@@ -41,6 +41,15 @@ NESTS = {
         "sections": {
             "General": {
                 "staff": ["WAFA", "CHERYL", "MUHANNED", "ELHAM", "AMINAH", "MNAYER"],
+                # Maps solver key → exact DB name (for web app integration)
+                "staff_db_names": {
+                    "WAFA":    "Wafa Assiri",
+                    "CHERYL":  "Cheryl",
+                    "MUHANNED":"Muhanned",
+                    "ELHAM":   "Elham",
+                    "AMINAH":  "Aminah",
+                    "MNAYER":  "Mnayer",
+                },
                 "allowed_shifts": ["D", "M", "N", "O", "AL", "SL"],
                 "coverage": {
                     "weekday": {"M": 1, "N": 1},
@@ -52,6 +61,13 @@ NESTS = {
             },
             "US": {
                 "staff": ["RAWAN", "ALANOOD", "ALNOUD", "TAGREED", "SADEEM"],
+                "staff_db_names": {
+                    "RAWAN":   "Rawan",
+                    "ALANOOD": "Alanood",
+                    "ALNOUD":  "Alnoud Alrashdi",
+                    "TAGREED": "Tagreed",
+                    "SADEEM":  "Sadeem",
+                },
                 "allowed_shifts": ["M", "N", "O", "AL", "SL"],
                 "coverage": {
                     "weekday": {"M": 1, "N": 1},
