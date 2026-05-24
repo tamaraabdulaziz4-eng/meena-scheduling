@@ -259,25 +259,31 @@ def generate_schedule(nest_name: str, year: int, month: int,
     al_idx = code_to_idx["AL"]
     o_idx  = code_to_idx["O"]
 
+    # Sections with no exact constraints use free scheduling (no dominant lock)
+    free_sections = {
+        sec_name for sec_name, sec in nest_cfg["sections"].items()
+        if not sec.get("exact")
+    }
+
     for p, sec_name, sec in all_staff:
         dom = dominant_shifts.get(p)
         shift_var[p] = []
+        use_dominant = sec_name not in free_sections  # lock domain only if section has exact constraints
         for d in range(n_days):
             day = d + 1
             if p in al_schedule and day in al_schedule[p]:
                 # Force AL on AL days
                 v = model.new_int_var(al_idx, al_idx, f"s_{p}_{d}")
             else:
-                # Domain: only dominant shift + O
-                # If dom is set and valid for this section, restrict to {dom, O}
-                # Otherwise fall back to full allowed set (shouldn't happen after fill-in)
-                if dom and dom in sec["allowed_shifts"] and dom != "O":
+                if use_dominant and dom and dom in sec["allowed_shifts"] and dom != "O":
+                    # Hard domain restriction: dominant shift OR O only
                     dom_idx = code_to_idx[dom]
                     domain  = cp_model.Domain.from_values([dom_idx, o_idx])
                 else:
-                    # Fallback: all allowed non-leave shifts
+                    # Free scheduling: any allowed non-leave, non-OC shift
+                    # OC is manual-only — solver never auto-assigns it
                     fallback = [code_to_idx[c] for c in sec["allowed_shifts"]
-                                if c not in ("AL", "SL")]
+                                if c not in ("AL", "SL", "OC")]
                     domain = cp_model.Domain.from_values(fallback)
                 v = model.new_int_var_from_domain(domain, f"s_{p}_{d}")
             shift_var[p].append(v)
@@ -488,6 +494,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
         exact_codes_per_sec[sec_name] = set(sec.get("exact", {}).keys())
 
     for sec_name, sec in nest_cfg["sections"].items():
+        # Free sections have no dominant lock — HC6 doesn't apply
+        if sec_name in free_sections:
+            continue
+
         sec_staff_names = [p for p, sn, _ in all_staff if sn == sec_name]
         exact_here      = exact_codes_per_sec[sec_name]
 
@@ -526,6 +536,34 @@ def generate_schedule(nest_name: str, year: int, month: int,
                     continue  # AL-heavy day — skip
                 work_bools = [get_bool(p, d, dom_code) for p in avail]
                 model.add(sum(work_bools) >= min_w)
+
+    # ── HC6b: Minimum total work days for free sections ───────────────────────
+    # Free sections have no dominant lock, so we enforce a per-person minimum
+    # work count (~5/7 of days) to prevent the solver from giving everyone O.
+    import math as _math2
+    for sec_name, sec in nest_cfg["sections"].items():
+        if sec_name not in free_sections:
+            continue
+        sec_staff_names = [p for p, sn, _ in all_staff if sn == sec_name]
+        work_codes_here = [c for c in sec["allowed_shifts"]
+                           if c not in ("O", "AL", "SL", "OC")]
+        if not work_codes_here:
+            continue
+        for p in sec_staff_names:
+            # Count AL days for this person
+            al_days = len(al_schedule.get(p, []))
+            avail_days = n_days - al_days
+            # Target: ~5/7 of available days working
+            min_work = max(1, _math2.floor(avail_days * 5 / 7))
+            work_bools = []
+            for d in range(n_days):
+                day = d + 1
+                if p in al_schedule and day in al_schedule[p]:
+                    continue
+                for wc in work_codes_here:
+                    work_bools.append(get_bool(p, d, wc))
+            if work_bools:
+                model.add(sum(work_bools) >= min_work)
 
     # ── Soft Constraint: Fairness — equal M and N distribution ───────────────
     # Minimize max deviation from mean for M and N counts
