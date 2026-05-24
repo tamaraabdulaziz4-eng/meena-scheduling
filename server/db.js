@@ -85,7 +85,8 @@ async function initSchema() {
       status      TEXT NOT NULL DEFAULT 'approved',
       note        TEXT,
       created_by  INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
-      created_at  TIMESTAMP DEFAULT NOW()
+      created_at  TIMESTAMP DEFAULT NOW(),
+      UNIQUE(staff_id, date)
     );
 
     CREATE TABLE IF NOT EXISTS scheduling.audit_log (
@@ -112,6 +113,18 @@ async function initSchema() {
   // Migrations: add columns that may not exist on older DBs
   await pool.query(`
     ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;
+  `);
+  // Add unique constraint on leave_requests (staff_id, date) if not exists
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'leave_requests_staff_id_date_key'
+          AND conrelid = 'scheduling.leave_requests'::regclass
+      ) THEN
+        ALTER TABLE scheduling.leave_requests ADD CONSTRAINT leave_requests_staff_id_date_key UNIQUE (staff_id, date);
+      END IF;
+    END $$;
   `);
 
   console.log('Scheduling schema ready.');
@@ -542,7 +555,11 @@ async function getLeaves(branchId, year, month) {
 async function insertLeave({ staff_id, date, leave_type, note, created_by }) {
   const { rows } = await pool.query(`
     INSERT INTO scheduling.leave_requests (staff_id, date, leave_type, status, note, created_by)
-    VALUES ($1,$2,$3,'approved',$4,$5) RETURNING *
+    VALUES ($1,$2,$3,'approved',$4,$5)
+    ON CONFLICT (staff_id, date) DO UPDATE
+      SET leave_type=EXCLUDED.leave_type, note=EXCLUDED.note, created_by=EXCLUDED.created_by
+    RETURNING id, staff_id, TO_CHAR(date, 'YYYY-MM-DD') AS date,
+              leave_type, status, note, created_by, created_at
   `, [staff_id, date, leave_type || 'AL', note || null, created_by || null]);
   return rows[0];
 }

@@ -3,10 +3,9 @@ let allLeaves = [];
 const LEAVE_LABELS = { AL:'Annual Leave', SL:'Sick Leave', TB:'Time-Back', OT:'Over Time' };
 
 async function loadLeaves(branchId, year, month) {
-  const params = new URLSearchParams();
-  if (branchId) params.append('branch_id', branchId);
-  if (year)     params.append('year', year);
-  if (month)    params.append('month', month);
+  let params = branchId ? `branch_id=${branchId}` : '';
+  if (year)  params += `${params?'&':''}year=${year}`;
+  if (month) params += `${params?'&':''}month=${month}`;
   allLeaves = await API.get(`/leaves?${params}`);
   return allLeaves;
 }
@@ -16,35 +15,35 @@ function renderLeavesPage() {
   setTopbar('Leave Management', 'Annual leave, sick leave, time-back',
     canEdit ? `<button class="btn btn-sm" onclick="openLeaveModal()">+ Add Leave</button>` : ''
   );
-
-  const now = new Date();
-  const c   = document.getElementById('content');
+  const c = document.getElementById('content');
   c.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <select id="leave-filter-year" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"></select>
       <select id="leave-filter-month" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none">
-        <option value="">All Months</option>
-        ${MONTHS.map((m,i) => `<option value="${i+1}"${i+1===now.getMonth()+1?' selected':''}>${m}</option>`).join('')}
+        <option value="">All months</option>
+        ${MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('')}
       </select>
       ${currentUser?.role==='superadmin' ? `<select id="leave-filter-branch" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>#</th><th>Staff</th><th>Branch</th><th>Date</th><th>Type</th><th>Note</th>
-        ${canEdit ? '<th>Actions</th>' : ''}</tr></thead>
+        <thead><tr>
+          <th>#</th><th>Staff</th><th>Branch</th><th>From</th><th>To</th><th>Days</th><th>Type</th><th>Note</th>
+          ${canEdit ? '<th>Actions</th>' : ''}
+        </tr></thead>
         <tbody id="leaves-tbody"></tbody>
       </table>
     </div>`;
 
-  // Year selector
+  // Populate year filter
   const ys = document.getElementById('leave-filter-year');
-  for (let y = now.getFullYear() - 1; y <= now.getFullYear() + 1; y++) {
-    const opt = document.createElement('option');
-    opt.value = y; opt.textContent = y;
-    if (y === now.getFullYear()) opt.selected = true;
-    ys.appendChild(opt);
+  const now = new Date();
+  for (let y = now.getFullYear() + 1; y >= now.getFullYear() - 1; y--) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y;
+    if (y === now.getFullYear()) o.selected = true;
+    ys.appendChild(o);
   }
-
   filterLeaves();
 }
 
@@ -60,69 +59,152 @@ async function filterLeaves() {
 }
 
 function renderLeavesList() {
-  const tb = document.getElementById('leaves-tbody');
-  if (!tb) return;
+  const tb     = document.getElementById('leaves-tbody');
   const canEdit = ['admin','superadmin'].includes(currentUser?.role);
   if (!allLeaves.length) {
-    tb.innerHTML = `<tr><td colspan="${canEdit?7:6}" style="text-align:center;padding:24px;color:var(--muted)">No leave records found</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="${canEdit?9:8}" style="text-align:center;padding:24px;color:var(--muted)">No leave records found</td></tr>`;
     return;
   }
-  tb.innerHTML = allLeaves.map((l, i) => {
-    const dateStr = l.date ? new Date(l.date).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-    const badge = { AL:'badge-purple', SL:'badge-orange', TB:'badge-yellow', OT:'badge-green' }[l.leave_type] || 'badge-gray';
+
+  // Group consecutive days for same staff+type into ranges
+  const groups = groupLeaveRanges(allLeaves);
+
+  tb.innerHTML = groups.map((g, i) => {
+    const badge = { AL:'badge-purple', SL:'badge-orange', TB:'badge-yellow', OT:'badge-green' }[g.leave_type] || 'badge-gray';
+    const fromStr = fmtDateDisplay(g.date_from);
+    const toStr   = g.date_from === g.date_to ? '—' : fmtDateDisplay(g.date_to);
+    const days    = g.day_count;
     return `<tr>
-      <td>${i+1}</td>
-      <td><strong>${l.staff_name}</strong></td>
-      <td>${l.branch_name || '—'}</td>
-      <td>${dateStr}</td>
-      <td><span class="badge ${badge}">${l.leave_type}</span> <span style="font-size:11px;color:var(--muted)">${LEAVE_LABELS[l.leave_type]||''}</span></td>
-      <td>${l.note || '—'}</td>
-      ${canEdit ? `<td><button class="action-btn danger" onclick="deleteLeaveConfirm(${l.id})">Delete</button></td>` : ''}
+      <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
+      <td style="font-weight:600">${g.staff_name}</td>
+      <td style="font-size:12px;color:var(--muted)">${g.branch_name || '—'}</td>
+      <td>${fromStr}</td>
+      <td>${toStr}</td>
+      <td style="text-align:center;font-weight:600">${days}</td>
+      <td><span class="badge ${badge}">${g.leave_type}</span> <span style="font-size:11px;color:var(--muted)">${LEAVE_LABELS[g.leave_type]||''}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${g.note || '—'}</td>
+      ${canEdit ? `<td><button class="action-btn danger" onclick="deleteLeaveRange(${JSON.stringify(g.ids)})">Delete</button></td>` : ''}
     </tr>`;
   }).join('');
 }
 
+// Group individual leave rows into date ranges (same staff + type + consecutive days)
+function groupLeaveRanges(leaves) {
+  // Sort by staff, type, date
+  const sorted = [...leaves].sort((a, b) => {
+    if (a.staff_id !== b.staff_id) return a.staff_id - b.staff_id;
+    if (a.leave_type !== b.leave_type) return a.leave_type.localeCompare(b.leave_type);
+    return new Date(a.date) - new Date(b.date);
+  });
+
+  const groups = [];
+  for (const lv of sorted) {
+    const d = new Date(lv.date);
+    const last = groups[groups.length - 1];
+    // Check if this extends the last group (same staff, type, consecutive day)
+    if (last &&
+        last.staff_id    === lv.staff_id &&
+        last.leave_type  === lv.leave_type) {
+      const lastDate   = new Date(last.date_to);
+      const nextDay    = new Date(lastDate);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      if (d.toISOString().slice(0,10) === nextDay.toISOString().slice(0,10)) {
+        last.date_to  = lv.date;
+        last.day_count++;
+        last.ids.push(lv.id);
+        continue;
+      }
+    }
+    groups.push({
+      ids:         [lv.id],
+      staff_id:    lv.staff_id,
+      staff_name:  lv.staff_name,
+      branch_name: lv.branch_name,
+      leave_type:  lv.leave_type,
+      date_from:   lv.date,
+      date_to:     lv.date,
+      day_count:   1,
+      note:        lv.note,
+    });
+  }
+  return groups;
+}
+
+function fmtDateDisplay(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' });
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
 function openLeaveModal() {
-  // Populate staff select (filtered to user's branch)
   const ls = document.getElementById('leave-staff');
   ls.innerHTML = '<option value="">Select staff…</option>';
-  const filtered = currentUser?.role === 'superadmin' ? allStaff : allStaff.filter(s => s.branch_id === currentUser?.branch_id);
+  const filtered = currentUser?.role === 'superadmin'
+    ? allStaff
+    : allStaff.filter(s => s.branch_id === currentUser?.branch_id);
   filtered.forEach(s => {
     const opt = document.createElement('option');
     opt.value = s.id; opt.textContent = `${s.name} (${s.branch_name || '?'})`;
     ls.appendChild(opt);
   });
-  document.getElementById('leave-date').value = fmtDate(new Date());
-  document.getElementById('leave-type').value = 'AL';
-  document.getElementById('leave-note').value = '';
+
+  const today = fmtDate(new Date());
+  document.getElementById('leave-date-from').value = today;
+  document.getElementById('leave-date-to').value   = today;
+  document.getElementById('leave-type').value      = 'AL';
+  document.getElementById('leave-note').value      = '';
   document.getElementById('leave-msg').textContent = '';
   document.getElementById('leave-modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('leave-staff').focus(), 50);
 }
+
 function closeLeaveModal() {
   document.getElementById('leave-modal-overlay').classList.remove('open');
 }
+
 async function saveLeave() {
-  const msg = document.getElementById('leave-msg');
+  const msg        = document.getElementById('leave-msg');
   const staff_id   = document.getElementById('leave-staff').value;
-  const date        = document.getElementById('leave-date').value;
-  const leave_type  = document.getElementById('leave-type').value;
-  const note        = document.getElementById('leave-note').value.trim();
-  if (!staff_id || !date) { msg.className='msg err'; msg.textContent='Staff and date required'; return; }
+  const date_from  = document.getElementById('leave-date-from').value;
+  const date_to    = document.getElementById('leave-date-to').value;
+  const leave_type = document.getElementById('leave-type').value;
+  const note       = document.getElementById('leave-note').value.trim();
+
+  if (!staff_id)   { msg.className='msg err'; msg.textContent='Select a staff member'; return; }
+  if (!date_from)  { msg.className='msg err'; msg.textContent='From date required'; return; }
+  if (!date_to)    { msg.className='msg err'; msg.textContent='To date required'; return; }
+  if (date_to < date_from) { msg.className='msg err'; msg.textContent='"To" date must be on or after "From" date'; return; }
+
+  // Calculate number of days for confirmation
+  const days = Math.round((new Date(date_to) - new Date(date_from)) / 86400000) + 1;
+
   try {
-    const l = await API.post('/leaves', { staff_id: Number(staff_id), date, leave_type, note });
-    allLeaves.unshift({ ...l, staff_name: allStaff.find(s=>s.id===Number(staff_id))?.name || '?', branch_name: allBranches.find(b=>b.id===allStaff.find(s=>s.id===Number(staff_id))?.branch_id)?.name || '?' });
+    // POST range to backend — it expands to individual rows
+    const result = await API.post('/leaves', {
+      staff_id: Number(staff_id),
+      date_from, date_to,
+      leave_type, note
+    });
+    // result: { inserted: N, leaves: [...] }
+    const staffObj = allStaff.find(s => s.id === Number(staff_id));
+    const branchObj = allBranches.find(b => b.id === staffObj?.branch_id);
+    (result.leaves || []).forEach(l => {
+      allLeaves.unshift({ ...l, staff_name: staffObj?.name || '?', branch_name: branchObj?.name || '?' });
+    });
     closeLeaveModal();
     renderLeavesList();
-    toast('Leave added');
+    toast(`${result.inserted} day${result.inserted !== 1 ? 's' : ''} of ${leave_type} added`);
   } catch (err) { msg.className='msg err'; msg.textContent=err.message; }
 }
-async function deleteLeaveConfirm(id) {
-  const ok = await showConfirm('Delete Leave', 'Remove this leave record?');
+
+async function deleteLeaveRange(ids) {
+  const ok = await showConfirm('Delete Leave', `Remove ${ids.length} day${ids.length !== 1 ? 's' : ''} of leave?`);
   if (!ok) return;
   try {
-    await API.delete(`/leaves/${id}`);
-    allLeaves = allLeaves.filter(l => l.id !== id);
+    await Promise.all(ids.map(id => API.delete(`/leaves/${id}`)));
+    allLeaves = allLeaves.filter(l => !ids.includes(l.id));
     renderLeavesList();
-    toast('Leave deleted');
+    toast(`${ids.length} leave day${ids.length !== 1 ? 's' : ''} deleted`);
   } catch (err) { toast(err.message, 'err'); }
 }
