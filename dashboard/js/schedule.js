@@ -175,9 +175,12 @@ function renderShiftLegend() {
   const leg = document.getElementById('shift-legend');
   if (!leg) return;
 
-  // Separate work shifts from status (off/leave/oncall) — exclude plain O
-  const workShifts   = allShiftTypes.filter(st => !st.is_off && !st.is_leave && !st.is_oncall && st.code !== 'O');
-  const statusShifts = allShiftTypes.filter(st => (st.is_leave || st.is_oncall) && st.code !== 'O');
+  // Only show shifts actually used in the current schedule entries
+  const usedCodes = new Set(currentEntries.map(e => e.shift_code).filter(Boolean));
+
+  // Always show leave/oncall types if any entry uses them; always show work shifts in use
+  const workShifts   = allShiftTypes.filter(st => !st.is_off && !st.is_leave && !st.is_oncall && st.code !== 'O' && usedCodes.has(st.code));
+  const statusShifts = allShiftTypes.filter(st => (st.is_leave || st.is_oncall) && st.code !== 'O' && usedCodes.has(st.code));
 
   function cellText(st) {
     const t = (st.start_time && st.end_time) ? `(${fmt12(st.start_time)} - ${fmt12(st.end_time)})` : null;
@@ -225,8 +228,8 @@ function renderScheduleStats() {
   if (!bar) return;
   const total    = scheduleStaff.length;
   const nDays    = daysInMonth(scheduleYear, scheduleMonth);
-  const working  = Object.values(entryMap).filter(e => e.shift_code !== 'O' && e.shift_code !== 'AL' && e.shift_code !== 'SL' && e.shift_code !== 'TB').length;
-  const onCall   = Object.values(entryMap).filter(e => e.is_oncall).length;
+  const working  = Object.values(entryMap).filter(e => !['O','AL','SL','TB','OC'].includes(e.shift_code) && !e.is_oncall).length;
+  const onCall   = Object.values(entryMap).filter(e => e.is_oncall || e.shift_code === 'OC').length;
   const leaves   = Object.values(entryMap).filter(e => ['AL','SL','TB'].includes(e.shift_code)).length;
 
   bar.innerHTML = `
@@ -263,7 +266,6 @@ function renderRotaGrid() {
         <th style="min-width:60px">Shifts</th>
       </tr>
       <tr>
-        <th class="rota-name-col"></th>
         ${Array.from({length:nDays},(_,i)=>{
           const dow = dayOfWeek(scheduleYear, scheduleMonth, i+1);
           const isWeekend = dow===5||dow===6;
