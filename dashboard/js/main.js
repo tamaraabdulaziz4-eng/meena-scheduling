@@ -23,10 +23,11 @@ async function initApp() {
   const isAdmin  = ['admin','superadmin'].includes(currentUser.role);
   const isSuperAdmin = currentUser.role === 'superadmin';
   document.getElementById('nav-section-admin').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('nav-branches').style.display = isSuperAdmin ? 'flex' : 'none';
-  document.getElementById('nav-shifts').style.display   = isAdmin ? 'flex' : 'none';
-  document.getElementById('nav-users').style.display    = isSuperAdmin ? 'flex' : 'none';
-  document.getElementById('nav-audit').style.display    = isAdmin ? 'flex' : 'none';
+  document.getElementById('nav-branches').style.display    = isSuperAdmin ? 'flex' : 'none';
+  document.getElementById('nav-shifts').style.display      = isAdmin ? 'flex' : 'none';
+  document.getElementById('nav-users').style.display       = isSuperAdmin ? 'flex' : 'none';
+  document.getElementById('nav-nest-config').style.display = isSuperAdmin ? 'flex' : 'none';
+  document.getElementById('nav-audit').style.display       = isAdmin ? 'flex' : 'none';
 
   // Load global data
   showLoader('Loading data…');
@@ -92,6 +93,11 @@ async function showPage(page) {
     case 'audit':
       if (!['admin','superadmin'].includes(currentUser?.role)) { showPage('schedule'); return; }
       await renderAuditPage();
+      break;
+
+    case 'nest-config':
+      if (currentUser?.role !== 'superadmin') { showPage('schedule'); return; }
+      await renderNestConfigPage();
       break;
 
     default:

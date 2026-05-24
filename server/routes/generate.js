@@ -38,7 +38,7 @@ function branchToNest(branchName) {
 }
 
 /** Run the Python solver, return parsed JSON result */
-function runSolver(nestName, year, month, alArgs, prevTail = {}, dominantArg = null, timeoutSec = 120) {
+function runSolver(nestName, year, month, alArgs, prevTail = {}, dominantArg = null, timeoutSec = 120, configArg = null) {
   return new Promise((resolve, reject) => {
     const schedulerDir = path.join(__dirname, '../../scheduler');
     const args = [
@@ -55,6 +55,9 @@ function runSolver(nestName, year, month, alArgs, prevTail = {}, dominantArg = n
     }
     if (dominantArg) {
       args.push('--dominant', dominantArg);
+    }
+    if (configArg) {
+      args.push('--config', configArg);
     }
 
     console.log('[Solver] cmd: python3', args.join(' '));
@@ -117,7 +120,31 @@ router.post('/', requireAdmin, async (req, res) => {
       nameToStaff[s.name.toLowerCase().trim()] = s;
     }
 
-    // ── 4. Build AL args from DB leaves ───────────────────────────────────────
+    // ── 4. Load nest config from DB ───────────────────────────────────────────
+    const nestSections = await db.getNestConfig(nestName);
+
+    // Build nestConfig in the format expected by generator.py:
+    // { "sections": { "General": { staff, staff_db_names, allowed_shifts, coverage, exact } } }
+    const nestConfigForSolver = { sections: {} };
+    for (const sec of nestSections) {
+      nestConfigForSolver.sections[sec.section_name] = {
+        staff:          sec.staff,
+        staff_db_names: sec.staff_db_names,
+        allowed_shifts: sec.allowed_shifts,
+        coverage:       sec.coverage,
+        exact:          sec.exact_coverage,
+      };
+    }
+
+    // Build configJson: { db_name_lower → solver_key }  (from DB config)
+    const configJson = {};
+    for (const sec of nestSections) {
+      for (const [solverKey, dbName] of Object.entries(sec.staff_db_names || {})) {
+        configJson[dbName.toLowerCase().trim()] = solverKey;
+      }
+    }
+
+    // ── 5. Build AL args from DB leaves ───────────────────────────────────────
     // leaves from DB: { staff_id, date, leave_type }
     // Group by staff name, collect day numbers
     const alByStaff = {}; // db_name → [day, ...]
@@ -128,35 +155,6 @@ router.post('/', requireAdmin, async (req, res) => {
       if (!alByStaff[s.name]) alByStaff[s.name] = [];
       alByStaff[s.name].push(day);
     }
-
-    // Convert to solver format: "SOLVER_KEY:d1,d2,d3"
-    // We need to reverse-map db_name → solver key using config
-    // Load config dynamically via python to get staff_db_names
-    // Simpler: build reverse map by calling python once to get config
-    // Even simpler: we store staff_db_names in config — read it with a quick python call
-
-    // Get solver config (staff_db_names) once
-    const schedulerDir = path.join(__dirname, '../../scheduler');
-    const configJson = await new Promise((resolve, reject) => {
-      const proc = spawn('python3', ['-c', `
-import json, sys
-sys.path.insert(0, '${schedulerDir}')
-from config import NESTS
-nest = NESTS.get('${nestName}', {})
-out = {}
-for sec_name, sec in nest.get('sections', {}).items():
-    for key, db_name in sec.get('staff_db_names', {}).items():
-        out[db_name.lower().strip()] = key
-print(json.dumps(out))
-`]);
-      let out = '';
-      proc.stdout.on('data', d => { out += d; });
-      proc.on('close', () => {
-        try { resolve(JSON.parse(out)); }
-        catch (e) { resolve({}); }  // if config missing staff_db_names, proceed without AL
-      });
-      proc.on('error', () => resolve({}));
-    });
 
     // configJson: { "wafa assiri": "WAFA", "cheryl": "CHERYL", ... }
     const alArgs = [];
@@ -180,7 +178,9 @@ print(json.dumps(out))
     // ── 6. Run solver ─────────────────────────────────────────────────────────
     console.log(`[Generate] ${nestName} ${year}-${String(month).padStart(2,'0')} AL:`, alArgs);
     console.log(`[Generate] prev-month tail:`, prevTailBySolver);
-    const solverResult = await runSolver(nestName, year, month, alArgs, prevTailBySolver);
+    // Pass DB config as JSON so solver doesn't need to read config.py for nest structure
+    const configArg = nestSections.length ? JSON.stringify(nestConfigForSolver) : null;
+    const solverResult = await runSolver(nestName, year, month, alArgs, prevTailBySolver, null, 120, configArg);
 
     if (solverResult.status === 'INFEASIBLE') {
       return res.status(422).json({
@@ -291,33 +291,20 @@ router.get('/allowed-shifts', async (req, res) => {
 
     const branch = await db.getBranchById(branch_id);
     const nestName = branchToNest(branch?.name);
-    if (!nestName) return res.json({ sections: {} });
+    if (!nestName) return res.json({ sections: {}, staff_allowed: {} });
 
-    const schedulerDir = path.join(__dirname, '../../scheduler');
-    const result = await new Promise((resolve) => {
-      const proc = spawn('python3', ['-c', `
-import json, sys
-sys.path.insert(0, '${schedulerDir}')
-from config import NESTS
-nest = NESTS.get('${nestName}', {})
-out = {}
-for sec_name, sec in nest.get('sections', {}).items():
-    out[sec_name] = {
-        'allowed_shifts': sec.get('allowed_shifts', []),
-        'staff_db_names': sec.get('staff_db_names', {}),
+    // Load from DB instead of reading config.py
+    const nestSections = await db.getNestConfig(nestName);
+
+    // Build result: { "General": { allowed_shifts: [...], staff_db_names: {...} }, ... }
+    const result = {};
+    for (const sec of nestSections) {
+      result[sec.section_name] = {
+        allowed_shifts: sec.allowed_shifts,
+        staff_db_names: sec.staff_db_names,
+      };
     }
-print(json.dumps(out))
-`]);
-      let out = '';
-      proc.stdout.on('data', d => { out += d; });
-      proc.on('close', () => {
-        try { resolve(JSON.parse(out)); }
-        catch (e) { resolve({}); }
-      });
-      proc.on('error', () => resolve({}));
-    });
 
-    // result: { "General": { allowed_shifts: [...], staff_db_names: {...} }, ... }
     // Map db_name (lower) → section name, so frontend can look up by staff name
     const dbNameToSection = {};
     const sectionAllowed  = {};
@@ -328,14 +315,12 @@ print(json.dumps(out))
       }
     }
 
-    // Also load staff to map staff_id → section via their db name
+    // Load staff to map staff_id → allowed shifts via their db name
     const staffList = await db.getAllStaff(branch_id);
-    const staffIdToSection = {};
     const staffIdToAllowed = {};
     for (const s of staffList) {
       const secName = dbNameToSection[s.name.toLowerCase().trim()];
       if (secName) {
-        staffIdToSection[s.id] = secName;
         staffIdToAllowed[s.id] = sectionAllowed[secName] || [];
       }
     }

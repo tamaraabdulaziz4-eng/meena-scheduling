@@ -82,6 +82,9 @@
       <button class="nav-item" id="nav-users" onclick="showPage('users')">
         <span class="nav-icon">🔐</span> Users
       </button>
+      <button class="nav-item" id="nav-nest-config" onclick="showPage('nest-config')">
+        <span class="nav-icon">⚙️</span> Nest Config
+      </button>
       <button class="nav-item" id="nav-audit" onclick="showPage('audit')">
         <span class="nav-icon">📋</span> Audit Log
       </button>
@@ -374,6 +377,72 @@
   </div>
 </div>
 
+<!-- ── Nest Config Section Modal ── -->
+<div class="modal-overlay" id="nest-section-modal-overlay">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <h3 id="nest-section-modal-title">Edit Section</h3>
+      <button class="modal-close" onclick="closeNestSectionModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <input type="hidden" id="ns-edit-id">
+        <div class="form-row">
+          <div class="form-field" style="flex:1">
+            <label>Nest Key *</label>
+            <input type="text" id="ns-nest-key" placeholder="e.g. NEST1" style="text-transform:uppercase">
+          </div>
+          <div class="form-field" style="flex:1">
+            <label>Section Name *</label>
+            <input type="text" id="ns-section-name" placeholder="e.g. General">
+          </div>
+          <div class="form-field" style="max-width:80px">
+            <label>Order</label>
+            <input type="number" id="ns-sort-order" value="0" min="0">
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label>Staff Solver Keys <span style="font-weight:400;color:var(--muted)">(one per line, e.g. WAFA)</span></label>
+          <textarea id="ns-staff" rows="4" placeholder="WAFA&#10;CHERYL&#10;MUHANNED" style="font-family:monospace;font-size:13px;resize:vertical"></textarea>
+        </div>
+
+        <div class="form-field">
+          <label>Staff DB Name Mapping <span style="font-weight:400;color:var(--muted)">(SOLVER_KEY = Exact DB Name, one per line)</span></label>
+          <textarea id="ns-db-names" rows="4" placeholder="WAFA = Wafa Assiri&#10;CHERYL = Cheryl" style="font-family:monospace;font-size:13px;resize:vertical"></textarea>
+        </div>
+
+        <div class="form-field">
+          <label>Allowed Shifts <span style="font-weight:400;color:var(--muted)">(comma-separated, e.g. M,N,D,O,AL,SL)</span></label>
+          <input type="text" id="ns-allowed-shifts" placeholder="M,N,D,O,AL,SL" style="font-family:monospace">
+        </div>
+
+        <div class="form-row">
+          <div class="form-field" style="flex:1">
+            <label>Weekday Coverage <span style="font-weight:400;color:var(--muted)">(JSON, e.g. {"M":1,"N":1})</span></label>
+            <input type="text" id="ns-coverage-weekday" placeholder='{"M":1,"N":1}' style="font-family:monospace;font-size:12px">
+          </div>
+          <div class="form-field" style="flex:1">
+            <label>Weekend Coverage <span style="font-weight:400;color:var(--muted)">(JSON)</span></label>
+            <input type="text" id="ns-coverage-weekend" placeholder='{"M":1,"N":1}' style="font-family:monospace;font-size:12px">
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label>Exact Coverage <span style="font-weight:400;color:var(--muted)">(JSON, e.g. {"N":1} means exactly 1 N per day)</span></label>
+          <input type="text" id="ns-exact-coverage" placeholder='{"N":1}' style="font-family:monospace;font-size:12px">
+        </div>
+
+        <div class="msg" id="ns-msg"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeNestSectionModal()">Cancel</button>
+      <button class="btn btn-sm" onclick="saveNestSection()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/auth.js"></script>
 <script src="/js/util.js"></script>
@@ -385,6 +454,7 @@
 <script src="/js/schedule.js"></script>
 <script src="/js/export.js"></script>
 <script src="/js/audit.js"></script>
+<script src="/js/nest-config.js"></script>
 <script src="/js/main.js"></script>
 </body>
 </html>

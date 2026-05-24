@@ -110,6 +110,24 @@ async function initSchema() {
       ON scheduling.shift_types (branch_id, code) WHERE branch_id IS NOT NULL;
   `);
 
+  // ── Nest config table ────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS scheduling.nest_sections (
+      id              SERIAL PRIMARY KEY,
+      nest_key        TEXT NOT NULL,          -- e.g. "NEST1"
+      section_name    TEXT NOT NULL,          -- e.g. "General", "US"
+      staff           TEXT[] NOT NULL DEFAULT '{}',
+      staff_db_names  JSONB NOT NULL DEFAULT '{}',
+      allowed_shifts  TEXT[] NOT NULL DEFAULT '{}',
+      coverage        JSONB NOT NULL DEFAULT '{}',
+      exact_coverage  JSONB NOT NULL DEFAULT '{}',
+      sort_order      INTEGER NOT NULL DEFAULT 0,
+      created_at      TIMESTAMP DEFAULT NOW(),
+      updated_at      TIMESTAMP DEFAULT NOW(),
+      UNIQUE (nest_key, section_name)
+    );
+  `);
+
   // Migrations: add columns that may not exist on older DBs
   await pool.query(`
     ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;
@@ -201,6 +219,193 @@ async function seedAdmin() {
     );
   }
   console.log(`Admin user "${username}" ready.`);
+}
+
+// ── Nest config seed ─────────────────────────────────────────────────────────
+async function seedNestConfig() {
+  // Full config mirrored from config.py — seeds only if row doesn't already exist.
+  const nests = [
+    // ── NEST1 ─────────────────────────────────────────────────────────────────
+    {
+      nest_key: 'NEST1', section_name: 'General', sort_order: 0,
+      staff: ['WAFA','CHERYL','MUHANNED','ELHAM','AMINAH','MNAYER'],
+      staff_db_names: {
+        WAFA:'Wafa Assiri', CHERYL:'Cheryl', MUHANNED:'Muhanned',
+        ELHAM:'Elham', AMINAH:'Aminah', MNAYER:'Mnayer',
+      },
+      allowed_shifts: ['D','M','N','O','AL','SL'],
+      coverage: { weekday:{M:1,N:1}, weekend:{M:1,N:1} },
+      exact_coverage: { N:1 },
+    },
+    {
+      nest_key: 'NEST1', section_name: 'US', sort_order: 1,
+      staff: ['RAWAN','ALANOOD','ALNOUD','TAGREED','SADEEM'],
+      staff_db_names: {
+        RAWAN:'Rawan', ALANOOD:'Alanood', ALNOUD:'Alnoud Alrashdi',
+        TAGREED:'Tagreed', SADEEM:'Sadeem',
+      },
+      allowed_shifts: ['M','N','O','AL','SL'],
+      coverage: { weekday:{M:1,N:1}, weekend:{M:1,N:1} },
+      exact_coverage: { N:1 },
+    },
+    // ── NEST2 ─────────────────────────────────────────────────────────────────
+    {
+      nest_key: 'NEST2', section_name: 'General', sort_order: 0,
+      staff: ['BADRIH','DALAL','WEDAD','LAYAN','FATIN','NAIF','MOHAMMED_BATT'],
+      staff_db_names: {},
+      allowed_shifts: ['M','N','D1','Y3','O','AL','SL','OC'],
+      coverage: { weekday:{M:1,N:1}, weekend:{M:1,N:1} },
+      exact_coverage: {},
+    },
+    {
+      nest_key: 'NEST2', section_name: 'US', sort_order: 1,
+      staff: ['ALHANOUF_BIN_AMMAR','HAJER','JOY','ALHANOUF_ALAZMI'],
+      staff_db_names: {},
+      allowed_shifts: ['D','M','N','D_US','O','AL','SL','OC'],
+      coverage: { weekday:{M:1,N:1,D:1}, weekend:{M:1,N:1} },
+      exact_coverage: {},
+    },
+    // ── NEST3 ─────────────────────────────────────────────────────────────────
+    {
+      nest_key: 'NEST3', section_name: 'General', sort_order: 0,
+      staff: ['DUAA','RAWAN','NOURAH','ABDULAZIZ','BUSHRA'],
+      staff_db_names: {},
+      allowed_shifts: ['M','N','A','O','AL','SL'],
+      coverage: { weekday:{M:1,N:1}, weekend:{M:1,N:1} },
+      exact_coverage: {},
+    },
+    {
+      nest_key: 'NEST3', section_name: 'US', sort_order: 1,
+      staff: ['ALMA','MANAR','QAMRAA','REEM'],
+      staff_db_names: {},
+      allowed_shifts: ['D','M','N','EV','D1','O','AL','SL'],
+      coverage: { weekday:{M:1,N:1,D:1}, weekend:{M:1,N:1} },
+      exact_coverage: {},
+    },
+    // ── NEST4 ─────────────────────────────────────────────────────────────────
+    {
+      nest_key: 'NEST4', section_name: 'General', sort_order: 0,
+      staff: ['SARAH','AROB'],
+      staff_db_names: {},
+      allowed_shifts: ['D','EV','M','O','AL','SL','OC'],
+      coverage: { weekday:{D:1,EV:1}, weekend:{D:1,EV:1} },
+      exact_coverage: {},
+    },
+    {
+      nest_key: 'NEST4', section_name: 'US', sort_order: 1,
+      staff: ['RANA','AESHAH','TAIF','ALAA'],
+      staff_db_names: {},
+      allowed_shifts: ['M','N','B','O','AL','SL','OC'],
+      coverage: { weekday:{M:1,N:1}, weekend:{M:1,N:1} },
+      exact_coverage: {},
+    },
+    // ── NEST6 ─────────────────────────────────────────────────────────────────
+    {
+      nest_key: 'NEST6', section_name: 'General', sort_order: 0,
+      staff: ['MOHAMMED','NAIF','RUBA','SHAHAD','WEDAD','NAIF_ALMUTARI','LAYAN','DALAL'],
+      staff_db_names: {},
+      allowed_shifts: ['D','M','N','O','AL','SL','OC'],
+      coverage: { weekday:{D:1,M:1,N:1}, weekend:{M:1,N:1} },
+      exact_coverage: {},
+    },
+    {
+      nest_key: 'NEST6', section_name: 'US', sort_order: 1,
+      staff: ['RANA','MEYAN','ALANOUD','HAJER','ALMA'],
+      staff_db_names: {},
+      allowed_shifts: ['A','B','C','M','N','D','EV','O','AL','SL','OC'],
+      coverage: { weekday:{A:1,B:1,N:1}, weekend:{A:1,B:1,N:1} },
+      exact_coverage: {},
+    },
+    // ── Y5 ────────────────────────────────────────────────────────────────────
+    {
+      nest_key: 'Y5', section_name: 'General', sort_order: 0,
+      staff: ['MANAL'],
+      staff_db_names: {},
+      allowed_shifts: ['A','O','OC','AL','SL'],
+      coverage: { weekday:{A:1}, weekend:{A:1} },
+      exact_coverage: {},
+    },
+  ];
+
+  for (const n of nests) {
+    await pool.query(`
+      INSERT INTO scheduling.nest_sections
+        (nest_key, section_name, staff, staff_db_names, allowed_shifts,
+         coverage, exact_coverage, sort_order)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      ON CONFLICT (nest_key, section_name) DO NOTHING
+    `, [
+      n.nest_key, n.section_name,
+      n.staff,
+      JSON.stringify(n.staff_db_names),
+      n.allowed_shifts,
+      JSON.stringify(n.coverage),
+      JSON.stringify(n.exact_coverage),
+      n.sort_order,
+    ]);
+  }
+  console.log('Nest configs seeded (skipped if already exist).');
+}
+
+// ── Nest config queries ───────────────────────────────────────────────────────
+
+/** Get all sections for a nest key, ordered by sort_order */
+async function getNestConfig(nestKey) {
+  const { rows } = await pool.query(`
+    SELECT id, nest_key, section_name, staff, staff_db_names,
+           allowed_shifts, coverage, exact_coverage, sort_order, updated_at
+    FROM scheduling.nest_sections
+    WHERE nest_key = $1
+    ORDER BY sort_order, section_name
+  `, [nestKey]);
+  return rows;
+}
+
+/** Get all nest sections (all nests) — for admin overview */
+async function getAllNestConfigs() {
+  const { rows } = await pool.query(`
+    SELECT id, nest_key, section_name, staff, staff_db_names,
+           allowed_shifts, coverage, exact_coverage, sort_order, updated_at
+    FROM scheduling.nest_sections
+    ORDER BY nest_key, sort_order, section_name
+  `);
+  return rows;
+}
+
+/** Upsert a single section */
+async function upsertNestSection({
+  nest_key, section_name, staff, staff_db_names,
+  allowed_shifts, coverage, exact_coverage, sort_order,
+}) {
+  const { rows } = await pool.query(`
+    INSERT INTO scheduling.nest_sections
+      (nest_key, section_name, staff, staff_db_names, allowed_shifts,
+       coverage, exact_coverage, sort_order, updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW())
+    ON CONFLICT (nest_key, section_name) DO UPDATE SET
+      staff          = EXCLUDED.staff,
+      staff_db_names = EXCLUDED.staff_db_names,
+      allowed_shifts = EXCLUDED.allowed_shifts,
+      coverage       = EXCLUDED.coverage,
+      exact_coverage = EXCLUDED.exact_coverage,
+      sort_order     = EXCLUDED.sort_order,
+      updated_at     = NOW()
+    RETURNING *
+  `, [
+    nest_key, section_name,
+    staff || [],
+    JSON.stringify(staff_db_names || {}),
+    allowed_shifts || [],
+    JSON.stringify(coverage || {}),
+    JSON.stringify(exact_coverage || {}),
+    sort_order ?? 0,
+  ]);
+  return rows[0];
+}
+
+/** Delete a single section by id */
+async function deleteNestSection(id) {
+  await pool.query(`DELETE FROM scheduling.nest_sections WHERE id=$1`, [id]);
 }
 
 // ── BRANCHES ─────────────────────────────────────────────────────────────────
@@ -588,6 +793,7 @@ async function getAudit(limit = 300) {
 
 const schemaReady = initSchema()
   .then(seedDefaults)
+  .then(seedNestConfig)
   .catch(err => {
     console.error('Schema init failed:', err);
     process.exit(1);
@@ -603,4 +809,5 @@ module.exports = {
   getEntries, getLastDaysOfMonth, upsertEntry, bulkUpsertEntries, deleteEntry, clearScheduleEntries,
   getLeaves, insertLeave, deleteLeave,
   insertAudit, getAudit,
+  getNestConfig, getAllNestConfigs, upsertNestSection, deleteNestSection,
 };

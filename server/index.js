@@ -26,6 +26,7 @@ app.use('/api/schedules',   require('./routes/schedules'));
 app.use('/api/leaves',      require('./routes/leaves'));
 app.use('/api/generate',    require('./routes/generate'));
 app.use('/api/audit',       require('./routes/audit'));
+app.use('/api/nest-config', require('./routes/nest-config'));
 
 // ── Serve dashboard ───────────────────────────────────────────────────────────
 const DASHBOARD = path.join(__dirname, '..', 'dashboard');

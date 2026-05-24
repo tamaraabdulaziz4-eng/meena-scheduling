@@ -14,8 +14,12 @@ import argparse
 import sys
 from ortools.sat.python import cp_model
 
-from config import SHIFTS, WORK_SHIFTS, REST_SHIFTS, WEEKEND_DAYS_OF_WEEK, NESTS
+from config import SHIFTS, WORK_SHIFTS, REST_SHIFTS, WEEKEND_DAYS_OF_WEEK, NESTS as _NESTS_DEFAULT
 from validator import validate_schedule, print_validation
+
+# _NESTS will be set to a merged dict at startup (default from config.py,
+# overridden by --config arg from DB at runtime).
+NESTS = _NESTS_DEFAULT
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -808,9 +812,11 @@ def print_coverage(result: dict, nest_name: str, year: int, month: int):
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def main():
+    global NESTS
+
     parser = argparse.ArgumentParser(description="Meena Health Schedule Generator")
     parser.add_argument("--nest",    default="NEST1",
-                        choices=list(NESTS.keys()), help="Which nest to schedule")
+                        help="Which nest to schedule (e.g. NEST1)")
     parser.add_argument("--year",    type=int, default=2026)
     parser.add_argument("--month",   type=int, default=5)
     parser.add_argument("--al",        nargs="*", default=[],
@@ -819,11 +825,25 @@ def main():
                         help='JSON dict of last 3 days of prev month: {"WAFA":["M","O","N"]}')
     parser.add_argument("--dominant", default=None,
                         help='Override dominant shifts: "WAFA:M,CHERYL:N,MUHANNED:D"')
+    parser.add_argument("--config",   default=None,
+                        help='JSON string: nest config override from DB. '
+                             'Format: {"sections": {"General": {...}, ...}}')
     parser.add_argument("--timeout",   type=int, default=60,
                         help="Solver time limit in seconds")
     parser.add_argument("--json",      action="store_true",
                         help="Output schedule as JSON to stdout")
     args = parser.parse_args()
+
+    # ── Apply --config override ───────────────────────────────────────────────
+    if args.config:
+        try:
+            cfg_override = json.loads(args.config)
+            # cfg_override is the nest config dict for this specific nest
+            # i.e. { "sections": { "General": {...}, "US": {...} } }
+            NESTS = dict(_NESTS_DEFAULT)   # shallow copy
+            NESTS[args.nest] = cfg_override
+        except Exception as e:
+            print(f"[generator] Warning: --config parse error: {e}", file=sys.stderr)
 
     al_schedule = parse_al_arg(args.al)
     prev_tail   = json.loads(args.prev_tail) if args.prev_tail else {}
