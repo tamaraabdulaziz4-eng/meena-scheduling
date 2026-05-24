@@ -52,6 +52,9 @@ NESTS = {
                 },
                 "allowed_shifts": ["D", "M", "N", "O", "AL", "SL"],
                 "coverage": {
+                    # Must have 1 M (12h morning) and 1 N (12h night) every day.
+                    # D (day 08:00-17:00) is allowed but not a mandatory coverage requirement —
+                    # it is assigned when a user pins someone to D dominant.
                     "weekday": {"M": 1, "N": 1},
                     "weekend": {"M": 1, "N": 1},
                 },

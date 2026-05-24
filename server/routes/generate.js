@@ -38,7 +38,7 @@ function branchToNest(branchName) {
 }
 
 /** Run the Python solver, return parsed JSON result */
-function runSolver(nestName, year, month, alArgs, prevTail = {}, timeoutSec = 120) {
+function runSolver(nestName, year, month, alArgs, prevTail = {}, dominantArg = null, timeoutSec = 120) {
   return new Promise((resolve, reject) => {
     const schedulerDir = path.join(__dirname, '../../scheduler');
     const args = [
@@ -53,7 +53,11 @@ function runSolver(nestName, year, month, alArgs, prevTail = {}, timeoutSec = 12
     if (Object.keys(prevTail).length) {
       args.push('--prev-tail', JSON.stringify(prevTail));
     }
+    if (dominantArg) {
+      args.push('--dominant', dominantArg);
+    }
 
+    console.log('[Solver] cmd: python3', args.join(' '));
     const proc = spawn('python3', args, { cwd: schedulerDir });
 
     let stdout = '';
@@ -63,7 +67,8 @@ function runSolver(nestName, year, month, alArgs, prevTail = {}, timeoutSec = 12
 
     proc.on('close', code => {
       // Log solver output for debugging
-      if (stderr) console.log('[Solver]', stderr.trim());
+      if (stderr) console.log('[Solver stderr]', stderr.trim());
+      if (stdout) console.log('[Solver stdout raw]', stdout.slice(0, 500));
       if (code !== 0) return reject(new Error(`Solver exited ${code}: ${stderr.slice(0, 300)}`));
       try {
         resolve(JSON.parse(stdout));
@@ -253,19 +258,94 @@ print(json.dumps(out))
       detail:   `${summary.length} staff · nest=${nestName} · solver=${solverResult.status} · ${solverResult.elapsed}s`,
     });
 
-    // ── 10. Response ──────────────────────────────────────────────────────────
+    // ── 10. Build dominant map keyed by staff_id for the UI ──────────────────
+    // solverResult.dominant: { "WAFA": "M", "CHERYL": "N", ... }
+    // We send back:
+    //   dominant:         { staff_id → shift_code }  for display
+    //   dominant_raw:     { solver_key → shift_code } for re-generating
+    //   solver_key_by_id: { staff_id → solver_key }  for building overrides in UI
+    // ── 11. Response ──────────────────────────────────────────────────────────
     const avg = summary.length ? Math.round(totalWork / summary.length) : 0;
     res.json({
       schedule,
-      entry_count:   flatEntries.length,
-      solver_status: solverResult.status,
+      entry_count:    flatEntries.length,
+      solver_status:  solverResult.status,
       solver_elapsed: solverResult.elapsed,
       summary,
-      avg_shifts:    avg,
+      avg_shifts:     avg,
     });
 
   } catch (err) {
     console.error('[Generate]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /generate/allowed-shifts?branch_id=X ─────────────────────────────────
+// Returns { sections: { sec_name: { staff: [...], allowed_shifts: [...] } } }
+// Used by the frontend to filter the shift picker per staff member.
+router.get('/allowed-shifts', async (req, res) => {
+  try {
+    const branch_id = Number(req.query.branch_id);
+    if (!branch_id) return res.status(400).json({ error: 'branch_id required' });
+
+    const branch = await db.getBranchById(branch_id);
+    const nestName = branchToNest(branch?.name);
+    if (!nestName) return res.json({ sections: {} });
+
+    const schedulerDir = path.join(__dirname, '../../scheduler');
+    const result = await new Promise((resolve) => {
+      const proc = spawn('python3', ['-c', `
+import json, sys
+sys.path.insert(0, '${schedulerDir}')
+from config import NESTS
+nest = NESTS.get('${nestName}', {})
+out = {}
+for sec_name, sec in nest.get('sections', {}).items():
+    out[sec_name] = {
+        'allowed_shifts': sec.get('allowed_shifts', []),
+        'staff_db_names': sec.get('staff_db_names', {}),
+    }
+print(json.dumps(out))
+`]);
+      let out = '';
+      proc.stdout.on('data', d => { out += d; });
+      proc.on('close', () => {
+        try { resolve(JSON.parse(out)); }
+        catch (e) { resolve({}); }
+      });
+      proc.on('error', () => resolve({}));
+    });
+
+    // result: { "General": { allowed_shifts: [...], staff_db_names: {...} }, ... }
+    // Map db_name (lower) → section name, so frontend can look up by staff name
+    const dbNameToSection = {};
+    const sectionAllowed  = {};
+    for (const [secName, secData] of Object.entries(result)) {
+      sectionAllowed[secName] = secData.allowed_shifts || [];
+      for (const dbName of Object.values(secData.staff_db_names || {})) {
+        dbNameToSection[dbName.toLowerCase().trim()] = secName;
+      }
+    }
+
+    // Also load staff to map staff_id → section via their db name
+    const staffList = await db.getAllStaff(branch_id);
+    const staffIdToSection = {};
+    const staffIdToAllowed = {};
+    for (const s of staffList) {
+      const secName = dbNameToSection[s.name.toLowerCase().trim()];
+      if (secName) {
+        staffIdToSection[s.id] = secName;
+        staffIdToAllowed[s.id] = sectionAllowed[secName] || [];
+      }
+    }
+
+    res.json({
+      nest: nestName,
+      sections: result,
+      staff_allowed: staffIdToAllowed,   // { staff_id: [shift_codes] }
+    });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

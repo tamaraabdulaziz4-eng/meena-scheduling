@@ -495,7 +495,9 @@ async function upsertEntry({ schedule_id, staff_id, date, shift_code, cross_bran
     VALUES ($1,$2,$3,$4,$5,$6,$7)
     ON CONFLICT (schedule_id, staff_id, date) DO UPDATE SET
       shift_code=$4, cross_branch_id=$5, is_oncall=$6, note=$7
-    RETURNING *
+    RETURNING id, schedule_id, staff_id,
+              TO_CHAR(date, 'YYYY-MM-DD') AS date,
+              shift_code, cross_branch_id, is_oncall, note
   `, [schedule_id, staff_id, date, shift_code || 'O',
       cross_branch_id || null, is_oncall || false, note || null]);
   return rows[0];

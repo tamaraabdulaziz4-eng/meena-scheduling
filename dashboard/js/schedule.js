@@ -6,9 +6,11 @@ let scheduleMonth     = new Date().getMonth() + 1;
 let currentBranchId   = null;
 let scheduleStaff     = [];   // staff for current branch
 let entryMap          = {};   // "staffId_dateStr" → entry
+let staffAllowedShifts = {}; // staff_id → [allowed shift codes]
 
 // Shift picker state
 let pickerCell = null;
+
 
 async function renderSchedulePage() {
   // Choose branch: admin sees own, superadmin picks
@@ -30,7 +32,7 @@ async function renderSchedulePage() {
         <button onclick="changeMonth(1)">&#8250;</button>
       </div>
 
-      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${['admin','superadmin'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
@@ -84,6 +86,14 @@ async function loadScheduleData() {
 
     // Load shift types for this branch
     await loadShiftTypes(currentBranchId);
+
+    // Load allowed shifts per staff from solver config (for cell picker filtering)
+    try {
+      const allowedData = await API.get(`/generate/allowed-shifts?branch_id=${currentBranchId}`);
+      staffAllowedShifts = allowedData.staff_allowed || {};
+    } catch (e) {
+      staffAllowedShifts = {}; // fallback: show all shifts if config unavailable
+    }
 
     renderScheduleStatusBar();
     renderShiftLegend();
@@ -310,10 +320,30 @@ function cellClick(cell) {
   if (currentSchedule?.status === 'approved') return;
   if (!['admin','superadmin'].includes(currentUser?.role)) return;
 
+  // If picker already open for this cell, close it (toggle)
+  if (pickerCell === cell && document.getElementById('shift-picker').style.display === 'grid') {
+    closePicker();
+    return;
+  }
+
   pickerCell = cell;
   const picker = document.getElementById('shift-picker');
 
-  picker.innerHTML = allShiftTypes.map(st => `
+  // Filter shift types to only those allowed for this staff member's section.
+  // Always include O (off), AL, SL (leaves), and OC (on-call) as universal options.
+  // Note: staffAllowedShifts keys are strings (from JSON), so look up with string key.
+  const staffId = cell.dataset.staff; // keep as string to match API keys
+  const allowed = staffAllowedShifts[staffId];  // array or undefined
+  const universalCodes = new Set(['O', 'AL', 'SL', 'OC']);
+  const allowedSet = allowed?.length
+    ? new Set([...allowed, ...universalCodes])
+    : null; // null = show all (fallback for unmapped branches)
+
+  const visibleShifts = allowedSet
+    ? allShiftTypes.filter(st => allowedSet.has(st.code))
+    : allShiftTypes;
+
+  picker.innerHTML = visibleShifts.map(st => `
     <div class="shift-picker-item"
       style="background:${st.color};color:${contrastColor(st.color)}"
       onclick="applyShift('${st.code}')" title="${st.label}">
@@ -324,18 +354,31 @@ function cellClick(cell) {
     // On-call toggle
     `<div class="shift-picker-item" style="background:#FF6B6B;color:white;font-size:9px" onclick="toggleOnCall()" title="Toggle On-Call">+OC</div>`;
 
-  // Position near cell
+  // Position near cell using fixed coordinates (getBoundingClientRect already gives viewport coords)
   const rect = cell.getBoundingClientRect();
-  picker.style.display = 'grid';
-  picker.style.top     = `${rect.bottom + window.scrollY + 4}px`;
-  picker.style.left    = `${Math.min(rect.left + window.scrollX, window.innerWidth - 250)}px`;
-  picker.style.position = 'fixed';
-  picker.style.top     = `${rect.bottom + 4}px`;
+  const pickerW = 250;
+  const pickerH = 160;
+  let top  = rect.bottom + 4;
+  let left = rect.left;
 
-  // Close on outside click
+  // Flip up if too close to bottom
+  if (top + pickerH > window.innerHeight) top = rect.top - pickerH - 4;
+  // Clamp to right edge
+  if (left + pickerW > window.innerWidth) left = window.innerWidth - pickerW - 8;
+  // Clamp to left edge
+  if (left < 4) left = 4;
+
+  picker.style.position = 'fixed';
+  picker.style.top      = `${top}px`;
+  picker.style.left     = `${left}px`;
+  picker.style.display  = 'grid';
+
+  // Remove any previous outside-click listener before adding new one
+  document.removeEventListener('click', closePicker);
+  // Delay so this same click event doesn't immediately trigger closePicker
   setTimeout(() => {
     document.addEventListener('click', closePicker, { once: true });
-  }, 10);
+  }, 50);
 }
 
 function closePicker() {
@@ -354,7 +397,7 @@ async function applyShift(code) {
   try {
     const entry = await API.put(`/schedules/${currentSchedule.id}/entries`, {
       staff_id: staffId, date, shift_code: code,
-      cross_branch_id: null, is_oncall: false
+      cross_branch_id: null, is_oncall: false,
     });
     // Update local
     const key = `${staffId}_${date}`;
@@ -441,6 +484,7 @@ async function approveSchedule() {
 }
 
 // ── Generate modal ────────────────────────────────────────────────────────────
+
 function openGenerateModal() {
   document.getElementById('gen-msg').textContent = '';
   document.getElementById('generate-modal-overlay').classList.add('open');
@@ -448,6 +492,7 @@ function openGenerateModal() {
 function closeGenerateModal() {
   document.getElementById('generate-modal-overlay').classList.remove('open');
 }
+
 async function runGenerate() {
   const btn = document.getElementById('gen-btn');
   const msg = document.getElementById('gen-msg');
@@ -456,10 +501,11 @@ async function runGenerate() {
   try {
     const result = await API.post('/generate', {
       branch_id: currentBranchId,
-      year: scheduleYear,
-      month: scheduleMonth,
+      year:      scheduleYear,
+      month:     scheduleMonth,
     });
     currentSchedule = result.schedule;
+
     // Reload entries
     currentEntries = await API.get(`/schedules/${currentSchedule.id}/entries`);
     buildEntryMap();
@@ -471,7 +517,7 @@ async function runGenerate() {
 
     toast(`Schedule generated (${result.solver_status} · ${result.solver_elapsed}s)`);
   } catch (err) {
-    msg.className='msg err'; msg.textContent=err.message;
+    msg.className = 'msg err'; msg.textContent = err.message;
   } finally {
     btn.disabled = false; btn.textContent = '⚡ Generate';
   }

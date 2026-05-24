@@ -8,7 +8,7 @@ from config import SHIFTS, WORK_SHIFTS, REST_SHIFTS, WEEKEND_DAYS_OF_WEEK, NESTS
 
 
 def validate_schedule(schedule: dict, nest_name: str, year: int, month: int,
-                      al_schedule: dict = None) -> dict:
+                      al_schedule: dict = None, dominant_shifts: dict = None) -> dict:
     """
     Validate a generated or manually-edited schedule.
 
@@ -125,22 +125,52 @@ def validate_schedule(schedule: dict, nest_name: str, year: int, month: int,
                 if actual < min_count:
                     e(f"Day {day} ({day_type}) {sec_name}: needs {min_count}×{shift_code}, has {actual}")
 
-    # ── 6. Soft: fairness — M/N distribution ─────────────────────────────────
+    # ── 6. Soft: fairness — shift distribution ────────────────────────────────
+    # When dominant_shifts is active, each person only works their dominant
+    # shift — so M/N spread across the whole section is expected and intentional.
+    # Instead, check fairness WITHIN each dominant group (people with the same
+    # dominant shift should have similar counts of that shift).
+    # When dominant_shifts is not provided, fall back to whole-section check.
     for sec_name, sec in nest_cfg["sections"].items():
-        for shift_code in ["M", "N"]:
-            counts = {}
+        if dominant_shifts:
+            # Group staff by their dominant shift and check within each group
+            from collections import defaultdict
+            groups = defaultdict(list)
             for p in sec["staff"]:
-                if p in schedule:
-                    counts[p] = sum(1 for c in schedule[p] if c == shift_code)
-            if not counts:
-                continue
-            vals = list(counts.values())
-            spread = max(vals) - min(vals)
-            if spread > 3:
-                low  = [p for p, v in counts.items() if v == min(vals)]
-                high = [p for p, v in counts.items() if v == max(vals)]
-                w(f"{sec_name} {shift_code} spread={spread}: "
-                  f"low={low}({min(vals)}) high={high}({max(vals)})")
+                dom = dominant_shifts.get(p)
+                if dom:
+                    groups[dom].append(p)
+                # Staff with no dominant get their own implicit group
+            for shift_code, group_staff in groups.items():
+                counts = {}
+                for p in group_staff:
+                    if p in schedule:
+                        counts[p] = sum(1 for c in schedule[p] if c == shift_code)
+                if len(counts) < 2:
+                    continue
+                vals = list(counts.values())
+                spread = max(vals) - min(vals)
+                if spread > 3:
+                    low  = [p for p, v in counts.items() if v == min(vals)]
+                    high = [p for p, v in counts.items() if v == max(vals)]
+                    w(f"{sec_name} {shift_code} fairness spread={spread}: "
+                      f"low={low}({min(vals)}) high={high}({max(vals)})")
+        else:
+            # No dominant info — check whole section M and N spread
+            for shift_code in ["M", "N"]:
+                counts = {}
+                for p in sec["staff"]:
+                    if p in schedule:
+                        counts[p] = sum(1 for c in schedule[p] if c == shift_code)
+                if not counts:
+                    continue
+                vals = list(counts.values())
+                spread = max(vals) - min(vals)
+                if spread > 3:
+                    low  = [p for p, v in counts.items() if v == min(vals)]
+                    high = [p for p, v in counts.items() if v == max(vals)]
+                    w(f"{sec_name} {shift_code} spread={spread}: "
+                      f"low={low}({min(vals)}) high={high}({max(vals)})")
 
     # ── 7. Soft: rest days per week ───────────────────────────────────────────
     for p, row in schedule.items():

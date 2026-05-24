@@ -47,20 +47,172 @@ def parse_al_arg(al_args):
     return al
 
 
+# ── Smart random dominant shift assignment ────────────────────────────────────
+
+def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
+                           seed: int = None) -> dict:
+    """
+    Randomly assign one dominant shift per person per section.
+
+    Because dominant is a HARD domain restriction (person can only work their
+    dominant shift or O), the number of people assigned each dominant code must
+    be carefully sized so every person achieves ~target_work_days/month.
+
+    Target work days per person ≈ n_days × 5/7  (5-day Islamic work week).
+
+    For a shift S required at k per day:
+      - Total S-shifts available in the month = n_days × k
+      - Max dominant-S people = floor(n_days × k / target_work_days)
+        = floor(k × 7/5)  (independent of n_days)
+      - For k=1 (exact N=1): max = floor(7/5) = 1... but that means only 1
+        N-dominant person per section, which is too fragile (if they're on AL
+        or rest, N can't be covered). So we use ceil(k × 7/5) = ceil(1.4) = 2.
+      - For k=2: ceil(2 × 7/5) = ceil(2.8) = 3.
+
+    Minimum dominant count (for feasibility on any day):
+      Each person rests ~2/7 days. With `m` dominant-S people,
+      expected available on any day = m × 5/7. Must be ≥ k.
+      So m_min = ceil(k × 7/5).
+
+    Since max = ceil(k × 7/5) = m_min, the count is exactly that number.
+    Remaining staff are assigned other required shift codes (or M by default).
+
+    Returns: { person_name: dominant_shift_code, ... }
+    """
+    import random, math, calendar as _cal
+    rng = random.Random(seed)
+
+    n_days   = _cal.monthrange(year, month)[1]
+    nest_cfg = NESTS[nest_name]
+    dominant = {}
+
+    for sec_name, sec in nest_cfg["sections"].items():
+        staff    = sec["staff"][:]
+        n_staff  = len(staff)
+        coverage = sec.get("coverage", {})
+        exact    = sec.get("exact", {})
+
+        weekday_cov = coverage.get("weekday", {})
+        weekend_cov = coverage.get("weekend", {})
+
+        # Raw coverage requirement per shift code (max of weekday/weekend)
+        raw_required = {}
+        for code, cnt in {**weekend_cov, **weekday_cov}.items():
+            raw_required[code] = max(raw_required.get(code, 0), cnt)
+        for code, cnt in exact.items():
+            raw_required[code] = max(raw_required.get(code, 0), cnt)
+
+        # Work shifts allowed in this section
+        work_shifts = [c for c in sec["allowed_shifts"]
+                       if c not in ("O", "AL", "SL", "OC")]
+
+        # Separate exact-constrained codes from minimum-coverage codes.
+        # - Exact codes (e.g. N=1): hard ceiling on slots per day.
+        #   Total available = n_days × k.  Assign floor(n_days×k / target_w_5_7)
+        #   people as dominant, but at least ceil(k×7/5) for feasibility.
+        # - Min-coverage codes (e.g. M≥1): no ceiling on slots.
+        #   People can work M every working day freely.
+        #   Assign the remaining staff (after exact-dominant assignments) to M.
+        exact_codes = set(exact.keys())
+        target_w_5_7 = n_days * 5 / 7      # ideal work-days per person
+
+        slot_budget = {}   # code → number of dominant people to assign
+
+        # Weekday-only coverage (not required on weekends) — use weekday count
+        weekday_only = {c for c in weekday_cov if c not in weekend_cov}
+
+        for code, k in raw_required.items():
+            if code not in work_shifts:
+                continue
+            if code in exact_codes:
+                # Hard budget: only n_days×k total slots available
+                max_dom = max(1, int(n_days * k / target_w_5_7))
+                min_dom = math.ceil(k * 7 / 5)   # feasibility floor
+                slot_budget[code] = max(min_dom, min(max_dom, n_staff))
+            # Min-coverage codes get no pre-budget — remaining staff fill them freely
+
+        # Sort: exact codes first, then min-coverage, M last (M absorbs remainder)
+        # so M-dominant people are the residual after all other shifts are covered.
+        def budget_priority(c):
+            if c in exact_codes: return 0
+            if c == 'M': return 2
+            return 1
+
+        pool = staff[:]
+        rng.shuffle(pool)
+        assigned = {}
+
+        # Assign budgeted shifts first (exact + capped min-coverage like D)
+        for code in sorted(slot_budget, key=budget_priority):
+            if code == 'M':
+                continue   # M gets the remainder — skip for now
+            needed  = slot_budget[code]
+            already = sum(1 for v in assigned.values() if v == code)
+            for _ in range(needed - already):
+                if not pool:
+                    break
+                p = pool.pop(0)
+                assigned[p] = code
+
+        # Remaining staff → M (or fallback to any non-exact work shift)
+        fallback_shifts = [c for c in work_shifts if c not in exact_codes] or work_shifts
+        for p in pool:
+            assigned[p] = 'M' if 'M' in fallback_shifts else fallback_shifts[0]
+
+        dominant.update(assigned)
+
+    return dominant
+
+
 # ── Main solver ───────────────────────────────────────────────────────────────
 
 def generate_schedule(nest_name: str, year: int, month: int,
                       al_schedule: dict = None, prev_tail: dict = None,
+                      dominant_shifts: dict = None,
                       time_limit: int = 60) -> dict:
     """
     Generate a schedule for the given nest/month using CP-SAT.
 
+    dominant_shifts: { person: shift_code } — preferred shift for each person
+                     this month. Solver strongly prefers assigning this shift.
+                     If None, assign_dominant_shifts() is called automatically.
+
     Returns:
-        { "status": ..., "schedule": {...}, "stats": {...} }
+        { "status": ..., "schedule": {...}, "dominant": {...} }
     """
-    al_schedule = al_schedule or {}
-    prev_tail   = prev_tail   or {}   # { "WAFA": ["M","O","N"] } — last 3 days of prev month
-    nest_cfg    = NESTS[nest_name]
+    al_schedule     = al_schedule or {}
+    prev_tail       = prev_tail   or {}
+    nest_cfg        = NESTS[nest_name]
+
+    # Auto-assign dominant shifts if not provided, or fill in gaps for partial overrides
+    import math as _math
+    user_overrides = set(dominant_shifts.keys()) if dominant_shifts else set()
+
+    if dominant_shifts is None:
+        dominant_shifts = assign_dominant_shifts(nest_name, year, month)
+    else:
+        # Fill in any staff not covered by the override with auto-assignment.
+        auto = assign_dominant_shifts(nest_name, year, month)
+        for sec_name, sec in nest_cfg["sections"].items():
+            for p in sec["staff"]:
+                if p not in dominant_shifts:
+                    dominant_shifts[p] = auto.get(p, "M")
+
+        # Ensure minimum N-dominant count per section (for exact N coverage).
+        # Only reassign non-user-pinned staff (those not in user_overrides).
+        for sec_name, sec in nest_cfg["sections"].items():
+            exact = sec.get("exact", {})
+            for code, k in exact.items():
+                min_needed = _math.ceil(k * 7 / 5)  # e.g. N=1 → need 2
+                sec_staff   = sec["staff"]
+                n_dom_count = sum(1 for p in sec_staff if dominant_shifts.get(p) == code)
+                if n_dom_count < min_needed:
+                    # Reassign non-pinned M-dominant staff to this code
+                    candidates = [p for p in sec_staff
+                                  if dominant_shifts.get(p) == "M"
+                                  and p not in user_overrides]
+                    for p in candidates[:min_needed - n_dom_count]:
+                        dominant_shifts[p] = code
     n_days      = calendar.monthrange(year, month)[1]
 
     # Collect all staff and their sections
@@ -88,14 +240,23 @@ def generate_schedule(nest_name: str, year: int, month: int,
 
     # ── Decision variables ────────────────────────────────────────────────────
     # shift_var[p][d] = integer index into ALL_CODES
-    # AL  → only on pre-specified AL days
-    # SL  → never auto-assigned (manual only)
+    #
+    # DOMINANT SHIFT HARD DOMAIN RESTRICTION:
+    #   On non-AL days, each person may only be assigned:
+    #     - their dominant shift (the one shift they "own" this month), OR
+    #     - O (off/rest)
+    #   This means WAFA with dominant=D can never appear as M or N — the solver
+    #   simply cannot assign those codes to her variable.
+    #   AL days are still forced to AL as before.
+    #   SL is never auto-assigned (manual override only).
+    #
+    # This turns dominant from a soft preference into the actual shift structure.
     shift_var = {}
     al_idx = code_to_idx["AL"]
+    o_idx  = code_to_idx["O"]
+
     for p, sec_name, sec in all_staff:
-        # Allowed: remove AL and SL — solver never auto-assigns these
-        auto_allowed = [code_to_idx[c] for c in sec["allowed_shifts"]
-                        if c not in ("AL", "SL")]
+        dom = dominant_shifts.get(p)
         shift_var[p] = []
         for d in range(n_days):
             day = d + 1
@@ -103,10 +264,18 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 # Force AL on AL days
                 v = model.new_int_var(al_idx, al_idx, f"s_{p}_{d}")
             else:
-                v = model.new_int_var_from_domain(
-                    cp_model.Domain.from_values(auto_allowed),
-                    f"s_{p}_{d}"
-                )
+                # Domain: only dominant shift + O
+                # If dom is set and valid for this section, restrict to {dom, O}
+                # Otherwise fall back to full allowed set (shouldn't happen after fill-in)
+                if dom and dom in sec["allowed_shifts"] and dom != "O":
+                    dom_idx = code_to_idx[dom]
+                    domain  = cp_model.Domain.from_values([dom_idx, o_idx])
+                else:
+                    # Fallback: all allowed non-leave shifts
+                    fallback = [code_to_idx[c] for c in sec["allowed_shifts"]
+                                if c not in ("AL", "SL")]
+                    domain = cp_model.Domain.from_values(fallback)
+                v = model.new_int_var_from_domain(domain, f"s_{p}_{d}")
             shift_var[p].append(v)
 
     # ── Boolean helpers: is_shift[p][d][code] = 1 if person p on day d has code ──
@@ -259,8 +428,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
     for p, sec_name, sec in all_staff:
         allowed = set(sec["allowed_shifts"])
 
-        # 2 O's required after N or D
-        for trigger_code in ["N", "D"]:
+        # 2 O's required after N (12h night shift only — not D which is 8-9h)
+        for trigger_code in ["N"]:
             if trigger_code not in allowed:
                 continue
             for d in range(n_days - 2):
@@ -291,51 +460,68 @@ def generate_schedule(nest_name: str, year: int, month: int,
             # → m0 + m1 + m2 + o1 - o2 <= 3
             model.add(b_m0 + b_m1 + b_m2 + b_o1 <= 3 + b_o2)
 
-    # ── Hard Constraint 6: Daily staffing balance (no mass-O days) ───────────
-    # Goal: staff presence is spread evenly across the month.
-    # For each section compute the expected work-days per person
-    # (coverage shifts needed × days / staff available).
-    # Then enforce: each day at least that many staff must be working.
+    # ── Hard Constraint 6: Per-shift-group daily balance (no mass-O days) ───────
+    # With hard domain restriction, each person can only work their dominant shift
+    # or be on O.
     #
-    # Formula:
-    #   total_coverage_shifts = sum of min_per_day across all days
-    #   avg_workers_per_day   = total_coverage_shifts / n_days  (already = coverage min)
-    #   BUT we want more than just coverage min —
-    #   we want total_work_budget / n_days where
-    #   total_work_budget = n_staff × target_work_days_per_person
+    # For groups whose shift is already covered by an `exact` constraint (e.g. N),
+    # the coverage constraint itself guarantees at least 1 person on that shift
+    # every day — no additional balance constraint is needed.
     #
-    # target_work_days = (n_days - avg_al_days) * (5/7)
-    # i.e. work 5 out of every 7 days (Islamic week: 5 work days, 2 off)
+    # For groups whose shift is NOT exact-constrained (e.g. M when only minimum
+    # coverage is set), we enforce: at least max(1, n_dom - max_rest_window) must
+    # be working on any day, where max_rest_window = 2 (the post-shift O count).
+    # This prevents mass-O days while remaining feasible with HC5b.
+    #
+    # Formula: min_w = max(1, n_dom - 2)
+    # i.e. at most 2 people in the group can be on O simultaneously (rest window).
 
     WORK_CODES_SET = set(c for c in ALL_CODES if c in WORK_SHIFTS)
 
+    # Collect shift codes covered by exact constraints per section
+    exact_codes_per_sec = {}
+    for sec_name, sec in nest_cfg["sections"].items():
+        exact_codes_per_sec[sec_name] = set(sec.get("exact", {}).keys())
+
     for sec_name, sec in nest_cfg["sections"].items():
         sec_staff_names = [p for p, sn, _ in all_staff if sn == sec_name]
-        work_in_sec     = [c for c in WORK_CODES_SET if c in sec["allowed_shifts"]]
-        if not work_in_sec:
-            continue
+        exact_here      = exact_codes_per_sec[sec_name]
 
-        n_sec = len(sec_staff_names)
-        # Average AL days per person in this section
-        avg_al = sum(len(al_schedule.get(p, [])) for p in sec_staff_names) / n_sec
-        # Workable days per person ≈ (n_days - avg_al) × 5/7
-        target_work_per_person = (n_days - avg_al) * (5 / 7)
-        # Total work budget for section
-        total_work_budget = n_sec * target_work_per_person
-        # Min workers per day = floor(total_work_budget / n_days)
-        min_workers_per_day = max(1, int(total_work_budget // n_days))
+        # Group staff by their dominant shift
+        dom_groups = {}  # shift_code → [person, ...]
+        for p in sec_staff_names:
+            dom = dominant_shifts.get(p)
+            if dom and dom in WORK_CODES_SET:
+                dom_groups.setdefault(dom, []).append(p)
 
-        for d in range(n_days):
-            day = d + 1
-            avail_today = [p for p in sec_staff_names
-                           if not (p in al_schedule and day in al_schedule[p])]
-            if len(avail_today) < min_workers_per_day:
-                continue  # too few available (heavy AL period) — skip
-            work_bools_today = []
-            for p in avail_today:
-                for wc in work_in_sec:
-                    work_bools_today.append(get_bool(p, d, wc))
-            model.add(sum(work_bools_today) >= min_workers_per_day)
+        for dom_code, dom_staff in dom_groups.items():
+            n_dom = len(dom_staff)
+            if n_dom == 0:
+                continue
+
+            if dom_code in exact_here:
+                # Exact-constrained: coverage constraint already guarantees this
+                # shift is covered. No extra balance needed (and adding it would
+                # over-constrain since we can't exceed the exact count anyway).
+                continue
+
+            # Min-coverage (non-exact): no upper limit on how many can work this
+            # shift per day. Force enough people to work to ensure coverage.
+            # For large groups: floor(n_dom × 5/7) ensures ~5/7 utilisation.
+            # For small groups (≤3): use 1 to avoid over-constraining rest days.
+            if n_dom <= 3:
+                min_w = 1
+            else:
+                min_w = max(1, int(n_dom * 5 / 7))
+
+            for d in range(n_days):
+                day = d + 1
+                avail = [p for p in dom_staff
+                         if not (p in al_schedule and day in al_schedule[p])]
+                if len(avail) < min_w:
+                    continue  # AL-heavy day — skip
+                work_bools = [get_bool(p, d, dom_code) for p in avail]
+                model.add(sum(work_bools) >= min_w)
 
     # ── Soft Constraint: Fairness — equal M and N distribution ───────────────
     # Minimize max deviation from mean for M and N counts
@@ -408,10 +594,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
             rest_penalty_terms.append(not_o)
 
     # ── Objective ─────────────────────────────────────────────────────────────
-    # fairness spread terms (weight 10) + rest penalty (weight 1)
+    # Dominant shift is now enforced via hard domain restriction (not soft penalty).
+    # Remaining soft objectives:
+    #   fairness spread (M/N distribution) → weight 100
+    #   rest penalty (encourage O days)    → weight 1
     total_obj = []
     for t in objective_terms:
-        total_obj.append(10 * t)
+        total_obj.append(100 * t)
     for t in rest_penalty_terms:
         total_obj.append(t)
     if total_obj:
@@ -447,19 +636,20 @@ def generate_schedule(nest_name: str, year: int, month: int,
         return {
             "status":   status_name,
             "schedule": schedule,
+            "dominant": dominant_shifts,
             "elapsed":  round(elapsed, 2),
         }
     else:
-        # INFEASIBLE — diagnose
-        print("\n❌ INFEASIBLE — diagnosing…")
+        # INFEASIBLE — diagnose (all output to stderr so JSON stdout stays clean)
+        print("\n❌ INFEASIBLE — diagnosing…", file=sys.stderr)
         diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff)
-        return {"status": status_name, "schedule": {}, "elapsed": round(elapsed, 2)}
+        return {"status": status_name, "schedule": {}, "dominant": dominant_shifts, "elapsed": round(elapsed, 2)}
 
 
 # ── Infeasibility diagnosis ───────────────────────────────────────────────────
 
 def diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff):
-    """Print likely reasons for infeasibility."""
+    """Print likely reasons for infeasibility (all output to stderr)."""
     nest_cfg = NESTS[nest_name]
 
     for d in range(n_days):
@@ -481,7 +671,7 @@ def diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff):
                         available += 1
                 if available < min_count:
                     print(f"  ⚠ Day {day} {sec_name}: needs {min_count}×{code}, "
-                          f"only {available} available → INFEASIBLE")
+                          f"only {available} available → INFEASIBLE", file=sys.stderr)
 
 
 # ── Pretty printing ───────────────────────────────────────────────────────────
@@ -627,6 +817,8 @@ def main():
                         help="AL entries: PERSON:d1,d2 or PERSON:d1-d2")
     parser.add_argument("--prev-tail", default=None,
                         help='JSON dict of last 3 days of prev month: {"WAFA":["M","O","N"]}')
+    parser.add_argument("--dominant", default=None,
+                        help='Override dominant shifts: "WAFA:M,CHERYL:N,MUHANNED:D"')
     parser.add_argument("--timeout",   type=int, default=60,
                         help="Solver time limit in seconds")
     parser.add_argument("--json",      action="store_true",
@@ -636,13 +828,23 @@ def main():
     al_schedule = parse_al_arg(args.al)
     prev_tail   = json.loads(args.prev_tail) if args.prev_tail else {}
 
+    dominant_shifts = None
+    if args.dominant:
+        dominant_shifts = {}
+        for item in args.dominant.split(","):
+            item = item.strip()
+            if ":" in item:
+                k, v = item.split(":", 1)
+                dominant_shifts[k.strip().upper()] = v.strip().upper()
+
     result = generate_schedule(
-        nest_name   = args.nest,
-        year        = args.year,
-        month       = args.month,
-        al_schedule = al_schedule,
-        prev_tail   = prev_tail,
-        time_limit  = args.timeout,
+        nest_name       = args.nest,
+        year            = args.year,
+        month           = args.month,
+        al_schedule     = al_schedule,
+        prev_tail       = prev_tail,
+        dominant_shifts = dominant_shifts,
+        time_limit      = args.timeout,
     )
 
     if args.json:
@@ -657,11 +859,12 @@ def main():
     if result["schedule"]:
         print(f"\n  Running validator…")
         val = validate_schedule(
-            schedule    = result["schedule"],
-            nest_name   = args.nest,
-            year        = args.year,
-            month       = args.month,
-            al_schedule = al_schedule,
+            schedule        = result["schedule"],
+            nest_name       = args.nest,
+            year            = args.year,
+            month           = args.month,
+            al_schedule     = al_schedule,
+            dominant_shifts = result.get("dominant"),
         )
         print_validation(val)
 
