@@ -3,4 +3,7 @@ node_modules/
 .DS_Store
 chats.txt
 reference/
+__pycache__/
+*.pyc
+*.pyo
 
