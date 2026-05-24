@@ -411,6 +411,8 @@ tr:hover td { background: var(--table-row-hover); }
 .rota-cell:hover { filter: brightness(0.88); }
 .rota-cell.readonly { cursor: default; }
 .rota-cell.readonly:hover { filter: none; }
+.rota-cell.blank-cell { background: #000 !important; border: none; }
+.rota-cell.blank-cell:hover { filter: brightness(1.3); }
 
 /* shift chip inside cell */
 .shift-chip {

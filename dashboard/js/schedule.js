@@ -149,10 +149,22 @@ function renderScheduleStatusBar() {
     reviewed:  'badge-purple',
     approved:  'badge-green'
   };
+  const isAdmin = ['admin','superadmin'].includes(currentUser?.role);
+
   bar.innerHTML = `
     <span class="badge ${badges[s.status] || 'badge-gray'}" style="font-size:11px;padding:4px 12px">
       ${s.status.charAt(0).toUpperCase()+s.status.slice(1)}
     </span>
+    ${isAdmin ? `
+      <button onclick="toggleScheduleLock()"
+        style="font-size:11px;padding:3px 12px;border-radius:20px;border:none;cursor:pointer;font-weight:600;
+               background:${s.is_locked ? '#f39c12' : '#dfe6e9'};color:${s.is_locked ? '#fff' : '#636e72'}"
+        title="${s.is_locked ? 'Click to unlock' : 'Click to lock'}">
+        ${s.is_locked ? '🔒 Locked' : '🔓 Unlocked'}
+      </button>` : `
+      <span style="font-size:11px;font-weight:600;color:${s.is_locked ? '#e17055' : '#636e72'}">
+        ${s.is_locked ? '🔒 Locked' : ''}
+      </span>`}
     ${s.created_by_name  ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${s.created_by_name}</strong></span>` : ''}
     ${s.reviewed_by_name ? `<span style="font-size:11px;color:var(--muted)">Reviewed by: <strong>${s.reviewed_by_name}</strong></span>` : ''}
     ${s.approved_by_name ? `<span style="font-size:11px;color:var(--muted)">Approved by: <strong>${s.approved_by_name}</strong></span>` : ''}
@@ -274,24 +286,27 @@ function renderRotaGrid() {
         const dow    = dayOfWeek(scheduleYear, scheduleMonth, d);
         const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const entry   = entryMap[`${s.id}_${dateStr}`];
-        const code    = entry?.shift_code || 'O';
-        const st      = allShiftTypes.find(x => x.code === code) || { color: '#D0D0D0', is_off: code==='O', is_leave: false };
+        const isBlank = !entry;
+        const code    = entry?.shift_code || '';
+        const st      = code ? (allShiftTypes.find(x => x.code === code) || { color: '#D0D0D0', is_off: false, is_leave: false }) : null;
         const isOC    = entry?.is_oncall;
         const isCross = entry?.cross_branch_id;
-        if (!st.is_off && !st.is_leave) shiftCount++;
+        if (st && !st.is_off && !st.is_leave) shiftCount++;
 
-        const bgColor  = st.color || '#D0D0D0';
-        const txtColor = contrastColor(bgColor);
+        const bgColor  = isBlank ? '#000000' : (st?.color || '#D0D0D0');
+        const txtColor = isBlank ? '#000000' : contrastColor(bgColor);
         const weekend  = dow===5||dow===6 ? 'rgba(107,78,255,0.04)' : '';
 
-        const classes = ['rota-cell', isLocked?'readonly':''].filter(Boolean).join(' ');
+        // Readonly if schedule approved OR schedule is_locked
+        const cellReadonly = isLocked || !!currentSchedule?.is_locked;
+        const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':''].filter(Boolean).join(' ');
         return `<td class="${classes}"
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
-          onclick="${isLocked?'':'cellClick(this)'}"
+          onclick="${cellReadonly?'':'cellClick(this)'}"
           style="background:${bgColor};${weekend?`outline:1px solid rgba(107,78,255,0.15);`:''}"
-          title="${s.name} — ${dateStr}: ${code}${isOC?' + OC':''}${isCross?' (cross)':''}">
+          title="${s.name} — ${dateStr}${code ? ': '+code : ' (blank)'}${isOC?' + OC':''}${isCross?' (cross)':''}">
           <div class="shift-chip${isOC?' has-oc':''}${isCross?' cross':''}" style="color:${txtColor}">
-            ${code}${isCross?'<sup style="font-size:7px">↗</sup>':''}
+            ${isBlank ? '' : code}${isCross?'<sup style="font-size:7px">↗</sup>':''}
           </div>
         </td>`;
       }).join('');
@@ -326,6 +341,7 @@ function cellClick(cell) {
     return;
   }
 
+
   pickerCell = cell;
   const picker = document.getElementById('shift-picker');
 
@@ -352,7 +368,9 @@ function cellClick(cell) {
     // Cross-branch button
     `<div class="shift-picker-item" style="background:#55EFC4;color:#2B2458;font-size:9px" onclick="applyCrossBranch()" title="Cross-branch assignment">↗XBR</div>` +
     // On-call toggle
-    `<div class="shift-picker-item" style="background:#FF6B6B;color:white;font-size:9px" onclick="toggleOnCall()" title="Toggle On-Call">+OC</div>`;
+    `<div class="shift-picker-item" style="background:#FF6B6B;color:white;font-size:9px" onclick="toggleOnCall()" title="Toggle On-Call">+OC</div>` +
+    // Blank/clear cell
+    `<div class="shift-picker-item" style="background:#f0f0f0;color:#666;font-size:9px;border:1px dashed #aaa" onclick="clearCell()" title="Clear cell (leave blank)">✕ blank</div>`;
 
   // Position near cell using fixed coordinates (getBoundingClientRect already gives viewport coords)
   const rect = cell.getBoundingClientRect();
@@ -427,6 +445,41 @@ async function toggleOnCall() {
     currentEntries.push(updated);
     buildEntryMap();
     renderRotaGrid();
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+async function toggleScheduleLock() {
+  if (!currentSchedule) return;
+  const willLock = !currentSchedule.is_locked;
+  const label = willLock ? 'Lock' : 'Unlock';
+  const ok = await showConfirm(
+    `${label} Schedule`,
+    willLock
+      ? 'Lock this schedule? No edits will be possible until unlocked.'
+      : 'Unlock this schedule? Edits will be allowed again.',
+    label
+  );
+  if (!ok) return;
+  try {
+    currentSchedule = await API.put(`/schedules/${currentSchedule.id}/lock`, { locked: willLock });
+    renderScheduleStatusBar();
+    renderRotaGrid();
+    toast(willLock ? '🔒 Schedule locked' : '🔓 Schedule unlocked', 'ok');
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+async function clearCell() {
+  if (!pickerCell) return;
+  const staffId = Number(pickerCell.dataset.staff);
+  const date    = pickerCell.dataset.date;
+  closePicker();
+  try {
+    await API.delete(`/schedules/${currentSchedule.id}/entries/cell`, { staff_id: staffId, date });
+    currentEntries = currentEntries.filter(e => !(e.staff_id===staffId && e.date?.slice(0,10)===date));
+    buildEntryMap();
+    renderRotaGrid();
+    renderScheduleStats();
+    toast(`${date}: cleared`, 'ok');
   } catch (err) { toast(err.message, 'err'); }
 }
 

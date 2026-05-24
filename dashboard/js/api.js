@@ -14,5 +14,5 @@ const API = {
   get:    (path)        => API.request('GET',    path),
   post:   (path, body)  => API.request('POST',   path, body),
   put:    (path, body)  => API.request('PUT',    path, body),
-  delete: (path)        => API.request('DELETE', path),
+  delete: (path, body)  => API.request('DELETE', path, body),
 };

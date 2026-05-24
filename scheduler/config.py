@@ -17,6 +17,7 @@ SHIFTS = {
     "D_US": {"start": "10:00", "end": "22:00", "hours": 12},
     "R":    {"start": "20:00", "end": "02:00", "hours":  6},
     "R1":   {"start": "20:00", "end": "04:00", "hours":  8},
+    "N6":   {"start": "20:00", "end": "02:00", "hours":  6},   # Night 6h (US section)
     "O":    {"start": None,    "end": None,    "hours":  0},   # Off
     "AL":   {"start": None,    "end": None,    "hours":  0},   # Annual Leave
     "SL":   {"start": None,    "end": None,    "hours":  0},   # Sick Leave
@@ -24,7 +25,7 @@ SHIFTS = {
 }
 
 # Shifts that count as "working" (not rest/leave)
-WORK_SHIFTS = {"M", "N", "D", "D1", "EV", "A", "B", "C", "Y3", "D_US", "R", "R1", "OC"}
+WORK_SHIFTS = {"M", "N", "D", "D1", "EV", "A", "B", "C", "Y3", "D_US", "R", "R1", "N6", "OC"}
 
 # Shifts that count as "off/absent" — person unavailable
 REST_SHIFTS = {"O", "AL", "SL"}

@@ -93,8 +93,8 @@ def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
     for sec_name, sec in nest_cfg["sections"].items():
         staff    = sec["staff"][:]
         n_staff  = len(staff)
-        coverage = sec.get("coverage", {})
-        exact    = sec.get("exact", {})
+        coverage = sec.get("coverage") or {}
+        exact    = sec.get("exact") or {}
 
         weekday_cov = coverage.get("weekday", {})
         weekend_cov = coverage.get("weekend", {})
@@ -205,7 +205,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
         # Ensure minimum N-dominant count per section (for exact N coverage).
         # Only reassign non-user-pinned staff (those not in user_overrides).
         for sec_name, sec in nest_cfg["sections"].items():
-            exact = sec.get("exact", {})
+            exact = sec.get("exact") or {}
             for code, k in exact.items():
                 min_needed = _math.ceil(k * 7 / 5)  # e.g. N=1 → need 2
                 sec_staff   = sec["staff"]
@@ -372,14 +372,14 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 return sec_bools_cache[code]
 
             # Minimum coverage
-            coverage = sec["coverage"].get(dtype, {})
+            coverage = (sec["coverage"] or {}).get(dtype, {})
             for code, min_count in coverage.items():
                 if min_count <= 0:
                     continue
                 model.add(sum(sec_bools(code)) >= min_count)
 
             # Exact coverage (applies every day, weekday and weekend)
-            for code, exact_count in sec.get("exact", {}).items():
+            for code, exact_count in (sec.get("exact") or {}).items():
                 model.add(sum(sec_bools(code)) == exact_count)
 
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
@@ -491,7 +491,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # Collect shift codes covered by exact constraints per section
     exact_codes_per_sec = {}
     for sec_name, sec in nest_cfg["sections"].items():
-        exact_codes_per_sec[sec_name] = set(sec.get("exact", {}).keys())
+        exact_codes_per_sec[sec_name] = set((sec.get("exact") or {}).keys())
 
     for sec_name, sec in nest_cfg["sections"].items():
         # Free sections have no dominant lock — HC6 doesn't apply
@@ -698,7 +698,7 @@ def diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff):
         day   = d + 1
         dtype = day_type(year, month, day)
         for sec_name, sec in nest_cfg["sections"].items():
-            coverage = sec["coverage"].get(dtype, {})
+            coverage = (sec["coverage"] or {}).get(dtype, {})
             for code, min_count in coverage.items():
                 if min_count <= 0:
                     continue
@@ -822,7 +822,7 @@ def print_coverage(result: dict, nest_name: str, year: int, month: int):
         day_issues = []
 
         for sec_name, sec in nest_cfg["sections"].items():
-            coverage = sec["coverage"].get(dtype, {})
+            coverage = (sec["coverage"] or {}).get(dtype, {})
             shift_counts = {}
             for p in sec["staff"]:
                 if p in schedule:
