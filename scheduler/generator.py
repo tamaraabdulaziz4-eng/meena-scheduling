@@ -183,6 +183,56 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 day_work.append(day_w)
             model.add(sum(day_work) <= 5)
 
+    # ── Hard Constraint 5b: Post-shift rest days ─────────────────────────────
+    # After a block of N or D: always 2 O days required
+    # After a block of M:
+    #   - block length >= 3 → 2 O days
+    #   - block length 1-2  → 1 O day
+    #
+    # Implementation: for each person and each day d where they work shift S,
+    # if the NEXT day is O, check how many O days follow — enforce minimum.
+    #
+    # Equivalent sliding-window form:
+    #   If person is on N on day d AND day d+1 is O  → day d+2 must also be O
+    #   If person is on D on day d AND day d+1 is O  → day d+2 must also be O
+    #   If person is on M for 3+ consecutive days ending on day d, AND d+1 is O
+    #                                                 → day d+2 must also be O
+
+    for p, sec_name, sec in all_staff:
+        allowed = set(sec["allowed_shifts"])
+
+        # 2 O's required after N or D
+        for trigger_code in ["N", "D"]:
+            if trigger_code not in allowed:
+                continue
+            for d in range(n_days - 2):
+                b_work  = get_bool(p, d,     trigger_code)
+                b_o1    = get_bool(p, d + 1, "O")
+                b_o2    = get_bool(p, d + 2, "O")
+                # If trigger_code on d AND O on d+1 → O on d+2
+                # Equivalently: NOT (work=1 AND o1=1 AND o2=0)
+                # → work + o1 - o2 <= 1
+                model.add(b_work + b_o1 <= 1 + b_o2)
+
+        # Also: if N on day d, day d+1 cannot be a work shift (already in HC4)
+        # but we also need: N on d → if d+1 is O → d+2 must be O too
+        # (covered above)
+
+        # 2 O's required after M block of length >= 3
+        # Detect: M on days d-2, d-1, d (3 consecutive), then O on d+1 → O on d+2
+        if "M" not in allowed:
+            continue
+        for d in range(2, n_days - 2):
+            b_m0 = get_bool(p, d - 2, "M")
+            b_m1 = get_bool(p, d - 1, "M")
+            b_m2 = get_bool(p, d,     "M")
+            b_o1 = get_bool(p, d + 1, "O")
+            b_o2 = get_bool(p, d + 2, "O")
+            # If M×3 ending on d AND O on d+1 → O on d+2
+            # NOT (m0=1 AND m1=1 AND m2=1 AND o1=1 AND o2=0)
+            # → m0 + m1 + m2 + o1 - o2 <= 3
+            model.add(b_m0 + b_m1 + b_m2 + b_o1 <= 3 + b_o2)
+
     # ── Hard Constraint 6: Daily staffing balance (no mass-O days) ───────────
     # Goal: staff presence is spread evenly across the month.
     # For each section compute the expected work-days per person
