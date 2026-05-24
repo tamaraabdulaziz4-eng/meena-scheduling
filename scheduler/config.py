@@ -45,6 +45,9 @@ NESTS = {
                 "coverage": {
                     "weekday": {"M": 1, "N": 1},
                     "weekend": {"M": 1, "N": 1},
+                },
+                "exact": {        # exactly this many per day (all days)
+                    "N": 1,
                 }
             },
             "US": {
@@ -53,6 +56,9 @@ NESTS = {
                 "coverage": {
                     "weekday": {"M": 1, "N": 1},
                     "weekend": {"M": 1, "N": 1},
+                },
+                "exact": {        # exactly this many per day (all days)
+                    "N": 1,
                 }
             }
         }

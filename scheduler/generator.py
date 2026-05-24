@@ -126,14 +126,24 @@ def generate_schedule(nest_name: str, year: int, month: int,
         day  = d + 1
         dtype = day_type(year, month, day)
         for sec_name, sec in nest_cfg["sections"].items():
+            sec_bools_cache = {}  # code → list of bools for this section/day
+
+            def sec_bools(code):
+                if code not in sec_bools_cache:
+                    sec_bools_cache[code] = [get_bool(p, d, code)
+                                             for p, sn, _ in all_staff if sn == sec_name]
+                return sec_bools_cache[code]
+
+            # Minimum coverage
             coverage = sec["coverage"].get(dtype, {})
             for code, min_count in coverage.items():
                 if min_count <= 0:
                     continue
-                # sum of staff in this section with this code >= min_count
-                bools = [get_bool(p, d, code)
-                         for p, sn, _ in all_staff if sn == sec_name]
-                model.add(sum(bools) >= min_count)
+                model.add(sum(sec_bools(code)) >= min_count)
+
+            # Exact coverage (applies every day, weekday and weekend)
+            for code, exact_count in sec.get("exact", {}).items():
+                model.add(sum(sec_bools(code)) == exact_count)
 
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
     MORNING_CODES = ["M", "D", "D1", "A", "EV", "B", "Y3", "D_US"]
