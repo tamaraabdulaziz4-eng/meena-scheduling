@@ -458,12 +458,6 @@ async function runGenerate() {
       branch_id: currentBranchId,
       year: scheduleYear,
       month: scheduleMonth,
-      options: {
-        target_shifts: Number(document.getElementById('gen-target').value),
-        min_shifts:    Number(document.getElementById('gen-min').value),
-        friday_offs:   Number(document.getElementById('gen-fridays').value),
-        min_rest_hours: Number(document.getElementById('gen-rest').value),
-      }
     });
     currentSchedule = result.schedule;
     // Reload entries
@@ -475,10 +469,7 @@ async function runGenerate() {
     renderRotaGrid();
     updateTopbarActions();
 
-    const avg = result.summary?.length
-      ? (result.summary.reduce((s,x)=>s+x.shifts,0)/result.summary.length).toFixed(1)
-      : '?';
-    toast(`Schedule generated! Avg ${avg} shifts/staff`);
+    toast(`Schedule generated (${result.solver_status} · ${result.solver_elapsed}s)`);
   } catch (err) {
     msg.className='msg err'; msg.textContent=err.message;
   } finally {
