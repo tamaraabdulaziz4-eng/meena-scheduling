@@ -1,0 +1,140 @@
+// ── Staff page ────────────────────────────────────────────────────────────────
+let allStaff = [];
+
+async function loadStaff() {
+  allStaff = await API.get('/staff');
+  return allStaff;
+}
+
+function renderStaffPage() {
+  const canEdit = ['admin','superadmin'].includes(currentUser?.role);
+  setTopbar('Staff', 'Manage radiology staff',
+    canEdit ? `<button class="btn btn-sm" onclick="openStaffModal()">+ Add Staff</button>` : ''
+  );
+
+  // Group by branch
+  const byBranch = {};
+  allStaff.forEach(s => {
+    const key = s.branch_name || 'Unassigned';
+    if (!byBranch[key]) byBranch[key] = [];
+    byBranch[key].push(s);
+  });
+
+  const c = document.getElementById('content');
+  c.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
+
+  const container = document.getElementById('staff-branch-sections');
+  if (!allStaff.length) {
+    container.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><p>No staff added yet</p><small>Add staff members to get started</small></div>`;
+    return;
+  }
+
+  Object.entries(byBranch).forEach(([branch, staff]) => {
+    const section = document.createElement('div');
+    section.className = 'card';
+    section.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--primary)">${branch}</div>
+          <div style="font-size:11px;color:var(--muted)">${staff.length} staff member${staff.length!==1?'s':''}</div>
+        </div>
+      </div>
+      <div class="table-wrap" style="border-radius:10px">
+        <table>
+          <thead><tr>
+            <th>#</th><th>Name</th><th>Phone</th><th>Speciality</th><th>Cross-Branch</th>
+            ${canEdit ? '<th>Actions</th>' : ''}
+          </tr></thead>
+          <tbody>${staff.map((s, i) => `
+            <tr>
+              <td>${i+1}</td>
+              <td><strong>${s.name}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}</td>
+              <td>${s.phone || '—'}</td>
+              <td>${(s.speciality||['General']).map(sp => `<span class="spec-tag ${sp.toLowerCase()}">${sp}</span>`).join('')}</td>
+              <td>${s.is_cross_branch ? '<span class="badge badge-green">Yes</span>' : '<span style="color:var(--muted);font-size:12px">—</span>'}</td>
+              ${canEdit ? `<td>
+                <button class="action-btn" onclick="openStaffModal(${s.id})">Edit</button>
+                <button class="action-btn danger" onclick="deleteStaffConfirm(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
+              </td>` : ''}
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    container.appendChild(section);
+  });
+}
+
+let _editStaffId = null;
+function openStaffModal(id) {
+  _editStaffId = id || null;
+  const s = id ? allStaff.find(x => x.id === id) : null;
+  document.getElementById('staff-modal-title').textContent = id ? 'Edit Staff' : 'Add Staff';
+  document.getElementById('staff-edit-id').value = id || '';
+  document.getElementById('staff-name').value    = s?.name || '';
+  document.getElementById('staff-phone').value   = s?.phone || '';
+  document.getElementById('staff-cross').checked = s?.is_cross_branch || false;
+  document.getElementById('staff-msg').textContent = '';
+
+  // Branch select — superadmin sees all, admin sees only their branch
+  const bs = document.getElementById('staff-branch');
+  bs.innerHTML = '';
+  const branches = currentUser?.role === 'superadmin' ? allBranches : allBranches.filter(b => b.id === currentUser?.branch_id);
+  branches.forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.id; opt.textContent = b.name;
+    if (s?.branch_id === b.id || (!s && b.id === currentUser?.branch_id)) opt.selected = true;
+    bs.appendChild(opt);
+  });
+
+  // Speciality checkboxes
+  const specs = s?.speciality || ['General'];
+  document.querySelectorAll('#staff-speciality input[type=checkbox]').forEach(cb => {
+    cb.checked = specs.includes(cb.value);
+  });
+
+  document.getElementById('staff-modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('staff-name').focus(), 50);
+}
+function closeStaffModal() {
+  document.getElementById('staff-modal-overlay').classList.remove('open');
+}
+async function saveStaff() {
+  const msg    = document.getElementById('staff-msg');
+  const name   = document.getElementById('staff-name').value.trim();
+  const phone  = document.getElementById('staff-phone').value.trim();
+  const bid    = document.getElementById('staff-branch').value;
+  const cross  = document.getElementById('staff-cross').checked;
+  const specs  = [...document.querySelectorAll('#staff-speciality input:checked')].map(c => c.value);
+
+  if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
+  if (!specs.length) { msg.className = 'msg err'; msg.textContent = 'Select at least one speciality'; return; }
+
+  const body = { name, phone, branch_id: bid ? Number(bid) : null, speciality: specs, is_cross_branch: cross };
+
+  try {
+    if (_editStaffId) {
+      const s = await API.put(`/staff/${_editStaffId}`, body);
+      const idx = allStaff.findIndex(x => x.id === _editStaffId);
+      if (idx >= 0) allStaff[idx] = { ...allStaff[idx], ...s };
+    } else {
+      const s = await API.post('/staff', body);
+      allStaff.push(s);
+    }
+    closeStaffModal();
+    renderStaffPage();
+    toast(_editStaffId ? 'Staff updated' : 'Staff added');
+  } catch (err) {
+    msg.className = 'msg err'; msg.textContent = err.message;
+  }
+}
+async function deleteStaffConfirm(id, name) {
+  const ok = await showConfirm('Delete Staff', `Remove "${name}" from the system?`);
+  if (!ok) return;
+  try {
+    await API.delete(`/staff/${id}`);
+    allStaff = allStaff.filter(s => s.id !== id);
+    renderStaffPage();
+    toast('Staff removed');
+  } catch (err) { toast(err.message, 'err'); }
+}
