@@ -38,7 +38,7 @@ function branchToNest(branchName) {
 }
 
 /** Run the Python solver, return parsed JSON result */
-function runSolver(nestName, year, month, alArgs, timeoutSec = 120) {
+function runSolver(nestName, year, month, alArgs, prevTail = {}, timeoutSec = 120) {
   return new Promise((resolve, reject) => {
     const schedulerDir = path.join(__dirname, '../../scheduler');
     const args = [
@@ -50,6 +50,9 @@ function runSolver(nestName, year, month, alArgs, timeoutSec = 120) {
       '--json',
     ];
     if (alArgs.length) args.push('--al', ...alArgs);
+    if (Object.keys(prevTail).length) {
+      args.push('--prev-tail', JSON.stringify(prevTail));
+    }
 
     const proc = spawn('python3', args, { cwd: schedulerDir });
 
@@ -82,10 +85,15 @@ router.post('/', requireAdmin, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
 
     // ── 1. Load data ──────────────────────────────────────────────────────────
-    const [staffList, leaves, branch] = await Promise.all([
+    // Also load last 3 days of previous month for cross-month boundary enforcement
+    const prevMonth = month === 1 ? 12 : month - 1;
+    const prevYear  = month === 1 ? year - 1 : year;
+
+    const [staffList, leaves, branch, prevTail] = await Promise.all([
       db.getAllStaff(branch_id),
       db.getLeaves(branch_id, year, month),
       db.getBranchById(branch_id),
+      db.getLastDaysOfMonth(branch_id, prevYear, prevMonth, 3).catch(() => []),
     ]);
 
     const activeStaff = staffList.filter(s => s.active);
@@ -154,9 +162,20 @@ print(json.dumps(out))
       }
     }
 
-    // ── 5. Run solver ─────────────────────────────────────────────────────────
+    // ── 5. Build prev-month tail for cross-month boundary ─────────────────────
+    // Format: { "SOLVER_KEY": ["M","N","O"] }  (last 3 days, oldest first)
+    const prevTailBySolver = {};
+    for (const row of prevTail) {
+      const solverKey = configJson[row.staff_name.toLowerCase().trim()];
+      if (!solverKey) continue;
+      if (!prevTailBySolver[solverKey]) prevTailBySolver[solverKey] = [];
+      prevTailBySolver[solverKey].push(row.shift_code);
+    }
+
+    // ── 6. Run solver ─────────────────────────────────────────────────────────
     console.log(`[Generate] ${nestName} ${year}-${String(month).padStart(2,'0')} AL:`, alArgs);
-    const solverResult = await runSolver(nestName, year, month, alArgs);
+    console.log(`[Generate] prev-month tail:`, prevTailBySolver);
+    const solverResult = await runSolver(nestName, year, month, alArgs, prevTailBySolver);
 
     if (solverResult.status === 'INFEASIBLE') {
       return res.status(422).json({

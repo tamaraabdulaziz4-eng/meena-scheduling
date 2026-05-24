@@ -445,6 +445,21 @@ async function deleteSchedule(id) {
 }
 
 // ── SCHEDULE ENTRIES ──────────────────────────────────────────────────────────
+// Get last N days of entries for a branch (for cross-month boundary enforcement)
+async function getLastDaysOfMonth(branchId, year, month, nDays = 3) {
+  const { rows } = await pool.query(`
+    SELECT e.staff_id, TO_CHAR(e.date, 'YYYY-MM-DD') AS date, e.shift_code,
+           s.name AS staff_name
+    FROM scheduling.schedule_entries e
+    JOIN scheduling.schedules sc ON sc.id = e.schedule_id
+    JOIN scheduling.staff s ON s.id = e.staff_id
+    WHERE sc.branch_id=$1 AND sc.year=$2 AND sc.month=$3
+      AND e.date >= (DATE_TRUNC('month', MAKE_DATE($2,$3,1)) + INTERVAL '1 month' - INTERVAL '1 day' * $4)
+    ORDER BY s.name, e.date
+  `, [branchId, year, month, nDays]);
+  return rows;
+}
+
 async function getEntries(scheduleId) {
   const { rows } = await pool.query(`
     SELECT e.id, e.schedule_id, e.staff_id,
@@ -566,7 +581,7 @@ module.exports = {
   getAllStaff, getStaffById, insertStaff, updateStaff, deleteStaff,
   getShiftTypes, getAllShiftTypes, upsertShiftType, updateShiftType, deleteShiftType,
   getSchedule, getAllSchedules, upsertSchedule, updateScheduleStatus, deleteSchedule,
-  getEntries, upsertEntry, bulkUpsertEntries, deleteEntry, clearScheduleEntries,
+  getEntries, getLastDaysOfMonth, upsertEntry, bulkUpsertEntries, deleteEntry, clearScheduleEntries,
   getLeaves, insertLeave, deleteLeave,
   insertAudit, getAudit,
 };

@@ -50,7 +50,8 @@ def parse_al_arg(al_args):
 # ── Main solver ───────────────────────────────────────────────────────────────
 
 def generate_schedule(nest_name: str, year: int, month: int,
-                      al_schedule: dict = None, time_limit: int = 60) -> dict:
+                      al_schedule: dict = None, prev_tail: dict = None,
+                      time_limit: int = 60) -> dict:
     """
     Generate a schedule for the given nest/month using CP-SAT.
 
@@ -58,6 +59,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
         { "status": ..., "schedule": {...}, "stats": {...} }
     """
     al_schedule = al_schedule or {}
+    prev_tail   = prev_tail   or {}   # { "WAFA": ["M","O","N"] } — last 3 days of prev month
     nest_cfg    = NESTS[nest_name]
     n_days      = calendar.monthrange(year, month)[1]
 
@@ -120,6 +122,62 @@ def generate_schedule(nest_name: str, year: int, month: int,
             model.add(shift_var[p][d] != idx).only_enforce_if(b.negated())
             is_shift[key] = b
         return is_shift[key]
+
+    # ── Hard Constraint 0: Cross-month boundary ──────────────────────────────
+    # Apply rest-day rules across the month boundary using prev_tail.
+    # prev_tail[person] = list of shift codes for last 1-3 days of prev month.
+    # We treat these as "virtual days -2, -1, 0" before day 1.
+    #
+    # Rules carried over:
+    #   - If prev month ended with N → day 1 cannot be a morning shift
+    #     AND if day 1 is O → day 2 must also be O
+    #   - If prev month ended with D → same 2-O rule
+    #   - If prev month ended with M×3+ → if day 1 is O → day 2 must also be O
+
+    MORNING_CODES_SET = {"M", "D", "D1", "A", "EV", "B", "Y3", "D_US"}
+
+    for p, sec_name, sec in all_staff:
+        tail = prev_tail.get(p, [])
+        if not tail:
+            continue
+        allowed = set(sec["allowed_shifts"])
+
+        last_code = tail[-1]   # the very last day of prev month
+
+        # Rule: last day was N → day 1 of this month cannot be a morning shift
+        if last_code == "N":
+            for mc in MORNING_CODES_SET:
+                if mc in allowed:
+                    b_m = get_bool(p, 0, mc)
+                    model.add(b_m == 0)
+
+        # Rule: last was N or D → if day 1 is O, day 2 must also be O
+        if last_code in ("N", "D") and n_days >= 2:
+            b_o1 = get_bool(p, 0, "O")
+            b_o2 = get_bool(p, 1, "O")
+            # last=N/D, day1=O → day2 must be O  ⟹  b_o1 <= b_o2
+            model.add(b_o1 <= b_o2)
+
+        # Rule: prev month ended with M×3+ → if day 1 is O, day 2 must also be O
+        # Count trailing M's in tail
+        trailing_m = 0
+        for code in reversed(tail):
+            if code == "M":
+                trailing_m += 1
+            else:
+                break
+        if trailing_m >= 3 and n_days >= 2:
+            b_o1 = get_bool(p, 0, "O")
+            b_o2 = get_bool(p, 1, "O")
+            model.add(b_o1 <= b_o2)
+
+        # Rule: last was N or D but day 1 is NOT O (person works day 1)
+        # → this is only valid if the shift is compatible (N→N is ok, not N→M)
+        # Already handled by the no-N→morning constraint above for N.
+        # For D: D→D is allowed, D→M is allowed (different rest pattern)
+        # Actually per the brief: after D block, 2 O's required.
+        # But if person works day 1 (not O), that's a continuation, not a rest.
+        # The 2-O rule only fires when O appears. So no extra constraint needed here.
 
     # ── Hard Constraint 1: Coverage ───────────────────────────────────────────
     for d in range(n_days):
@@ -565,21 +623,25 @@ def main():
                         choices=list(NESTS.keys()), help="Which nest to schedule")
     parser.add_argument("--year",    type=int, default=2026)
     parser.add_argument("--month",   type=int, default=5)
-    parser.add_argument("--al",      nargs="*", default=[],
+    parser.add_argument("--al",        nargs="*", default=[],
                         help="AL entries: PERSON:d1,d2 or PERSON:d1-d2")
-    parser.add_argument("--timeout", type=int, default=60,
+    parser.add_argument("--prev-tail", default=None,
+                        help='JSON dict of last 3 days of prev month: {"WAFA":["M","O","N"]}')
+    parser.add_argument("--timeout",   type=int, default=60,
                         help="Solver time limit in seconds")
-    parser.add_argument("--json",    action="store_true",
+    parser.add_argument("--json",      action="store_true",
                         help="Output schedule as JSON to stdout")
     args = parser.parse_args()
 
     al_schedule = parse_al_arg(args.al)
+    prev_tail   = json.loads(args.prev_tail) if args.prev_tail else {}
 
     result = generate_schedule(
         nest_name   = args.nest,
         year        = args.year,
         month       = args.month,
         al_schedule = al_schedule,
+        prev_tail   = prev_tail,
         time_limit  = args.timeout,
     )
 
