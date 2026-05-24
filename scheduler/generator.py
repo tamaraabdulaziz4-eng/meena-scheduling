@@ -173,6 +173,52 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 day_work.append(day_w)
             model.add(sum(day_work) <= 5)
 
+    # ── Hard Constraint 6: Daily staffing balance (no mass-O days) ───────────
+    # Goal: staff presence is spread evenly across the month.
+    # For each section compute the expected work-days per person
+    # (coverage shifts needed × days / staff available).
+    # Then enforce: each day at least that many staff must be working.
+    #
+    # Formula:
+    #   total_coverage_shifts = sum of min_per_day across all days
+    #   avg_workers_per_day   = total_coverage_shifts / n_days  (already = coverage min)
+    #   BUT we want more than just coverage min —
+    #   we want total_work_budget / n_days where
+    #   total_work_budget = n_staff × target_work_days_per_person
+    #
+    # target_work_days = (n_days - avg_al_days) * (5/7)
+    # i.e. work 5 out of every 7 days (Islamic week: 5 work days, 2 off)
+
+    WORK_CODES_SET = set(c for c in ALL_CODES if c in WORK_SHIFTS)
+
+    for sec_name, sec in nest_cfg["sections"].items():
+        sec_staff_names = [p for p, sn, _ in all_staff if sn == sec_name]
+        work_in_sec     = [c for c in WORK_CODES_SET if c in sec["allowed_shifts"]]
+        if not work_in_sec:
+            continue
+
+        n_sec = len(sec_staff_names)
+        # Average AL days per person in this section
+        avg_al = sum(len(al_schedule.get(p, [])) for p in sec_staff_names) / n_sec
+        # Workable days per person ≈ (n_days - avg_al) × 5/7
+        target_work_per_person = (n_days - avg_al) * (5 / 7)
+        # Total work budget for section
+        total_work_budget = n_sec * target_work_per_person
+        # Min workers per day = floor(total_work_budget / n_days)
+        min_workers_per_day = max(1, int(total_work_budget // n_days))
+
+        for d in range(n_days):
+            day = d + 1
+            avail_today = [p for p in sec_staff_names
+                           if not (p in al_schedule and day in al_schedule[p])]
+            if len(avail_today) < min_workers_per_day:
+                continue  # too few available (heavy AL period) — skip
+            work_bools_today = []
+            for p in avail_today:
+                for wc in work_in_sec:
+                    work_bools_today.append(get_bool(p, d, wc))
+            model.add(sum(work_bools_today) >= min_workers_per_day)
+
     # ── Soft Constraint: Fairness — equal M and N distribution ───────────────
     # Minimize max deviation from mean for M and N counts
     FAIRNESS_SHIFTS = ["M", "N"]
