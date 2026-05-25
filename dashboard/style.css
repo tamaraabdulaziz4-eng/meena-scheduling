@@ -372,9 +372,8 @@ tr:hover td { background: var(--table-row-hover); }
 
 /* ── Schedule Grid ── */
 .rota-wrap {
-  overflow: auto; border-radius: 14px;
+  overflow-x: auto; border-radius: 14px;
   border: 1px solid var(--border); background: var(--card-alt);
-  max-height: calc(100vh - 220px);
 }
 .rota-table { border-collapse: collapse; font-size: 11.5px; }
 .rota-table th, .rota-table td {
