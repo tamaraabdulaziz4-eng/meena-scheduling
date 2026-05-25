@@ -407,6 +407,14 @@ def generate_schedule(nest_name: str, year: int, month: int,
                         if len(avail) >= 1:
                             model.add(sum(sec_bools(mandatory_code)) >= 1)
 
+            # Cap: at most 2 M and at most 2 N per section per day
+            # Max shifts (17) is an upper limit not a target — this prevents
+            # the solver piling everyone onto the same shift on a given day.
+            sec_staff_count = sum(1 for p, sn, _ in all_staff if sn == sec_name)
+            for capped_code in ("M", "N"):
+                if sec_staff_count > 2:  # only cap if section has more than 2 staff
+                    model.add(sum(sec_bools(capped_code)) <= 2)
+
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
     MORNING_CODES = ["M", "D", "D1", "A", "EV", "B", "Y3", "D_US"]
     for p, sec_name, sec in all_staff:
@@ -459,40 +467,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
             if max_s > 0:
                 model.add(sum(work_days) <= max_s)
 
-    # ── Hard Constraint 5c: 2 rest days after max consecutive work days ──────
-    # After a person works their maximum consecutive days in a row (p_max_c),
-    # the next 2 days must be rest (O).
-    # Sliding window: if days d..d+p_max_c-1 are ALL work → days d+p_max_c and
-    # d+p_max_c+1 must be O.
-    WORK_CODES_5C = list(AUTO_WORK_SHIFTS)  # M and N only (what solver assigns)
-    for p, sec_name, sec in all_staff:
-        limits  = staff_limits.get(p, {})
-        p_max_c = limits.get("max_consecutive", max_consecutive)
-        if n_days < p_max_c + 2:
-            continue  # month too short to enforce — skip
-        for d in range(n_days - p_max_c - 1):
-            # Check if all p_max_c days starting at d are work days
-            all_work = [model.new_bool_var(f"5c_w_{p}_{d}_{d2}") for d2 in range(d, d + p_max_c)]
-            for i, d2 in enumerate(range(d, d + p_max_c)):
-                work_d = [get_bool(p, d2, wc) for wc in WORK_CODES_5C if wc in sec["allowed_shifts"]]
-                if work_d:
-                    model.add_bool_or(work_d).only_enforce_if(all_work[i])
-                    model.add(sum(work_d) == 0).only_enforce_if(all_work[i].negated())
-                else:
-                    model.add(all_work[i] == 0)
-            # If all p_max_c days are work → day d+p_max_c must be O
-            b_o1 = get_bool(p, d + p_max_c,     "O")
-            b_o2 = get_bool(p, d + p_max_c + 1, "O")
-            all_work_sum = sum(all_work)
-            # all_work_sum == p_max_c → b_o1 == 1
-            model.add(b_o1 == 1).only_enforce_if(
-                [w for w in all_work]  # only if every work bool is true
-            )
-            # all_work_sum == p_max_c AND b_o1 == 1 → b_o2 == 1
-            b_all_and_o1 = model.new_bool_var(f"5c_trigger_{p}_{d}")
-            model.add_bool_and(all_work + [b_o1]).only_enforce_if(b_all_and_o1)
-            model.add_bool_or([w.negated() for w in all_work] + [b_o1.negated()]).only_enforce_if(b_all_and_o1.negated())
-            model.add(b_o2 == 1).only_enforce_if(b_all_and_o1)
+    # HC5c removed — max consecutive (HC5) already prevents overwork;
+    # forced rest days on top caused excessive O chains.
 
     # ── Hard Constraint 6: Per-shift-group daily balance (no mass-O days) ───────
     # With hard domain restriction, each person can only work their dominant shift
