@@ -1212,6 +1212,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     print(f"[Generate] config_json keys={list(config_json.keys())}")
     print(f"[Generate] active_staff names={[s['name'] for s in active_staff]}")
     print(f"[Generate] max_consecutive={max_consecutive} staff_limits={staff_limits}")
+    for sn, sc in nest_cfg_for_solver["sections"].items():
+        print(f"[Generate] section={sn} staff={sc['staff']} coverage={sc['coverage']} exact={sc['exact']} allowed={sc['allowed_shifts']}")
 
     try:
         result = solver_generate(
