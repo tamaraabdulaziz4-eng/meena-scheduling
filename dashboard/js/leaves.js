@@ -165,6 +165,7 @@ function closeLeaveModal() {
 
 async function saveLeave() {
   const msg        = document.getElementById('leave-msg');
+  const btn        = document.getElementById('leave-save-btn');
   const staff_id   = document.getElementById('leave-staff').value;
   const date_from  = document.getElementById('leave-date-from').value;
   const date_to    = document.getElementById('leave-date-to').value;
@@ -176,18 +177,14 @@ async function saveLeave() {
   if (!date_to)    { msg.className='msg err'; msg.textContent='To date required'; return; }
   if (date_to < date_from) { msg.className='msg err'; msg.textContent='"To" date must be on or after "From" date'; return; }
 
-  // Calculate number of days for confirmation
-  const days = Math.round((new Date(date_to) - new Date(date_from)) / 86400000) + 1;
+  msg.className = 'msg'; msg.textContent = '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   try {
-    // POST range to backend — it expands to individual rows
     const result = await API.post('/leaves', {
-      staff_id: Number(staff_id),
-      date_from, date_to,
-      leave_type, note
+      staff_id: Number(staff_id), date_from, date_to, leave_type, note
     });
-    // result: { inserted: N, leaves: [...] }
-    const staffObj = allStaff.find(s => s.id === Number(staff_id));
+    const staffObj  = allStaff.find(s => s.id === Number(staff_id));
     const branchObj = allBranches.find(b => b.id === staffObj?.branch_id);
     (result.leaves || []).forEach(l => {
       allLeaves.unshift({ ...l, staff_name: staffObj?.name || '?', branch_name: branchObj?.name || '?' });
@@ -195,16 +192,22 @@ async function saveLeave() {
     closeLeaveModal();
     renderLeavesList();
     toast(`${result.inserted} day${result.inserted !== 1 ? 's' : ''} of ${leave_type} added`);
-  } catch (err) { msg.className='msg err'; msg.textContent=err.message; }
+  } catch (err) {
+    msg.className = 'msg err'; msg.textContent = err.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
 }
 
 async function deleteLeaveRange(ids) {
   const ok = await showConfirm('Delete Leave', `Remove ${ids.length} day${ids.length !== 1 ? 's' : ''} of leave?`);
   if (!ok) return;
+  showLoader('Deleting leave…');
   try {
     await Promise.all(ids.map(id => API.delete(`/leaves/${id}`)));
     allLeaves = allLeaves.filter(l => !ids.includes(l.id));
     renderLeavesList();
     toast(`${ids.length} leave day${ids.length !== 1 ? 's' : ''} deleted`);
   } catch (err) { toast(err.message, 'err'); }
+  finally { hideLoader(); }
 }
