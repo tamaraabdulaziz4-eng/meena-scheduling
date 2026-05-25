@@ -174,7 +174,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
                       al_schedule: dict = None, prev_tail: dict = None,
                       dominant_shifts: dict = None,
                       time_limit: int = 60,
-                      max_consecutive: int = 5,
+                      max_consecutive: int = 4,
                       staff_limits: dict = None) -> dict:
     """
     staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits

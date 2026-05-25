@@ -6,7 +6,8 @@ let scheduleMonth     = new Date().getMonth() + 1;
 let currentBranchId   = null;
 let scheduleStaff     = [];   // staff for current branch
 let entryMap          = {};   // "staffId_dateStr" → entry
-let staffAllowedShifts = {}; // staff_id → [allowed shift codes]
+let staffAllowedShifts  = {}; // staff_id → [allowed shift codes]
+let staffMonthSettings  = {}; // staff_id → { min_shifts, max_shifts }
 
 // Shift picker state
 let pickerCell = null;
@@ -92,7 +93,16 @@ async function loadScheduleData() {
       const allowedData = await API.get(`/generate/allowed-shifts?branch_id=${currentBranchId}`);
       staffAllowedShifts = allowedData.staff_allowed || {};
     } catch (e) {
-      staffAllowedShifts = {}; // fallback: show all shifts if config unavailable
+      staffAllowedShifts = {};
+    }
+
+    // Load per-month min/max settings for each staff
+    try {
+      staffMonthSettings = await API.get(
+        `/staff-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`
+      );
+    } catch (e) {
+      staffMonthSettings = {};
     }
 
     renderScheduleStatusBar();
@@ -116,22 +126,9 @@ function buildEntryMap() {
 
 function updateTopbarActions() {
   if (!currentSchedule) return;
-  const canEdit    = ['admin','superadmin'].includes(currentUser.role);
-  const canReview  = currentUser.role === 'superadmin';
-  const canApprove = currentUser.role === 'superadmin';
-  const status     = currentSchedule.status;
-
+  const canEdit = ['admin','superadmin'].includes(currentUser.role);
   let actions = '';
-  if (canEdit && status === 'draft') {
-    actions += `<button class="btn btn-outline btn-sm" onclick="submitSchedule()">Submit for Review</button>`;
-  }
-  if (canReview && status === 'submitted') {
-    actions += `<button class="btn btn-sm" onclick="reviewSchedule()">✓ Mark Reviewed</button>`;
-  }
-  if (canApprove && status === 'reviewed') {
-    actions += `<button class="btn btn-sm" style="background:#00C896" onclick="approveSchedule()">✓✓ Approve</button>`;
-  }
-  if (canEdit && (status === 'draft' || status === 'submitted')) {
+  if (canEdit) {
     actions += `<button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>`;
   }
   actions += `<button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 XLSX</button>`;
@@ -144,17 +141,9 @@ function renderScheduleStatusBar() {
   if (!bar || !currentSchedule) return;
   const s = currentSchedule;
   const badges = {
-    draft:     'badge-gray',
-    submitted: 'badge-yellow',
-    reviewed:  'badge-purple',
-    approved:  'badge-green'
-  };
   const isAdmin = ['admin','superadmin'].includes(currentUser?.role);
 
   bar.innerHTML = `
-    <span class="badge ${badges[s.status] || 'badge-gray'}" style="font-size:11px;padding:4px 12px">
-      ${s.status.charAt(0).toUpperCase()+s.status.slice(1)}
-    </span>
     ${isAdmin ? `
       <button onclick="toggleScheduleLock()"
         style="font-size:11px;padding:3px 12px;border-radius:20px;border:none;cursor:pointer;font-weight:600;
@@ -162,12 +151,10 @@ function renderScheduleStatusBar() {
         title="${s.is_locked ? 'Click to unlock' : 'Click to lock'}">
         ${s.is_locked ? '🔒 Locked' : '🔓 Unlocked'}
       </button>` : `
-      <span style="font-size:11px;font-weight:600;color:${s.is_locked ? '#e17055' : '#636e72'}">
+      <span style="font-size:11px;font-weight:600;color:${s.is_locked ? '#e17055' : ''}">
         ${s.is_locked ? '🔒 Locked' : ''}
       </span>`}
-    ${s.created_by_name  ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${s.created_by_name}</strong></span>` : ''}
-    ${s.reviewed_by_name ? `<span style="font-size:11px;color:var(--muted)">Reviewed by: <strong>${s.reviewed_by_name}</strong></span>` : ''}
-    ${s.approved_by_name ? `<span style="font-size:11px;color:var(--muted)">Approved by: <strong>${s.approved_by_name}</strong></span>` : ''}
+    ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${s.created_by_name}</strong></span>` : ''}
   `;
 }
 
@@ -243,7 +230,7 @@ function renderRotaGrid() {
   if (!wrap) return;
 
   const nDays   = daysInMonth(scheduleYear, scheduleMonth);
-  const isLocked = currentSchedule?.status === 'approved';
+  const isLocked = !!currentSchedule?.is_locked;
 
   // Group staff: General first, then US
   const generalStaff = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
@@ -254,7 +241,7 @@ function renderRotaGrid() {
   let html = `<table class="rota-table" id="rota-table">
     <thead>
       <tr>
-        <th class="rota-name-col" rowspan="2">Name</th>
+        <th class="rota-name-col" rowspan="2" style="min-width:200px">Name &nbsp;<span style="font-weight:400;font-size:9px;color:var(--muted)">Min · Max · Days</span></th>
         ${Array.from({length:nDays},(_,i)=>{
           const d = i+1;
           const dow = dayOfWeek(scheduleYear, scheduleMonth, d);
@@ -296,8 +283,7 @@ function renderRotaGrid() {
         const txtColor = isBlank ? '#000000' : contrastColor(bgColor);
         const weekend  = dow===5||dow===6 ? 'rgba(107,78,255,0.04)' : '';
 
-        // Readonly if schedule approved OR schedule is_locked
-        const cellReadonly = isLocked || !!currentSchedule?.is_locked;
+        const cellReadonly = isLocked;
         const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':''].filter(Boolean).join(' ');
         return `<td class="${classes}"
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
@@ -309,8 +295,26 @@ function renderRotaGrid() {
           </div>
         </td>`;
       }).join('');
+      const ms  = staffMonthSettings[s.id] || {};
+      const minS = ms.min_shifts ?? 0;
+      const maxS = ms.max_shifts ?? 17;
+      const canEdit = ['admin','superadmin'].includes(currentUser?.role) && !currentSchedule?.is_locked;
       rows += `<tr>
-        <td class="rota-name-col">${s.name}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</td>
+        <td class="rota-name-col" style="padding:4px 8px !important">
+          <div style="font-weight:600;font-size:12px;white-space:nowrap">${s.name}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</div>
+          ${canEdit ? `
+          <div style="display:flex;gap:4px;align-items:center;margin-top:3px">
+            <input type="number" min="0" max="31" value="${minS}"
+              id="min-s-${s.id}" title="Min shifts this month"
+              style="width:36px;font-size:10px;padding:1px 3px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);text-align:center"
+              onchange="saveStaffMonthSetting(${s.id}, 'min', this.value)">
+            <span style="font-size:10px;color:var(--muted)">–</span>
+            <input type="number" min="0" max="31" value="${maxS}"
+              id="max-s-${s.id}" title="Max shifts this month"
+              style="width:36px;font-size:10px;padding:1px 3px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);text-align:center"
+              onchange="saveStaffMonthSetting(${s.id}, 'max', this.value)">
+          </div>` : `<div style="font-size:10px;color:var(--muted)">${minS}–${maxS}</div>`}
+        </td>
         ${cells}
         <td style="text-align:center;font-weight:700;font-size:12px;color:var(--primary)">${shiftCount}</td>
       </tr>`;
@@ -331,7 +335,7 @@ function renderRotaGrid() {
 
 // ── Cell click → shift picker ─────────────────────────────────────────────────
 function cellClick(cell) {
-  if (currentSchedule?.status === 'approved') return;
+  if (currentSchedule?.is_locked) return;
   if (!['admin','superadmin'].includes(currentUser?.role)) return;
 
   // If picker already open for this cell, close it (toggle)
@@ -467,6 +471,18 @@ async function toggleScheduleLock() {
   } catch (err) { toast(err.message, 'err'); }
 }
 
+async function saveStaffMonthSetting(staffId, field, value) {
+  const ms = staffMonthSettings[staffId] || { min_shifts: 0, max_shifts: 17 };
+  const min_shifts = field === 'min' ? parseInt(value) : ms.min_shifts;
+  const max_shifts = field === 'max' ? parseInt(value) : ms.max_shifts;
+  try {
+    await API.put(`/staff-month-settings/${staffId}`, {
+      year: scheduleYear, month: scheduleMonth, min_shifts, max_shifts
+    });
+    staffMonthSettings[staffId] = { min_shifts, max_shifts };
+  } catch (err) { toast(err.message, 'err'); }
+}
+
 async function clearCell() {
   if (!pickerCell) return;
   const staffId = Number(pickerCell.dataset.staff);
@@ -504,34 +520,6 @@ async function applyCrossBranch() {
     buildEntryMap();
     renderRotaGrid();
     toast('Cross-branch assigned');
-  } catch (err) { toast(err.message, 'err'); }
-}
-
-// ── Status transitions ────────────────────────────────────────────────────────
-async function submitSchedule() {
-  const ok = await showConfirm('Submit Schedule', 'Submit this schedule for supervisor review?', 'Submit', 'confirm-ok');
-  if (!ok) return;
-  try {
-    currentSchedule = await API.put(`/schedules/${currentSchedule.id}/status`, { status: 'submitted' });
-    renderScheduleStatusBar();
-    updateTopbarActions();
-    toast('Schedule submitted for review');
-  } catch (err) { toast(err.message, 'err'); }
-}
-async function reviewSchedule() {
-  try {
-    currentSchedule = await API.put(`/schedules/${currentSchedule.id}/status`, { status: 'reviewed' });
-    renderScheduleStatusBar(); updateTopbarActions();
-    toast('Schedule marked as reviewed');
-  } catch (err) { toast(err.message, 'err'); }
-}
-async function approveSchedule() {
-  const ok = await showConfirm('Approve Schedule', 'Approve this schedule? It will be locked.', 'Approve');
-  if (!ok) return;
-  try {
-    currentSchedule = await API.put(`/schedules/${currentSchedule.id}/status`, { status: 'approved' });
-    renderScheduleStatusBar(); updateTopbarActions(); renderRotaGrid();
-    toast('Schedule approved and locked ✓', 'ok');
   } catch (err) { toast(err.message, 'err'); }
 }
 

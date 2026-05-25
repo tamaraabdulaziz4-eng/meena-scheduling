@@ -187,8 +187,18 @@ def init_schema():
                 CREATE TABLE IF NOT EXISTS scheduling.branch_settings (
                     id SERIAL PRIMARY KEY,
                     branch_id INTEGER UNIQUE NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
-                    max_consecutive INTEGER NOT NULL DEFAULT 5,
+                    max_consecutive INTEGER NOT NULL DEFAULT 4,
                     updated_at TIMESTAMP DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS scheduling.staff_month_settings (
+                    id SERIAL PRIMARY KEY,
+                    staff_id INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    min_shifts INTEGER NOT NULL DEFAULT 0,
+                    max_shifts INTEGER NOT NULL DEFAULT 17,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(staff_id, year, month)
                 );
             """)
 
@@ -602,18 +612,59 @@ def delete_staff(sid: int, user=Depends(require_admin)):
 def get_branch_settings(bid: int, user=Depends(get_current_user)):
     row = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (bid,), one=True)
     if not row:
-        return {"branch_id": bid, "max_consecutive": 5}
+        return {"branch_id": bid, "max_consecutive": 4}
     return row
 
 @app.put("/api/branch-settings/{bid}")
 async def update_branch_settings(bid: int, request: Request, user=Depends(require_admin)):
     if not can_access_branch(user, bid): raise HTTPException(403, "Forbidden")
     body = await request.json()
-    max_consecutive = int(body.get("max_consecutive", 5))
+    max_consecutive = int(body.get("max_consecutive", 4))
     row = q("""INSERT INTO scheduling.branch_settings (branch_id, max_consecutive)
                VALUES (%s, %s)
                ON CONFLICT (branch_id) DO UPDATE SET max_consecutive=%s, updated_at=NOW()
                RETURNING *""", (bid, max_consecutive, max_consecutive), one=True)
+    return row
+
+# ── Staff Month Settings ──────────────────────────────────────────────────────
+
+@app.get("/api/staff-month-settings")
+def get_staff_month_settings(request: Request, user=Depends(get_current_user)):
+    """Get per-month min/max settings for all staff in a branch/year/month.
+    Falls back to staff.min_shifts / staff.max_shifts (default 17) if no override."""
+    branch_id = request.query_params.get("branch_id")
+    year      = request.query_params.get("year")
+    month     = request.query_params.get("month")
+    if not branch_id or not year or not month:
+        raise HTTPException(400, "branch_id, year, month required")
+    rows = q("""
+        SELECT s.id AS staff_id,
+               COALESCE(sms.min_shifts, s.min_shifts, 0)  AS min_shifts,
+               COALESCE(sms.max_shifts, s.max_shifts, 17) AS max_shifts
+        FROM scheduling.staff s
+        LEFT JOIN scheduling.staff_month_settings sms
+          ON sms.staff_id=s.id AND sms.year=%s AND sms.month=%s
+        WHERE s.branch_id=%s AND s.active=true
+    """, (int(year), int(month), int(branch_id)))
+    return {r["staff_id"]: {"min_shifts": r["min_shifts"], "max_shifts": r["max_shifts"]} for r in rows}
+
+@app.put("/api/staff-month-settings/{staff_id}")
+async def upsert_staff_month_settings(staff_id: int, request: Request, user=Depends(require_admin)):
+    body  = await request.json()
+    year  = int(body.get("year"))
+    month = int(body.get("month"))
+    min_s = int(body.get("min_shifts", 0))
+    max_s = int(body.get("max_shifts", 17))
+    # Check access
+    staff = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+    if not staff: raise HTTPException(404, "Staff not found")
+    if not can_access_branch(user, staff["branch_id"]): raise HTTPException(403, "Forbidden")
+    row = q("""INSERT INTO scheduling.staff_month_settings (staff_id, year, month, min_shifts, max_shifts)
+               VALUES (%s,%s,%s,%s,%s)
+               ON CONFLICT (staff_id, year, month) DO UPDATE
+               SET min_shifts=%s, max_shifts=%s, updated_at=NOW()
+               RETURNING *""",
+            (staff_id, year, month, min_s, max_s, min_s, max_s), one=True)
     return row
 
 # ── Shift Types ───────────────────────────────────────────────────────────────
@@ -1093,16 +1144,28 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
     # Load branch settings (max_consecutive)
     branch_settings = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (branch_id,), one=True)
-    max_consecutive = (branch_settings or {}).get("max_consecutive", 5)
+    max_consecutive = (branch_settings or {}).get("max_consecutive", 4)
 
-    # Build per-solver-key min/max shifts from staff table
+    # Load per-month min/max settings (falls back to staff.min_shifts/max_shifts → default 17)
+    month_settings_rows = q("""
+        SELECT s.id, s.name,
+               COALESCE(sms.min_shifts, s.min_shifts, 0)  AS min_shifts,
+               COALESCE(sms.max_shifts, s.max_shifts, 17) AS max_shifts
+        FROM scheduling.staff s
+        LEFT JOIN scheduling.staff_month_settings sms
+          ON sms.staff_id=s.id AND sms.year=%s AND sms.month=%s
+        WHERE s.branch_id=%s AND s.active=true
+    """, (year, month, branch_id))
+    month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
+
+    # Build per-solver-key min/max using per-month values
     staff_limits = {}  # solver_key → {"min": int, "max": int}
     for db_name_l, sk in config_json.items():
-        staff_row = name_to_staff.get(db_name_l)
-        if staff_row:
+        ms = month_settings.get(db_name_l)
+        if ms:
             staff_limits[sk] = {
-                "min": staff_row.get("min_shifts", 0),
-                "max": staff_row.get("max_shifts", 17),
+                "min": ms.get("min_shifts", 0),
+                "max": ms.get("max_shifts", 17),
             }
 
     # Patch NESTS with DB config and call solver directly (no subprocess)
