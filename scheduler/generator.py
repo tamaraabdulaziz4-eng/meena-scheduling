@@ -377,7 +377,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
                                              for p, sn, _ in all_staff if sn == sec_name]
                 return sec_bools_cache[code]
 
-            # Minimum coverage
+            # Minimum coverage from config
             coverage = (sec["coverage"] or {}).get(dtype, {})
             for code, min_count in coverage.items():
                 if min_count <= 0:
@@ -387,6 +387,20 @@ def generate_schedule(nest_name: str, year: int, month: int,
             # Exact coverage (applies every day, weekday and weekend)
             for code, exact_count in (sec.get("exact") or {}).items():
                 model.add(sum(sec_bools(code)) == exact_count)
+
+            # Global rule: at least 1 M and 1 N per section per day
+            # Only enforce if section has enough staff (>= 2) and that shift isn't
+            # already covered by a stricter exact/coverage constraint above
+            sec_staff_count = sum(1 for p, sn, _ in all_staff if sn == sec_name)
+            already_covered_codes = set((sec.get("exact") or {}).keys()) | set(coverage.keys())
+            if sec_staff_count >= 2:
+                for mandatory_code in ("M", "N"):
+                    if mandatory_code not in already_covered_codes:
+                        avail = [p for p, sn, _ in all_staff
+                                 if sn == sec_name
+                                 and not (p in al_schedule and day in al_schedule[p])]
+                        if len(avail) >= 1:
+                            model.add(sum(sec_bools(mandatory_code)) >= 1)
 
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
     MORNING_CODES = ["M", "D", "D1", "A", "EV", "B", "Y3", "D_US"]

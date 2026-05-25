@@ -182,6 +182,7 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS min_shifts INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS max_shifts INTEGER NOT NULL DEFAULT 17;")
+            cur.execute("UPDATE scheduling.staff SET max_shifts=17 WHERE max_shifts=0 OR max_shifts IS NULL;")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.branch_settings (
                     id SERIAL PRIMARY KEY,
@@ -233,88 +234,71 @@ def seed_defaults():
 
 
 def seed_nest_config():
+    # Coverage: 1 M + 1 N every day for all sections (auto-generate rule)
+    # allowed_shifts: full list — used for manual cell picker (user can assign any shift)
+    # Auto-generate only uses M and N regardless of allowed_shifts
+    _MN = {'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}}
+    _ALL = ['M','N','D','D1','EV','A','B','C','N6','Y3','O','OC','AL','SL','TB']
     nests = [
         # NEST1
         dict(nest_key='NEST1', section_name='General', sort_order=0,
              staff=['WAFA','CHERYL','MUHANNED','ELHAM','AMINAH','MNAYER'],
              staff_db_names={'WAFA':'Wafa Assiri','CHERYL':'Cheryl','MUHANNED':'Muhanned',
                              'ELHAM':'Elham','AMINAH':'Aminah','MNAYER':'Mnayer'},
-             allowed_shifts=['D','M','N','O','AL','SL'],
-             coverage={'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}},
-             exact_coverage={'N':1}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         dict(nest_key='NEST1', section_name='US', sort_order=1,
              staff=['RAWAN','ALANOOD','ALNOUD','TAGREED','SADEEM'],
              staff_db_names={'RAWAN':'Rawan','ALANOOD':'Alanood','ALNOUD':'Alnoud Alrashdi',
                              'TAGREED':'Tagreed','SADEEM':'Sadeem'},
-             allowed_shifts=['M','N','O','AL','SL'],
-             coverage={'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}},
-             exact_coverage={'N':1}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         # NEST2
         dict(nest_key='NEST2', section_name='General', sort_order=0,
              staff=['BADRIH','DALAL','WEDAD','LAYAN','FATIN','NAIF','MOHAMMED_BATT'],
              staff_db_names={'BADRIH':'Badrih','DALAL':'Dalal','WEDAD':'Wedad','LAYAN':'Layan',
                              'FATIN':'Fatin','NAIF':'Naif','MOHAMMED_BATT':'Mohammed Batt'},
-             allowed_shifts=['M','N','N6','D1','Y3','O','AL','SL','OC'],
-             coverage={'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         dict(nest_key='NEST2', section_name='US', sort_order=1,
              staff=['ALHANOUF_BIN_AMMAR','HAJER','JOY','ALHANOUF_ALAZMI'],
              staff_db_names={'ALHANOUF_BIN_AMMAR':'Alhanouf Bin Ammar','HAJER':'Hajer AL Mutiri',
                              'JOY':'Joy','ALHANOUF_ALAZMI':'Alhanouf Alazmi'},
-             allowed_shifts=['D','D1','N6','O','AL','SL','OC'],
-             coverage={'weekday':{'D':1,'N6':1},'weekend':{'D':1}},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         # NEST3
         dict(nest_key='NEST3', section_name='General', sort_order=0,
              staff=['DUAA','RAWAN','NOURAH','ABDULAZIZ','BUSHRA'],
              staff_db_names={'DUAA':'Duaa','RAWAN':'Rawan Alharbi','NOURAH':'Nourah',
                              'ABDULAZIZ':'Abdulaziz Alanazi','BUSHRA':'Bushra Alqahani'},
-             allowed_shifts=['M','N','A','O','AL','SL','OC'],
-             coverage={'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         dict(nest_key='NEST3', section_name='US', sort_order=1,
              staff=['ALMA','MANAR','QAMRAA','REEM'],
              staff_db_names={'ALMA':'Alma Tolentino','MANAR':'Manar',
                              'QAMRAA':'Qamraa','REEM':'Reem Alharbi'},
-             allowed_shifts=['D','D1','EV','N','A','O','AL','SL','OC'],
-             coverage={'weekday':{'D':1,'N':1},'weekend':{'D':1}},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         # NEST4
         dict(nest_key='NEST4', section_name='General', sort_order=0,
              staff=['SARAH','AROB'],
              staff_db_names={'SARAH':'Sara Halawani','AROB':'Arob'},
-             allowed_shifts=['D','EV','O','AL','SL','OC'],
-             coverage={},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         dict(nest_key='NEST4', section_name='US', sort_order=1,
              staff=['RANA','AESHAH','TAIF','ALAA'],
              staff_db_names={'RANA':'Rana','AESHAH':'Aeshah','TAIF':'Taif','ALAA':'Alaa'},
-             allowed_shifts=['M','N','B','O','AL','SL','OC'],
-             coverage={'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         # NEST6
         dict(nest_key='NEST6', section_name='General', sort_order=0,
              staff=['MOHAMMED','NAIF_ALMUTARI','RUBA','SHAHAD','WEDAD','LAYAN','DALAL','NAIF'],
              staff_db_names={'MOHAMMED':'Mohammed','NAIF_ALMUTARI':'Naif Almutari','RUBA':'Ruba',
                              'SHAHAD':'Shahad','WEDAD':'Wedad N6','LAYAN':'Layan N6',
                              'DALAL':'Dalal N6','NAIF':'Naif'},
-             allowed_shifts=['D','M','N','EV','Y3','O','AL','SL','OC'],
-             coverage={'weekday':{'D':1,'M':1,'N':1},'weekend':{'M':1,'N':1}},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
         dict(nest_key='NEST6', section_name='US', sort_order=1,
              staff=['RANA','MEYAN','ALANOUD','HAJER','ALMA'],
              staff_db_names={'RANA':'Rana N6','MEYAN':'Meyan','ALANOUD':'Alanoud N6',
                              'HAJER':'Hajer N6','ALMA':'Alma N6'},
-             allowed_shifts=['A','B','C','D','M','N','O','AL','SL','OC'],
-             coverage={'weekday':{'A':1,'B':1,'N':1},'weekend':{'A':1,'B':1}},
-             exact_coverage={}),
-        # Y5
+             allowed_shifts=_ALL, coverage=_MN, exact_coverage={}),
+        # Y5 — only 1 staff, can't enforce M+N, manual only
         dict(nest_key='Y5', section_name='General', sort_order=0,
              staff=['MANAL'],
              staff_db_names={'MANAL':'Manal Salem'},
-             allowed_shifts=['A','O','OC','AL','SL'],
-             coverage={},
-             exact_coverage={}),
+             allowed_shifts=_ALL, coverage={}, exact_coverage={}),
     ]
     for n in nests:
         q("""INSERT INTO scheduling.nest_sections
