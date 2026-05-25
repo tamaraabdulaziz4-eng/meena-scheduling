@@ -37,6 +37,7 @@ async function renderSchedulePage() {
         ${['admin','superadmin'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
+          <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" title="Staff shift settings">⚙️ Settings</button>
         ` : ''}
         <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Print</button>
       </div>
@@ -240,7 +241,7 @@ function renderRotaGrid() {
   let html = `<table class="rota-table" id="rota-table">
     <thead>
       <tr>
-        <th class="rota-name-col" rowspan="2" style="min-width:200px">Name &nbsp;<span style="font-weight:400;font-size:9px;color:var(--muted)">Min · Max · Days</span></th>
+        <th class="rota-name-col" rowspan="2" style="min-width:160px">Name</th>
         ${Array.from({length:nDays},(_,i)=>{
           const d = i+1;
           const dow = dayOfWeek(scheduleYear, scheduleMonth, d);
@@ -294,29 +295,9 @@ function renderRotaGrid() {
           </div>
         </td>`;
       }).join('');
-      const ms   = staffMonthSettings[s.id] || {};
-      const minS = ms.min_shifts    ?? 0;
-      const maxS = ms.max_shifts    ?? 17;
-      const maxC = ms.max_consecutive ?? 4;
-      const canEdit = ['admin','superadmin'].includes(currentUser?.role) && !currentSchedule?.is_locked;
-      const inputStyle = `width:32px;font-size:10px;padding:1px 3px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);text-align:center`;
       rows += `<tr>
-        <td class="rota-name-col" style="padding:4px 8px !important">
-          <div style="font-weight:600;font-size:12px;white-space:nowrap">${s.name}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</div>
-          ${canEdit ? `
-          <div style="display:flex;gap:3px;align-items:center;margin-top:3px;flex-wrap:wrap">
-            <input type="number" min="0" max="31" value="${minS}"
-              title="Min shifts/month" style="${inputStyle}"
-              onchange="saveStaffMonthSetting(${s.id}, 'min_shifts', this.value)">
-            <span style="font-size:10px;color:var(--muted)">–</span>
-            <input type="number" min="0" max="31" value="${maxS}"
-              title="Max shifts/month" style="${inputStyle}"
-              onchange="saveStaffMonthSetting(${s.id}, 'max_shifts', this.value)">
-            <span style="font-size:10px;color:var(--muted)">|</span>
-            <input type="number" min="1" max="14" value="${maxC}"
-              title="Max consecutive days" style="${inputStyle}"
-              onchange="saveStaffMonthSetting(${s.id}, 'max_consecutive', this.value)">
-          </div>` : `<div style="font-size:10px;color:var(--muted)">${minS}–${maxS} | ≤${maxC}d</div>`}
+        <td class="rota-name-col" style="padding:4px 8px !important;white-space:nowrap">
+          <span style="font-weight:600;font-size:12px">${s.name}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</span>
         </td>
         ${cells}
         <td style="text-align:center;font-weight:700;font-size:12px;color:var(--primary)">${shiftCount}</td>
@@ -410,28 +391,46 @@ function closePicker() {
   pickerCell = null;
 }
 
+// Show a small spinning indicator on a cell while saving
+function setCellSaving(cell, saving) {
+  if (!cell) return;
+  if (saving) {
+    cell.style.opacity = '0.5';
+    cell.style.pointerEvents = 'none';
+    const chip = cell.querySelector('.shift-chip');
+    if (chip) chip.dataset.prevText = chip.textContent;
+    if (chip) chip.textContent = '…';
+  } else {
+    cell.style.opacity = '';
+    cell.style.pointerEvents = '';
+  }
+}
+
 async function applyShift(code) {
   if (!pickerCell) return;
   const staffId  = Number(pickerCell.dataset.staff);
   const date     = pickerCell.dataset.date;
   const oldCode  = pickerCell.dataset.code;
+  const savedCell = pickerCell;
   closePicker();
   if (code === oldCode) return;
 
+  setCellSaving(savedCell, true);
   try {
     const entry = await API.put(`/schedules/${currentSchedule.id}/entries`, {
       staff_id: staffId, date, shift_code: code,
       cross_branch_id: null, is_oncall: false,
     });
-    // Update local
-    const key = `${staffId}_${date}`;
     currentEntries = currentEntries.filter(e => !(e.staff_id===staffId && e.date?.slice(0,10)===date));
     currentEntries.push(entry);
     buildEntryMap();
     renderRotaGrid();
     renderScheduleStats();
     toast(`${date}: ${code}`, 'ok');
-  } catch (err) { toast(err.message, 'err'); }
+  } catch (err) {
+    setCellSaving(savedCell, false);
+    toast(err.message, 'err');
+  }
 }
 
 async function toggleOnCall() {
@@ -474,25 +473,137 @@ async function toggleScheduleLock() {
   } catch (err) { toast(err.message, 'err'); }
 }
 
-async function saveStaffMonthSetting(staffId, field, value) {
+async function saveStaffMonthSetting(staffId, field, value, inputEl) {
   const ms = staffMonthSettings[staffId] || { min_shifts: 0, max_shifts: 17, max_consecutive: 4 };
   const updated = { ...ms, [field]: parseInt(value) };
-  try {
-    await API.put(`/staff-month-settings/${staffId}`, {
-      year: scheduleYear, month: scheduleMonth,
-      min_shifts:      updated.min_shifts,
-      max_shifts:      updated.max_shifts,
-      max_consecutive: updated.max_consecutive,
-    });
-    staffMonthSettings[staffId] = updated;
-  } catch (err) { toast(err.message, 'err'); }
+
+  // Show spinner on the input
+  if (inputEl) {
+    const orig = inputEl.style.cssText;
+    inputEl.disabled = true;
+    inputEl.style.opacity = '0.5';
+    try {
+      await API.put(`/staff-month-settings/${staffId}`, {
+        year: scheduleYear, month: scheduleMonth,
+        min_shifts:      updated.min_shifts,
+        max_shifts:      updated.max_shifts,
+        max_consecutive: updated.max_consecutive,
+      });
+      staffMonthSettings[staffId] = updated;
+      inputEl.style.borderColor = '#27ae60';
+      setTimeout(() => { inputEl.style.borderColor = ''; }, 800);
+    } catch (err) {
+      toast(err.message, 'err');
+      inputEl.value = ms[field] ?? value; // revert
+    } finally {
+      inputEl.disabled = false;
+      inputEl.style.opacity = '1';
+    }
+  } else {
+    try {
+      await API.put(`/staff-month-settings/${staffId}`, {
+        year: scheduleYear, month: scheduleMonth,
+        min_shifts:      updated.min_shifts,
+        max_shifts:      updated.max_shifts,
+        max_consecutive: updated.max_consecutive,
+      });
+      staffMonthSettings[staffId] = updated;
+    } catch (err) { toast(err.message, 'err'); }
+  }
+}
+
+// ── Staff Settings Modal ──────────────────────────────────────────────────────
+
+function openStaffSettingsModal() {
+  const monthName = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
+  const canEdit = ['admin','superadmin'].includes(currentUser?.role) && !currentSchedule?.is_locked;
+
+  const inputStyle = `width:52px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;text-align:center`;
+
+  const rows = scheduleStaff.map(s => {
+    const ms   = staffMonthSettings[s.id] || {};
+    const minS = ms.min_shifts     ?? 0;
+    const maxS = ms.max_shifts     ?? 17;
+    const maxC = ms.max_consecutive ?? 4;
+    if (canEdit) {
+      return `<tr>
+        <td style="padding:8px 10px;font-weight:600;font-size:13px">${s.name}</td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="0" max="31" value="${minS}" style="${inputStyle}"
+            onchange="saveStaffMonthSetting(${s.id}, 'min_shifts', this.value, this)">
+        </td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="0" max="31" value="${maxS}" style="${inputStyle}"
+            onchange="saveStaffMonthSetting(${s.id}, 'max_shifts', this.value, this)">
+        </td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="1" max="14" value="${maxC}" style="${inputStyle}"
+            onchange="saveStaffMonthSetting(${s.id}, 'max_consecutive', this.value, this)">
+        </td>
+      </tr>`;
+    } else {
+      return `<tr>
+        <td style="padding:8px 10px;font-weight:600;font-size:13px">${s.name}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${minS}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${maxS}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${maxC}</td>
+      </tr>`;
+    }
+  }).join('');
+
+  const thStyle = `padding:8px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:center;border-bottom:1px solid var(--border)`;
+
+  showModal('staff-settings-modal', `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div>
+        <div style="font-size:16px;font-weight:700">⚙️ Staff Shift Settings</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">${monthName} ${scheduleYear} · ${scheduleStaff.length} staff</div>
+      </div>
+      <button onclick="closeModal('staff-settings-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="${thStyle};text-align:left;padding-left:10px">Staff</th>
+          <th style="${thStyle}">Min Shifts</th>
+          <th style="${thStyle}">Max Shifts</th>
+          <th style="${thStyle}">Max Consecutive Days</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input.</div>` : ''}
+  `);
+}
+
+function showModal(id, html) {
+  let overlay = document.getElementById(id);
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = id;
+    overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(id); });
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div style="background:var(--card);border-radius:14px;padding:24px;width:90%;max-width:520px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+      ${html}
+    </div>`;
+  overlay.style.display = 'flex';
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = 'none';
 }
 
 async function clearCell() {
   if (!pickerCell) return;
-  const staffId = Number(pickerCell.dataset.staff);
-  const date    = pickerCell.dataset.date;
+  const staffId  = Number(pickerCell.dataset.staff);
+  const date     = pickerCell.dataset.date;
+  const savedCell = pickerCell;
   closePicker();
+  setCellSaving(savedCell, true);
   try {
     await API.delete(`/schedules/${currentSchedule.id}/entries/cell`, { staff_id: staffId, date });
     currentEntries = currentEntries.filter(e => !(e.staff_id===staffId && e.date?.slice(0,10)===date));
@@ -500,7 +611,10 @@ async function clearCell() {
     renderRotaGrid();
     renderScheduleStats();
     toast(`${date}: cleared`, 'ok');
-  } catch (err) { toast(err.message, 'err'); }
+  } catch (err) {
+    setCellSaving(savedCell, false);
+    toast(err.message, 'err');
+  }
 }
 
 async function applyCrossBranch() {
