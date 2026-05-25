@@ -5,3 +5,4 @@ python-jose[cryptography]==3.3.0
 bcrypt==4.1.3
 python-multipart==0.0.9
 ortools==9.10.4067
+gunicorn==22.0.0
