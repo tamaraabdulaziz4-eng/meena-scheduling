@@ -459,55 +459,40 @@ def generate_schedule(nest_name: str, year: int, month: int,
             if max_s > 0:
                 model.add(sum(work_days) <= max_s)
 
-    # ── Hard Constraint 5c: Post-shift rest days ─────────────────────────────
-    # After a block of N or D: always 2 O days required
-    # After a block of M:
-    #   - block length >= 3 → 2 O days
-    #   - block length 1-2  → 1 O day
-    #
-    # Implementation: for each person and each day d where they work shift S,
-    # if the NEXT day is O, check how many O days follow — enforce minimum.
-    #
-    # Equivalent sliding-window form:
-    #   If person is on N on day d AND day d+1 is O  → day d+2 must also be O
-    #   If person is on D on day d AND day d+1 is O  → day d+2 must also be O
-    #   If person is on M for 3+ consecutive days ending on day d, AND d+1 is O
-    #                                                 → day d+2 must also be O
-
+    # ── Hard Constraint 5c: 2 rest days after max consecutive work days ──────
+    # After a person works their maximum consecutive days in a row (p_max_c),
+    # the next 2 days must be rest (O).
+    # Sliding window: if days d..d+p_max_c-1 are ALL work → days d+p_max_c and
+    # d+p_max_c+1 must be O.
+    WORK_CODES_5C = list(AUTO_WORK_SHIFTS)  # M and N only (what solver assigns)
     for p, sec_name, sec in all_staff:
-        allowed = set(sec["allowed_shifts"])
-
-        # 2 O's required after N (12h night shift only — not D which is 8-9h)
-        for trigger_code in ["N"]:
-            if trigger_code not in allowed:
-                continue
-            for d in range(n_days - 2):
-                b_work  = get_bool(p, d,     trigger_code)
-                b_o1    = get_bool(p, d + 1, "O")
-                b_o2    = get_bool(p, d + 2, "O")
-                # If trigger_code on d AND O on d+1 → O on d+2
-                # Equivalently: NOT (work=1 AND o1=1 AND o2=0)
-                # → work + o1 - o2 <= 1
-                model.add(b_work + b_o1 <= 1 + b_o2)
-
-        # Also: if N on day d, day d+1 cannot be a work shift (already in HC4)
-        # but we also need: N on d → if d+1 is O → d+2 must be O too
-        # (covered above)
-
-        # 2 O's required after M block of length >= 3
-        # Detect: M on days d-2, d-1, d (3 consecutive), then O on d+1 → O on d+2
-        if "M" not in allowed:
-            continue
-        for d in range(2, n_days - 2):
-            b_m0 = get_bool(p, d - 2, "M")
-            b_m1 = get_bool(p, d - 1, "M")
-            b_m2 = get_bool(p, d,     "M")
-            b_o1 = get_bool(p, d + 1, "O")
-            b_o2 = get_bool(p, d + 2, "O")
-            # If M×3 ending on d AND O on d+1 → O on d+2
-            # NOT (m0=1 AND m1=1 AND m2=1 AND o1=1 AND o2=0)
-            # → m0 + m1 + m2 + o1 - o2 <= 3
-            model.add(b_m0 + b_m1 + b_m2 + b_o1 <= 3 + b_o2)
+        limits  = staff_limits.get(p, {})
+        p_max_c = limits.get("max_consecutive", max_consecutive)
+        if n_days < p_max_c + 2:
+            continue  # month too short to enforce — skip
+        for d in range(n_days - p_max_c - 1):
+            # Check if all p_max_c days starting at d are work days
+            all_work = [model.new_bool_var(f"5c_w_{p}_{d}_{d2}") for d2 in range(d, d + p_max_c)]
+            for i, d2 in enumerate(range(d, d + p_max_c)):
+                work_d = [get_bool(p, d2, wc) for wc in WORK_CODES_5C if wc in sec["allowed_shifts"]]
+                if work_d:
+                    model.add_bool_or(work_d).only_enforce_if(all_work[i])
+                    model.add(sum(work_d) == 0).only_enforce_if(all_work[i].negated())
+                else:
+                    model.add(all_work[i] == 0)
+            # If all p_max_c days are work → day d+p_max_c must be O
+            b_o1 = get_bool(p, d + p_max_c,     "O")
+            b_o2 = get_bool(p, d + p_max_c + 1, "O")
+            all_work_sum = sum(all_work)
+            # all_work_sum == p_max_c → b_o1 == 1
+            model.add(b_o1 == 1).only_enforce_if(
+                [w for w in all_work]  # only if every work bool is true
+            )
+            # all_work_sum == p_max_c AND b_o1 == 1 → b_o2 == 1
+            b_all_and_o1 = model.new_bool_var(f"5c_trigger_{p}_{d}")
+            model.add_bool_and(all_work + [b_o1]).only_enforce_if(b_all_and_o1)
+            model.add_bool_or([w.negated() for w in all_work] + [b_o1.negated()]).only_enforce_if(b_all_and_o1.negated())
+            model.add(b_o2 == 1).only_enforce_if(b_all_and_o1)
 
     # ── Hard Constraint 6: Per-shift-group daily balance (no mass-O days) ───────
     # With hard domain restriction, each person can only work their dominant shift
@@ -658,32 +643,9 @@ def generate_schedule(nest_name: str, year: int, month: int,
             model.add(wknd_spread == max_wknd - min_wknd)
             objective_terms.append(wknd_spread)
 
-    # ── Soft Constraint: Maximize rest (O) days ──────────────────────────────
-    # Each work day costs 1 point; each fairness spread costs 10 points.
-    # This encourages ~2 O days/week while keeping fairness the priority.
-    rest_penalty_terms = []
-    for p, sec_name, sec in all_staff:
-        for d in range(n_days):
-            day = d + 1
-            if p in al_schedule and day in al_schedule[p]:
-                continue   # AL days already forced — skip
-            if "O" not in sec["allowed_shifts"]:
-                continue   # section doesn't use O (shouldn't happen)
-            b_o = get_bool(p, d, "O")
-            not_o = model.new_bool_var(f"notO_{p}_{d}")
-            model.add(not_o == 1 - b_o)
-            rest_penalty_terms.append(not_o)
-
     # ── Objective ─────────────────────────────────────────────────────────────
-    # Dominant shift is now enforced via hard domain restriction (not soft penalty).
-    # Remaining soft objectives:
-    #   fairness spread (M/N distribution) → weight 100
-    #   rest penalty (encourage O days)    → weight 1
-    total_obj = []
-    for t in objective_terms:
-        total_obj.append(100 * t)
-    for t in rest_penalty_terms:
-        total_obj.append(t)
+    # Minimize fairness spread (M/N distribution across staff).
+    total_obj = [100 * t for t in objective_terms]
     if total_obj:
         model.minimize(sum(total_obj))
 

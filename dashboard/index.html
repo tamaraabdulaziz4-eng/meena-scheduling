@@ -250,14 +250,13 @@
         <div style="background:rgba(107,78,255,0.07);border:1px solid rgba(107,78,255,0.18);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.7">
           🤖 Schedule will be generated using the <strong style="color:var(--text)">CP-SAT solver</strong> — only <strong style="color:var(--text)">M</strong> and <strong style="color:var(--text)">N</strong> shifts are auto-assigned. Other shifts can be added manually after generation.<br>
           <span style="font-size:12px">
-            &nbsp;· Exactly 1 Night (N) shift per section per day<br>
-            &nbsp;· At least 1 Morning (M) shift per section per day<br>
-            &nbsp;· Balanced M and N distribution across staff<br>
+            &nbsp;· Exactly 1 Night (N) + at least 1 Morning (M) per section per day<br>
             &nbsp;· No Night → Morning shift back-to-back<br>
-            &nbsp;· 2 rest days required after a Night shift<br>
-            &nbsp;· Max consecutive work days per staff (configurable inline)<br>
-            &nbsp;· Min / Max shifts per staff per month (configurable inline)<br>
-            &nbsp;· Annual leave days are locked in and respected
+            &nbsp;· 2 rest days after reaching max consecutive work days<br>
+            &nbsp;· Max consecutive days per staff (default 4, configurable per staff)<br>
+            &nbsp;· Min / Max shifts per month per staff (configurable per staff)<br>
+            &nbsp;· Balanced M and N distribution across staff<br>
+            &nbsp;· Annual leave days locked in
           </span>
         </div>
 
