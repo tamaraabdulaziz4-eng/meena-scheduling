@@ -173,7 +173,13 @@ def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
 def generate_schedule(nest_name: str, year: int, month: int,
                       al_schedule: dict = None, prev_tail: dict = None,
                       dominant_shifts: dict = None,
-                      time_limit: int = 60) -> dict:
+                      time_limit: int = 60,
+                      max_consecutive: int = 5,
+                      staff_limits: dict = None) -> dict:
+    """
+    staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits
+    max_consecutive: max working days in a row (default 5)
+    """
     """
     Generate a schedule for the given nest/month using CP-SAT.
 
@@ -186,7 +192,12 @@ def generate_schedule(nest_name: str, year: int, month: int,
     """
     al_schedule     = al_schedule or {}
     prev_tail       = prev_tail   or {}
+    staff_limits    = staff_limits or {}
     nest_cfg        = NESTS[nest_name]
+
+    # Auto-generate only assigns M and N (plus O/AL/SL)
+    # User can manually add other shifts after generation
+    AUTO_WORK_SHIFTS = {"M", "N"}
 
     # Auto-assign dominant shifts if not provided, or fill in gaps for partial overrides
     import math as _math
@@ -266,26 +277,21 @@ def generate_schedule(nest_name: str, year: int, month: int,
     }
 
     for p, sec_name, sec in all_staff:
-        dom = dominant_shifts.get(p)
         shift_var[p] = []
-        use_dominant = sec_name not in free_sections  # lock domain only if section has exact constraints
+        # Auto-generate only assigns M, N, or O — user adds other shifts manually
+        auto_allowed = [c for c in sec["allowed_shifts"] if c in AUTO_WORK_SHIFTS]
+        if not auto_allowed:
+            auto_allowed = ["M", "N"]  # fallback if section has no M/N configured
+        auto_indices = [code_to_idx[c] for c in auto_allowed] + [o_idx]
+        auto_domain  = cp_model.Domain.from_values(auto_indices)
+
         for d in range(n_days):
             day = d + 1
             if p in al_schedule and day in al_schedule[p]:
                 # Force AL on AL days
                 v = model.new_int_var(al_idx, al_idx, f"s_{p}_{d}")
             else:
-                if use_dominant and dom and dom in sec["allowed_shifts"] and dom != "O":
-                    # Hard domain restriction: dominant shift OR O only
-                    dom_idx = code_to_idx[dom]
-                    domain  = cp_model.Domain.from_values([dom_idx, o_idx])
-                else:
-                    # Free scheduling: any allowed non-leave, non-OC shift
-                    # OC is manual-only — solver never auto-assigns it
-                    fallback = [code_to_idx[c] for c in sec["allowed_shifts"]
-                                if c not in ("AL", "SL", "OC")]
-                    domain = cp_model.Domain.from_values(fallback)
-                v = model.new_int_var_from_domain(domain, f"s_{p}_{d}")
+                v = model.new_int_var_from_domain(auto_domain, f"s_{p}_{d}")
             shift_var[p].append(v)
 
     # ── Boolean helpers: is_shift[p][d][code] = 1 if person p on day d has code ──
@@ -394,23 +400,15 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 # b_n=1 AND b_m=1 is forbidden → b_n + b_m <= 1
                 model.add(b_n + b_m <= 1)
 
-    # ── Hard Constraint 5: Max 5 consecutive working shifts ───────────────────
-    WORK_CODES = [c for c in ALL_CODES if c in WORK_SHIFTS]
+    # ── Hard Constraint 5: Max consecutive working shifts (configurable) ────────
+    WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N now
+    window = max_consecutive + 1         # e.g. max 5 → window of 6, at least 1 off
     for p, sec_name, sec in all_staff:
-        allowed = set(sec["allowed_shifts"])
-        work_in_allowed = [c for c in WORK_CODES if c in allowed]
-        for d in range(n_days - 5):
-            # In any window of 6 days, at least 1 must be non-work
-            work_bools = []
-            for d2 in range(d, d + 6):
-                for wc in work_in_allowed:
-                    work_bools.append(get_bool(p, d2, wc))
-            # sum of work bools in 6-day window <= 5 * (num_work_shifts_per_day)
-            # But since each day has exactly 1 shift:
-            # count of work days in window <= 5
+        work_in_allowed = [c for c in WORK_CODES if c in sec["allowed_shifts"] or c in AUTO_WORK_SHIFTS]
+        for d in range(n_days - max_consecutive):
             day_work = []
-            for d2 in range(d, d + 6):
-                day_w = model.new_bool_var(f"dw_{p}_{d2}")
+            for d2 in range(d, d + window):
+                day_w = model.new_bool_var(f"dw_{p}_{d2}_{d}")
                 work_d = [get_bool(p, d2, wc) for wc in work_in_allowed]
                 if work_d:
                     model.add_bool_or(work_d).only_enforce_if(day_w)
@@ -418,9 +416,29 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 else:
                     model.add(day_w == 0)
                 day_work.append(day_w)
-            model.add(sum(day_work) <= 5)
+            model.add(sum(day_work) <= max_consecutive)
 
-    # ── Hard Constraint 5b: Post-shift rest days ─────────────────────────────
+    # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
+    for p, sec_name, sec in all_staff:
+        limits = staff_limits.get(p, {})
+        min_s  = limits.get("min", 0)
+        max_s  = limits.get("max", 17)
+        # Count total work days (M or N) for this person
+        work_days = []
+        for d in range(n_days):
+            work_d = [get_bool(p, d, wc) for wc in WORK_CODES if wc in (sec["allowed_shifts"] or AUTO_WORK_SHIFTS)]
+            if work_d:
+                dw = model.new_bool_var(f"ms_{p}_{d}")
+                model.add_bool_or(work_d).only_enforce_if(dw)
+                model.add(sum(work_d) == 0).only_enforce_if(dw.negated())
+                work_days.append(dw)
+        if work_days:
+            if min_s > 0:
+                model.add(sum(work_days) >= min_s)
+            if max_s > 0:
+                model.add(sum(work_days) <= max_s)
+
+    # ── Hard Constraint 5c: Post-shift rest days ─────────────────────────────
     # After a block of N or D: always 2 O days required
     # After a block of M:
     #   - block length >= 3 → 2 O days

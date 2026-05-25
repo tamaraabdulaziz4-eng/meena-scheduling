@@ -180,6 +180,16 @@ def init_schema():
 
             # Migrations
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS min_shifts INTEGER NOT NULL DEFAULT 0;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS max_shifts INTEGER NOT NULL DEFAULT 17;")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.branch_settings (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER UNIQUE NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    max_consecutive INTEGER NOT NULL DEFAULT 5,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -585,7 +595,7 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
     if not existing: raise HTTPException(404, "Not found")
     if not can_access_branch(user, existing["branch_id"]): raise HTTPException(403, "Forbidden")
     sets, params = [], []
-    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase"):
+    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts"):
         if field in body:
             sets.append(f"{field}=%s")
             params.append(body[field] if body[field] != "" else None)
@@ -601,6 +611,26 @@ def delete_staff(sid: int, user=Depends(require_admin)):
     if not can_access_branch(user, existing["branch_id"]): raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.staff WHERE id=%s", (sid,), exec_only=True)
     return {"ok": True}
+
+# ── Branch Settings ───────────────────────────────────────────────────────────
+
+@app.get("/api/branch-settings/{bid}")
+def get_branch_settings(bid: int, user=Depends(get_current_user)):
+    row = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (bid,), one=True)
+    if not row:
+        return {"branch_id": bid, "max_consecutive": 5}
+    return row
+
+@app.put("/api/branch-settings/{bid}")
+async def update_branch_settings(bid: int, request: Request, user=Depends(require_admin)):
+    if not can_access_branch(user, bid): raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    max_consecutive = int(body.get("max_consecutive", 5))
+    row = q("""INSERT INTO scheduling.branch_settings (branch_id, max_consecutive)
+               VALUES (%s, %s)
+               ON CONFLICT (branch_id) DO UPDATE SET max_consecutive=%s, updated_at=NOW()
+               RETURNING *""", (bid, max_consecutive, max_consecutive), one=True)
+    return row
 
 # ── Shift Types ───────────────────────────────────────────────────────────────
 
@@ -1077,22 +1107,39 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         if not solver_key: continue
         prev_tail_by_solver.setdefault(solver_key, []).append(row["shift_code"])
 
+    # Load branch settings (max_consecutive)
+    branch_settings = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (branch_id,), one=True)
+    max_consecutive = (branch_settings or {}).get("max_consecutive", 5)
+
+    # Build per-solver-key min/max shifts from staff table
+    staff_limits = {}  # solver_key → {"min": int, "max": int}
+    for db_name_l, sk in config_json.items():
+        staff_row = name_to_staff.get(db_name_l)
+        if staff_row:
+            staff_limits[sk] = {
+                "min": staff_row.get("min_shifts", 0),
+                "max": staff_row.get("max_shifts", 17),
+            }
+
     # Patch NESTS with DB config and call solver directly (no subprocess)
     import generator as _gen
     original_nests = _gen.NESTS
-    patched = dict(original_nests)          # start from the REAL current state
+    patched = dict(original_nests)
     patched[nest_name] = nest_cfg_for_solver
     _gen.NESTS = patched
 
     print(f"[Generate] nest={nest_name} sections={list(nest_cfg_for_solver['sections'].keys())}")
     print(f"[Generate] config_json keys={list(config_json.keys())}")
     print(f"[Generate] active_staff names={[s['name'] for s in active_staff]}")
+    print(f"[Generate] max_consecutive={max_consecutive} staff_limits={staff_limits}")
 
     try:
         result = solver_generate(
             nest_name=nest_name, year=year, month=month,
             al_schedule=al_schedule, prev_tail=prev_tail_by_solver,
             dominant_shifts=None, time_limit=120,
+            max_consecutive=max_consecutive,
+            staff_limits=staff_limits,
         )
     finally:
         _gen.NESTS = original_nests  # restore
