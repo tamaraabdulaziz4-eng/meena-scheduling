@@ -5,6 +5,7 @@
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let nestConfigData = {};   // { NEST1: [...sections], NEST2: [...], ... }
+let branchSettingsCache = {};  // branch_id → { max_consecutive }
 
 // ── Page render ───────────────────────────────────────────────────────────────
 
@@ -28,6 +29,14 @@ async function renderNestConfigPage() {
   try {
     const data = await API.get('/nest-config');
     nestConfigData = data.nests || {};
+    // Load branch settings for each branch
+    branchSettingsCache = {};
+    for (const b of (allBranches || [])) {
+      try {
+        const s = await API.get(`/branch-settings/${b.id}`);
+        branchSettingsCache[b.id] = s;
+      } catch(e) { branchSettingsCache[b.id] = { max_consecutive: 5 }; }
+    }
     renderNestConfigList();
   } catch (err) {
     document.getElementById('nest-config-list').innerHTML =
@@ -46,6 +55,10 @@ function renderNestConfigList() {
 
   el.innerHTML = nestKeys.map(nestKey => {
     const sections = nestConfigData[nestKey] || [];
+    // Find branch_id for this nest
+    const nestToBranch = {'NEST1':1,'NEST2':2,'NEST3':3,'NEST4':4,'NEST6':5,'Y5':6};
+    const bid = nestToBranch[nestKey];
+    const settings = branchSettingsCache[bid] || { max_consecutive: 5 };
     return `
       <div class="nest-block" style="margin-bottom:28px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
@@ -53,6 +66,19 @@ function renderNestConfigList() {
           <button class="btn btn-sm" style="font-size:11px;padding:4px 10px"
             onclick="openNestSectionModal(null, '${nestKey}')">+ Add Section</button>
         </div>
+
+        <div class="card" style="padding:12px 16px;margin-bottom:10px;border-radius:10px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">⚙️ Solver Settings</span>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+            Max consecutive working days:
+            <input type="number" min="1" max="14" value="${settings.max_consecutive}"
+              id="max-consec-${nestKey}"
+              style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px">
+            <button class="btn btn-sm" style="padding:4px 12px;font-size:12px"
+              onclick="saveMaxConsecutive('${nestKey}', ${bid})">Save</button>
+          </label>
+        </div>
+
         <div style="display:flex;flex-direction:column;gap:10px">
           ${sections.map(sec => renderSectionCard(sec)).join('')}
         </div>
@@ -226,6 +252,16 @@ async function saveNestSection() {
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
   }
+}
+
+async function saveMaxConsecutive(nestKey, branchId) {
+  const val = parseInt(document.getElementById(`max-consec-${nestKey}`).value);
+  if (!val || val < 1 || val > 14) { toast('Enter a value between 1 and 14', 'err'); return; }
+  try {
+    await API.put(`/branch-settings/${branchId}`, { max_consecutive: val });
+    branchSettingsCache[branchId] = { max_consecutive: val };
+    toast(`${nestKey} max consecutive days set to ${val}`);
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 async function deleteNestSection(id, nestKey, secName) {
