@@ -22,6 +22,7 @@ from typing import Optional, Any
 import bcrypt
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from jose import jwt, JWTError
 from fastapi import FastAPI, Request, Response, HTTPException, Depends, Cookie
 from fastapi.responses import JSONResponse, FileResponse
@@ -37,14 +38,27 @@ JWT_DAYS     = 30
 ADMIN_USER   = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS   = os.environ.get("ADMIN_PASS", "admin123")
 
-# ── DB ────────────────────────────────────────────────────────────────────────
+# ── DB connection pool ────────────────────────────────────────────────────────
+# One pool per worker process — keeps 2 connections warm, up to 10 max.
+# Eliminates the ~200ms SSL handshake cost on every request.
 
-def get_conn():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+
+def get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=2, maxconn=10,
+            dsn=DATABASE_URL,
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
+    return _pool
 
 def q(sql, params=(), *, one=False, many=False, exec_only=False):
-    """Run a query. Returns row(s) as plain dict(s)."""
-    with get_conn() as conn:
+    """Run a query using a pooled connection."""
+    pool = get_pool()
+    conn = pool.getconn()
+    try:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             if exec_only:
@@ -54,15 +68,21 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
             if one:
                 row = cur.fetchone()
                 return dict(row) if row else None
-            if many:
-                return [dict(r) for r in cur.fetchall()]
-            # default: return all rows
             return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
 
 # ── Schema init ───────────────────────────────────────────────────────────────
 
+def _direct_conn():
+    """One-off connection for startup only (pool not ready yet)."""
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+
 def init_schema():
-    with get_conn() as conn:
+    with _direct_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS scheduling;")
 
@@ -719,7 +739,9 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_adm
     body = await request.json()
     entries = body.get("entries", [])
     if not isinstance(entries, list): raise HTTPException(400, "entries must be array")
-    with get_conn() as conn:
+    pool = get_pool()
+    conn = pool.getconn()
+    try:
         with conn.cursor() as cur:
             for e in entries:
                 cur.execute("""INSERT INTO scheduling.schedule_entries
@@ -733,6 +755,11 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_adm
                              e.get("shift_code","O"), e.get("cross_branch_id"),
                              e.get("is_oncall",False), e.get("note")))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
     insert_audit(user, "BULK_SAVE", f"schedule:{sid}", f"{len(entries)} entries")
     return {"ok": True, "count": len(entries)}
 
@@ -1135,7 +1162,9 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
     q("DELETE FROM scheduling.schedule_entries WHERE schedule_id=%s", (schedule["id"],), exec_only=True)
 
-    with get_conn() as conn:
+    pool = get_pool()
+    conn = pool.getconn()
+    try:
         with conn.cursor() as cur:
             for e in flat_entries:
                 cur.execute("""INSERT INTO scheduling.schedule_entries
@@ -1147,6 +1176,11 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
                              e["cross_branch_id"], e["is_oncall"], e["note"],
                              e["shift_code"], e["cross_branch_id"], e["is_oncall"], e["note"]))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
 
     insert_audit(user, "GENERATE_SCHEDULE",
                  f"{year}-{month:02d}",
