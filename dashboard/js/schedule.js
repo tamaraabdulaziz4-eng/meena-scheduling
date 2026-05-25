@@ -435,11 +435,13 @@ async function applyShift(code) {
 
 async function toggleOnCall() {
   if (!pickerCell) return;
-  const staffId = Number(pickerCell.dataset.staff);
-  const date    = pickerCell.dataset.date;
-  const key     = `${staffId}_${date}`;
-  const entry   = entryMap[key];
+  const staffId   = Number(pickerCell.dataset.staff);
+  const date      = pickerCell.dataset.date;
+  const key       = `${staffId}_${date}`;
+  const entry     = entryMap[key];
+  const savedCell = pickerCell;
   closePicker();
+  setCellSaving(savedCell, true);
   try {
     const updated = await API.put(`/schedules/${currentSchedule.id}/entries`, {
       staff_id: staffId, date,
@@ -450,7 +452,10 @@ async function toggleOnCall() {
     currentEntries.push(updated);
     buildEntryMap();
     renderRotaGrid();
-  } catch (err) { toast(err.message, 'err'); }
+  } catch (err) {
+    setCellSaving(savedCell, false);
+    toast(err.message, 'err');
+  }
 }
 
 async function toggleScheduleLock() {
@@ -619,6 +624,7 @@ async function clearCell() {
 
 async function applyCrossBranch() {
   if (!pickerCell) return;
+  const savedCell = pickerCell;
   closePicker();
   // Simple prompt — pick branch
   const names = allBranches.filter(b => b.id !== currentBranchId).map(b => `${b.id}:${b.name}`).join('\n');
@@ -627,8 +633,9 @@ async function applyCrossBranch() {
   const crossId = parseInt(picked);
   if (isNaN(crossId)) return;
 
-  const staffId = Number(pickerCell.dataset.staff);
-  const date    = pickerCell.dataset.date;
+  const staffId = Number(savedCell.dataset.staff);
+  const date    = savedCell.dataset.date;
+  setCellSaving(savedCell, true);
   try {
     const entry = await API.put(`/schedules/${currentSchedule.id}/entries`, {
       staff_id: staffId, date, shift_code: 'M',
@@ -639,7 +646,10 @@ async function applyCrossBranch() {
     buildEntryMap();
     renderRotaGrid();
     toast('Cross-branch assigned');
-  } catch (err) { toast(err.message, 'err'); }
+  } catch (err) {
+    setCellSaving(savedCell, false);
+    toast(err.message, 'err');
+  }
 }
 
 // ── Generate modal ────────────────────────────────────────────────────────────
