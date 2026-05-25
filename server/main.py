@@ -55,25 +55,45 @@ def get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     return _pool
 
 def q(sql, params=(), *, one=False, many=False, exec_only=False):
-    """Run a query using a pooled connection."""
+    """Run a query using a pooled connection.
+    Neon closes idle SSL connections; we detect stale connections and retry once
+    with a fresh connection so callers never see 'SSL connection closed' errors.
+    """
     pool = get_pool()
-    conn = pool.getconn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            if exec_only:
+    for attempt in range(2):
+        conn = pool.getconn()
+        try:
+            # Quick liveness check — if the connection is broken this raises immediately
+            conn.reset()
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                if exec_only:
+                    conn.commit()
+                    pool.putconn(conn)
+                    return None
                 conn.commit()
-                return None
-            conn.commit()
-            if one:
-                row = cur.fetchone()
-                return dict(row) if row else None
-            return [dict(r) for r in cur.fetchall()]
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        pool.putconn(conn)
+                if one:
+                    row = cur.fetchone()
+                    pool.putconn(conn)
+                    return dict(row) if row else None
+                rows = [dict(r) for r in cur.fetchall()]
+                pool.putconn(conn)
+                return rows
+        except psycopg2.OperationalError:
+            # Connection is dead — discard it and retry with a new one
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            if attempt == 1:
+                raise   # second attempt also failed, give up
+        except Exception:
+            try:
+                conn.rollback()
+                pool.putconn(conn)
+            except Exception:
+                pass
+            raise
 
 # ── Schema init ───────────────────────────────────────────────────────────────
 
