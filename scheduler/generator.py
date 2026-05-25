@@ -414,15 +414,17 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 # b_n=1 AND b_m=1 is forbidden → b_n + b_m <= 1
                 model.add(b_n + b_m <= 1)
 
-    # ── Hard Constraint 5: Max consecutive working shifts (configurable) ────────
-    WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N now
-    window = max_consecutive + 1         # e.g. max 5 → window of 6, at least 1 off
+    # ── Hard Constraint 5: Max consecutive working shifts (per-staff) ───────────
+    WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
     for p, sec_name, sec in all_staff:
-        work_in_allowed = [c for c in WORK_CODES if c in sec["allowed_shifts"] or c in AUTO_WORK_SHIFTS]
-        for d in range(n_days - max_consecutive):
+        limits  = staff_limits.get(p, {})
+        p_max_c = limits.get("max_consecutive", max_consecutive)  # per-staff, fallback to branch default
+        window  = p_max_c + 1
+        work_in_allowed = [c for c in WORK_CODES if c in AUTO_WORK_SHIFTS]
+        for d in range(n_days - p_max_c):
             day_work = []
             for d2 in range(d, d + window):
-                day_w = model.new_bool_var(f"dw_{p}_{d2}_{d}")
+                day_w  = model.new_bool_var(f"dw_{p}_{d2}_{d}")
                 work_d = [get_bool(p, d2, wc) for wc in work_in_allowed]
                 if work_d:
                     model.add_bool_or(work_d).only_enforce_if(day_w)
@@ -430,7 +432,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 else:
                     model.add(day_w == 0)
                 day_work.append(day_w)
-            model.add(sum(day_work) <= max_consecutive)
+            model.add(sum(day_work) <= p_max_c)
 
     # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
     for p, sec_name, sec in all_staff:

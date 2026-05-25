@@ -140,7 +140,6 @@ function renderScheduleStatusBar() {
   const bar = document.getElementById('schedule-status-bar');
   if (!bar || !currentSchedule) return;
   const s = currentSchedule;
-  const badges = {
   const isAdmin = ['admin','superadmin'].includes(currentUser?.role);
 
   bar.innerHTML = `
@@ -295,25 +294,29 @@ function renderRotaGrid() {
           </div>
         </td>`;
       }).join('');
-      const ms  = staffMonthSettings[s.id] || {};
-      const minS = ms.min_shifts ?? 0;
-      const maxS = ms.max_shifts ?? 17;
+      const ms   = staffMonthSettings[s.id] || {};
+      const minS = ms.min_shifts    ?? 0;
+      const maxS = ms.max_shifts    ?? 17;
+      const maxC = ms.max_consecutive ?? 4;
       const canEdit = ['admin','superadmin'].includes(currentUser?.role) && !currentSchedule?.is_locked;
+      const inputStyle = `width:32px;font-size:10px;padding:1px 3px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);text-align:center`;
       rows += `<tr>
         <td class="rota-name-col" style="padding:4px 8px !important">
           <div style="font-weight:600;font-size:12px;white-space:nowrap">${s.name}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</div>
           ${canEdit ? `
-          <div style="display:flex;gap:4px;align-items:center;margin-top:3px">
+          <div style="display:flex;gap:3px;align-items:center;margin-top:3px;flex-wrap:wrap">
             <input type="number" min="0" max="31" value="${minS}"
-              id="min-s-${s.id}" title="Min shifts this month"
-              style="width:36px;font-size:10px;padding:1px 3px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);text-align:center"
-              onchange="saveStaffMonthSetting(${s.id}, 'min', this.value)">
+              title="Min shifts/month" style="${inputStyle}"
+              onchange="saveStaffMonthSetting(${s.id}, 'min_shifts', this.value)">
             <span style="font-size:10px;color:var(--muted)">–</span>
             <input type="number" min="0" max="31" value="${maxS}"
-              id="max-s-${s.id}" title="Max shifts this month"
-              style="width:36px;font-size:10px;padding:1px 3px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);text-align:center"
-              onchange="saveStaffMonthSetting(${s.id}, 'max', this.value)">
-          </div>` : `<div style="font-size:10px;color:var(--muted)">${minS}–${maxS}</div>`}
+              title="Max shifts/month" style="${inputStyle}"
+              onchange="saveStaffMonthSetting(${s.id}, 'max_shifts', this.value)">
+            <span style="font-size:10px;color:var(--muted)">|</span>
+            <input type="number" min="1" max="14" value="${maxC}"
+              title="Max consecutive days" style="${inputStyle}"
+              onchange="saveStaffMonthSetting(${s.id}, 'max_consecutive', this.value)">
+          </div>` : `<div style="font-size:10px;color:var(--muted)">${minS}–${maxS} | ≤${maxC}d</div>`}
         </td>
         ${cells}
         <td style="text-align:center;font-weight:700;font-size:12px;color:var(--primary)">${shiftCount}</td>
@@ -472,14 +475,16 @@ async function toggleScheduleLock() {
 }
 
 async function saveStaffMonthSetting(staffId, field, value) {
-  const ms = staffMonthSettings[staffId] || { min_shifts: 0, max_shifts: 17 };
-  const min_shifts = field === 'min' ? parseInt(value) : ms.min_shifts;
-  const max_shifts = field === 'max' ? parseInt(value) : ms.max_shifts;
+  const ms = staffMonthSettings[staffId] || { min_shifts: 0, max_shifts: 17, max_consecutive: 4 };
+  const updated = { ...ms, [field]: parseInt(value) };
   try {
     await API.put(`/staff-month-settings/${staffId}`, {
-      year: scheduleYear, month: scheduleMonth, min_shifts, max_shifts
+      year: scheduleYear, month: scheduleMonth,
+      min_shifts:      updated.min_shifts,
+      max_shifts:      updated.max_shifts,
+      max_consecutive: updated.max_consecutive,
     });
-    staffMonthSettings[staffId] = { min_shifts, max_shifts };
+    staffMonthSettings[staffId] = updated;
   } catch (err) { toast(err.message, 'err'); }
 }
 
