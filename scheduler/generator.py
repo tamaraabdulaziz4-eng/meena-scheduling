@@ -244,6 +244,11 @@ def generate_schedule(nest_name: str, year: int, month: int,
     idx_to_code  = {i: c for c, i in code_to_idx.items()}
     N_SHIFTS     = len(ALL_CODES)
 
+    # Safety: strip any shift codes from nest config that aren't in SHIFTS.
+    # This prevents KeyError if the DB has codes (e.g. TB) not yet in config.py.
+    for _, _, sec in all_staff:
+        sec["allowed_shifts"] = [c for c in sec.get("allowed_shifts", []) if c in code_to_idx]
+
     import sys as _sys
     print(f"\n{'='*60}", file=_sys.stderr)
     print(f"  Generating {nest_name} — {calendar.month_name[month]} {year}", file=_sys.stderr)

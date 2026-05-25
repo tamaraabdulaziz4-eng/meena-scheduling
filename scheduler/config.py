@@ -21,6 +21,7 @@ SHIFTS = {
     "O":    {"start": None,    "end": None,    "hours":  0},   # Off
     "AL":   {"start": None,    "end": None,    "hours":  0},   # Annual Leave
     "SL":   {"start": None,    "end": None,    "hours":  0},   # Sick Leave
+    "TB":   {"start": None,    "end": None,    "hours":  0},   # Time-Back
     "OC":   {"start": None,    "end": None,    "hours":  0},   # On Call
 }
 
@@ -28,7 +29,7 @@ SHIFTS = {
 WORK_SHIFTS = {"M", "N", "D", "D1", "EV", "A", "B", "C", "Y3", "D_US", "R", "R1", "N6", "OC"}
 
 # Shifts that count as "off/absent" — person unavailable
-REST_SHIFTS = {"O", "AL", "SL"}
+REST_SHIFTS = {"O", "AL", "SL", "TB"}
 
 # Islamic weekend
 WEEKENDS = {4, 5}   # 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu... wait — Fri=4, Sat=5
