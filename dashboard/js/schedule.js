@@ -175,12 +175,9 @@ function renderShiftLegend() {
   const leg = document.getElementById('shift-legend');
   if (!leg) return;
 
-  // Only show shifts actually used in the current schedule entries
-  const usedCodes = new Set(currentEntries.map(e => e.shift_code).filter(Boolean));
-
-  // Always show leave/oncall types if any entry uses them; always show work shifts in use
-  const workShifts   = allShiftTypes.filter(st => !st.is_off && !st.is_leave && !st.is_oncall && st.code !== 'O' && usedCodes.has(st.code));
-  const statusShifts = allShiftTypes.filter(st => (st.is_leave || st.is_oncall) && st.code !== 'O' && usedCodes.has(st.code));
+  // Show all shift types available for this branch (not just used ones)
+  const workShifts   = allShiftTypes.filter(st => !st.is_off && !st.is_leave && !st.is_oncall && st.code !== 'O');
+  const statusShifts = allShiftTypes.filter(st => (st.is_leave || st.is_oncall) && st.code !== 'O');
 
   function cellText(st) {
     const t = (st.start_time && st.end_time) ? `(${fmt12(st.start_time)} - ${fmt12(st.end_time)})` : null;
