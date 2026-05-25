@@ -8,7 +8,10 @@ const API = {
     }
     const res = await fetch('/api' + path, opts);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const msg = (typeof data.detail === 'string' ? data.detail : data.detail?.error) || data.error || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
     return data;
   },
   get:    (path)        => API.request('GET',    path),
