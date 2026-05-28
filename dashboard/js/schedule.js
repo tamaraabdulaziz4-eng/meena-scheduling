@@ -616,7 +616,7 @@ async function openStaffSettingsModal(tab) {
     </div>
     ${canEdit ? `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;gap:8px">
-      <div style="font-size:11px;color:var(--muted)">Changes save automatically on input.</div>
+      <div style="font-size:11px;color:var(--muted)">Changes save automatically on input and will apply from the next Generate.</div>
       <button class="btn btn-sm btn-ghost" style="color:var(--danger,#e74c3c);border-color:var(--danger,#e74c3c)" onclick="resetStaffSettingsToDefault()">Reset to Default</button>
     </div>` : ''}
     ` : `
@@ -632,7 +632,7 @@ async function openStaffSettingsModal(tab) {
         <tbody>${sectionRows || `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">No sections found</td></tr>`}</tbody>
       </table>
     </div>
-    ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input. Applied per section per month.</div>` : ''}
+    ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input and will apply from the next Generate.</div>` : ''}
     `}
   `);
 }
