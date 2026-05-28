@@ -1238,15 +1238,31 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             leaves_by_solver_key[solver_key] = leaves_by_solver_key.get(solver_key, 0) + 1
 
     def calc_section_mn(sec):
+        import calendar as _cal2
         staff_keys = sec["staff"]
+        # Build per-staff leave day sets for this section
+        staff_al = {sk: set(al_schedule.get(sk, [])) for sk in staff_keys}
+        # Count available staff on each day of the month
+        # A staff member is available on day d if not on AL and not consuming
+        # a forced O (we use a conservative floor: just check AL)
+        min_daily_avail = n_days_in_month  # start high, find minimum
+        for day in range(1, n_days_in_month + 1):
+            avail = sum(1 for sk in staff_keys if day not in staff_al[sk])
+            if avail < min_daily_avail:
+                min_daily_avail = avail
+        # Also check average availability
         total_avail = sum(
             min(17, n_days_in_month - leaves_by_solver_key.get(sk, 0))
             for sk in staff_keys
         )
-        ratio = total_avail / n_days_in_month if n_days_in_month > 0 else 0
-        if ratio >= 4:
+        avg_ratio = total_avail / n_days_in_month if n_days_in_month > 0 else 0
+        # Use the more conservative of min daily avail and avg ratio
+        # Need shifts_per_day + 2 buffer for rest days
+        # 2M+1N = 3/day needs min_daily_avail >= 4 (1 person resting) AND avg_ratio >= 3.5
+        # 2M+1N = 3/day needs avg_ratio >= 3.5 to account for rest days in HC4b/HC5
+        if min_daily_avail >= 5 and avg_ratio >= 4:
             return {"exact_n": 2, "exact_m": 2}
-        elif ratio >= 3:
+        elif min_daily_avail >= 4 and avg_ratio >= 3.5:
             return {"exact_n": 1, "exact_m": 2}
         else:
             return {"exact_n": 1, "exact_m": 1}
@@ -1319,7 +1335,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         leave_days = len(al_schedule.get(solver_key, []))
         available  = n_days_in_month - leave_days
         target     = min(17, available * 5 / 7)
-        min_s      = max(0, _math_staff.floor(target * 0.85))
+        # Use 0.75 floor (not 0.85) to give solver room for forced O days after N blocks
+        min_s      = max(0, _math_staff.floor(target * 0.75))
         max_s      = min(17, _math_staff.ceil(target * 1.15))
         return {"min_shifts": min_s, "max_shifts": max_s, "max_consecutive": max_consec}
 
