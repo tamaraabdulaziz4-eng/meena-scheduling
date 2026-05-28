@@ -129,9 +129,13 @@ def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
             if code not in work_shifts:
                 continue
             if code in exact_codes:
-                # Hard budget: only n_days×k total slots available
-                max_dom = max(1, int(n_days * k / target_w_5_7))
-                min_dom = math.ceil(k * 7 / 5)   # feasibility floor
+                # With hard 2-O-after-N, each N-dominant person works ~4/6 days
+                # (4 consecutive N + 2 forced O). Need ceil(k / (4/6)) = ceil(k*6/4)
+                # = ceil(k*1.5) people to guarantee N is covered every day.
+                # For k=1: ceil(1.5) = 2, but use 3 for safety margin.
+                # For k=2: ceil(3) = 3.
+                min_dom = max(math.ceil(k * 1.5) + 1, math.ceil(k * 7 / 5))
+                max_dom = max(min_dom, int(n_days * k / target_w_5_7))
                 slot_budget[code] = max(min_dom, min(max_dom, n_staff))
             # Min-coverage codes get no pre-budget — remaining staff fill them freely
 
