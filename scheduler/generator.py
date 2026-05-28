@@ -424,12 +424,11 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 b_m = get_bool(p, d + 1, mc)
                 model.add(b_n + b_m <= 1)
 
-    # ── Hard Constraint 4b: 2 O days after end of N block ────────────────────
-    # If N on day D and not-N on D+1 → O on D+1 and D+2.
-    # Encoded as: b_n_today=1 AND b_n_tomorrow=0 → b_o_d1=1 (and b_o_d2=1)
-    # Equivalent to: b_n_today + (1 - b_n_tomorrow) <= 1 + b_o_d1  →  not needed;
-    # use implication: NOT(b_n_today=1 AND b_n_tomorrow=0) OR b_o_d1=1
-    # i.e.  b_n_today - b_n_tomorrow - b_o_d1 <= 0
+    # ── Soft Constraint 4b: 2 O days after end of N block ────────────────────
+    # Penalise: N on day D, not-N on D+1, but D+1 (or D+2) is not O.
+    # violation = max(0, b_n_today - b_n_tomorrow - b_o_d1)  → 0 or 1
+    # Linear slack: b_n_today - b_n_tomorrow - b_o_d1 - slack_d1 <= 0, slack >= 0
+    rest_violation_terms = []
     for p, sec_name, sec in all_staff:
         allowed = set(sec["allowed_shifts"])
         if "N" not in allowed:
@@ -438,17 +437,17 @@ def generate_schedule(nest_name: str, year: int, month: int,
             b_n_today    = get_bool(p, d,     "N")
             b_n_tomorrow = get_bool(p, d + 1, "N")
             b_o_d1       = get_bool(p, d + 1, "O")
-            # b_n_today=1, b_n_tomorrow=0 → b_o_d1=1
-            # Linear: b_n_today - b_n_tomorrow <= b_o_d1  →  b_n_today - b_n_tomorrow - b_o_d1 <= 0
-            model.add(b_n_today - b_n_tomorrow - b_o_d1 <= 0)
+            viol1 = model.new_bool_var(f"nrest1_{p}_{d}")
+            # viol1=1 when N today, not-N tomorrow, not-O d+1
+            model.add(b_n_today - b_n_tomorrow - b_o_d1 <= viol1)
+            rest_violation_terms.append(viol1)
             if d + 2 < n_days:
                 b_o_d2 = get_bool(p, d + 2, "O")
-                model.add(b_n_today - b_n_tomorrow - b_o_d2 <= 0)
+                viol2 = model.new_bool_var(f"nrest2_{p}_{d}")
+                model.add(b_n_today - b_n_tomorrow - b_o_d2 <= viol2)
+                rest_violation_terms.append(viol2)
 
-    # ── Hard Constraint 4c: 1 O day after end of M block ─────────────────────
-    # If M on day D and not-M on D+1 and not-N on D+1 → O on D+1.
-    # b_m_today=1, b_m_tomorrow=0, b_n_tomorrow=0 → b_o_d1=1
-    # Linear: b_m_today - b_m_tomorrow - b_n_tomorrow - b_o_d1 <= 0
+    # ── Soft Constraint 4c: 1 O day after end of M block ─────────────────────
     for p, sec_name, sec in all_staff:
         allowed = set(sec["allowed_shifts"])
         if "M" not in allowed or "N" not in allowed:
@@ -458,7 +457,9 @@ def generate_schedule(nest_name: str, year: int, month: int,
             b_m_tomorrow = get_bool(p, d + 1, "M")
             b_n_tomorrow = get_bool(p, d + 1, "N")
             b_o_d1       = get_bool(p, d + 1, "O")
-            model.add(b_m_today - b_m_tomorrow - b_n_tomorrow - b_o_d1 <= 0)
+            viol = model.new_bool_var(f"mrest_{p}_{d}")
+            model.add(b_m_today - b_m_tomorrow - b_n_tomorrow - b_o_d1 <= viol)
+            rest_violation_terms.append(viol)
 
     # ── Hard Constraint 5: Max consecutive working shifts (per-staff) ───────────
     WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
@@ -691,9 +692,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
             objective_terms.append(wknd_spread)
 
     # ── Objective ─────────────────────────────────────────────────────────────
-    # Weights: block continuity (500) > fairness spread (100)
-    total_obj  = [500 * t for t in block_penalty_terms]
-    total_obj += [100 * t for t in objective_terms]
+    # Weights: rest violations (1000) > block continuity (500) > fairness (100)
+    total_obj  = [1000 * t for t in rest_violation_terms]
+    total_obj += [500  * t for t in block_penalty_terms]
+    total_obj += [100  * t for t in objective_terms]
     if total_obj:
         model.minimize(sum(total_obj))
 
