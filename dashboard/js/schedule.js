@@ -656,6 +656,12 @@ async function applyCrossBranch() {
 
 function openGenerateModal() {
   document.getElementById('gen-msg').textContent = '';
+
+  const branchName = allBranches.find(b => b.id === currentBranchId)?.name || 'this branch';
+  const monthName  = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
+  document.getElementById('gen-overwrite-warning').innerHTML =
+    `⚠ This will <strong>overwrite</strong> the current schedule for <strong>${branchName}</strong> — <strong>${monthName} ${scheduleYear}</strong>.`;
+
   document.getElementById('generate-modal-overlay').classList.add('open');
 }
 
