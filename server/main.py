@@ -1324,18 +1324,32 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     """, (year, month, branch_id))
     month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
 
-    # Auto-calculate fair min/max shifts per staff based on availability after leaves
-    # available_days = days_in_month - leave_days
-    # fair_target = min(17, available_days * 5/7)  — 5 working days out of 7
-    # min_shifts = floor(fair_target * 0.85), max_shifts = min(17, ceil(fair_target * 1.15))
+    # Auto-calculate fair min/max shifts per staff based on section capacity
+    # Section capacity = (exact_m + exact_n) slots per day × days_in_month / staff_count
+    # This is the fair share each person should get — much more accurate than 5/7 rule
+    # which assumes unlimited slots per day.
+    # Build solver_key → section mn config lookup
     import math as _math_staff
+    sk_to_mn = {}
+    for sec in nest_sections:
+        mn = nest_cfg_for_solver["sections"].get(sec["section_name"], {})
+        slots_per_day = mn.get("min_m", 1) + mn.get("min_n", 1)
+        staff_count   = len(sec["staff"])
+        for sk in sec["staff"]:
+            sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
+
     def calc_staff_limits(solver_key, max_consec):
-        leave_days = len(al_schedule.get(solver_key, []))
-        available  = n_days_in_month - leave_days
-        target     = min(17, available * 5 / 7)
-        # Use 0.75 floor (not 0.85) to give solver room for forced O days after N blocks
-        min_s      = max(0, _math_staff.floor(target * 0.75))
-        max_s      = min(17, _math_staff.ceil(target * 1.15))
+        leave_days    = len(al_schedule.get(solver_key, []))
+        available     = n_days_in_month - leave_days
+        sec_info      = sk_to_mn.get(solver_key, {"slots_per_day": 2, "staff_count": 5})
+        slots_per_day = sec_info["slots_per_day"]
+        staff_count   = sec_info["staff_count"]
+        # Fair share: total slots in month / staff count, scaled by personal availability
+        total_slots   = slots_per_day * n_days_in_month
+        fair_target   = min(17, (total_slots / staff_count) * (available / n_days_in_month))
+        # Give ±20% tolerance so solver has room to balance
+        min_s = max(0, _math_staff.floor(fair_target * 0.80))
+        max_s = min(17, _math_staff.ceil(fair_target * 1.20))
         return {"min_shifts": min_s, "max_shifts": max_s, "max_consecutive": max_consec}
 
     # Build per-solver-key limits
