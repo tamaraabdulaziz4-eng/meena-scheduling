@@ -1237,11 +1237,10 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         if solver_key:
             leaves_by_solver_key[solver_key] = leaves_by_solver_key.get(solver_key, 0) + 1
 
-    def calc_section_mn(sec):
-        import calendar as _cal2
+    def calc_section_mn(sec, al_sched):
         staff_keys = sec["staff"]
         # Build per-staff leave day sets for this section
-        staff_al = {sk: set(al_schedule.get(sk, [])) for sk in staff_keys}
+        staff_al = {sk: set(al_sched.get(sk, [])) for sk in staff_keys}
         # Count available staff on each day of the month
         # A staff member is available on day d if not on AL and not consuming
         # a forced O (we use a conservative floor: just check AL)
@@ -1267,24 +1266,6 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         else:
             return {"exact_n": 1, "exact_m": 1}
 
-    # Build nest config dict for solver
-    nest_cfg_for_solver = {"sections": {}}
-    for sec in nest_sections:
-        mn = calc_section_mn(sec)
-        nest_cfg_for_solver["sections"][sec["section_name"]] = {
-            "staff":          sec["staff"],
-            "staff_db_names": sec["staff_db_names"],
-            "allowed_shifts": sec["allowed_shifts"],
-            "coverage":       sec["coverage"],
-            # Auto-calculated exact counts override DB/settings values
-            "exact":          {"N": mn["exact_n"]},
-            "min_m":          mn["exact_m"],
-            "max_m":          mn["exact_m"],
-            "min_n":          mn["exact_n"],
-            "max_n":          mn["exact_n"],
-        }
-        print(f"[Generate] section={sec['section_name']} staff={sec['staff']} avail_ratio={sum(min(17,n_days_in_month-leaves_by_solver_key.get(sk,0)) for sk in sec['staff'])/n_days_in_month:.2f} → exact_n={mn['exact_n']} exact_m={mn['exact_m']}")
-
     # Build configJson: db_name_lower → solver_key
     config_json = {}
     for sec in nest_sections:
@@ -1307,6 +1288,23 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         solver_key = config_json.get(db_name.lower().strip())
         if solver_key:
             al_schedule[solver_key] = sorted(set(days))
+
+    # Build nest config dict for solver (after al_schedule is populated)
+    nest_cfg_for_solver = {"sections": {}}
+    for sec in nest_sections:
+        mn = calc_section_mn(sec, al_schedule)
+        nest_cfg_for_solver["sections"][sec["section_name"]] = {
+            "staff":          sec["staff"],
+            "staff_db_names": sec["staff_db_names"],
+            "allowed_shifts": sec["allowed_shifts"],
+            "coverage":       sec["coverage"],
+            "exact":          {"N": mn["exact_n"]},
+            "min_m":          mn["exact_m"],
+            "max_m":          mn["exact_m"],
+            "min_n":          mn["exact_n"],
+            "max_n":          mn["exact_n"],
+        }
+        print(f"[Generate] section={sec['section_name']} avail_ratio={sum(min(17,n_days_in_month-leaves_by_solver_key.get(sk,0)) for sk in sec['staff'])/n_days_in_month:.2f} → exact_n={mn['exact_n']} exact_m={mn['exact_m']}")
 
     # Prev tail
     prev_tail_by_solver = {}
