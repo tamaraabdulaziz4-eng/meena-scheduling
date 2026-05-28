@@ -658,6 +658,28 @@ function openGenerateModal() {
   document.getElementById('gen-msg').textContent = '';
   document.getElementById('generate-modal-overlay').classList.add('open');
 }
+
+async function resetStaffSettingsToDefault() {
+  const ok = await showConfirm(
+    'Reset to Default',
+    `Reset all staff settings for this month to:\n  · Min shifts: 0\n  · Max shifts: 17\n  · Max consecutive days: 4\n\nThis applies to ${scheduleStaff.length} staff for this branch and month only.`,
+    'Reset'
+  );
+  if (!ok) return;
+  const msg = document.getElementById('gen-msg');
+  msg.className = 'msg'; msg.textContent = 'Resetting…';
+  try {
+    await Promise.all(scheduleStaff.map(s =>
+      API.put(`/staff-month-settings/${s.id}`, {
+        year: scheduleYear, month: scheduleMonth,
+        min_shifts: 0, max_shifts: 17, max_consecutive: 4
+      }).then(() => { staffMonthSettings[s.id] = { min_shifts: 0, max_shifts: 17, max_consecutive: 4 }; })
+    ));
+    msg.className = 'msg'; msg.textContent = '✓ Reset to defaults — you can try Generate again.';
+  } catch (err) {
+    msg.className = 'msg err'; msg.textContent = err.message;
+  }
+}
 function closeGenerateModal() {
   document.getElementById('generate-modal-overlay').classList.remove('open');
 }
