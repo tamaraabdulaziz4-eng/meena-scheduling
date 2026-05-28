@@ -1299,12 +1299,10 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         if not solver_key: continue
         prev_tail_by_solver.setdefault(solver_key, []).append(row["shift_code"])
 
-    # Load per-month settings per staff (min/max shifts + max_consecutive)
+    # Load per-month settings per staff (max_consecutive only — min/max shifts are auto-calculated)
     month_settings_rows = q("""
         SELECT s.id, s.name,
-               COALESCE(sms.min_shifts, s.min_shifts, 0)   AS min_shifts,
-               COALESCE(sms.max_shifts, s.max_shifts, 17)  AS max_shifts,
-               COALESCE(sms.max_consecutive, 4)             AS max_consecutive
+               COALESCE(sms.max_consecutive, 4) AS max_consecutive
         FROM scheduling.staff s
         LEFT JOIN scheduling.staff_month_settings sms
           ON sms.staff_id=s.id AND sms.year=%s AND sms.month=%s
@@ -1312,16 +1310,26 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     """, (year, month, branch_id))
     month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
 
+    # Auto-calculate fair min/max shifts per staff based on availability after leaves
+    # available_days = days_in_month - leave_days
+    # fair_target = min(17, available_days * 5/7)  — 5 working days out of 7
+    # min_shifts = floor(fair_target * 0.85), max_shifts = min(17, ceil(fair_target * 1.15))
+    import math as _math_staff
+    def calc_staff_limits(solver_key, max_consec):
+        leave_days = len(al_schedule.get(solver_key, []))
+        available  = n_days_in_month - leave_days
+        target     = min(17, available * 5 / 7)
+        min_s      = max(0, _math_staff.floor(target * 0.85))
+        max_s      = min(17, _math_staff.ceil(target * 1.15))
+        return {"min_shifts": min_s, "max_shifts": max_s, "max_consecutive": max_consec}
+
     # Build per-solver-key limits
-    staff_limits = {}  # solver_key → {"min_shifts": int, "max_shifts": int, "max_consecutive": int}
+    staff_limits = {}
     for db_name_l, sk in config_json.items():
         ms = month_settings.get(db_name_l)
-        if ms:
-            staff_limits[sk] = {
-                "min_shifts":      ms.get("min_shifts", 0),
-                "max_shifts":      ms.get("max_shifts", 17),
-                "max_consecutive": ms.get("max_consecutive", 4),
-            }
+        max_consec = ms.get("max_consecutive", 4) if ms else 4
+        staff_limits[sk] = calc_staff_limits(sk, max_consec)
+        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']}")
 
     # Use branch-level max_consecutive as fallback (taken as min across staff, or 4)
     max_consecutive = min(
