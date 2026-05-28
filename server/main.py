@@ -1313,10 +1313,11 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         if not solver_key: continue
         prev_tail_by_solver.setdefault(solver_key, []).append(row["shift_code"])
 
-    # Load per-month settings per staff (max_consecutive only — min/max shifts are auto-calculated)
+    # Load per-month settings per staff (max_shifts used as ceiling for auto-calc)
     month_settings_rows = q("""
         SELECT s.id, s.name,
-               COALESCE(sms.max_consecutive, 4) AS max_consecutive
+               COALESCE(sms.max_consecutive, 4)  AS max_consecutive,
+               COALESCE(sms.max_shifts, s.max_shifts, 17) AS max_shifts
         FROM scheduling.staff s
         LEFT JOIN scheduling.staff_month_settings sms
           ON sms.staff_id=s.id AND sms.year=%s AND sms.month=%s
@@ -1324,11 +1325,9 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     """, (year, month, branch_id))
     month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
 
-    # Auto-calculate fair min/max shifts per staff based on section capacity
-    # Section capacity = (exact_m + exact_n) slots per day × days_in_month / staff_count
-    # This is the fair share each person should get — much more accurate than 5/7 rule
-    # which assumes unlimited slots per day.
-    # Build solver_key → section mn config lookup
+    # Auto-calculate fair min/max shifts per staff based on section capacity.
+    # The DB max_shifts (per-staff or per-month override) acts as the hard ceiling —
+    # auto-calc will never exceed it.
     import math as _math_staff
     sk_to_mn = {}
     for sec in nest_sections:
@@ -1338,7 +1337,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         for sk in sec["staff"]:
             sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
 
-    def calc_staff_limits(solver_key, max_consec):
+    def calc_staff_limits(solver_key, max_consec, db_max_shifts):
         leave_days    = len(al_schedule.get(solver_key, []))
         available     = n_days_in_month - leave_days
         sec_info      = sk_to_mn.get(solver_key, {"slots_per_day": 2, "staff_count": 5})
@@ -1346,19 +1345,20 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         staff_count   = sec_info["staff_count"]
         # Fair share: total slots in month / staff count, scaled by personal availability
         total_slots   = slots_per_day * n_days_in_month
-        fair_target   = min(17, (total_slots / staff_count) * (available / n_days_in_month))
+        fair_target   = min(db_max_shifts, (total_slots / staff_count) * (available / n_days_in_month))
         # Give ±20% tolerance so solver has room to balance
         min_s = max(0, _math_staff.floor(fair_target * 0.80))
-        max_s = min(17, _math_staff.ceil(fair_target * 1.20))
+        max_s = min(db_max_shifts, _math_staff.ceil(fair_target * 1.20))
         return {"min_shifts": min_s, "max_shifts": max_s, "max_consecutive": max_consec}
 
     # Build per-solver-key limits
     staff_limits = {}
     for db_name_l, sk in config_json.items():
         ms = month_settings.get(db_name_l)
-        max_consec = ms.get("max_consecutive", 4) if ms else 4
-        staff_limits[sk] = calc_staff_limits(sk, max_consec)
-        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']}")
+        max_consec    = ms.get("max_consecutive", 4)  if ms else 4
+        db_max_shifts = ms.get("max_shifts", 17)      if ms else 17
+        staff_limits[sk] = calc_staff_limits(sk, max_consec, db_max_shifts)
+        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} db_max={db_max_shifts} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']}")
 
     # Use branch-level max_consecutive as fallback (taken as min across staff, or 4)
     max_consecutive = min(
