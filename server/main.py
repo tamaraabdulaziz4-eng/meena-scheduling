@@ -1234,7 +1234,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
     if result["status"] == "INFEASIBLE":
         raise HTTPException(422, detail={
-            "error": "Solver could not find a valid schedule. Check staff count and AL dates.",
+            "error": "Could not generate a schedule with the current settings. Your constraints (min/max shifts, max consecutive days, leaves) may be too tight. Try using Reset to Default in the Generate dialog, or reduce leaves for this month.",
             "solver_status": result["status"]
         })
 

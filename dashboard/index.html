@@ -259,11 +259,10 @@
         </div>
 
         <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.25);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--muted);line-height:1.6">
-          ⚠️ If the solver cannot find a valid schedule, it means your current constraints (staff count, leaves, min/max shifts, max consecutive days) are too tight to satisfy.<br>
-          To fix this: adjust the settings in <strong style="color:var(--text)">⚙️ Settings</strong>, or click
-          <button onclick="resetStaffSettingsToDefault()" style="display:inline;background:none;border:1px solid var(--border);border-radius:6px;padding:1px 8px;font-size:11px;cursor:pointer;color:var(--text);margin:0 2px">Reset to Default</button>
-          (sets all staff to: min 0 · max 17 · max 4 consecutive days).<br>
-          If it still fails after resetting, please contact the developer.
+          ⚠️ If the solver cannot find a valid schedule, your constraints are too tight. To resolve:<br>
+          1. Click <button onclick="resetStaffSettingsToDefault()" style="display:inline;background:none;border:1px solid var(--border);border-radius:6px;padding:1px 8px;font-size:11px;cursor:pointer;color:var(--text);margin:0 2px">Reset to Default</button> — resets all staff to min 0 · max 17 · max 4 consecutive days<br>
+          2. Or reduce the number of leaves for this month<br>
+          3. If it still fails, please contact your system administrator.
         </div>
 
         <div style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.2);border-radius:10px;padding:10px 14px;font-size:12px;color:#cc4444">
