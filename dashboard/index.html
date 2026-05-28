@@ -263,7 +263,7 @@
 
         <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.25);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--muted);line-height:1.6">
           ⚠️ If the solver cannot find a valid schedule, your constraints are too tight. To resolve:<br>
-          1. Adjust settings via <button onclick="closeGenerateModal();openStaffSettingsModal()" style="display:inline;background:none;border:1px solid var(--border);border-radius:6px;padding:1px 8px;font-size:11px;cursor:pointer;color:var(--text);margin:0 2px">⚙️ Open Settings</button> or click <button onclick="resetStaffSettingsToDefault()" style="display:inline;background:none;border:1px solid var(--border);border-radius:6px;padding:1px 8px;font-size:11px;cursor:pointer;color:var(--text);margin:0 2px">Reset to Default</button> — resets all staff to min 0 · max 17 · max 4 consecutive days<br>
+          1. Adjust settings via <button onclick="closeGenerateModal();openStaffSettingsModal()" class="btn btn-sm" style="display:inline-flex;vertical-align:middle;padding:2px 10px;font-size:11px;margin:0 3px">⚙️ Open Settings</button> or <button onclick="resetStaffSettingsToDefault()" class="btn btn-sm" style="display:inline-flex;vertical-align:middle;padding:2px 10px;font-size:11px;margin:0 3px;color:var(--danger,#e74c3c);border-color:var(--danger,#e74c3c)">Reset to Default</button> — resets all staff to min 0 · max 17 · max 4 consecutive days<br>
           2. Or reduce the number of leaves for this month<br>
           3. If it still fails, please contact your system administrator.
         </div>

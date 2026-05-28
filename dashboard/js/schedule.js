@@ -110,7 +110,6 @@ async function loadScheduleData() {
     renderShiftLegend();
     renderScheduleStats();
     renderRotaGrid();
-    updateTopbarActions();
   } catch (err) {
     document.getElementById('rota-wrap').innerHTML =
       `<div class="empty"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
@@ -125,17 +124,6 @@ function buildEntryMap() {
   }
 }
 
-function updateTopbarActions() {
-  if (!currentSchedule) return;
-  const canEdit = ['admin','superadmin'].includes(currentUser.role);
-  let actions = '';
-  if (canEdit) {
-    actions += `<button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>`;
-  }
-  actions += `<button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 XLSX</button>`;
-  actions += `<button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Print</button>`;
-  document.getElementById('topbar-actions').innerHTML = actions;
-}
 
 function renderScheduleStatusBar() {
   const bar = document.getElementById('schedule-status-bar');
@@ -577,7 +565,11 @@ function openStaffSettingsModal() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input.</div>` : ''}
+    ${canEdit ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;gap:8px">
+      <div style="font-size:11px;color:var(--muted)">Changes save automatically on input.</div>
+      <button class="btn btn-sm btn-ghost" style="color:var(--danger,#e74c3c);border-color:var(--danger,#e74c3c)" onclick="resetStaffSettingsToDefault()">Reset to Default</button>
+    </div>` : ''}
   `);
 }
 
@@ -672,8 +664,6 @@ async function resetStaffSettingsToDefault() {
     'Reset'
   );
   if (!ok) return;
-  const msg = document.getElementById('gen-msg');
-  msg.className = 'msg'; msg.textContent = 'Resetting…';
   try {
     await Promise.all(scheduleStaff.map(s =>
       API.put(`/staff-month-settings/${s.id}`, {
@@ -681,9 +671,15 @@ async function resetStaffSettingsToDefault() {
         min_shifts: 0, max_shifts: 17, max_consecutive: 4
       }).then(() => { staffMonthSettings[s.id] = { min_shifts: 0, max_shifts: 17, max_consecutive: 4 }; })
     ));
-    msg.className = 'msg'; msg.textContent = '✓ Reset to defaults — you can try Generate again.';
+    const genMsg = document.getElementById('gen-msg');
+    if (genMsg) { genMsg.className = 'msg'; genMsg.textContent = '✓ Reset to defaults — you can try Generate again.'; }
+    // Refresh settings modal if it's open
+    if (document.getElementById('staff-settings-modal')?.style.display === 'flex') {
+      openStaffSettingsModal();
+    }
+    toast('Settings reset to defaults');
   } catch (err) {
-    msg.className = 'msg err'; msg.textContent = err.message;
+    toast(err.message, 'err');
   }
 }
 function closeGenerateModal() {
@@ -710,7 +706,6 @@ async function runGenerate() {
     renderScheduleStatusBar();
     renderScheduleStats();
     renderRotaGrid();
-    updateTopbarActions();
 
     toast(`Schedule generated (${result.solver_status} · ${result.solver_elapsed}s)`);
   } catch (err) {
