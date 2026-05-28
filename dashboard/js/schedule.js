@@ -507,13 +507,24 @@ async function saveStaffMonthSetting(staffId, field, value, inputEl) {
 
 // ── Staff Settings Modal ──────────────────────────────────────────────────────
 
-function openStaffSettingsModal() {
+let sectionMonthSettings = {}; // section_id → { section_name, min_m, max_m, min_n, max_n }
+
+async function openStaffSettingsModal(tab) {
+  tab = tab || 'staff';
   const monthName = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
   const canEdit = ['admin','superadmin'].includes(currentUser?.role) && !currentSchedule?.is_locked;
-
   const inputStyle = `width:52px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;text-align:center`;
+  const thStyle = `padding:8px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:center;border-bottom:1px solid var(--border)`;
 
-  const rows = scheduleStaff.map(s => {
+  // Load section settings if on section tab
+  if (tab === 'section') {
+    try {
+      sectionMonthSettings = await API.get(`/section-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`);
+    } catch (e) { sectionMonthSettings = {}; }
+  }
+
+  // Staff tab rows
+  const staffRows = scheduleStaff.map(s => {
     const ms   = staffMonthSettings[s.id] || {};
     const minS = ms.min_shifts     ?? 0;
     const maxS = ms.max_shifts     ?? 17;
@@ -544,25 +555,63 @@ function openStaffSettingsModal() {
     }
   }).join('');
 
-  const thStyle = `padding:8px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:center;border-bottom:1px solid var(--border)`;
+  // Section tab rows
+  const sectionRows = Object.entries(sectionMonthSettings).map(([secId, sec]) => {
+    if (canEdit) {
+      return `<tr>
+        <td style="padding:8px 10px;font-weight:600;font-size:13px">${sec.section_name}</td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="0" max="10" value="${sec.min_m}" style="${inputStyle}"
+            onchange="saveSectionMonthSetting(${secId}, 'min_m', this.value, this)">
+        </td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="1" max="10" value="${sec.max_m}" style="${inputStyle}"
+            onchange="saveSectionMonthSetting(${secId}, 'max_m', this.value, this)">
+        </td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="0" max="10" value="${sec.min_n}" style="${inputStyle}"
+            onchange="saveSectionMonthSetting(${secId}, 'min_n', this.value, this)">
+        </td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="1" max="10" value="${sec.max_n}" style="${inputStyle}"
+            onchange="saveSectionMonthSetting(${secId}, 'max_n', this.value, this)">
+        </td>
+      </tr>`;
+    } else {
+      return `<tr>
+        <td style="padding:8px 10px;font-weight:600;font-size:13px">${sec.section_name}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.min_m}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.max_m}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.min_n}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.max_n}</td>
+      </tr>`;
+    }
+  }).join('');
+
+  const tabBtn = (t, label) => `<button onclick="openStaffSettingsModal('${t}')" style="padding:5px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;${tab===t ? 'background:var(--accent,#4a90e2);color:#fff' : 'background:var(--card-alt);color:var(--muted)'}">${label}</button>`;
 
   showModal('staff-settings-modal', `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div>
-        <div style="font-size:16px;font-weight:700">⚙️ Staff Shift Settings</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">${monthName} ${scheduleYear} · ${scheduleStaff.length} staff</div>
+        <div style="font-size:16px;font-weight:700">⚙️ Shift Settings</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">${monthName} ${scheduleYear}</div>
       </div>
       <button onclick="closeModal('staff-settings-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
     </div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      ${tabBtn('staff', 'Staff')}
+      ${tabBtn('section', 'Section Limits')}
+    </div>
+    ${tab === 'staff' ? `
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse">
         <thead><tr>
           <th style="${thStyle};text-align:left;padding-left:10px">Staff</th>
           <th style="${thStyle}">Min Shifts</th>
           <th style="${thStyle}">Max Shifts</th>
-          <th style="${thStyle}">Max Consecutive Days</th>
+          <th style="${thStyle}">Max Consecutive</th>
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${staffRows}</tbody>
       </table>
     </div>
     ${canEdit ? `
@@ -570,7 +619,43 @@ function openStaffSettingsModal() {
       <div style="font-size:11px;color:var(--muted)">Changes save automatically on input.</div>
       <button class="btn btn-sm btn-ghost" style="color:var(--danger,#e74c3c);border-color:var(--danger,#e74c3c)" onclick="resetStaffSettingsToDefault()">Reset to Default</button>
     </div>` : ''}
+    ` : `
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="${thStyle};text-align:left;padding-left:10px">Section</th>
+          <th style="${thStyle}">Min M</th>
+          <th style="${thStyle}">Max M</th>
+          <th style="${thStyle}">Min N</th>
+          <th style="${thStyle}">Max N</th>
+        </tr></thead>
+        <tbody>${sectionRows || `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">No sections found</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input. Applied per section per month.</div>` : ''}
+    `}
   `);
+}
+
+async function saveSectionMonthSetting(sectionId, field, value, inputEl) {
+  const sec = sectionMonthSettings[sectionId] || { min_m:1, max_m:2, min_n:1, max_n:2 };
+  const updated = { ...sec, [field]: parseInt(value) };
+  inputEl.disabled = true; inputEl.style.opacity = '0.5';
+  try {
+    await API.put(`/section-month-settings/${sectionId}`, {
+      year: scheduleYear, month: scheduleMonth,
+      min_m: updated.min_m, max_m: updated.max_m,
+      min_n: updated.min_n, max_n: updated.max_n,
+    });
+    sectionMonthSettings[sectionId] = updated;
+    inputEl.style.borderColor = '#27ae60';
+    setTimeout(() => { inputEl.style.borderColor = ''; }, 800);
+  } catch (err) {
+    toast(err.message, 'err');
+    inputEl.value = sec[field] ?? value;
+  } finally {
+    inputEl.disabled = false; inputEl.style.opacity = '1';
+  }
 }
 
 function showModal(id, html) {

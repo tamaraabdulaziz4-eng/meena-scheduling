@@ -205,6 +205,20 @@ def init_schema():
             cur.execute("UPDATE scheduling.staff SET max_shifts=17 WHERE max_shifts=0 OR max_shifts IS NULL;")
             cur.execute("ALTER TABLE scheduling.staff_month_settings ADD COLUMN IF NOT EXISTS max_consecutive INTEGER NOT NULL DEFAULT 4;")
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.section_month_settings (
+                    id SERIAL PRIMARY KEY,
+                    section_id INTEGER NOT NULL REFERENCES scheduling.nest_sections(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    min_m INTEGER NOT NULL DEFAULT 1,
+                    max_m INTEGER NOT NULL DEFAULT 2,
+                    min_n INTEGER NOT NULL DEFAULT 1,
+                    max_n INTEGER NOT NULL DEFAULT 2,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(section_id, year, month)
+                );
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.branch_settings (
                     id SERIAL PRIMARY KEY,
                     branch_id INTEGER UNIQUE NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
@@ -410,11 +424,24 @@ def branch_to_nest(branch_name: str) -> Optional[str]:
     if "Y5" in n or "JUBAIL" in n or "AL-JUBAIL" in n: return "Y5"
     return None
 
-def get_nest_sections(nest_key: str) -> list:
-    rows = q("""SELECT id,nest_key,section_name,staff,staff_db_names,
-                       allowed_shifts,coverage,exact_coverage,sort_order,updated_at
-                FROM scheduling.nest_sections WHERE nest_key=%s
-                ORDER BY sort_order,section_name""", (nest_key,))
+def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> list:
+    if year and month:
+        rows = q("""
+            SELECT ns.id,ns.nest_key,ns.section_name,ns.staff,ns.staff_db_names,
+                   ns.allowed_shifts,ns.coverage,ns.exact_coverage,ns.sort_order,ns.updated_at,
+                   COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
+                   COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n
+            FROM scheduling.nest_sections ns
+            LEFT JOIN scheduling.section_month_settings sms
+              ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
+            WHERE ns.nest_key=%s ORDER BY ns.sort_order,ns.section_name
+        """, (year, month, nest_key))
+    else:
+        rows = q("""SELECT id,nest_key,section_name,staff,staff_db_names,
+                           allowed_shifts,coverage,exact_coverage,sort_order,updated_at,
+                           1 AS min_m, 2 AS max_m, 1 AS min_n, 2 AS max_n
+                    FROM scheduling.nest_sections WHERE nest_key=%s
+                    ORDER BY sort_order,section_name""", (nest_key,))
     return rows
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -698,6 +725,58 @@ async def upsert_staff_month_settings(staff_id: int, request: Request, user=Depe
                RETURNING *""",
             (staff_id, year, month, min_s, max_s, max_con,
              min_s, max_s, max_con), one=True)
+    return row
+
+# ── Section Month Settings ────────────────────────────────────────────────────
+
+@app.get("/api/section-month-settings")
+def get_section_month_settings(request: Request, user=Depends(get_current_user)):
+    """Get per-month M/N limits for all sections in a nest (branch), for a given year/month."""
+    branch_id = request.query_params.get("branch_id")
+    year      = request.query_params.get("year")
+    month     = request.query_params.get("month")
+    if not branch_id or not year or not month:
+        raise HTTPException(400, "branch_id, year, month required")
+    branch = q("SELECT name FROM scheduling.branches WHERE id=%s", (int(branch_id),), one=True)
+    if not branch: raise HTTPException(404, "Branch not found")
+    nest_name = branch_to_nest(branch["name"])
+    if not nest_name: return {}
+    rows = q("""
+        SELECT ns.id AS section_id, ns.section_name,
+               COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
+               COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n
+        FROM scheduling.nest_sections ns
+        LEFT JOIN scheduling.section_month_settings sms
+          ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
+        WHERE ns.nest_key=%s ORDER BY ns.sort_order,ns.section_name
+    """, (int(year), int(month), nest_name))
+    return {r["section_id"]: {
+        "section_name": r["section_name"],
+        "min_m": r["min_m"], "max_m": r["max_m"],
+        "min_n": r["min_n"], "max_n": r["max_n"],
+    } for r in rows}
+
+@app.put("/api/section-month-settings/{section_id}")
+async def upsert_section_month_settings(section_id: int, request: Request, user=Depends(require_admin)):
+    body  = await request.json()
+    year  = int(body.get("year"))
+    month = int(body.get("month"))
+    min_m = int(body.get("min_m", 1))
+    max_m = int(body.get("max_m", 2))
+    min_n = int(body.get("min_n", 1))
+    max_n = int(body.get("max_n", 2))
+    if min_m > max_m: raise HTTPException(400, "min_m cannot exceed max_m")
+    if min_n > max_n: raise HTTPException(400, "min_n cannot exceed max_n")
+    sec = q("SELECT id FROM scheduling.nest_sections WHERE id=%s", (section_id,), one=True)
+    if not sec: raise HTTPException(404, "Section not found")
+    row = q("""INSERT INTO scheduling.section_month_settings
+                 (section_id, year, month, min_m, max_m, min_n, max_n)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (section_id, year, month) DO UPDATE
+               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, updated_at=NOW()
+               RETURNING *""",
+            (section_id, year, month, min_m, max_m, min_n, max_n,
+             min_m, max_m, min_n, max_n), one=True)
     return row
 
 # ── Shift Types ───────────────────────────────────────────────────────────────
@@ -1131,8 +1210,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     if not nest_name:
         raise HTTPException(400, f'Branch "{branch["name"]}" not mapped to a nest')
 
-    # Load nest config from DB
-    nest_sections = get_nest_sections(nest_name)
+    # Load nest config from DB (with per-month M/N limits)
+    nest_sections = get_nest_sections(nest_name, year=year, month=month)
 
     # Build nest config dict for solver
     nest_cfg_for_solver = {"sections": {}}
@@ -1143,6 +1222,10 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             "allowed_shifts": sec["allowed_shifts"],
             "coverage":       sec["coverage"],
             "exact":          sec["exact_coverage"],
+            "min_m":          sec.get("min_m", 1),
+            "max_m":          sec.get("max_m", 2),
+            "min_n":          sec.get("min_n", 1),
+            "max_n":          sec.get("max_n", 2),
         }
 
     # Build configJson: db_name_lower → solver_key

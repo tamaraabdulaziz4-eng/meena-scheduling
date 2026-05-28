@@ -393,27 +393,25 @@ def generate_schedule(nest_name: str, year: int, month: int,
             for code, exact_count in (sec.get("exact") or {}).items():
                 model.add(sum(sec_bools(code)) == exact_count)
 
-            # Global rule: at least 1 M and 1 N per section per day
-            # Only enforce if section has enough staff (>= 2) and that shift isn't
-            # already covered by a stricter exact/coverage constraint above
+            # Per-section per-month min/max M and N per day (configurable, default min=1 max=2)
             sec_staff_count = sum(1 for p, sn, _ in all_staff if sn == sec_name)
             already_covered_codes = set((sec.get("exact") or {}).keys()) | set(coverage.keys())
-            if sec_staff_count >= 2:
-                for mandatory_code in ("M", "N"):
-                    if mandatory_code not in already_covered_codes:
+            mn_limits = {
+                "M": (int(sec.get("min_m", 1)), int(sec.get("max_m", 2))),
+                "N": (int(sec.get("min_n", 1)), int(sec.get("max_n", 2))),
+            }
+            for code, (mn_min, mn_max) in mn_limits.items():
+                if sec_staff_count >= mn_min:
+                    # Min: only enforce if not already covered by exact/coverage
+                    if code not in already_covered_codes:
                         avail = [p for p, sn, _ in all_staff
                                  if sn == sec_name
                                  and not (p in al_schedule and day in al_schedule[p])]
-                        if len(avail) >= 1:
-                            model.add(sum(sec_bools(mandatory_code)) >= 1)
-
-            # Cap: at most 2 M and at most 2 N per section per day
-            # Max shifts (17) is an upper limit not a target — this prevents
-            # the solver piling everyone onto the same shift on a given day.
-            sec_staff_count = sum(1 for p, sn, _ in all_staff if sn == sec_name)
-            for capped_code in ("M", "N"):
-                if sec_staff_count > 2:  # only cap if section has more than 2 staff
-                    model.add(sum(sec_bools(capped_code)) <= 2)
+                        if len(avail) >= mn_min:
+                            model.add(sum(sec_bools(code)) >= mn_min)
+                    # Max: only cap if section has more staff than the cap
+                    if sec_staff_count > mn_max:
+                        model.add(sum(sec_bools(code)) <= mn_max)
 
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
     MORNING_CODES = ["M", "D", "D1", "A", "EV", "B", "Y3", "D_US"]
