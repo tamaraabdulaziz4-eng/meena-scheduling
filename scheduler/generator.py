@@ -514,72 +514,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # HC5c removed — max consecutive (HC5) already prevents overwork;
     # forced rest days on top caused excessive O chains.
 
-    # ── Hard Constraint 6: Per-shift-group daily balance (no mass-O days) ───────
-    # With hard domain restriction, each person can only work their dominant shift
-    # or be on O.
-    #
-    # For groups whose shift is already covered by an `exact` constraint (e.g. N),
-    # the coverage constraint itself guarantees at least 1 person on that shift
-    # every day — no additional balance constraint is needed.
-    #
-    # For groups whose shift is NOT exact-constrained (e.g. M when only minimum
-    # coverage is set), we enforce: at least max(1, n_dom - max_rest_window) must
-    # be working on any day, where max_rest_window = 2 (the post-shift O count).
-    # This prevents mass-O days while remaining feasible with HC5b.
-    #
-    # Formula: min_w = max(1, n_dom - 2)
-    # i.e. at most 2 people in the group can be on O simultaneously (rest window).
+    # HC6 removed: with exact M=1 and exact N=1 both enforced by HC1, daily
+    # coverage is already guaranteed. Adding dominant-group balance constraints
+    # on top of exact coverage pins M-shifts exclusively to M-dominant staff,
+    # which combined with max_shifts caps causes infeasibility when the M-dominant
+    # group is small (e.g. 2 staff × max 15 = 30 < 31 required M-days).
 
     WORK_CODES_SET = set(c for c in ALL_CODES if c in WORK_SHIFTS)
-
-    # Collect shift codes covered by exact constraints per section
-    exact_codes_per_sec = {}
-    for sec_name, sec in nest_cfg["sections"].items():
-        exact_codes_per_sec[sec_name] = set((sec.get("exact") or {}).keys())
-
-    for sec_name, sec in nest_cfg["sections"].items():
-        # Free sections have no dominant lock — HC6 doesn't apply
-        if sec_name in free_sections:
-            continue
-
-        sec_staff_names = [p for p, sn, _ in all_staff if sn == sec_name]
-        exact_here      = exact_codes_per_sec[sec_name]
-
-        # Group staff by their dominant shift
-        dom_groups = {}  # shift_code → [person, ...]
-        for p in sec_staff_names:
-            dom = dominant_shifts.get(p)
-            if dom and dom in WORK_CODES_SET:
-                dom_groups.setdefault(dom, []).append(p)
-
-        for dom_code, dom_staff in dom_groups.items():
-            n_dom = len(dom_staff)
-            if n_dom == 0:
-                continue
-
-            if dom_code in exact_here:
-                # Exact-constrained: coverage constraint already guarantees this
-                # shift is covered. No extra balance needed (and adding it would
-                # over-constrain since we can't exceed the exact count anyway).
-                continue
-
-            # Min-coverage (non-exact): no upper limit on how many can work this
-            # shift per day. Force enough people to work to ensure coverage.
-            # For large groups: floor(n_dom × 5/7) ensures ~5/7 utilisation.
-            # For small groups (≤3): use 1 to avoid over-constraining rest days.
-            if n_dom <= 3:
-                min_w = 1
-            else:
-                min_w = max(1, int(n_dom * 5 / 7))
-
-            for d in range(n_days):
-                day = d + 1
-                avail = [p for p in dom_staff
-                         if not (p in al_schedule and day in al_schedule[p])]
-                if len(avail) < min_w:
-                    continue  # AL-heavy day — skip
-                work_bools = [get_bool(p, d, dom_code) for p in avail]
-                model.add(sum(work_bools) >= min_w)
 
     # ── HC6b: Minimum total work days for free sections ───────────────────────
     # Free sections have no dominant lock, so we enforce a per-person minimum
