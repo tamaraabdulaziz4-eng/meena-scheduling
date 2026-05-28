@@ -1295,12 +1295,13 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     patched[nest_name] = nest_cfg_for_solver
     _gen.NESTS = patched
 
-    print(f"[Generate] nest={nest_name} sections={list(nest_cfg_for_solver['sections'].keys())}")
-    print(f"[Generate] config_json keys={list(config_json.keys())}")
-    print(f"[Generate] active_staff names={[s['name'] for s in active_staff]}")
-    print(f"[Generate] max_consecutive={max_consecutive} staff_limits={staff_limits}")
+    print(f"[Generate] nest={nest_name} year={year} month={month}")
+    print(f"[Generate] active_staff ({len(active_staff)}): {[s['name'] for s in active_staff]}")
+    print(f"[Generate] al_schedule: {al_schedule}")
+    print(f"[Generate] max_consecutive={max_consecutive}")
+    print(f"[Generate] staff_limits={staff_limits}")
     for sn, sc in nest_cfg_for_solver["sections"].items():
-        print(f"[Generate] section={sn} staff={sc['staff']} coverage={sc['coverage']} exact={sc['exact']} allowed={sc['allowed_shifts']}")
+        print(f"[Generate] SECTION '{sn}': staff={sc['staff']} | exact={sc['exact']} | coverage={sc['coverage']} | min_m={sc['min_m']} max_m={sc['max_m']} min_n={sc['min_n']} max_n={sc['max_n']} | allowed={sc['allowed_shifts']}")
 
     try:
         result = solver_generate(
