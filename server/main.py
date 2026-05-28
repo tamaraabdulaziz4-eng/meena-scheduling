@@ -1210,23 +1210,64 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     if not nest_name:
         raise HTTPException(400, f'Branch "{branch["name"]}" not mapped to a nest')
 
-    # Load nest config from DB (with per-month M/N limits)
+    # Load nest config from DB
     nest_sections = get_nest_sections(nest_name, year=year, month=month)
+
+    # ── Auto-calculate exact M/N counts per section based on capacity ──────────
+    # For each section, total available shifts = sum over staff of min(17, days - leaves)
+    # capacity_ratio = total_available / days_in_month
+    # ratio >= 4 → exact N=2, exact M=2
+    # ratio >= 3 → exact N=1, exact M=2
+    # ratio >= 2 → exact N=1, exact M=1
+    # ratio <  2 → exact N=1, exact M=1 (too few staff, do best we can)
+    import calendar as _cal
+    n_days_in_month = _cal.monthrange(year, month)[1]
+
+    # Build leave counts per solver_key for capacity calc
+    leaves_by_solver_key = {}
+    for lv in leaves:
+        s = next((x for x in active_staff if x["id"] == lv["staff_id"]), None)
+        if not s: continue
+        solver_key = None
+        for sec in nest_sections:
+            for sk, db_name in (sec["staff_db_names"] or {}).items():
+                if db_name.lower().strip() == s["name"].lower().strip():
+                    solver_key = sk
+                    break
+        if solver_key:
+            leaves_by_solver_key[solver_key] = leaves_by_solver_key.get(solver_key, 0) + 1
+
+    def calc_section_mn(sec):
+        staff_keys = sec["staff"]
+        total_avail = sum(
+            min(17, n_days_in_month - leaves_by_solver_key.get(sk, 0))
+            for sk in staff_keys
+        )
+        ratio = total_avail / n_days_in_month if n_days_in_month > 0 else 0
+        if ratio >= 4:
+            return {"exact_n": 2, "exact_m": 2}
+        elif ratio >= 3:
+            return {"exact_n": 1, "exact_m": 2}
+        else:
+            return {"exact_n": 1, "exact_m": 1}
 
     # Build nest config dict for solver
     nest_cfg_for_solver = {"sections": {}}
     for sec in nest_sections:
+        mn = calc_section_mn(sec)
         nest_cfg_for_solver["sections"][sec["section_name"]] = {
             "staff":          sec["staff"],
             "staff_db_names": sec["staff_db_names"],
             "allowed_shifts": sec["allowed_shifts"],
             "coverage":       sec["coverage"],
-            "exact":          sec["exact_coverage"],
-            "min_m":          sec.get("min_m", 1),
-            "max_m":          sec.get("max_m", 2),
-            "min_n":          sec.get("min_n", 1),
-            "max_n":          sec.get("max_n", 2),
+            # Auto-calculated exact counts override DB/settings values
+            "exact":          {"N": mn["exact_n"]},
+            "min_m":          mn["exact_m"],
+            "max_m":          mn["exact_m"],
+            "min_n":          mn["exact_n"],
+            "max_n":          mn["exact_n"],
         }
+        print(f"[Generate] section={sec['section_name']} staff={sec['staff']} avail_ratio={sum(min(17,n_days_in_month-leaves_by_solver_key.get(sk,0)) for sk in sec['staff'])/n_days_in_month:.2f} → exact_n={mn['exact_n']} exact_m={mn['exact_m']}")
 
     # Build configJson: db_name_lower → solver_key
     config_json = {}
@@ -1272,13 +1313,13 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
 
     # Build per-solver-key limits
-    staff_limits = {}  # solver_key → {"min": int, "max": int, "max_consecutive": int}
+    staff_limits = {}  # solver_key → {"min_shifts": int, "max_shifts": int, "max_consecutive": int}
     for db_name_l, sk in config_json.items():
         ms = month_settings.get(db_name_l)
         if ms:
             staff_limits[sk] = {
-                "min":             ms.get("min_shifts", 0),
-                "max":             ms.get("max_shifts", 17),
+                "min_shifts":      ms.get("min_shifts", 0),
+                "max_shifts":      ms.get("max_shifts", 17),
                 "max_consecutive": ms.get("max_consecutive", 4),
             }
 

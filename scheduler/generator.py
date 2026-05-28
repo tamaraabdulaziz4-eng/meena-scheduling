@@ -424,11 +424,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 b_m = get_bool(p, d + 1, mc)
                 model.add(b_n + b_m <= 1)
 
-    # ── Soft Constraint 4b: 2 O days after end of N block ────────────────────
-    # Penalise: N on day D, not-N on D+1, but D+1 (or D+2) is not O.
-    # violation = max(0, b_n_today - b_n_tomorrow - b_o_d1)  → 0 or 1
-    # Linear slack: b_n_today - b_n_tomorrow - b_o_d1 - slack_d1 <= 0, slack >= 0
-    rest_violation_terms = []
+    # ── Hard Constraint 4b: 2 O days after end of N block ────────────────────
+    # N on day D, not-N on D+1 → O on D+1 AND O on D+2
+    # Safe as hard because: dominant system ensures each person does at most one
+    # N-block per month, and auto-calc ensures enough N-dominant staff are assigned
+    # so staggered rest windows never leave N uncovered.
+    # Linear encoding: N_today - N_tomorrow - O_d1 <= 0
+    rest_violation_terms = []  # kept empty — 4b is now hard, 4c stays soft below
     for p, sec_name, sec in all_staff:
         allowed = set(sec["allowed_shifts"])
         if "N" not in allowed:
@@ -437,15 +439,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
             b_n_today    = get_bool(p, d,     "N")
             b_n_tomorrow = get_bool(p, d + 1, "N")
             b_o_d1       = get_bool(p, d + 1, "O")
-            viol1 = model.new_bool_var(f"nrest1_{p}_{d}")
-            # viol1=1 when N today, not-N tomorrow, not-O d+1
-            model.add(b_n_today - b_n_tomorrow - b_o_d1 <= viol1)
-            rest_violation_terms.append(viol1)
+            model.add(b_n_today - b_n_tomorrow - b_o_d1 <= 0)
             if d + 2 < n_days:
                 b_o_d2 = get_bool(p, d + 2, "O")
-                viol2 = model.new_bool_var(f"nrest2_{p}_{d}")
-                model.add(b_n_today - b_n_tomorrow - b_o_d2 <= viol2)
-                rest_violation_terms.append(viol2)
+                model.add(b_n_today - b_n_tomorrow - b_o_d2 <= 0)
 
     # ── Soft Constraint 4c: 1 O day after end of M block ─────────────────────
     for p, sec_name, sec in all_staff:
@@ -484,8 +481,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
     for p, sec_name, sec in all_staff:
         limits = staff_limits.get(p, {})
-        min_s  = limits.get("min", 0)
-        max_s  = limits.get("max", 17)
+        min_s  = limits.get("min_shifts", 0)
+        max_s  = limits.get("max_shifts", 17)
         # Count total work days (M or N) for this person
         work_days = []
         for d in range(n_days):
@@ -599,44 +596,6 @@ def generate_schedule(nest_name: str, year: int, month: int,
             if work_bools:
                 model.add(sum(work_bools) >= min_work)
 
-    # ── Soft Constraint: Shift block continuity (min 3 consecutive before switch) ─
-    # Penalise switching between M and N before completing a block of 3.
-    # For each day D where shift switches from code A to code B (A≠B, both work shifts),
-    # check if the block ending on D had length < 3 — if so, add penalty.
-    # Implementation: for each pair of days (d, d+1) where shift changes M↔N,
-    # check if d-1 was also a different shift (i.e. block length was only 1 or 2).
-    MIN_BLOCK = 3
-    BLOCK_SHIFTS = ["M", "N"]
-    block_penalty_terms = []
-
-    for p, sec_name, sec in all_staff:
-        allowed = set(sec["allowed_shifts"])
-        if not ("M" in allowed and "N" in allowed):
-            continue
-        for d in range(1, n_days - 1):
-            for (code_a, code_b) in [("M", "N"), ("N", "M")]:
-                # Detect: code_a on day d, code_b on day d+1
-                switched = model.new_bool_var(f"sw_{p}_{code_a}_{code_b}_{d}")
-                model.add(get_bool(p, d, code_a) == 1).only_enforce_if(switched)
-                model.add(get_bool(p, d + 1, code_b) == 1).only_enforce_if(switched)
-                # Check block length: how many of the previous (MIN_BLOCK-1) days were code_a
-                # If fewer than MIN_BLOCK-1 days before d are code_a, the block was short
-                start = max(0, d - (MIN_BLOCK - 1))
-                prev_same = [get_bool(p, dd, code_a) for dd in range(start, d)]
-                if prev_same:
-                    block_short = model.new_bool_var(f"bshort_{p}_{code_a}_{d}")
-                    # block_short = 1 if sum of prev_same < MIN_BLOCK - 1
-                    # i.e. not all (MIN_BLOCK-1) prior days were code_a
-                    total_prev = model.new_int_var(0, len(prev_same), f"bprev_{p}_{code_a}_{d}")
-                    model.add(total_prev == sum(prev_same))
-                    model.add(total_prev < MIN_BLOCK - 1).only_enforce_if(block_short)
-                    model.add(total_prev >= MIN_BLOCK - 1).only_enforce_if(block_short.negated())
-                    # Penalty fires when switch happened AND block was short
-                    pen = model.new_bool_var(f"pen_{p}_{code_a}_{code_b}_{d}")
-                    model.add_bool_and([switched, block_short]).only_enforce_if(pen)
-                    model.add_bool_or([switched.negated(), block_short.negated()]).only_enforce_if(pen.negated())
-                    block_penalty_terms.append(pen)
-
     # ── Soft Constraint: Fairness — equal M and N distribution ───────────────
     # Minimize max deviation from mean for M and N counts
     FAIRNESS_SHIFTS = ["M", "N"]
@@ -692,10 +651,9 @@ def generate_schedule(nest_name: str, year: int, month: int,
             objective_terms.append(wknd_spread)
 
     # ── Objective ─────────────────────────────────────────────────────────────
-    # Weights: rest violations (1000) > block continuity (500) > fairness (100)
-    total_obj  = [1000 * t for t in rest_violation_terms]
-    total_obj += [500  * t for t in block_penalty_terms]
-    total_obj += [100  * t for t in objective_terms]
+    # Weights: M-block rest violations (500) > fairness spread (100)
+    total_obj  = [500 * t for t in rest_violation_terms]
+    total_obj += [100 * t for t in objective_terms]
     if total_obj:
         model.minimize(sum(total_obj))
 
