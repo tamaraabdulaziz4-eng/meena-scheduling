@@ -435,12 +435,17 @@ def generate_schedule(nest_name: str, year: int, month: int,
         allowed = set(sec["allowed_shifts"])
         if "N" not in allowed:
             continue
+        p_al = set(al_schedule.get(p, []))
         for d in range(n_days - 1):
+            day_d1 = d + 2  # 1-indexed
+            day_d2 = d + 3
             b_n_today    = get_bool(p, d,     "N")
             b_n_tomorrow = get_bool(p, d + 1, "N")
-            b_o_d1       = get_bool(p, d + 1, "O")
-            model.add(b_n_today - b_n_tomorrow - b_o_d1 <= 0)
-            if d + 2 < n_days:
+            # If d+1 is an AL day the person is already off — constraint satisfied
+            if day_d1 not in p_al:
+                b_o_d1 = get_bool(p, d + 1, "O")
+                model.add(b_n_today - b_n_tomorrow - b_o_d1 <= 0)
+            if d + 2 < n_days and day_d2 not in p_al:
                 b_o_d2 = get_bool(p, d + 2, "O")
                 model.add(b_n_today - b_n_tomorrow - b_o_d2 <= 0)
 
@@ -449,7 +454,11 @@ def generate_schedule(nest_name: str, year: int, month: int,
         allowed = set(sec["allowed_shifts"])
         if "M" not in allowed or "N" not in allowed:
             continue
+        p_al = set(al_schedule.get(p, []))
         for d in range(n_days - 1):
+            day_d1 = d + 2  # 1-indexed
+            if day_d1 in p_al:
+                continue  # AL day counts as rest — skip
             b_m_today    = get_bool(p, d,     "M")
             b_m_tomorrow = get_bool(p, d + 1, "M")
             b_n_tomorrow = get_bool(p, d + 1, "N")
