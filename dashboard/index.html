@@ -250,10 +250,11 @@
         <div style="background:rgba(107,78,255,0.07);border:1px solid rgba(107,78,255,0.18);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.7">
           🤖 The solver will generate a schedule based on your current inputs for this branch and month — including staff count, leaves taken, and the settings below. Only <strong style="color:var(--text)">M</strong> and <strong style="color:var(--text)">N</strong> shifts are auto-assigned; other shifts can be added manually after.<br><br>
           <span style="font-size:12px">
-            &nbsp;· At least 1 and at most 2 Night (N) shifts per section per day<br>
-            &nbsp;· At least 1 and at most 2 Morning (M) shifts per section per day<br>
+            &nbsp;· <strong style="color:var(--text)">M and N counts are auto-calculated per section</strong> based on available staff after leaves — 1M+1N, 2M+1N, or 2M+2N per day<br>
+            &nbsp;· After a Night (N) block ends → 2 days off before any other shift<br>
+            &nbsp;· After a Morning (M) block ends → 1 day off (where possible)<br>
             &nbsp;· No Night → Morning shift back-to-back<br>
-            &nbsp;· Each staff member works at most their configured max consecutive days in a row<br>
+            &nbsp;· Max consecutive working days enforced per staff (default 4)<br>
             &nbsp;· Each staff member works within their configured min / max shifts for the month<br>
             &nbsp;· Balanced M and N distribution across staff<br>
             &nbsp;· Annual leave days locked in<br>
