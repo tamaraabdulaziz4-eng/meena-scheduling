@@ -6,4 +6,7 @@ reference/
 __pycache__/
 *.pyc
 *.pyo
-
+.venv/
+.pytest_cache/
+.mypy_cache/
+*.log
