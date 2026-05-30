@@ -1,4 +1,13 @@
 // ── API helper ────────────────────────────────────────────────────────────────
+class APIError extends Error {
+  constructor(message, status, data) {
+    super(message);
+    this.name = 'APIError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 const API = {
   async request(method, path, body) {
     const opts = { method, credentials: 'include', headers: {} };
@@ -10,7 +19,7 @@ const API = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const msg = (typeof data.detail === 'string' ? data.detail : data.detail?.error) || data.error || `HTTP ${res.status}`;
-      throw new Error(msg);
+      throw new APIError(msg, res.status, data);
     }
     return data;
   },

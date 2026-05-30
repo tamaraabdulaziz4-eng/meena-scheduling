@@ -799,10 +799,83 @@ async function runGenerate() {
     renderScheduleStats();
     renderRotaGrid();
 
-    toast(`Schedule generated (${result.solver_status} · ${result.solver_elapsed}s)`);
+    toast(`Schedule generated (${result.solver_status})`);
+
+    // Show diagnostics if any section is non-optimal or infeasible.
+    const sections = result.sections || {};
+    const nonOptimal = Object.values(sections).some(s => s?.status && s.status !== 'OPTIMAL');
+    if (nonOptimal) {
+      openGenerateDiagnosticsModal({
+        title: 'Generation completed with warnings',
+        solver_status: result.solver_status,
+        sections,
+      });
+    }
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
+
+    // If backend provided detailed diagnostics, show them in a popup.
+    const data = err?.data || err?.response || null;
+    const sections = data?.detail?.sections || data?.sections;
+    if (sections) {
+      openGenerateDiagnosticsModal({
+        title: 'Could not generate schedule',
+        solver_status: data?.detail?.solver_status || data?.solver_status,
+        sections,
+        top_error: (typeof data?.detail === 'string' ? data.detail : data?.detail?.error) || data?.error,
+      });
+    }
   } finally {
     btn.disabled = false; btn.textContent = '⚡ Generate';
   }
+}
+
+function openGenerateDiagnosticsModal({ title, solver_status, sections, top_error }) {
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  const sectionRows = Object.entries(sections || {}).map(([name, info]) => {
+    const status = info?.status || 'UNKNOWN';
+    const diag = info?.diagnostics || {};
+    const msgs = (diag.messages || []).slice(0, 6);
+    const shortages = (diag.daily_shortages || []).slice(0, 6);
+    const extra = [];
+
+    if (status === 'FEASIBLE') extra.push('Found a feasible schedule but could not prove optimality within the time limit.');
+    if (status === 'INFEASIBLE') extra.push('No schedule satisfies the current constraints for this section.');
+    if (diag.required_month_min_shifts && diag.capacity_month_max_mn && diag.required_month_min_shifts > diag.capacity_month_max_mn) {
+      extra.push(`Monthly minimum shifts demand (${diag.required_month_min_shifts}) exceeds capacity (${diag.capacity_month_max_mn}).`);
+    }
+
+    const list = [...extra, ...msgs].filter(Boolean);
+    const listHtml = list.length
+      ? `<ul style="margin:10px 0 0 18px;color:var(--text);line-height:1.35">${list.map(m => `<li>${esc(m)}</li>`).join('')}</ul>`
+      : `<div style="margin-top:10px;color:var(--muted)">No additional diagnostics provided.</div>`;
+
+    const shortageHtml = shortages.length
+      ? `<div style="margin-top:10px;color:var(--muted);font-size:12px">Example shortage days: ${shortages.map(s => `Day ${s.day} (avail ${s.available_staff} / need ${s.required_staff})`).join(', ')}</div>`
+      : '';
+
+    return `
+      <div style="padding:12px 12px;border:1px solid var(--border);border-radius:12px;margin-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div style="font-weight:700">${esc(name)}</div>
+          <div style="font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,0.05);border:1px solid var(--border)">${esc(status)}</div>
+        </div>
+        ${listHtml}
+        ${shortageHtml}
+      </div>`;
+  }).join('');
+
+  showModal('generate-diagnostics-modal', `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div style="font-size:18px;font-weight:800">${esc(title || 'Diagnostics')}</div>
+      <button onclick="closeModal('generate-diagnostics-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
+    </div>
+    ${top_error ? `<div style="margin-top:10px;color:var(--text)">${esc(top_error)}</div>` : ''}
+    <div style="margin-top:8px;color:var(--muted);font-size:12px">Solver status: ${esc(solver_status || 'UNKNOWN')}</div>
+    ${sectionRows || `<div style="margin-top:12px;color:var(--muted)">No section details.</div>`}
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button onclick="closeModal('generate-diagnostics-modal')" class="btn">Close</button>
+    </div>
+  `);
 }
