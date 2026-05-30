@@ -1458,11 +1458,13 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     def section_diagnostics(section_name: str, sec_cfg: dict, staff_keys: list[str]) -> dict:
         """Best-effort explanation when a section is infeasible."""
         import calendar as _cal2
+        import math as _m2
         n_days = _cal2.monthrange(year, month)[1]
         min_m = int(sec_cfg.get("min_m", 1) or 1)
         max_m = int(sec_cfg.get("max_m", 2) or 2)
         min_n = int(sec_cfg.get("min_n", 1) or 1)
         max_n = int(sec_cfg.get("max_n", 2) or 2)
+        k = int(sec_cfg.get("max_consecutive", 4) or 4)
         max_slots_per_day = max_m + max_n
         cap_month = n_days * max_slots_per_day
         required_month = sum(int(staff_limits.get(sk, {}).get("min_shifts", 0) or 0) for sk in staff_keys)
@@ -1480,10 +1482,20 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             msgs.append(f"Monthly minimum demand ({required_month}) exceeds capacity ({cap_month}) given max M/N per day.")
         if daily_shortages:
             msgs.append(f"Some days have fewer available staff than required coverage (min M+N).")
+        # 4-on/2-off feasibility heuristic: each staff works at most k/(k+2) of days long-run.
+        # Staff needed per day ≈ ceil(need / (k/(k+2))) = ceil(need * (k+2)/k)
+        if k > 0:
+            need_per_day = min_m + min_n
+            min_staff_for_coverage = int(_m2.ceil(need_per_day * (k + 2) / k))
+            if len(staff_keys) < min_staff_for_coverage:
+                msgs.append(
+                    f"Not enough staff for daily coverage under the {k}-on/2-off rule: need ~{min_staff_for_coverage} active staff, have {len(staff_keys)}."
+                )
         return {
             "section": section_name,
             "staff_count": len(staff_keys),
             "min_m": min_m, "max_m": max_m, "min_n": min_n, "max_n": max_n,
+            "max_consecutive": k,
             "required_month_min_shifts": required_month,
             "capacity_month_max_mn": cap_month,
             "daily_shortages": daily_shortages[:10],
