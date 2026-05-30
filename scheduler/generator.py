@@ -522,6 +522,26 @@ def generate_schedule(nest_name: str, year: int, month: int,
             if max_s > 0:
                 model.add(sum(work_days) <= max_s)
 
+    # ── Hard Constraint 5c: Section must have enough M/N slots ───────────────
+    # If staff have per-month minimums, the section must schedule enough M+N
+    # assignments (within per-day min/max ranges) to satisfy them.
+    for sec_name, sec in nest_cfg["sections"].items():
+        sec_staff = [p for p, sn, _ in all_staff if sn == sec_name]
+        if not sec_staff:
+            continue
+        required_total = sum(int((staff_limits.get(p, {}) or {}).get("min_shifts", 0) or 0) for p in sec_staff)
+        if required_total <= 0:
+            continue
+
+        total_mn = []
+        for d in range(n_days):
+            for code in ("M", "N"):
+                if code in (sec.get("allowed_shifts") or []):
+                    for p in sec_staff:
+                        total_mn.append(get_bool(p, d, code))
+        if total_mn:
+            model.add(sum(total_mn) >= required_total)
+
     # HC5c removed — max consecutive (HC5) already prevents overwork;
     # forced rest days on top caused excessive O chains.
 
