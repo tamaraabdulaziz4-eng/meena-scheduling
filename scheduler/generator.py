@@ -250,18 +250,21 @@ def generate_schedule(nest_name: str, year: int, month: int,
     al_idx = code_to_idx["AL"]
     o_idx  = code_to_idx["O"]
 
-    # "Free" sections are those with no explicit daily coverage requirements.
+    # "Free" sections are those with no explicit daily requirements at all.
     # For such sections, we enforce a per-person minimum work count (HC6b) to
-    # prevent the solver from assigning everyone Off.
+    # prevent the solver from assigning everyone Off when staff min_shifts are 0.
     #
-    # If a section has coverage/exact rules (even if `exact` is empty), it is
-    # not considered free.
+    # Sections with M/N min settings are NOT free (even if nest coverage/exact
+    # are empty), because min_m/min_n already enforce daily staffing.
     free_sections = set()
     for sec_name, sec in nest_cfg["sections"].items():
         has_exact = bool(sec.get("exact"))
         cov = sec.get("coverage") or {}
         has_coverage = bool(cov.get("weekday")) or bool(cov.get("weekend"))
-        if not has_exact and not has_coverage:
+        mn_min_m = int(sec.get("min_m", 0) or 0)
+        mn_min_n = int(sec.get("min_n", 0) or 0)
+        has_mn_daily = (mn_min_m > 0) or (mn_min_n > 0)
+        if not has_exact and not has_coverage and not has_mn_daily:
             free_sections.add(sec_name)
 
     for p, sec_name, sec in all_staff:
@@ -634,8 +637,9 @@ def generate_schedule(nest_name: str, year: int, month: int,
     WORK_CODES_SET = set(c for c in ALL_CODES if c in WORK_SHIFTS)
 
     # ── HC6b: Minimum total work days for free sections ───────────────────────
-    # Free sections have no dominant lock, so we enforce a per-person minimum
-    # work count (~5/7 of days) to prevent the solver from giving everyone O.
+    # Free sections have no daily requirements, so we enforce a per-person
+    # minimum work count (~5/7 of available days) to prevent everyone being O
+    # when staff min_shifts are 0.
     import math as _math2
     for sec_name, sec in nest_cfg["sections"].items():
         if sec_name not in free_sections:
@@ -646,6 +650,12 @@ def generate_schedule(nest_name: str, year: int, month: int,
         if not work_codes_here:
             continue
         for p in sec_staff_names:
+            lim = staff_limits.get(p, {}) or {}
+            max_s = int(lim.get("max_shifts", 0) or 0)
+            min_s = int(lim.get("min_shifts", 0) or 0)
+            # If explicit min/max exist, HC5b already handles it.
+            if min_s > 0 or max_s > 0:
+                continue
             # Count AL days for this person
             al_days = len(al_schedule.get(p, []))
             avail_days = n_days - al_days

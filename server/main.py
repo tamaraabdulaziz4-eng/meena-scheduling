@@ -297,12 +297,9 @@ def seed_defaults():
 
 
 def seed_nest_config():
-    # Coverage: 1 M + 1 N every day for all sections (auto-generate rule)
-    # exact_coverage: exactly 1 N per day — required for solver feasibility
-    #   (without exact N=1, the "at least 1M + 1N" fallback + 2-rest-after-N + max_shifts=17
-    #    creates infeasible constraints for small sections)
     # allowed_shifts: full list — used for manual cell picker (user can assign any shift)
-    # Auto-generate only uses M and N regardless of allowed_shifts
+    # Auto-generate uses only M/N/O (and forced AL) regardless of other codes.
+    # coverage/exact_coverage are legacy fields and are not used for auto-generate.
     _MN  = {'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}}
     _ALL = ['M','N','D','D1','EV','A','B','C','N6','Y3','O','OC','AL','SL','TB']
     _N1  = {'N': 1}   # exact 1 night shift per section per day
@@ -1309,9 +1306,10 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             "staff":          sec["staff"],
             "staff_db_names": sec["staff_db_names"],
             "allowed_shifts": sec["allowed_shifts"],
-            "coverage":       sec["coverage"],
-            # Use per-month min/max ranges instead of fixed exact counts.
-            # Coverage JSON continues to enforce minimums (e.g., M>=1, N>=1).
+            # App goal: auto-generate M/N only. Daily M/N requirements come from
+            # per-month section settings (min_m/max_m/min_n/max_n), not the nest
+            # config coverage/exact JSON.
+            "coverage":       {},
             "exact":          {},
             "min_m":          min_m,
             "max_m":          max_m,

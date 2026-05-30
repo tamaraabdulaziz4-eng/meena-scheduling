@@ -102,11 +102,6 @@ function renderSectionCard(sec) {
     return `<span style="display:inline-block;background:var(--surface2,rgba(107,78,255,0.1));border-radius:6px;padding:2px 8px;font-size:12px;margin:2px">${key}${dbName ? ` <span style="color:var(--muted)">(${dbName})</span>` : ''}</span>`;
   }).join('');
 
-  const coverage = sec.coverage || {};
-  const wd = JSON.stringify(coverage.weekday || {});
-  const we = JSON.stringify(coverage.weekend || {});
-  const exact = JSON.stringify(sec.exact_coverage || {});
-
   return `
     <div class="card" style="padding:16px;border-radius:10px;background:var(--surface);border:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
@@ -131,18 +126,6 @@ function renderSectionCard(sec) {
         <div>
           <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Allowed Shifts</div>
           <code style="font-size:12px">${(sec.allowed_shifts || []).join(', ')}</code>
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Weekday Coverage</div>
-          <code style="font-size:12px">${wd}</code>
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Weekend Coverage</div>
-          <code style="font-size:12px">${we}</code>
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Exact</div>
-          <code style="font-size:12px">${exact === '{}' ? '—' : exact}</code>
         </div>
       </div>
     </div>
@@ -177,11 +160,6 @@ function openNestSectionModal(id = null, nestKeyDefault = '') {
     const dbNames = found.staff_db_names || {};
     document.getElementById('ns-db-names').value =
       Object.entries(dbNames).map(([k,v]) => `${k} = ${v}`).join('\n');
-
-    const cov = found.coverage || {};
-    document.getElementById('ns-coverage-weekday').value = JSON.stringify(cov.weekday || {});
-    document.getElementById('ns-coverage-weekend').value = JSON.stringify(cov.weekend || {});
-    document.getElementById('ns-exact-coverage').value   = JSON.stringify(found.exact_coverage || {});
   } else {
     title.textContent = 'Add Section';
     document.getElementById('ns-edit-id').value       = '';
@@ -191,9 +169,6 @@ function openNestSectionModal(id = null, nestKeyDefault = '') {
     document.getElementById('ns-staff').value         = '';
     document.getElementById('ns-db-names').value      = '';
     document.getElementById('ns-allowed-shifts').value = 'M,N,O,AL,SL';
-    document.getElementById('ns-coverage-weekday').value = '{"M":1,"N":1}';
-    document.getElementById('ns-coverage-weekend').value = '{"M":1,"N":1}';
-    document.getElementById('ns-exact-coverage').value   = '{"N":1}';
   }
 
   modal.style.display = 'flex';
@@ -230,12 +205,6 @@ async function saveNestSection() {
   const allowed_shifts = document.getElementById('ns-allowed-shifts').value
     .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
 
-  // Parse coverage JSON
-  let weekdayCov = {}, weekendCov = {}, exactCov = {};
-  try { weekdayCov = JSON.parse(document.getElementById('ns-coverage-weekday').value || '{}'); } catch { msg.className='msg err'; msg.textContent='Weekday coverage: invalid JSON'; return; }
-  try { weekendCov = JSON.parse(document.getElementById('ns-coverage-weekend').value || '{}'); } catch { msg.className='msg err'; msg.textContent='Weekend coverage: invalid JSON'; return; }
-  try { exactCov   = JSON.parse(document.getElementById('ns-exact-coverage').value   || '{}'); } catch { msg.className='msg err'; msg.textContent='Exact coverage: invalid JSON'; return; }
-
   const sort_order = Number(document.getElementById('ns-sort-order').value) || 0;
 
   msg.className = 'msg'; msg.textContent = 'Saving…';
@@ -245,8 +214,6 @@ async function saveNestSection() {
       staff,
       staff_db_names,
       allowed_shifts,
-      coverage: { weekday: weekdayCov, weekend: weekendCov },
-      exact_coverage: exactCov,
       sort_order,
     });
 
