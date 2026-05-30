@@ -250,23 +250,20 @@
         <div style="background:rgba(107,78,255,0.07);border:1px solid rgba(107,78,255,0.18);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.7">
           🤖 The solver will generate a schedule based on your current inputs for this branch and month — including staff count, leaves taken, and the settings below. Only <strong style="color:var(--text)">M</strong> and <strong style="color:var(--text)">N</strong> shifts are auto-assigned; other shifts can be added manually after.<br><br>
           <span style="font-size:12px">
-            &nbsp;· <strong style="color:var(--text)">M and N counts are auto-calculated per section</strong> based on available staff after leaves — 1M+1N, 2M+1N, or 2M+2N per day<br>
-            &nbsp;· After a Night (N) block ends → 2 days off before any other shift<br>
-            &nbsp;· After a Morning (M) block ends → 1 day off (where possible)<br>
-            &nbsp;· No Night → Morning shift back-to-back<br>
-            &nbsp;· Max consecutive working days enforced per staff (default 4)<br>
-            &nbsp;· Each staff member works within their configured min / max shifts for the month<br>
-            &nbsp;· Balanced M and N distribution across staff<br>
-            &nbsp;· Annual leave days locked in<br>
-            &nbsp;· <strong style="color:var(--text)">Min / Max shifts</strong> and <strong style="color:var(--text)">Max consecutive days</strong> are set <em>per staff, per branch, per month</em> — changes apply to this month only and do not carry over to other months
+            &nbsp;· Coverage per section/day follows your <strong style="color:var(--text)">Section Month Settings</strong> (Min/Max M and Min/Max N per day)<br>
+            &nbsp;· <strong style="color:var(--text)">Max consecutive working days</strong> is enforced (default 4). After a full block, the next 2 days are Off (unless AL)<br>
+            &nbsp;· No <strong style="color:var(--text)">Night (N)</strong> → <strong style="color:var(--text)">Morning</strong> back-to-back; ending an N block enforces 2 Off days (unless AL)<br>
+            &nbsp;· Staff work within their <strong style="color:var(--text)">Staff Month Settings</strong> (Min/Max shifts + Max consecutive) for this month<br>
+            &nbsp;· Annual Leave (<strong style="color:var(--text)">AL</strong>) days are locked in and cannot be scheduled as work<br>
+            &nbsp;· Generation runs <strong style="color:var(--text)">per section</strong>: if one section is infeasible, other sections may still generate (you’ll see diagnostics)
           </span>
         </div>
 
         <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.25);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--muted);line-height:1.6">
           ⚠️ If the solver cannot find a valid schedule, your constraints are too tight. To resolve:<br>
-          1. Adjust settings via <button onclick="closeGenerateModal();openStaffSettingsModal()" class="btn btn-sm" style="display:inline-flex;vertical-align:middle;padding:2px 10px;font-size:11px;margin:0 3px">⚙️ Open Settings</button> — min 0 · max 17 · max 4 consecutive days per staff<br>
-          2. Or reduce the number of leaves for this month<br>
-          3. If it still fails, please contact your system administrator.
+          1. Adjust <strong style="color:var(--text)">Staff Month Settings</strong> or <strong style="color:var(--text)">Section Month Settings</strong> via <button onclick="closeGenerateModal();openStaffSettingsModal()" class="btn btn-sm" style="display:inline-flex;vertical-align:middle;padding:2px 10px;font-size:11px;margin:0 3px">⚙️ Open Settings</button><br>
+          2. Reduce the number of leaves (AL) for this month<br>
+          3. Add more staff to the section (common cause: not enough staff to cover daily Min M+N under 4‑on/2‑off)
         </div>
 
         <div style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.2);border-radius:10px;padding:10px 14px;font-size:12px;color:#cc4444" id="gen-overwrite-warning">
