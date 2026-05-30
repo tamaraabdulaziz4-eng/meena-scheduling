@@ -1,0 +1,6 @@
+[settings]
+# Railway's Railpack uses mise to install Python. Recent mise versions may
+# enforce GitHub artifact attestations for Python builds and fail in CI/build
+# environments where attestations aren't available.
+python.github_attestations = false
+
