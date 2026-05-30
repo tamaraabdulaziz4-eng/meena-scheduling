@@ -179,10 +179,10 @@ def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
 
 def generate_schedule(nest_name: str, year: int, month: int,
                       al_schedule: dict = None, prev_tail: dict = None,
-                      dominant_shifts: dict = None,
                       time_limit: int = 60,
                       max_consecutive: int = 4,
-                      staff_limits: dict = None) -> dict:
+                      staff_limits: dict = None,
+                      section_limits: dict = None) -> dict:
     """
     staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits
     max_consecutive: max working days in a row (default 5)
@@ -190,51 +190,19 @@ def generate_schedule(nest_name: str, year: int, month: int,
     """
     Generate a schedule for the given nest/month using CP-SAT.
 
-    dominant_shifts: { person: shift_code } — preferred shift for each person
-                     this month. Solver strongly prefers assigning this shift.
-                     If None, assign_dominant_shifts() is called automatically.
-
     Returns:
-        { "status": ..., "schedule": {...}, "dominant": {...} }
+        { "status": ..., "schedule": {...}, "elapsed": ... }
     """
     al_schedule     = al_schedule or {}
     prev_tail       = prev_tail   or {}
     staff_limits    = staff_limits or {}
+    section_limits  = section_limits or {}
     nest_cfg        = NESTS[nest_name]
 
     # Auto-generate only assigns M and N (plus O/AL/SL)
     # User can manually add other shifts after generation
     AUTO_WORK_SHIFTS = {"M", "N"}
 
-    # Auto-assign dominant shifts if not provided, or fill in gaps for partial overrides
-    import math as _math
-    user_overrides = set(dominant_shifts.keys()) if dominant_shifts else set()
-
-    if dominant_shifts is None:
-        dominant_shifts = assign_dominant_shifts(nest_name, year, month)
-    else:
-        # Fill in any staff not covered by the override with auto-assignment.
-        auto = assign_dominant_shifts(nest_name, year, month)
-        for sec_name, sec in nest_cfg["sections"].items():
-            for p in sec["staff"]:
-                if p not in dominant_shifts:
-                    dominant_shifts[p] = auto.get(p, "M")
-
-        # Ensure minimum N-dominant count per section (for exact N coverage).
-        # Only reassign non-user-pinned staff (those not in user_overrides).
-        for sec_name, sec in nest_cfg["sections"].items():
-            exact = sec.get("exact") or {}
-            for code, k in exact.items():
-                min_needed = _math.ceil(k * 7 / 5)  # e.g. N=1 → need 2
-                sec_staff   = sec["staff"]
-                n_dom_count = sum(1 for p in sec_staff if dominant_shifts.get(p) == code)
-                if n_dom_count < min_needed:
-                    # Reassign non-pinned M-dominant staff to this code
-                    candidates = [p for p in sec_staff
-                                  if dominant_shifts.get(p) == "M"
-                                  and p not in user_overrides]
-                    for p in candidates[:min_needed - n_dom_count]:
-                        dominant_shifts[p] = code
     n_days      = calendar.monthrange(year, month)[1]
 
     # Collect all staff and their sections
@@ -327,6 +295,31 @@ def generate_schedule(nest_name: str, year: int, month: int,
             model.add(shift_var[p][d] != idx).only_enforce_if(b.negated())
             is_shift[key] = b
         return is_shift[key]
+
+    # ── Hard Constraint 0b: Half-month M/N locking ───────────────────────────
+    # For each person, choose whether they do M in the first half and N in the
+    # second half, or vice-versa. Within a half-month, they can only work that
+    # half’s shift type (or be Off/AL).
+    half = (n_days + 1) // 2
+    first_half_is_m = {}
+    for p, sec_name, sec in all_staff:
+        first_half_is_m[p] = model.new_bool_var(f"first_half_m_{p}")
+        for d in range(n_days):
+            if p in al_schedule and (d + 1) in al_schedule[p]:
+                continue
+            in_first = (d + 1) <= half
+
+            # First half: if first_half_is_m -> forbid N, else forbid M
+            # Second half: opposite
+            if in_first:
+                model.add(get_bool(p, d, "N") == 0).only_enforce_if(first_half_is_m[p])
+                model.add(get_bool(p, d, "M") == 0).only_enforce_if(first_half_is_m[p].negated())
+            else:
+                model.add(get_bool(p, d, "M") == 0).only_enforce_if(first_half_is_m[p])
+                model.add(get_bool(p, d, "N") == 0).only_enforce_if(first_half_is_m[p].negated())
+
+        # Note: we do NOT force off-days at the half boundary globally.
+        # If a person ends an N-block at the boundary, HC4b will enforce rest.
 
     # ── Hard Constraint 0: Cross-month boundary ──────────────────────────────
     # Apply rest-day rules across the month boundary using prev_tail.
@@ -486,7 +479,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
     WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
     for p, sec_name, sec in all_staff:
         limits  = staff_limits.get(p, {})
-        p_max_c = limits.get("max_consecutive", max_consecutive)  # per-staff, fallback to branch default
+        # Prefer section-level max_consecutive if provided, else per-staff, else branch default
+        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
+        sec_max_c = sec_lim.get("max_consecutive")
+        p_max_c = sec_max_c if sec_max_c is not None else limits.get("max_consecutive", max_consecutive)
         window  = p_max_c + 1
         work_in_allowed = [c for c in WORK_CODES if c in AUTO_WORK_SHIFTS]
         for d in range(n_days - p_max_c):
@@ -501,6 +497,42 @@ def generate_schedule(nest_name: str, year: int, month: int,
                     model.add(day_w == 0)
                 day_work.append(day_w)
             model.add(sum(day_work) <= p_max_c)
+
+    # ── Hard Constraint 5a: After a full block, take 2 days off ──────────────
+    # For each section, if a person works `k` consecutive days (k=max_consecutive),
+    # the next 2 days must be Off (or AL). This encodes the "4 on, 2 off" rule.
+    for p, sec_name, sec in all_staff:
+        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
+        k = sec_lim.get("max_consecutive")
+        if k is None:
+            k = staff_limits.get(p, {}).get("max_consecutive", max_consecutive)
+        k = int(k) if k else max_consecutive
+        if k <= 0:
+            continue
+
+        p_al = set(al_schedule.get(p, []))
+        for start in range(0, n_days - (k + 2) + 1):
+            # all_work = AND_{i=0..k-1} work(start+i)
+            work_bools = []
+            for i in range(k):
+                d = start + i
+                work_d = [get_bool(p, d, wc) for wc in WORK_CODES]
+                w = model.new_bool_var(f"blkwork_{p}_{start}_{i}")
+                model.add_bool_or(work_d).only_enforce_if(w)
+                model.add(sum(work_d) == 0).only_enforce_if(w.negated())
+                work_bools.append(w)
+            all_work = model.new_bool_var(f"blkall_{p}_{start}")
+            model.add_bool_and(work_bools).only_enforce_if(all_work)
+            model.add_bool_or([b.negated() for b in work_bools]).only_enforce_if(all_work.negated())
+
+            # Next two days must be O if not AL
+            for j in (k, k + 1):
+                d = start + j
+                day_num = d + 1
+                if day_num in p_al:
+                    continue
+                b_o = get_bool(p, d, "O")
+                model.add(b_o == 1).only_enforce_if(all_work)
 
     # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
     for p, sec_name, sec in all_staff:
@@ -641,30 +673,6 @@ def generate_schedule(nest_name: str, year: int, month: int,
     total_obj  = [500 * t for t in rest_violation_terms]
     total_obj += [100 * t for t in objective_terms]
 
-    # ── Soft Constraint: Stable M↔N rotation (15-day blocks) ──────────────────
-    # Encourage each staff member to stick to one of {M,N} for ~15 days, then
-    # swap for the next 15-day block (continuous across months).
-    #
-    # Base preference comes from dominant_shifts[p] when provided (M or N).
-    # If dominant_shifts isn't provided for a person, skip (no preference).
-    from datetime import date as _date
-    ROT_EPOCH = _date(2026, 1, 1)
-    ROT_PERIOD_DAYS = 15
-
-    def _opp(code: str) -> str:
-        return "N" if code == "M" else "M"
-
-    for p, sec_name, sec in all_staff:
-        base = (dominant_shifts or {}).get(p)
-        if base not in ("M", "N"):
-            continue
-        for d in range(n_days):
-            day = d + 1
-            block = ((_date(year, month, day) - ROT_EPOCH).days // ROT_PERIOD_DAYS)
-            pref = base if (block % 2 == 0) else _opp(base)
-            # Penalize assigning the opposite shift (only counts when working).
-            total_obj.append(25 * get_bool(p, d, _opp(pref)))
-
     if total_obj:
         model.minimize(sum(total_obj))
 
@@ -698,14 +706,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
         return {
             "status":   status_name,
             "schedule": schedule,
-            "dominant": dominant_shifts,
             "elapsed":  round(elapsed, 2),
         }
     else:
         # INFEASIBLE — diagnose (all output to stderr so JSON stdout stays clean)
         print("\n❌ INFEASIBLE — diagnosing…", file=sys.stderr)
         diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff)
-        return {"status": status_name, "schedule": {}, "dominant": dominant_shifts, "elapsed": round(elapsed, 2)}
+        return {"status": status_name, "schedule": {}, "elapsed": round(elapsed, 2)}
 
 
 # ── Infeasibility diagnosis ───────────────────────────────────────────────────

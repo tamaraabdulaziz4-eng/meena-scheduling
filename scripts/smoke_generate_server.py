@@ -44,22 +44,21 @@ def main() -> int:
     from fastapi.testclient import TestClient
     from server.main import app
 
-    client = TestClient(app)
+    with TestClient(app) as client:
+        r = client.post("/api/auth/login", json={"username": username, "password": password})
+        if r.status_code != 200:
+            print("Login failed:", r.status_code, r.text, file=sys.stderr)
+            return 1
 
-    r = client.post("/api/auth/login", json={"username": username, "password": password})
-    if r.status_code != 200:
-        print("Login failed:", r.status_code, r.text, file=sys.stderr)
-        return 1
+        r = client.post("/api/generate", json={"branch_id": branch_id, "year": year, "month": month})
+        print("Generate status:", r.status_code)
+        try:
+            payload = r.json()
+            print(json.dumps(payload, indent=2)[:4000])
+        except Exception:
+            print(r.text[:4000])
 
-    r = client.post("/api/generate", json={"branch_id": branch_id, "year": year, "month": month})
-    print("Generate status:", r.status_code)
-    try:
-        payload = r.json()
-        print(json.dumps(payload, indent=2)[:4000])
-    except Exception:
-        print(r.text[:4000])
-
-    return 0 if r.status_code == 200 else 1
+        return 0 if r.status_code == 200 else 1
 
 
 if __name__ == "__main__":
