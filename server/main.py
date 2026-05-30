@@ -1245,58 +1245,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     # Load nest config from DB
     nest_sections = get_nest_sections(nest_name, year=year, month=month)
 
-    # ── Auto-calculate exact M/N counts per section based on capacity ──────────
-    # For each section, total available shifts = sum over staff of min(17, days - leaves)
-    # capacity_ratio = total_available / days_in_month
-    # ratio >= 4 → exact N=2, exact M=2
-    # ratio >= 3 → exact N=1, exact M=2
-    # ratio >= 2 → exact N=1, exact M=1
-    # ratio <  2 → exact N=1, exact M=1 (too few staff, do best we can)
     import calendar as _cal
     n_days_in_month = _cal.monthrange(year, month)[1]
-
-    # Build leave counts per solver_key for capacity calc
-    leaves_by_solver_key = {}
-    for lv in leaves:
-        s = next((x for x in active_staff if x["id"] == lv["staff_id"]), None)
-        if not s: continue
-        solver_key = None
-        for sec in nest_sections:
-            for sk, db_name in (sec["staff_db_names"] or {}).items():
-                if db_name.lower().strip() == s["name"].lower().strip():
-                    solver_key = sk
-                    break
-        if solver_key:
-            leaves_by_solver_key[solver_key] = leaves_by_solver_key.get(solver_key, 0) + 1
-
-    def calc_section_mn(sec, al_sched):
-        staff_keys = sec["staff"]
-        # Build per-staff leave day sets for this section
-        staff_al = {sk: set(al_sched.get(sk, [])) for sk in staff_keys}
-        # Count available staff on each day of the month
-        # A staff member is available on day d if not on AL and not consuming
-        # a forced O (we use a conservative floor: just check AL)
-        min_daily_avail = n_days_in_month  # start high, find minimum
-        for day in range(1, n_days_in_month + 1):
-            avail = sum(1 for sk in staff_keys if day not in staff_al[sk])
-            if avail < min_daily_avail:
-                min_daily_avail = avail
-        # Also check average availability
-        total_avail = sum(
-            min(17, n_days_in_month - leaves_by_solver_key.get(sk, 0))
-            for sk in staff_keys
-        )
-        avg_ratio = total_avail / n_days_in_month if n_days_in_month > 0 else 0
-        # Use the more conservative of min daily avail and avg ratio
-        # Need shifts_per_day + 2 buffer for rest days
-        # 2M+1N = 3/day needs min_daily_avail >= 4 (1 person resting) AND avg_ratio >= 3.5
-        # 2M+1N = 3/day needs avg_ratio >= 3.5 to account for rest days in HC4b/HC5
-        if min_daily_avail >= 5 and avg_ratio >= 4:
-            return {"exact_n": 2, "exact_m": 2}
-        elif min_daily_avail >= 4 and avg_ratio >= 3.5:
-            return {"exact_n": 1, "exact_m": 2}
-        else:
-            return {"exact_n": 1, "exact_m": 1}
 
     # Build configJson: db_name_lower → solver_key
     config_json = {}
@@ -1324,19 +1274,28 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     # Build nest config dict for solver (after al_schedule is populated)
     nest_cfg_for_solver = {"sections": {}}
     for sec in nest_sections:
-        mn = calc_section_mn(sec, al_schedule)
+        min_m = int(sec.get("min_m", 1) or 1)
+        max_m = int(sec.get("max_m", 2) or 2)
+        min_n = int(sec.get("min_n", 1) or 1)
+        max_n = int(sec.get("max_n", 2) or 2)
+        if min_m > max_m:
+            min_m = max_m
+        if min_n > max_n:
+            min_n = max_n
         nest_cfg_for_solver["sections"][sec["section_name"]] = {
             "staff":          sec["staff"],
             "staff_db_names": sec["staff_db_names"],
             "allowed_shifts": sec["allowed_shifts"],
             "coverage":       sec["coverage"],
-            "exact":          {"N": mn["exact_n"]},
-            "min_m":          mn["exact_m"],
-            "max_m":          mn["exact_m"],
-            "min_n":          mn["exact_n"],
-            "max_n":          mn["exact_n"],
+            # Use per-month min/max ranges instead of fixed exact counts.
+            # Coverage JSON continues to enforce minimums (e.g., M>=1, N>=1).
+            "exact":          {},
+            "min_m":          min_m,
+            "max_m":          max_m,
+            "min_n":          min_n,
+            "max_n":          max_n,
         }
-        print(f"[Generate] section={sec['section_name']} avail_ratio={sum(min(17,n_days_in_month-leaves_by_solver_key.get(sk,0)) for sk in sec['staff'])/n_days_in_month:.2f} → exact_n={mn['exact_n']} exact_m={mn['exact_m']}")
+        print(f"[Generate] section={sec['section_name']} min_m={min_m} max_m={max_m} min_n={min_n} max_n={max_n}")
 
     # Prev tail
     prev_tail_by_solver = {}

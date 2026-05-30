@@ -282,11 +282,19 @@ def generate_schedule(nest_name: str, year: int, month: int,
     al_idx = code_to_idx["AL"]
     o_idx  = code_to_idx["O"]
 
-    # Sections with no exact constraints use free scheduling (no dominant lock)
-    free_sections = {
-        sec_name for sec_name, sec in nest_cfg["sections"].items()
-        if not sec.get("exact")
-    }
+    # "Free" sections are those with no explicit daily coverage requirements.
+    # For such sections, we enforce a per-person minimum work count (HC6b) to
+    # prevent the solver from assigning everyone Off.
+    #
+    # If a section has coverage/exact rules (even if `exact` is empty), it is
+    # not considered free.
+    free_sections = set()
+    for sec_name, sec in nest_cfg["sections"].items():
+        has_exact = bool(sec.get("exact"))
+        cov = sec.get("coverage") or {}
+        has_coverage = bool(cov.get("weekday")) or bool(cov.get("weekend"))
+        if not has_exact and not has_coverage:
+            free_sections.add(sec_name)
 
     for p, sec_name, sec in all_staff:
         shift_var[p] = []
