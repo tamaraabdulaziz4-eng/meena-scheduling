@@ -1374,6 +1374,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     def calc_staff_limits(solver_key, max_consec, db_min_shifts, db_max_shifts):
         leave_days    = len(al_schedule.get(solver_key, []))
         available     = n_days_in_month - leave_days
+        if available < 0:
+            available = 0
         sec_info      = sk_to_mn.get(solver_key, {"slots_per_day": 2, "staff_count": 5})
         slots_per_day = sec_info["slots_per_day"]
         staff_count   = sec_info["staff_count"]
@@ -1384,13 +1386,13 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         auto_min = max(0, _math_staff.floor(fair_target * 0.80))
         auto_max = min(db_max_shifts, _math_staff.ceil(fair_target * 1.20))
 
-        eff_min = max(branch_min_shifts_default, int(db_min_shifts or 0), auto_min)
-        if db_max_shifts < eff_min:
-            raise HTTPException(422, detail={
-                "error": f"Staff min_shifts ({eff_min}) exceeds max_shifts ({db_max_shifts}). Increase max_shifts or lower branch minimum.",
-            })
+        requested_min = max(branch_min_shifts_default, int(db_min_shifts or 0), auto_min)
+        # Hard feasibility cap: can't require more work days than the person can
+        # physically work (available days) or their configured max.
+        hard_cap = min(int(db_max_shifts), int(available))
+        eff_min = min(requested_min, hard_cap)
 
-        eff_max = max(eff_min, auto_max)
+        eff_max = max(eff_min, min(int(db_max_shifts), auto_max))
         return {"min_shifts": eff_min, "max_shifts": eff_max, "max_consecutive": max_consec}
 
     # Build per-solver-key limits
