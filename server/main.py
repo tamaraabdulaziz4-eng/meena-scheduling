@@ -613,6 +613,14 @@ def list_staff(request: Request, user=Depends(get_current_user)):
     branch_id = request.query_params.get("branch_id")
     if user["role"] != "superadmin":
         branch_id = user.get("branch_id")
+    # Guard against UI bugs passing "undefined"/"null" as strings.
+    if isinstance(branch_id, str) and branch_id.strip().lower() in ("", "undefined", "null"):
+        branch_id = None
+    if branch_id is not None:
+        try:
+            branch_id = int(branch_id)
+        except Exception:
+            raise HTTPException(400, "branch_id must be an integer")
     if branch_id:
         rows = q("""SELECT s.*,b.name AS branch_name FROM scheduling.staff s
                     LEFT JOIN scheduling.branches b ON b.id=s.branch_id
