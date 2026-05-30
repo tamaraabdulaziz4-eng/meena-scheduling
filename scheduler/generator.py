@@ -339,6 +339,12 @@ def generate_schedule(nest_name: str, year: int, month: int,
         if not tail:
             continue
         allowed = set(sec["allowed_shifts"])
+        # Section/staff max_consecutive (k) for cross-month logic
+        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
+        k = sec_lim.get("max_consecutive")
+        if k is None:
+            k = staff_limits.get(p, {}).get("max_consecutive", max_consecutive)
+        k = int(k) if k else max_consecutive
 
         last_code = tail[-1]   # the very last day of prev month
 
@@ -368,6 +374,48 @@ def generate_schedule(nest_name: str, year: int, month: int,
             b_o1 = get_bool(p, 0, "O")
             b_o2 = get_bool(p, 1, "O")
             model.add(b_o1 <= b_o2)
+
+        # Cross-month max-consecutive workdays (counts M/N only).
+        # If the previous month ended with t consecutive workdays (t in 1..k),
+        # then the first part of this month may not extend that beyond k.
+        # Additionally, if the boundary completes a full k-day work block,
+        # enforce the 2-off-days rule at the start of the month.
+        if k and k > 0:
+            trailing_work = 0
+            for code in reversed(tail):
+                if code in ("M", "N"):
+                    trailing_work += 1
+                else:
+                    break
+
+            if trailing_work > 0:
+                # work[d] = 1 iff day d (0-indexed) is M or N
+                work = []
+                for d in range(n_days):
+                    b_m = get_bool(p, d, "M")
+                    b_n = get_bool(p, d, "N")
+                    w = model.new_bool_var(f"work_{p}_{d}")
+                    if p in al_schedule and (d + 1) in al_schedule[p]:
+                        # Forced AL day: cannot be work
+                        model.add(w == 0)
+                    else:
+                        model.add(w == b_m + b_n)
+                    work.append((d, w))
+
+                # Prevent k+1 consecutive workdays across boundary:
+                # among first (k - trailing_work + 1) days, not all can be work.
+                need_window = k - trailing_work + 1
+                if need_window > 0 and n_days >= need_window:
+                    ws = [w for d, w in work if d < need_window]
+                    if ws:
+                        model.add(sum(ws) <= need_window - 1)
+
+                # If the previous month already ended at/over k consecutive workdays,
+                # start this month with 2 off days (unless AL forces otherwise).
+                if trailing_work >= k:
+                    for d in (0, 1):
+                        if d < n_days and not (p in al_schedule and (d + 1) in al_schedule[p]):
+                            model.add(get_bool(p, d, "O") == 1)
 
         # Rule: last was N or D but day 1 is NOT O (person works day 1)
         # → this is only valid if the shift is compatible (N→N is ok, not N→M)
