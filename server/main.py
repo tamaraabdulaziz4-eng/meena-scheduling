@@ -59,8 +59,10 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
     Neon closes idle SSL connections; we detect stale connections and retry once
     with a fresh connection so callers never see 'SSL connection closed' errors.
     """
-    pool = get_pool()
-    for attempt in range(2):
+    # Neon can drop idle SSL connections. We retry and, if needed, rebuild the
+    # whole pool so requests return normally instead of bubbling OperationalError.
+    for attempt in range(3):
+        pool = get_pool()
         conn = pool.getconn()
         try:
             # Quick liveness check — if the connection is broken this raises immediately
@@ -85,8 +87,17 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
                 pool.putconn(conn, close=True)
             except Exception:
                 pass
+            # If we've already retried once, rebuild the pool (fresh SSL conns).
             if attempt == 1:
-                raise   # second attempt also failed, give up
+                global _pool
+                try:
+                    if _pool is not None:
+                        _pool.closeall()
+                except Exception:
+                    pass
+                _pool = None
+            if attempt == 2:
+                raise   # third attempt also failed, give up
         except Exception:
             try:
                 conn.rollback()
