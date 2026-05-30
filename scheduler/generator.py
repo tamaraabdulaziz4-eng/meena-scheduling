@@ -324,6 +324,32 @@ def generate_schedule(nest_name: str, year: int, month: int,
         # Note: we do NOT force off-days at the half boundary globally.
         # If a person ends an N-block at the boundary, HC4b will enforce rest.
 
+        # Mid-month switch rest: require at least one pair of consecutive Off
+        # days around the half-month boundary (unless AL forces otherwise).
+        #
+        # The half-month lock forces a shift-type change (M↔N) between halves.
+        # Requiring the same two fixed off-days for everyone can make coverage
+        # infeasible, so instead we require that each person has at least one
+        # consecutive "O O" pair in the 4-day window around the boundary.
+        #
+        # Window: (half-1, half), (half, half+1), (half+1, half+2)
+        # Any one of these pairs being O O satisfies the rest requirement.
+        p_al = set(al_schedule.get(p, []))
+        pair_bools = []
+        for a, b in ((half - 1, half), (half, half + 1), (half + 1, half + 2)):
+            if a < 1 or b > n_days:
+                continue
+            if a in p_al or b in p_al:
+                continue
+            ba = get_bool(p, a - 1, "O")
+            bb = get_bool(p, b - 1, "O")
+            both = model.new_bool_var(f"halfOO_{p}_{a}_{b}")
+            model.add_bool_and([ba, bb]).only_enforce_if(both)
+            model.add_bool_or([ba.negated(), bb.negated()]).only_enforce_if(both.negated())
+            pair_bools.append(both)
+        if pair_bools:
+            model.add_bool_or(pair_bools)
+
     # ── Hard Constraint 0: Cross-month boundary ──────────────────────────────
     # Apply rest-day rules across the month boundary using prev_tail.
     # prev_tail[person] = list of shift codes for last 1-3 days of prev month.
