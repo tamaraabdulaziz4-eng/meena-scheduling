@@ -1331,10 +1331,30 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
 
     def calc_staff_limits(solver_key, max_consec, db_min_shifts, db_max_shifts):
-        leave_days    = len(al_schedule.get(solver_key, []))
-        available     = n_days_in_month - leave_days
+        al_days_set = set(al_schedule.get(solver_key, []))
+        leave_days  = len(al_days_set)
+        available   = n_days_in_month - leave_days
         if available < 0:
             available = 0
+
+        # Max possible work days given max_consecutive and AL blocks.
+        # In any contiguous block of length L, you need at least floor(L/(max_consec+1))
+        # rest days to break long streaks, so max work in that block is L - that.
+        # This is a conservative feasibility cap (works even if all work days are M).
+        if max_consec and max_consec > 0:
+            block_len = 0
+            max_work_feasible = 0
+            for day in range(1, n_days_in_month + 1):
+                if day in al_days_set:
+                    if block_len:
+                        max_work_feasible += block_len - (block_len // (max_consec + 1))
+                        block_len = 0
+                else:
+                    block_len += 1
+            if block_len:
+                max_work_feasible += block_len - (block_len // (max_consec + 1))
+        else:
+            max_work_feasible = available
         sec_info      = sk_to_mn.get(solver_key, {"slots_per_day": 2, "staff_count": 5})
         slots_per_day = sec_info["slots_per_day"]
         staff_count   = sec_info["staff_count"]
@@ -1348,8 +1368,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         requested_min = max(branch_min_shifts_default, int(db_min_shifts or 0), auto_min)
         # Hard feasibility cap: can't require more work days than the person can
         # physically work (available days) or their configured max.
-        # Also can't exceed their fair-share capacity for the section.
-        hard_cap = min(int(db_max_shifts), int(available), int(_math_staff.floor(fair_target)))
+        hard_cap = min(int(db_max_shifts), int(max_work_feasible))
         eff_min = min(requested_min, hard_cap)
 
         eff_max = max(eff_min, min(int(db_max_shifts), auto_max))
