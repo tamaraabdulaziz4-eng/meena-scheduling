@@ -54,7 +54,7 @@ function renderStaffPage() {
               <td><strong>${s.name}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}</td>
               <td>${(s.speciality||['General']).map(sp => `<span class="spec-tag ${sp.toLowerCase()}">${sp}</span>`).join('')}</td>
               <td>${s.is_cross_branch ? '<span class="badge badge-green">Yes</span>' : '<span style="color:var(--muted);font-size:12px">—</span>'}</td>
-              <td style="text-align:center">${s.min_shifts ?? 0}</td>
+              <td style="text-align:center">${s.min_shifts ?? 17}</td>
               <td style="text-align:center">${s.max_shifts ?? 17}</td>
               ${canEdit ? `<td>
                 <button class="action-btn" onclick="openStaffModal(${s.id})">Edit</button>
@@ -77,7 +77,7 @@ function openStaffModal(id) {
   document.getElementById('staff-name').value    = s?.name || '';
   document.getElementById('staff-phone').value   = s?.phone || '';
   document.getElementById('staff-cross').checked = s?.is_cross_branch || false;
-  document.getElementById('staff-min-shifts').value = s?.min_shifts ?? 0;
+  document.getElementById('staff-min-shifts').value = s?.min_shifts ?? 17;
   document.getElementById('staff-max-shifts').value = s?.max_shifts ?? 17;
   document.getElementById('staff-msg').textContent = '';
 
@@ -115,7 +115,7 @@ async function saveStaff() {
   if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
   if (!specs.length) { msg.className = 'msg err'; msg.textContent = 'Select at least one speciality'; return; }
 
-  const min_shifts = parseInt(document.getElementById('staff-min-shifts').value) || 0;
+  const min_shifts = parseInt(document.getElementById('staff-min-shifts').value) || 17;
   const max_shifts = parseInt(document.getElementById('staff-max-shifts').value) || 17;
   const body = { name, phone, branch_id: bid ? Number(bid) : null, speciality: specs, is_cross_branch: cross, min_shifts, max_shifts };
 

@@ -223,6 +223,7 @@ def init_schema():
                     id SERIAL PRIMARY KEY,
                     branch_id INTEGER UNIQUE NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
                     max_consecutive INTEGER NOT NULL DEFAULT 4,
+                    min_shifts_default INTEGER NOT NULL DEFAULT 17,
                     updated_at TIMESTAMP DEFAULT NOW()
                 );
                 CREATE TABLE IF NOT EXISTS scheduling.staff_month_settings (
@@ -237,6 +238,8 @@ def init_schema():
                     UNIQUE(staff_id, year, month)
                 );
             """)
+            # For older DBs created before `min_shifts_default` existed.
+            cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -665,18 +668,25 @@ def delete_staff(sid: int, user=Depends(require_admin)):
 def get_branch_settings(bid: int, user=Depends(get_current_user)):
     row = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (bid,), one=True)
     if not row:
-        return {"branch_id": bid, "max_consecutive": 4}
+        return {"branch_id": bid, "max_consecutive": 4, "min_shifts_default": 17}
     return row
 
 @app.put("/api/branch-settings/{bid}")
 async def update_branch_settings(bid: int, request: Request, user=Depends(require_admin)):
     if not can_access_branch(user, bid): raise HTTPException(403, "Forbidden")
     body = await request.json()
-    max_consecutive = int(body.get("max_consecutive", 4))
-    row = q("""INSERT INTO scheduling.branch_settings (branch_id, max_consecutive)
-               VALUES (%s, %s)
-               ON CONFLICT (branch_id) DO UPDATE SET max_consecutive=%s, updated_at=NOW()
-               RETURNING *""", (bid, max_consecutive, max_consecutive), one=True)
+    existing = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (bid,), one=True) or {}
+    max_consecutive = int(body.get("max_consecutive", existing.get("max_consecutive", 4)))
+    min_shifts_default = int(body.get("min_shifts_default", existing.get("min_shifts_default", 17)))
+    if min_shifts_default < 0 or min_shifts_default > 31:
+        raise HTTPException(400, "min_shifts_default must be between 0 and 31")
+    row = q("""INSERT INTO scheduling.branch_settings (branch_id, max_consecutive, min_shifts_default)
+               VALUES (%s, %s, %s)
+               ON CONFLICT (branch_id) DO UPDATE
+               SET max_consecutive=%s, min_shifts_default=%s, updated_at=NOW()
+               RETURNING *""",
+            (bid, max_consecutive, min_shifts_default, max_consecutive, min_shifts_default),
+            one=True)
     return row
 
 # ── Staff Month Settings ──────────────────────────────────────────────────────
@@ -690,6 +700,8 @@ def get_staff_month_settings(request: Request, user=Depends(get_current_user)):
     month     = request.query_params.get("month")
     if not branch_id or not year or not month:
         raise HTTPException(400, "branch_id, year, month required")
+    bs = q("SELECT min_shifts_default FROM scheduling.branch_settings WHERE branch_id=%s", (int(branch_id),), one=True) or {}
+    branch_min = int(bs.get("min_shifts_default", 17) or 17)
     rows = q("""
         SELECT s.id AS staff_id,
                COALESCE(sms.min_shifts, s.min_shifts, 0)   AS min_shifts,
@@ -701,8 +713,8 @@ def get_staff_month_settings(request: Request, user=Depends(get_current_user)):
         WHERE s.branch_id=%s AND s.active=true
     """, (int(year), int(month), int(branch_id)))
     return {r["staff_id"]: {
-        "min_shifts": r["min_shifts"],
-        "max_shifts": r["max_shifts"],
+        "min_shifts": max(branch_min, r["min_shifts"]),
+        "max_shifts": max(max(branch_min, r["min_shifts"]), r["max_shifts"]),
         "max_consecutive": r["max_consecutive"]
     } for r in rows}
 
@@ -717,6 +729,11 @@ async def upsert_staff_month_settings(staff_id: int, request: Request, user=Depe
     staff = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
     if not staff: raise HTTPException(404, "Staff not found")
     if not can_access_branch(user, staff["branch_id"]): raise HTTPException(403, "Forbidden")
+    bs = q("SELECT min_shifts_default FROM scheduling.branch_settings WHERE branch_id=%s", (int(staff["branch_id"]),), one=True) or {}
+    branch_min = int(bs.get("min_shifts_default", 17) or 17)
+    min_s = max(branch_min, min_s)
+    if max_s < min_s:
+        raise HTTPException(400, "max_shifts cannot be less than min_shifts")
     row = q("""INSERT INTO scheduling.staff_month_settings
                  (staff_id, year, month, min_shifts, max_shifts, max_consecutive)
                VALUES (%s,%s,%s,%s,%s,%s)
@@ -1210,6 +1227,13 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     if not nest_name:
         raise HTTPException(400, f'Branch "{branch["name"]}" not mapped to a nest')
 
+    # Branch-level solver defaults (used as fallbacks)
+    bs = q("""SELECT max_consecutive, min_shifts_default
+              FROM scheduling.branch_settings WHERE branch_id=%s""",
+           (branch_id,), one=True) or {}
+    branch_max_consecutive = int(bs.get("max_consecutive", 4) or 4)
+    branch_min_shifts_default = int(bs.get("min_shifts_default", 17) or 17)
+
     # Load nest config from DB
     nest_sections = get_nest_sections(nest_name, year=year, month=month)
 
@@ -1313,16 +1337,18 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         if not solver_key: continue
         prev_tail_by_solver.setdefault(solver_key, []).append(row["shift_code"])
 
-    # Load per-month settings per staff (max_shifts used as ceiling for auto-calc)
+    # Load per-month settings per staff (min/max used as constraints; max_shifts acts as ceiling)
     month_settings_rows = q("""
         SELECT s.id, s.name,
-               COALESCE(sms.max_consecutive, 4)  AS max_consecutive,
-               COALESCE(sms.max_shifts, s.max_shifts, 17) AS max_shifts
+               COALESCE(sms.min_shifts, s.min_shifts, 0)  AS min_shifts,
+               COALESCE(sms.max_consecutive, %s)  AS max_consecutive,
+               COALESCE(sms.max_shifts, s.max_shifts, 17) AS max_shifts,
+               COALESCE(s.phase, 0) AS phase
         FROM scheduling.staff s
         LEFT JOIN scheduling.staff_month_settings sms
           ON sms.staff_id=s.id AND sms.year=%s AND sms.month=%s
         WHERE s.branch_id=%s AND s.active=true
-    """, (year, month, branch_id))
+    """, (branch_max_consecutive, year, month, branch_id))
     month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
 
     # Auto-calculate fair min/max shifts per staff based on section capacity.
@@ -1337,7 +1363,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         for sk in sec["staff"]:
             sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
 
-    def calc_staff_limits(solver_key, max_consec, db_max_shifts):
+    def calc_staff_limits(solver_key, max_consec, db_min_shifts, db_max_shifts):
         leave_days    = len(al_schedule.get(solver_key, []))
         available     = n_days_in_month - leave_days
         sec_info      = sk_to_mn.get(solver_key, {"slots_per_day": 2, "staff_count": 5})
@@ -1347,18 +1373,30 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         total_slots   = slots_per_day * n_days_in_month
         fair_target   = min(db_max_shifts, (total_slots / staff_count) * (available / n_days_in_month))
         # Give ±20% tolerance so solver has room to balance
-        min_s = max(0, _math_staff.floor(fair_target * 0.80))
-        max_s = min(db_max_shifts, _math_staff.ceil(fair_target * 1.20))
-        return {"min_shifts": min_s, "max_shifts": max_s, "max_consecutive": max_consec}
+        auto_min = max(0, _math_staff.floor(fair_target * 0.80))
+        auto_max = min(db_max_shifts, _math_staff.ceil(fair_target * 1.20))
+
+        eff_min = max(branch_min_shifts_default, int(db_min_shifts or 0), auto_min)
+        if db_max_shifts < eff_min:
+            raise HTTPException(422, detail={
+                "error": f"Staff min_shifts ({eff_min}) exceeds max_shifts ({db_max_shifts}). Increase max_shifts or lower branch minimum.",
+            })
+
+        eff_max = max(eff_min, auto_max)
+        return {"min_shifts": eff_min, "max_shifts": eff_max, "max_consecutive": max_consec}
 
     # Build per-solver-key limits
     staff_limits = {}
+    dominant_shifts = {}
     for db_name_l, sk in config_json.items():
         ms = month_settings.get(db_name_l)
-        max_consec    = ms.get("max_consecutive", 4)  if ms else 4
-        db_max_shifts = ms.get("max_shifts", 17)      if ms else 17
-        staff_limits[sk] = calc_staff_limits(sk, max_consec, db_max_shifts)
-        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} db_max={db_max_shifts} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']}")
+        max_consec    = int(ms.get("max_consecutive", branch_max_consecutive)) if ms else branch_max_consecutive
+        db_min_shifts = int(ms.get("min_shifts", 0))                           if ms else 0
+        db_max_shifts = int(ms.get("max_shifts", 17))                          if ms else 17
+        staff_limits[sk] = calc_staff_limits(sk, max_consec, db_min_shifts, db_max_shifts)
+        phase = int(ms.get("phase", 0)) if ms else 0
+        dominant_shifts[sk] = "N" if (phase % 2 == 1) else "M"
+        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} db_min={db_min_shifts} db_max={db_max_shifts} branch_min={branch_min_shifts_default} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']}")
 
     # Use branch-level max_consecutive as fallback (taken as min across staff, or 4)
     max_consecutive = min(
@@ -1385,7 +1423,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         result = solver_generate(
             nest_name=nest_name, year=year, month=month,
             al_schedule=al_schedule, prev_tail=prev_tail_by_solver,
-            dominant_shifts=None, time_limit=120,
+            dominant_shifts=dominant_shifts, time_limit=120,
             max_consecutive=max_consecutive,
             staff_limits=staff_limits,
         )

@@ -467,7 +467,7 @@ async function toggleScheduleLock() {
 }
 
 async function saveStaffMonthSetting(staffId, field, value, inputEl) {
-  const ms = staffMonthSettings[staffId] || { min_shifts: 0, max_shifts: 17, max_consecutive: 4 };
+  const ms = staffMonthSettings[staffId] || { min_shifts: 17, max_shifts: 17, max_consecutive: 4 };
   const updated = { ...ms, [field]: parseInt(value) };
 
   // Show spinner on the input
@@ -526,7 +526,7 @@ async function openStaffSettingsModal(tab) {
   // Staff tab rows
   const staffRows = scheduleStaff.map(s => {
     const ms   = staffMonthSettings[s.id] || {};
-    const minS = ms.min_shifts     ?? 0;
+    const minS = ms.min_shifts     ?? 17;
     const maxS = ms.max_shifts     ?? 17;
     const maxC = ms.max_consecutive ?? 4;
     if (canEdit) {
@@ -745,7 +745,7 @@ function openGenerateModal() {
 async function resetStaffSettingsToDefault() {
   const ok = await showConfirm(
     'Reset to Default',
-    `Reset all staff settings for this month to:\n  · Min shifts: 0\n  · Max shifts: 17\n  · Max consecutive days: 4\n\nThis applies to ${scheduleStaff.length} staff for this branch and month only.`,
+    `Reset all staff settings for this month to:\n  · Min shifts: 17\n  · Max shifts: 17\n  · Max consecutive days: 4\n\nThis applies to ${scheduleStaff.length} staff for this branch and month only.`,
     'Reset'
   );
   if (!ok) return;
@@ -753,8 +753,8 @@ async function resetStaffSettingsToDefault() {
     await Promise.all(scheduleStaff.map(s =>
       API.put(`/staff-month-settings/${s.id}`, {
         year: scheduleYear, month: scheduleMonth,
-        min_shifts: 0, max_shifts: 17, max_consecutive: 4
-      }).then(() => { staffMonthSettings[s.id] = { min_shifts: 0, max_shifts: 17, max_consecutive: 4 }; })
+        min_shifts: 17, max_shifts: 17, max_consecutive: 4
+      }).then(() => { staffMonthSettings[s.id] = { min_shifts: 17, max_shifts: 17, max_consecutive: 4 }; })
     ));
     const genMsg = document.getElementById('gen-msg');
     if (genMsg) { genMsg.className = 'msg'; genMsg.textContent = '✓ Reset to defaults — you can try Generate again.'; }

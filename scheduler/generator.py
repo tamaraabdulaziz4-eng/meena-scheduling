@@ -83,7 +83,10 @@ def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
 
     Returns: { person_name: dominant_shift_code, ... }
     """
-    import random, math, calendar as _cal
+    import random, math, calendar as _cal, hashlib as _hashlib
+    if seed is None:
+        # Stable (non-randomized) seed so dominant assignment is reproducible.
+        seed = int(_hashlib.sha256(f"{nest_name}:{year}:{month}".encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed)
 
     n_days   = _cal.monthrange(year, month)[1]
@@ -606,8 +609,34 @@ def generate_schedule(nest_name: str, year: int, month: int,
 
     # ── Objective ─────────────────────────────────────────────────────────────
     # Weights: M-block rest violations (500) > fairness spread (100)
+    #          > M/N rotation preference (25)
     total_obj  = [500 * t for t in rest_violation_terms]
     total_obj += [100 * t for t in objective_terms]
+
+    # ── Soft Constraint: Stable M↔N rotation (15-day blocks) ──────────────────
+    # Encourage each staff member to stick to one of {M,N} for ~15 days, then
+    # swap for the next 15-day block (continuous across months).
+    #
+    # Base preference comes from dominant_shifts[p] when provided (M or N).
+    # If dominant_shifts isn't provided for a person, skip (no preference).
+    from datetime import date as _date
+    ROT_EPOCH = _date(2026, 1, 1)
+    ROT_PERIOD_DAYS = 15
+
+    def _opp(code: str) -> str:
+        return "N" if code == "M" else "M"
+
+    for p, sec_name, sec in all_staff:
+        base = (dominant_shifts or {}).get(p)
+        if base not in ("M", "N"):
+            continue
+        for d in range(n_days):
+            day = d + 1
+            block = ((_date(year, month, day) - ROT_EPOCH).days // ROT_PERIOD_DAYS)
+            pref = base if (block % 2 == 0) else _opp(base)
+            # Penalize assigning the opposite shift (only counts when working).
+            total_obj.append(25 * get_bool(p, d, _opp(pref)))
+
     if total_obj:
         model.minimize(sum(total_obj))
 

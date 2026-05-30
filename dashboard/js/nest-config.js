@@ -5,7 +5,7 @@
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let nestConfigData = {};   // { NEST1: [...sections], NEST2: [...], ... }
-let branchSettingsCache = {};  // branch_id → { max_consecutive }
+let branchSettingsCache = {};  // branch_id → { max_consecutive, min_shifts_default }
 
 // ── Page render ───────────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ async function renderNestConfigPage() {
       try {
         const s = await API.get(`/branch-settings/${b.id}`);
         branchSettingsCache[b.id] = s;
-      } catch(e) { branchSettingsCache[b.id] = { max_consecutive: 5 }; }
+      } catch(e) { branchSettingsCache[b.id] = { max_consecutive: 5, min_shifts_default: 17 }; }
     }
     renderNestConfigList();
   } catch (err) {
@@ -58,7 +58,7 @@ function renderNestConfigList() {
     // Find branch_id for this nest
     const nestToBranch = {'NEST1':1,'NEST2':2,'NEST3':3,'NEST4':4,'NEST6':5,'Y5':6};
     const bid = nestToBranch[nestKey];
-    const settings = branchSettingsCache[bid] || { max_consecutive: 5 };
+    const settings = branchSettingsCache[bid] || { max_consecutive: 5, min_shifts_default: 17 };
     return `
       <div class="nest-block" style="margin-bottom:28px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
@@ -76,6 +76,14 @@ function renderNestConfigList() {
               style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px">
             <button class="btn btn-sm" style="padding:4px 12px;font-size:12px"
               onclick="saveMaxConsecutive('${nestKey}', ${bid})">Save</button>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+            Min shifts / staff / month:
+            <input type="number" min="0" max="31" value="${settings.min_shifts_default ?? 17}"
+              id="min-shifts-${nestKey}"
+              style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px">
+            <button class="btn btn-sm" style="padding:4px 12px;font-size:12px"
+              onclick="saveMinShiftsDefault('${nestKey}', ${bid})">Save</button>
           </label>
         </div>
 
@@ -259,8 +267,18 @@ async function saveMaxConsecutive(nestKey, branchId) {
   if (!val || val < 1 || val > 14) { toast('Enter a value between 1 and 14', 'err'); return; }
   try {
     await API.put(`/branch-settings/${branchId}`, { max_consecutive: val });
-    branchSettingsCache[branchId] = { max_consecutive: val };
+    branchSettingsCache[branchId] = { ...(branchSettingsCache[branchId] || {}), max_consecutive: val };
     toast(`${nestKey} max consecutive days set to ${val}`);
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+async function saveMinShiftsDefault(nestKey, branchId) {
+  const val = parseInt(document.getElementById(`min-shifts-${nestKey}`).value);
+  if (val < 0 || val > 31) { toast('Enter a value between 0 and 31', 'err'); return; }
+  try {
+    await API.put(`/branch-settings/${branchId}`, { min_shifts_default: val });
+    branchSettingsCache[branchId] = { ...(branchSettingsCache[branchId] || {}), min_shifts_default: val };
+    toast(`${nestKey} min shifts default set to ${val}`);
   } catch (err) { toast(err.message, 'err'); }
 }
 
