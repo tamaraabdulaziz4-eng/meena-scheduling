@@ -1389,7 +1389,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         requested_min = max(branch_min_shifts_default, int(db_min_shifts or 0), auto_min)
         # Hard feasibility cap: can't require more work days than the person can
         # physically work (available days) or their configured max.
-        hard_cap = min(int(db_max_shifts), int(available))
+        # Also can't exceed their fair-share capacity for the section.
+        hard_cap = min(int(db_max_shifts), int(available), int(_math_staff.floor(fair_target)))
         eff_min = min(requested_min, hard_cap)
 
         eff_max = max(eff_min, min(int(db_max_shifts), auto_max))

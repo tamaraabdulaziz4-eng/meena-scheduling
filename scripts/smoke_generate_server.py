@@ -17,6 +17,18 @@ import json
 
 
 def main() -> int:
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    sys.path.insert(0, repo_root)
+
+    # Load .env the same way server/main.py does (setdefault semantics).
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    if os.path.exists(env_path):
+        for line in open(env_path):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, val = line.split("=", 1)
+                os.environ.setdefault(key.strip(), val.strip())
+
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         print("ERROR: DATABASE_URL is not set.", file=sys.stderr)
@@ -52,4 +64,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
