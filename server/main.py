@@ -254,6 +254,8 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
             cur.execute("ALTER TABLE scheduling.section_month_settings ADD COLUMN IF NOT EXISTS max_consecutive INTEGER NOT NULL DEFAULT 4;")
+            # For AL block policy (per-section per-month).
+            cur.execute("ALTER TABLE scheduling.section_month_settings ADD COLUMN IF NOT EXISTS min_al_block INTEGER NOT NULL DEFAULT 1;")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -445,7 +447,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
                    ns.allowed_shifts,ns.coverage,ns.exact_coverage,ns.sort_order,ns.updated_at,
                    COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
                    COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n,
-                   COALESCE(sms.max_consecutive,4) AS max_consecutive
+                   COALESCE(sms.max_consecutive,4) AS max_consecutive,
+                   COALESCE(sms.min_al_block,1) AS min_al_block
             FROM scheduling.nest_sections ns
             LEFT JOIN scheduling.section_month_settings sms
               ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
@@ -455,7 +458,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
         rows = q("""SELECT id,nest_key,section_name,staff,staff_db_names,
                            allowed_shifts,coverage,exact_coverage,sort_order,updated_at,
                            1 AS min_m, 2 AS max_m, 1 AS min_n, 2 AS max_n,
-                           4 AS max_consecutive
+                           4 AS max_consecutive,
+                           1 AS min_al_block
                     FROM scheduling.nest_sections WHERE nest_key=%s
                     ORDER BY sort_order,section_name""", (nest_key,))
     return rows
@@ -783,7 +787,8 @@ def get_section_month_settings(request: Request, user=Depends(get_current_user))
         SELECT ns.id AS section_id, ns.section_name,
                COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
                COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n,
-               COALESCE(sms.max_consecutive,4) AS max_consecutive
+               COALESCE(sms.max_consecutive,4) AS max_consecutive,
+               COALESCE(sms.min_al_block,1) AS min_al_block
         FROM scheduling.nest_sections ns
         LEFT JOIN scheduling.section_month_settings sms
           ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
@@ -794,6 +799,7 @@ def get_section_month_settings(request: Request, user=Depends(get_current_user))
         "min_m": r["min_m"], "max_m": r["max_m"],
         "min_n": r["min_n"], "max_n": r["max_n"],
         "max_consecutive": r["max_consecutive"],
+        "min_al_block": r["min_al_block"],
     } for r in rows}
 
 @app.put("/api/section-month-settings/{section_id}")
@@ -806,20 +812,23 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
     min_n = int(body.get("min_n", 1))
     max_n = int(body.get("max_n", 2))
     max_consecutive = int(body.get("max_consecutive", 4))
+    min_al_block = int(body.get("min_al_block", 1))
     if min_m > max_m: raise HTTPException(400, "min_m cannot exceed max_m")
     if min_n > max_n: raise HTTPException(400, "min_n cannot exceed max_n")
     if max_consecutive < 1 or max_consecutive > 14:
         raise HTTPException(400, "max_consecutive must be between 1 and 14")
+    if min_al_block < 1 or min_al_block > 14:
+        raise HTTPException(400, "min_al_block must be between 1 and 14")
     sec = q("SELECT id FROM scheduling.nest_sections WHERE id=%s", (section_id,), one=True)
     if not sec: raise HTTPException(404, "Section not found")
     row = q("""INSERT INTO scheduling.section_month_settings
-                 (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                 (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_al_block)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (section_id, year, month) DO UPDATE
-               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, max_consecutive=%s, updated_at=NOW()
+               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, max_consecutive=%s, min_al_block=%s, updated_at=NOW()
                RETURNING *""",
-            (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive,
-             min_m, max_m, min_n, max_n, max_consecutive), one=True)
+            (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_al_block,
+             min_m, max_m, min_n, max_n, max_consecutive, min_al_block), one=True)
     return row
 
 # ── Shift Types ───────────────────────────────────────────────────────────────
@@ -1298,6 +1307,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         min_n = int(sec.get("min_n", 1) or 1)
         max_n = int(sec.get("max_n", 2) or 2)
         sec_max_consecutive = int(sec.get("max_consecutive", branch_max_consecutive) or branch_max_consecutive)
+        sec_min_al_block = int(sec.get("min_al_block", 1) or 1)
         if min_m > max_m:
             min_m = max_m
         if min_n > max_n:
@@ -1315,6 +1325,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             "max_m":          max_m,
             "min_n":          min_n,
             "max_n":          max_n,
+            "min_al_block":   sec_min_al_block,
         }
         section_limits_for_solver[sec["section_name"]] = {"max_consecutive": sec_max_consecutive}
         print(f"[Generate] section={sec['section_name']} min_m={min_m} max_m={max_m} min_n={min_n} max_n={max_n} max_consecutive={sec_max_consecutive}")
@@ -1463,6 +1474,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         min_n = int(sec_cfg.get("min_n", 1) or 1)
         max_n = int(sec_cfg.get("max_n", 2) or 2)
         k = int(sec_cfg.get("max_consecutive", 4) or 4)
+        min_al_block = int(sec_cfg.get("min_al_block", 1) or 1)
         max_slots_per_day = max_m + max_n
         cap_month = n_days * max_slots_per_day
         required_month = sum(int(staff_limits.get(sk, {}).get("min_shifts", 0) or 0) for sk in staff_keys)
@@ -1489,14 +1501,30 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
                 msgs.append(
                     f"Not enough staff for daily coverage under the {k}-on/2-off rule: need ~{min_staff_for_coverage} active staff, have {len(staff_keys)}."
                 )
+
+        # AL block policy diagnostics (single-day AL not allowed)
+        al_violations = []
+        if min_al_block >= 2:
+            for sk in staff_keys:
+                days = sorted(set(al_schedule.get(sk, []) or []))
+                if not days:
+                    continue
+                dayset = set(days)
+                for d in days:
+                    if (d - 1 not in dayset) and (d + 1 not in dayset):
+                        al_violations.append({"staff": sk, "day": d})
+            if al_violations:
+                msgs.append(f"Some staff have single-day AL, but this section requires AL blocks of {min_al_block}+ days.")
         return {
             "section": section_name,
             "staff_count": len(staff_keys),
             "min_m": min_m, "max_m": max_m, "min_n": min_n, "max_n": max_n,
             "max_consecutive": k,
+            "min_al_block": min_al_block,
             "required_month_min_shifts": required_month,
             "capacity_month_max_mn": cap_month,
             "daily_shortages": daily_shortages[:10],
+            "al_single_days": al_violations[:10],
             "messages": msgs,
         }
 
@@ -1511,6 +1539,26 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         if not staff_keys:
             section_results[sec_name] = {"status": "SKIPPED", "error": "No staff in section"}
             continue
+
+        # Validate AL block policy for this section (single-day AL not allowed if min_al_block>=2).
+        min_al_block = int(sec_cfg.get("min_al_block", 1) or 1)
+        if min_al_block >= 2:
+            viol = []
+            for sk in staff_keys:
+                days = sorted(set(al_schedule.get(sk, []) or []))
+                if not days:
+                    continue
+                dayset = set(days)
+                for d in days:
+                    if (d - 1 not in dayset) and (d + 1 not in dayset):
+                        viol.append({"staff": sk, "day": d})
+            if viol:
+                section_results[sec_name] = {
+                    "status": "INFEASIBLE",
+                    "error": f"Annual leave must be in blocks of {min_al_block}+ days (no single-day AL).",
+                    "diagnostics": section_diagnostics(sec_name, sec_cfg, staff_keys),
+                }
+                continue
 
         sec_al = {sk: al_schedule.get(sk, []) for sk in staff_keys if sk in al_schedule}
         sec_prev_tail = {sk: prev_tail_by_solver.get(sk, []) for sk in staff_keys if sk in prev_tail_by_solver}
