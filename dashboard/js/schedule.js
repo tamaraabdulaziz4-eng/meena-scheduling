@@ -681,8 +681,13 @@ function showModal(id, html) {
     overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(id); });
     document.body.appendChild(overlay);
   }
+  const maxWidthById = {
+    'staff-settings-modal': '900px',
+    'generate-diagnostics-modal': '900px',
+  };
+  const maxWidth = maxWidthById[id] || '520px';
   overlay.innerHTML = `
-    <div style="background:var(--card);border-radius:14px;padding:24px;width:90%;max-width:520px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
+    <div style="background:var(--card);border-radius:14px;padding:24px;width:94%;max-width:${maxWidth};max-height:86vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25)">
       ${html}
     </div>`;
   overlay.style.display = 'flex';
