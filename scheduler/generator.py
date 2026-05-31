@@ -611,6 +611,35 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 b_o = get_bool(p, d, "O")
                 model.add(b_o == 1).only_enforce_if(all_work)
 
+    # ── Hard Constraint 5d: No isolated Off (O) days ─────────────────────────
+    # If enabled per section (`min_o_block` >= 2), any Off day must be part of
+    # a block of at least 2 consecutive Off days (O O). Month edges must also
+    # respect this (day 1 O => day 2 O, last day O => previous day O).
+    for p, sec_name, sec in all_staff:
+        min_o_block = int((sec.get("min_o_block", 2) or 2))
+        if min_o_block < 2:
+            continue
+        p_al = set(al_schedule.get(p, []))
+        for d in range(n_days):
+            day = d + 1
+            if day in p_al:
+                continue
+            b_o = get_bool(p, d, "O")
+
+            # Determine if this O has an adjacent O (previous or next day), skipping AL days.
+            adj = []
+            if d - 1 >= 0 and (day - 1) not in p_al:
+                adj.append(get_bool(p, d - 1, "O"))
+            if d + 1 < n_days and (day + 1) not in p_al:
+                adj.append(get_bool(p, d + 1, "O"))
+
+            if not adj:
+                # If today is O, it would be isolated.
+                model.add(b_o == 0)
+            else:
+                # If today is O, at least one adjacent day must be O.
+                model.add_bool_or(adj).only_enforce_if(b_o)
+
     # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
     for p, sec_name, sec in all_staff:
         limits = staff_limits.get(p, {})

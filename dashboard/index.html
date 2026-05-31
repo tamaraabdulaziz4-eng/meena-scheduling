@@ -251,8 +251,10 @@
           🤖 The solver will generate a schedule based on your current inputs for this branch and month — including staff count, leaves taken, and the settings below. Only <strong style="color:var(--text)">M</strong> and <strong style="color:var(--text)">N</strong> shifts are auto-assigned; other shifts can be added manually after.<br><br>
           <span style="font-size:12px">
             &nbsp;· Coverage per section/day follows your <strong style="color:var(--text)">Section Month Settings</strong> (Min/Max M and Min/Max N per day)<br>
-            &nbsp;· <strong style="color:var(--text)">Max consecutive working days</strong> is enforced (default 4). After a full block, the next 2 days are Off (unless AL)<br>
-            &nbsp;· No <strong style="color:var(--text)">Night (N)</strong> → <strong style="color:var(--text)">Morning</strong> back-to-back; ending an N block enforces 2 Off days (unless AL)<br>
+            &nbsp;· <strong style="color:var(--text)">Max consecutive working days</strong> is enforced per section (default 4). After a full block, the next 2 days are Off (unless AL)<br>
+            &nbsp;· <strong style="color:var(--text)">No isolated Off days</strong> (O) if enabled: Off must be at least 2 consecutive days (configured via <strong style="color:var(--text)">Section Month Settings</strong>)<br>
+            &nbsp;· Half‑month rule: each staff works only <strong style="color:var(--text)">one shift type</strong> in each half (M-only or N-only), then switches in the second half (with required rest days around the mid‑month switch)<br>
+            &nbsp;· Cross‑month rule: the previous month’s ending shifts are considered so you don’t start a new month in an unsafe pattern (e.g. 5 straight work days)<br>
             &nbsp;· Staff work within their <strong style="color:var(--text)">Staff Month Settings</strong> (Min/Max shifts + Max consecutive) for this month<br>
             &nbsp;· Annual Leave (<strong style="color:var(--text)">AL</strong>) days are locked in and cannot be scheduled as work<br>
             &nbsp;· Generation runs <strong style="color:var(--text)">per section</strong>: if one section is infeasible, other sections may still generate (you’ll see diagnostics)

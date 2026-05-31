@@ -254,6 +254,11 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
             cur.execute("ALTER TABLE scheduling.section_month_settings ADD COLUMN IF NOT EXISTS max_consecutive INTEGER NOT NULL DEFAULT 4;")
+            # For O (Off) block policy (per-section per-month). 1 disables.
+            cur.execute("ALTER TABLE scheduling.section_month_settings ADD COLUMN IF NOT EXISTS min_o_block INTEGER NOT NULL DEFAULT 2;")
+            # If the column already existed from a previous deploy, ensure new
+            # rows default to 2 (no isolated Off days).
+            cur.execute("ALTER TABLE scheduling.section_month_settings ALTER COLUMN min_o_block SET DEFAULT 2;")
             # Note: older DBs may have extra columns; migrations are additive.
 
             conn.commit()
@@ -446,7 +451,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
                    ns.allowed_shifts,ns.coverage,ns.exact_coverage,ns.sort_order,ns.updated_at,
                    COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
                    COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n,
-                   COALESCE(sms.max_consecutive,4) AS max_consecutive
+                   COALESCE(sms.max_consecutive,4) AS max_consecutive,
+                   COALESCE(sms.min_o_block,2) AS min_o_block
             FROM scheduling.nest_sections ns
             LEFT JOIN scheduling.section_month_settings sms
               ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
@@ -456,7 +462,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
         rows = q("""SELECT id,nest_key,section_name,staff,staff_db_names,
                            allowed_shifts,coverage,exact_coverage,sort_order,updated_at,
                            1 AS min_m, 2 AS max_m, 1 AS min_n, 2 AS max_n,
-                           4 AS max_consecutive
+                           4 AS max_consecutive,
+                           2 AS min_o_block
                     FROM scheduling.nest_sections WHERE nest_key=%s
                     ORDER BY sort_order,section_name""", (nest_key,))
     return rows
@@ -784,7 +791,8 @@ def get_section_month_settings(request: Request, user=Depends(get_current_user))
         SELECT ns.id AS section_id, ns.section_name,
                COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
                COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n,
-               COALESCE(sms.max_consecutive,4) AS max_consecutive
+               COALESCE(sms.max_consecutive,4) AS max_consecutive,
+               COALESCE(sms.min_o_block,2) AS min_o_block
         FROM scheduling.nest_sections ns
         LEFT JOIN scheduling.section_month_settings sms
           ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
@@ -795,6 +803,7 @@ def get_section_month_settings(request: Request, user=Depends(get_current_user))
         "min_m": r["min_m"], "max_m": r["max_m"],
         "min_n": r["min_n"], "max_n": r["max_n"],
         "max_consecutive": r["max_consecutive"],
+        "min_o_block": r["min_o_block"],
     } for r in rows}
 
 @app.put("/api/section-month-settings/{section_id}")
@@ -807,20 +816,23 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
     min_n = int(body.get("min_n", 1))
     max_n = int(body.get("max_n", 2))
     max_consecutive = int(body.get("max_consecutive", 4))
+    min_o_block = int(body.get("min_o_block", 2))
     if min_m > max_m: raise HTTPException(400, "min_m cannot exceed max_m")
     if min_n > max_n: raise HTTPException(400, "min_n cannot exceed max_n")
     if max_consecutive < 1 or max_consecutive > 14:
         raise HTTPException(400, "max_consecutive must be between 1 and 14")
+    if min_o_block < 1 or min_o_block > 14:
+        raise HTTPException(400, "min_o_block must be between 1 and 14")
     sec = q("SELECT id FROM scheduling.nest_sections WHERE id=%s", (section_id,), one=True)
     if not sec: raise HTTPException(404, "Section not found")
     row = q("""INSERT INTO scheduling.section_month_settings
-                 (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                 (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (section_id, year, month) DO UPDATE
-               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, max_consecutive=%s, updated_at=NOW()
+               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, max_consecutive=%s, min_o_block=%s, updated_at=NOW()
                RETURNING *""",
-            (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive,
-             min_m, max_m, min_n, max_n, max_consecutive), one=True)
+            (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block,
+             min_m, max_m, min_n, max_n, max_consecutive, min_o_block), one=True)
     return row
 
 # ── Shift Types ───────────────────────────────────────────────────────────────
@@ -1299,6 +1311,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         min_n = int(sec.get("min_n", 1) or 1)
         max_n = int(sec.get("max_n", 2) or 2)
         sec_max_consecutive = int(sec.get("max_consecutive", branch_max_consecutive) or branch_max_consecutive)
+        sec_min_o_block = int(sec.get("min_o_block", 2) or 2)
         if min_m > max_m:
             min_m = max_m
         if min_n > max_n:
@@ -1316,6 +1329,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             "max_m":          max_m,
             "min_n":          min_n,
             "max_n":          max_n,
+            "min_o_block":    sec_min_o_block,
         }
         section_limits_for_solver[sec["section_name"]] = {"max_consecutive": sec_max_consecutive}
         print(f"[Generate] section={sec['section_name']} min_m={min_m} max_m={max_m} min_n={min_n} max_n={max_n} max_consecutive={sec_max_consecutive}")
