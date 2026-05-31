@@ -1,83 +1,45 @@
 // ── Shift Types page ──────────────────────────────────────────────────────────
-let allShiftTypes    = [];   // effective merged view for current branch (used by schedule grid)
-let allShiftTypesRaw = [];   // all rows from DB (used internally)
-let _shiftBranchFilter = null; // null = first branch, or branch id number
+let allShiftTypes    = [];   // global shift types (used by schedule grid)
+let allShiftTypesRaw = [];   // same as allShiftTypes (kept for compatibility)
 
-// Used by schedule.js — loads effective merged shift types for a branch
+// Used by schedule.js — loads global shift types
 async function loadShiftTypes(branchId) {
-  const params = branchId ? `?branch_id=${branchId}` : '';
-  allShiftTypes = await API.get(`/shift-types${params}`);
+  allShiftTypes = await API.get('/shift-types');
   return allShiftTypes;
 }
 
-// Used by settings page — loads every row
+// Used by settings page — loads every row (global)
 async function loadAllShiftTypesRaw() {
   allShiftTypesRaw = await API.get('/shift-types/all');
-}
-
-// Get effective shifts for a branch (branch rows override global for same code)
-function getEffectiveShifts(branchId) {
-  const globals   = allShiftTypesRaw.filter(s => !s.branch_id);
-  const overrides = allShiftTypesRaw.filter(s => s.branch_id === branchId);
-  const overrideMap = {};
-  overrides.forEach(o => { overrideMap[o.code] = o; });
-  const merged = globals.map(g => overrideMap[g.code] || g);
-  // Add any branch-only codes not in globals
-  overrides.forEach(o => { if (!globals.find(g => g.code === o.code)) merged.push(o); });
-  merged.sort((a, b) => a.sort_order - b.sort_order);
-  return merged;
 }
 
 function renderShiftsPage() {
   const canEdit = ['admin', 'superadmin'].includes(currentUser?.role);
 
-  // Default to first branch
-  if (_shiftBranchFilter === null && allBranches?.length) {
-    _shiftBranchFilter = allBranches[0].id;
-  }
-
-  const activeBranch = (allBranches || []).find(b => b.id === _shiftBranchFilter);
-
-  setTopbar('Shift Types', `Shift hours for ${activeBranch?.name || ''}`,
+  setTopbar('Shift Types', `Global shift list (all branches)`,
     canEdit ? `<button class="btn btn-sm" onclick="openShiftModal()">+ Add Shift</button>` : ''
   );
 
   const c = document.getElementById('content');
   c.innerHTML = `
-    <div style="margin-bottom:20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      ${(allBranches || []).map(b =>
-        `<button class="tab-btn ${_shiftBranchFilter === b.id ? 'active' : ''}" onclick="setShiftBranchFilter(${b.id})">${b.name}</button>`
-      ).join('')}
-    </div>
     <div id="shift-tables-wrap"></div>`;
 
   renderShiftTable();
-}
-
-function setShiftBranchFilter(branchId) {
-  _shiftBranchFilter = branchId;
-  renderShiftsPage();
 }
 
 function renderShiftTable() {
   const wrap = document.getElementById('shift-tables-wrap');
   if (!wrap) return;
   const canEdit = ['admin', 'superadmin'].includes(currentUser?.role);
-  const branchId = _shiftBranchFilter;
-  const shifts = getEffectiveShifts(branchId);
+  const shifts = (allShiftTypesRaw || []).slice().sort((a, b) => (a.sort_order - b.sort_order) || a.code.localeCompare(b.code));
 
   const rowsHtml = shifts.map((st, idx) => {
     const hours = calcHours(st.start_time, st.end_time);
     const flags = [st.is_off && 'Off', st.is_leave && 'Leave', st.is_oncall && 'On-Call'].filter(Boolean).join(', ') || '—';
-    const branchRow = allShiftTypesRaw.find(s => s.branch_id === branchId && s.code === st.code);
-    const isCustom  = !!branchRow;
 
     let actions = '';
     if (canEdit) {
-      const editFn = isCustom
-        ? `openShiftModal(${branchRow.id})`
-        : `openShiftModalForBranch('${st.code}',${branchId})`;
-      actions = `<button class="action-btn" onclick="${editFn}">Edit</button>`;
+      actions = `<button class="action-btn" onclick="openShiftModal(${st.id})">Edit</button>`;
     }
 
     return `<tr>
@@ -144,34 +106,8 @@ function openShiftModal(id) {
   document.getElementById('shift-is-oncall').checked = st?.is_oncall || false;
   document.getElementById('shift-msg').textContent   = '';
 
-  // Branch select — hidden label, pre-set to current branch
-  const bs = document.getElementById('shift-branch');
-  bs.innerHTML = '<option value="">— All branches (default) —</option>';
-  (allBranches || []).forEach(b => {
-    const opt = document.createElement('option');
-    opt.value = b.id; opt.textContent = b.name;
-    if (st?.branch_id === b.id) opt.selected = true;
-    bs.appendChild(opt);
-  });
-  if (!id && _shiftBranchFilter) bs.value = String(_shiftBranchFilter);
-
   document.getElementById('shift-modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById(id ? 'shift-label' : 'shift-code').focus(), 50);
-}
-
-function openShiftModalForBranch(code, branchId) {
-  // Edit times for this branch — pre-fill from current effective values
-  const effective = getEffectiveShifts(branchId).find(s => s.code === code);
-  openShiftModal(null);
-  document.getElementById('shift-code').value   = code;
-  document.getElementById('shift-code').disabled = true;
-  document.getElementById('shift-label').value  = effective?.label || code;
-  document.getElementById('shift-start').value  = effective?.start_time || '';
-  document.getElementById('shift-end').value    = effective?.end_time || '';
-  document.getElementById('shift-color').value  = effective?.color || '#6B4EFF';
-  document.getElementById('shift-branch').value = String(branchId);
-  const branchName = (allBranches || []).find(b => b.id === branchId)?.name || '';
-  document.getElementById('shift-modal-title').textContent = `Edit ${code} — ${branchName}`;
 }
 
 function closeShiftModal() {
@@ -191,7 +127,6 @@ async function saveShiftType() {
     is_off:     document.getElementById('shift-is-off').checked,
     is_leave:   document.getElementById('shift-is-leave').checked,
     is_oncall:  document.getElementById('shift-is-oncall').checked,
-    branch_id:  document.getElementById('shift-branch').value ? Number(document.getElementById('shift-branch').value) : null,
   };
   if (!body.code || !body.label) { msg.className = 'msg err'; msg.textContent = 'Code and label required'; return; }
 

@@ -210,6 +210,27 @@ def init_schema():
             """)
 
             # Migrations
+            # Shift types were originally supported as global (branch_id NULL) with
+            # optional per-branch overrides. The app no longer uses branch-specific
+            # shift types, so we consolidate everything into a single global list.
+            #
+            # Keep one row per code (prefer existing global), delete duplicates,
+            # and set remaining branch_id to NULL.
+            cur.execute("""
+                WITH ranked AS (
+                  SELECT id,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY code
+                           ORDER BY (branch_id IS NULL) DESC, id ASC
+                         ) AS rn
+                  FROM scheduling.shift_types
+                )
+                DELETE FROM scheduling.shift_types st
+                USING ranked r
+                WHERE st.id = r.id AND r.rn > 1;
+            """)
+            cur.execute("UPDATE scheduling.shift_types SET branch_id=NULL WHERE branch_id IS NOT NULL;")
+
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS min_shifts INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS max_shifts INTEGER NOT NULL DEFAULT 17;")
@@ -839,31 +860,28 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
 
 @app.get("/api/shift-types")
 def get_shift_types(request: Request, user=Depends(get_current_user)):
-    branch_id = request.query_params.get("branch_id") or user.get("branch_id") or 0
-    rows = q("""SELECT DISTINCT ON (code) id,branch_id,code,label,start_time,end_time,
+    # Shift types are global across all branches.
+    rows = q("""SELECT id,branch_id,code,label,start_time,end_time,
                        color,is_off,is_leave,is_oncall,sort_order
                 FROM scheduling.shift_types
-                WHERE branch_id IS NULL OR branch_id=%s
-                ORDER BY code, branch_id DESC NULLS LAST, sort_order""", (branch_id,))
-    return sorted(rows, key=lambda r: r["sort_order"])
+                WHERE branch_id IS NULL
+                ORDER BY sort_order, code""")
+    return rows
 
 @app.get("/api/shift-types/all")
 def get_all_shift_types(user=Depends(get_current_user)):
-    return q("""SELECT st.id,st.branch_id,st.code,st.label,st.start_time,st.end_time,
-                       st.color,st.is_off,st.is_leave,st.is_oncall,st.sort_order,
-                       b.name AS branch_name
-                FROM scheduling.shift_types st
-                LEFT JOIN scheduling.branches b ON b.id=st.branch_id
-                ORDER BY st.code, st.branch_id NULLS FIRST, st.sort_order""")
+    # Backwards-compatible endpoint: same as /shift-types now.
+    return q("""SELECT id,branch_id,code,label,start_time,end_time,
+                       color,is_off,is_leave,is_oncall,sort_order
+                FROM scheduling.shift_types
+                WHERE branch_id IS NULL
+                ORDER BY sort_order, code""")
 
 @app.post("/api/shift-types")
 async def upsert_shift_type(request: Request, user=Depends(require_admin)):
     body = await request.json()
-    bid  = body.get("branch_id") or None
     code = body.get("code")
-    existing = q("SELECT id FROM scheduling.shift_types WHERE branch_id IS NULL AND code=%s" if bid is None
-                 else "SELECT id FROM scheduling.shift_types WHERE branch_id=%s AND code=%s",
-                 (code,) if bid is None else (bid, code), one=True)
+    existing = q("SELECT id FROM scheduling.shift_types WHERE branch_id IS NULL AND code=%s", (code,), one=True)
     if existing:
         return q("""UPDATE scheduling.shift_types
                     SET label=%s,start_time=%s,end_time=%s,color=%s,
@@ -876,7 +894,7 @@ async def upsert_shift_type(request: Request, user=Depends(require_admin)):
     return q("""INSERT INTO scheduling.shift_types
                 (branch_id,code,label,start_time,end_time,color,is_off,is_leave,is_oncall,sort_order)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-             (bid, code, body.get("label"), body.get("start_time"), body.get("end_time"),
+             (None, code, body.get("label"), body.get("start_time"), body.get("end_time"),
               body.get("color","#6B4EFF"), body.get("is_off",False),
               body.get("is_leave",False), body.get("is_oncall",False),
               body.get("sort_order",0)), one=True)
