@@ -43,9 +43,7 @@ function renderStaffPage() {
       <div class="table-wrap" style="border-radius:10px">
         <table>
           <thead><tr>
-            <th>#</th><th>Name</th><th>Section</th><th>Cross-Branch</th>
-            <th title="Min shifts per month">Min Shifts</th>
-            <th title="Max shifts per month">Max Shifts</th>
+            <th>#</th><th>Name</th><th>Section</th>
             ${canEdit ? '<th>Actions</th>' : ''}
           </tr></thead>
           <tbody>${staff.map((s, i) => `
@@ -57,9 +55,6 @@ function renderStaffPage() {
                 const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
                 return `<span class="spec-tag ${sec.toLowerCase()}">${sec}</span>`;
               })()}</td>
-              <td>${s.is_cross_branch ? '<span class="badge badge-green">Yes</span>' : '<span style="color:var(--muted);font-size:12px">—</span>'}</td>
-              <td style="text-align:center">${s.min_shifts ?? 17}</td>
-              <td style="text-align:center">${s.max_shifts ?? 17}</td>
               ${canEdit ? `<td>
                 <button class="action-btn" onclick="openStaffModal(${s.id})">Edit</button>
                 <button class="action-btn danger" onclick="deleteStaffConfirm(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
@@ -80,9 +75,6 @@ function openStaffModal(id) {
   document.getElementById('staff-edit-id').value = id || '';
   document.getElementById('staff-name').value    = s?.name || '';
   document.getElementById('staff-phone').value   = s?.phone || '';
-  document.getElementById('staff-cross').checked = s?.is_cross_branch || false;
-  document.getElementById('staff-min-shifts').value = s?.min_shifts ?? 17;
-  document.getElementById('staff-max-shifts').value = s?.max_shifts ?? 17;
   document.getElementById('staff-msg').textContent = '';
 
   // Branch select — superadmin sees all, admin sees only their branch
@@ -112,16 +104,13 @@ async function saveStaff() {
   const name   = document.getElementById('staff-name').value.trim();
   const phone  = document.getElementById('staff-phone').value.trim();
   const bid    = document.getElementById('staff-branch').value;
-  const cross  = document.getElementById('staff-cross').checked;
   const section = document.getElementById('staff-section').value;
   const specs  = [section];
 
   if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
   if (!specs[0]) { msg.className = 'msg err'; msg.textContent = 'Select a section'; return; }
 
-  const min_shifts = parseInt(document.getElementById('staff-min-shifts').value) || 17;
-  const max_shifts = parseInt(document.getElementById('staff-max-shifts').value) || 17;
-  const body = { name, phone, branch_id: bid ? Number(bid) : null, speciality: specs, is_cross_branch: cross, min_shifts, max_shifts };
+  const body = { name, phone, branch_id: bid ? Number(bid) : null, speciality: specs };
 
   try {
     if (_editStaffId) {

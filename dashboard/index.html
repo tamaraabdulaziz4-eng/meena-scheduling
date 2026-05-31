@@ -164,21 +164,9 @@
             This controls which section the staff member belongs to for schedule generation.
           </div>
         </div>
-        <div style="display:flex;gap:12px">
-          <div class="form-field" style="flex:1">
-            <label>Min Shifts / Month</label>
-            <input type="number" id="staff-min-shifts" min="0" max="31" value="17" placeholder="17">
-          </div>
-          <div class="form-field" style="flex:1">
-            <label>Max Shifts / Month</label>
-            <input type="number" id="staff-max-shifts" min="1" max="31" value="17" placeholder="17">
-          </div>
-        </div>
-        <div class="form-field">
-          <label style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="staff-cross" style="accent-color:var(--accent)">
-            <span style="font-size:12px;color:var(--text);text-transform:none;letter-spacing:0">Available for cross-branch coverage</span>
-          </label>
+        <div style="font-size:12px;color:var(--muted);line-height:1.5">
+          Monthly limits (min/max shifts, max consecutive) are managed from the
+          <strong style="color:var(--text)">Schedule → Settings</strong> modal.
         </div>
         <div class="msg" id="staff-msg"></div>
       </div>

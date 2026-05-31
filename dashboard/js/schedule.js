@@ -322,8 +322,6 @@ function cellClick(cell) {
       onclick="applyShift('${st.code}')" title="${st.label}">
       ${st.code}
     </div>`).join('') +
-    // Cross-branch button
-    `<div class="shift-picker-item" style="background:#55EFC4;color:#2B2458;font-size:9px" onclick="applyCrossBranch()" title="Cross-branch assignment">↗XBR</div>` +
     // On-call toggle
     `<div class="shift-picker-item" style="background:#FF6B6B;color:white;font-size:9px" onclick="toggleOnCall()" title="Toggle On-Call">+OC</div>` +
     // Blank/clear cell
