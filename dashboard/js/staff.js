@@ -74,7 +74,6 @@ function openStaffModal(id) {
   document.getElementById('staff-modal-title').textContent = id ? 'Edit Staff' : 'Add Staff';
   document.getElementById('staff-edit-id').value = id || '';
   document.getElementById('staff-name').value    = s?.name || '';
-  document.getElementById('staff-phone').value   = s?.phone || '';
   document.getElementById('staff-msg').textContent = '';
 
   // Branch select — superadmin sees all, admin sees only their branch
@@ -102,7 +101,6 @@ function closeStaffModal() {
 async function saveStaff() {
   const msg    = document.getElementById('staff-msg');
   const name   = document.getElementById('staff-name').value.trim();
-  const phone  = document.getElementById('staff-phone').value.trim();
   const bid    = document.getElementById('staff-branch').value;
   const section = document.getElementById('staff-section').value;
   const specs  = [section];
@@ -110,7 +108,7 @@ async function saveStaff() {
   if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
   if (!specs[0]) { msg.className = 'msg err'; msg.textContent = 'Select a section'; return; }
 
-  const body = { name, phone, branch_id: bid ? Number(bid) : null, speciality: specs };
+  const body = { name, branch_id: bid ? Number(bid) : null, speciality: specs };
 
   try {
     if (_editStaffId) {
