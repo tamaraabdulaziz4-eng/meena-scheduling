@@ -96,12 +96,6 @@ function renderNestConfigList() {
 }
 
 function renderSectionCard(sec) {
-  const dbNames = sec.staff_db_names || {};
-  const staffList = (sec.staff || []).map(key => {
-    const dbName = dbNames[key] || '';
-    return `<span style="display:inline-block;background:var(--surface2,rgba(107,78,255,0.1));border-radius:6px;padding:2px 8px;font-size:12px;margin:2px">${key}${dbName ? ` <span style="color:var(--muted)">(${dbName})</span>` : ''}</span>`;
-  }).join('');
-
   return `
     <div class="card" style="padding:16px;border-radius:10px;background:var(--surface);border:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
@@ -112,14 +106,11 @@ function renderSectionCard(sec) {
         <div style="display:flex;gap:8px">
           <button class="btn btn-ghost btn-sm" style="font-size:12px"
             onclick="openNestSectionModal(${sec.id})">✏️ Edit</button>
-          <button class="btn btn-ghost btn-sm" style="font-size:12px;color:#cc4444"
-            onclick="deleteNestSection(${sec.id}, '${sec.nest_key}', '${sec.section_name}')">🗑</button>
         </div>
       </div>
 
-      <div style="margin-bottom:8px">
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Staff (${sec.staff.length})</div>
-        <div>${staffList || '<span style="color:var(--muted);font-size:12px">—</span>'}</div>
+      <div style="margin-bottom:8px;color:var(--muted);font-size:12px">
+        Staff membership is managed on the Staff page (Section field).
       </div>
 
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">
@@ -152,20 +143,12 @@ function openNestSectionModal(id = null, nestKeyDefault = '') {
     document.getElementById('ns-nest-key').value      = found.nest_key;
     document.getElementById('ns-section-name').value  = found.section_name;
     document.getElementById('ns-sort-order').value    = found.sort_order ?? 0;
-    document.getElementById('ns-staff').value         = (found.staff || []).join('\n');
-
-    // DB names: SOLVER_KEY = DB Name, one per line
-    const dbNames = found.staff_db_names || {};
-    document.getElementById('ns-db-names').value =
-      Object.entries(dbNames).map(([k,v]) => `${k} = ${v}`).join('\n');
   } else {
     title.textContent = 'Add Section';
     document.getElementById('ns-edit-id').value       = '';
     document.getElementById('ns-nest-key').value      = nestKeyDefault;
     document.getElementById('ns-section-name').value  = '';
     document.getElementById('ns-sort-order').value    = '0';
-    document.getElementById('ns-staff').value         = '';
-    document.getElementById('ns-db-names').value      = '';
   }
 
   modal.style.display = 'flex';
@@ -184,28 +167,12 @@ async function saveNestSection() {
     msg.className = 'msg err'; msg.textContent = 'Nest key and section name are required.'; return;
   }
 
-  // Parse staff (one per line)
-  const staff = document.getElementById('ns-staff').value
-    .split('\n').map(s => s.trim().toUpperCase()).filter(Boolean);
-
-  // Parse db names (KEY = Value, one per line)
-  const staff_db_names = {};
-  for (const line of document.getElementById('ns-db-names').value.split('\n')) {
-    const idx = line.indexOf('=');
-    if (idx < 0) continue;
-    const key = line.slice(0, idx).trim().toUpperCase();
-    const val = line.slice(idx + 1).trim();
-    if (key && val) staff_db_names[key] = val;
-  }
-
   const sort_order = Number(document.getElementById('ns-sort-order').value) || 0;
 
   msg.className = 'msg'; msg.textContent = 'Saving…';
 
   try {
     await API.put(`/nest-config/${nestKey}/${encodeURIComponent(secName)}`, {
-      staff,
-      staff_db_names,
       sort_order,
     });
 

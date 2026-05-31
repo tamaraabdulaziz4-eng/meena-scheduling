@@ -43,7 +43,7 @@ function renderStaffPage() {
       <div class="table-wrap" style="border-radius:10px">
         <table>
           <thead><tr>
-            <th>#</th><th>Name</th><th>Speciality</th><th>Cross-Branch</th>
+            <th>#</th><th>Name</th><th>Section</th><th>Cross-Branch</th>
             <th title="Min shifts per month">Min Shifts</th>
             <th title="Max shifts per month">Max Shifts</th>
             ${canEdit ? '<th>Actions</th>' : ''}
@@ -52,7 +52,11 @@ function renderStaffPage() {
             <tr>
               <td>${i+1}</td>
               <td><strong>${s.name}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}</td>
-              <td>${(s.speciality||['General']).map(sp => `<span class="spec-tag ${sp.toLowerCase()}">${sp}</span>`).join('')}</td>
+              <td>${(() => {
+                const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
+                const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
+                return `<span class="spec-tag ${sec.toLowerCase()}">${sec}</span>`;
+              })()}</td>
               <td>${s.is_cross_branch ? '<span class="badge badge-green">Yes</span>' : '<span style="color:var(--muted);font-size:12px">—</span>'}</td>
               <td style="text-align:center">${s.min_shifts ?? 17}</td>
               <td style="text-align:center">${s.max_shifts ?? 17}</td>
@@ -92,11 +96,10 @@ function openStaffModal(id) {
     bs.appendChild(opt);
   });
 
-  // Speciality checkboxes
-  const specs = s?.speciality || ['General'];
-  document.querySelectorAll('#staff-speciality input[type=checkbox]').forEach(cb => {
-    cb.checked = specs.includes(cb.value);
-  });
+  // Section select (stored in DB as speciality[0])
+  const specs = (s?.speciality || []).map(x => String(x || '').toUpperCase());
+  const secEl = document.getElementById('staff-section');
+  secEl.value = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
 
   document.getElementById('staff-modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('staff-name').focus(), 50);
@@ -110,10 +113,11 @@ async function saveStaff() {
   const phone  = document.getElementById('staff-phone').value.trim();
   const bid    = document.getElementById('staff-branch').value;
   const cross  = document.getElementById('staff-cross').checked;
-  const specs  = [...document.querySelectorAll('#staff-speciality input:checked')].map(c => c.value);
+  const section = document.getElementById('staff-section').value;
+  const specs  = [section];
 
   if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
-  if (!specs.length) { msg.className = 'msg err'; msg.textContent = 'Select at least one speciality'; return; }
+  if (!specs[0]) { msg.className = 'msg err'; msg.textContent = 'Select a section'; return; }
 
   const min_shifts = parseInt(document.getElementById('staff-min-shifts').value) || 17;
   const max_shifts = parseInt(document.getElementById('staff-max-shifts').value) || 17;

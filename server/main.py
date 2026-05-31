@@ -1303,38 +1303,47 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     branch_max_consecutive = int(bs.get("max_consecutive", 4) or 4)
     branch_min_shifts_default = int(bs.get("min_shifts_default", 17) or 17)
 
-    # Load nest config from DB
+    # Load section definitions from DB
     nest_sections = get_nest_sections(nest_name, year=year, month=month)
 
     import calendar as _cal
     n_days_in_month = _cal.monthrange(year, month)[1]
 
-    # Build configJson: db_name_lower → solver_key
-    config_json = {}
-    for sec in nest_sections:
-        for solver_key, db_name in (sec["staff_db_names"] or {}).items():
-            config_json[db_name.lower().strip()] = solver_key
-
-    # Build nameToStaff
-    name_to_staff = {s["name"].lower().strip(): s for s in active_staff}
+    # Build stable solver keys from staff_id (so we don't depend on names or nest config)
+    staff_by_id = {int(s["id"]): s for s in active_staff}
+    solver_key_by_staff_id = {sid: f"S{sid}" for sid in staff_by_id.keys()}
+    staff_id_by_solver_key = {sk: sid for sid, sk in solver_key_by_staff_id.items()}
 
     # AL args
-    al_by_staff = {}
-    for lv in leaves:
-        s = next((x for x in active_staff if x["id"] == lv["staff_id"]), None)
-        if not s: continue
-        day = int(lv["date"].split("-")[2])
-        al_by_staff.setdefault(s["name"], []).append(day)
-
     al_schedule = {}
-    for db_name, days in al_by_staff.items():
-        solver_key = config_json.get(db_name.lower().strip())
-        if solver_key:
-            al_schedule[solver_key] = sorted(set(days))
+    for lv in leaves:
+        sid = int(lv["staff_id"])
+        sk = solver_key_by_staff_id.get(sid)
+        if not sk:
+            continue
+        day = int(lv["date"].split("-")[2])
+        al_schedule.setdefault(sk, []).append(day)
+    for sk in list(al_schedule.keys()):
+        al_schedule[sk] = sorted(set(al_schedule[sk]))
 
     # Build nest config dict for solver (after al_schedule is populated)
     nest_cfg_for_solver = {"sections": {}}
     section_limits_for_solver = {}
+    # Build section → staff mapping from Staff.page "Section" (stored as speciality[0])
+    # This replaces the old nest-config staff lists.
+    staff_ids_by_section = {}
+    section_names = [sec["section_name"] for sec in nest_sections]
+    def _normalize_section(specs):
+        vals = [str(x or "").strip().upper() for x in (specs or [])]
+        if "US" in vals or "ULTRASOUND" in vals:
+            return "US"
+        return "General"
+    for s in active_staff:
+        sec = _normalize_section(s.get("speciality"))
+        if sec not in section_names:
+            continue
+        staff_ids_by_section.setdefault(sec, []).append(int(s["id"]))
+
     for sec in nest_sections:
         min_m = int(sec.get("min_m", 1) or 1)
         max_m = int(sec.get("max_m", 2) or 2)
@@ -1346,9 +1355,10 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             min_m = max_m
         if min_n > max_n:
             min_n = max_n
+        sec_staff_ids = staff_ids_by_section.get(sec["section_name"], [])
+        sec_solver_keys = [solver_key_by_staff_id[sid] for sid in sec_staff_ids if sid in solver_key_by_staff_id]
         nest_cfg_for_solver["sections"][sec["section_name"]] = {
-            "staff":          sec["staff"],
-            "staff_db_names": sec["staff_db_names"],
+            "staff":          sec_solver_keys,
             "allowed_shifts": sec["allowed_shifts"],
             # App goal: auto-generate M/N only. Daily M/N requirements come from
             # per-month section settings (min_m/max_m/min_n/max_n), not the nest
@@ -1367,8 +1377,10 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     # Prev tail
     prev_tail_by_solver = {}
     for row in prev_tail:
-        solver_key = config_json.get(row["staff_name"].lower().strip())
-        if not solver_key: continue
+        sid = int(row["staff_id"])
+        solver_key = solver_key_by_staff_id.get(sid)
+        if not solver_key:
+            continue
         prev_tail_by_solver.setdefault(solver_key, []).append(row["shift_code"])
 
     # Load per-month settings per staff (min/max used as constraints; max_shifts acts as ceiling)
@@ -1383,7 +1395,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
           ON sms.staff_id=s.id AND sms.year=%s AND sms.month=%s
         WHERE s.branch_id=%s AND s.active=true
     """, (branch_max_consecutive, year, month, branch_id))
-    month_settings = {r["name"].lower().strip(): r for r in month_settings_rows}
+    month_settings = {int(r["id"]): r for r in month_settings_rows}
 
     # Auto-calculate fair min/max shifts per staff based on section capacity.
     # The DB max_shifts (per-staff or per-month override) acts as the hard ceiling —
@@ -1393,8 +1405,9 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
     for sec in nest_sections:
         mn = nest_cfg_for_solver["sections"].get(sec["section_name"], {})
         slots_per_day = mn.get("min_m", 1) + mn.get("min_n", 1)
-        staff_count   = len(sec["staff"])
-        for sk in sec["staff"]:
+        staff_keys = mn.get("staff") or []
+        staff_count   = len(staff_keys)
+        for sk in staff_keys:
             sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
 
     def calc_staff_limits(solver_key, max_consec, db_min_shifts, db_max_shifts):
@@ -1453,8 +1466,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
     # Build per-solver-key limits
     staff_limits = {}
-    for db_name_l, sk in config_json.items():
-        ms = month_settings.get(db_name_l)
+    for sid, sk in solver_key_by_staff_id.items():
+        ms = month_settings.get(int(sid))
         max_consec    = int(ms.get("max_consecutive", branch_max_consecutive)) if ms else branch_max_consecutive
         db_min_shifts = int(ms.get("min_shifts", 0))                           if ms else 0
         db_max_shifts = int(ms.get("max_shifts", 17))                          if ms else 17
@@ -1484,15 +1497,7 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
     # (Generation happens per-section further below.)
 
-    # Reverse map: solver_key → db_name_lower
-    # config_json: db_name_lower → solver_key; if multiple db_names map to same solver_key,
-    # the inversion keeps the last. Build a proper reverse map.
-    solver_key_to_db = {}
-    for db_name_l, sk in config_json.items():
-        solver_key_to_db[sk] = db_name_l   # last one wins (same as before, but explicit)
-
-    print(f"[Generate] solver_key_to_db={solver_key_to_db}")
-    print(f"[Generate] name_to_staff keys={list(name_to_staff.keys())}")
+    print(f"[Generate] solver_key_to_staff_id={staff_id_by_solver_key}")
 
     import calendar as _calendar
     days_in_month = _calendar.monthrange(year, month)[1]
@@ -1595,8 +1600,8 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
         # Add entries from this section only
         for solver_key, row in (sec_result.get("schedule") or {}).items():
-            db_name_l = solver_key_to_db.get(solver_key)
-            staff     = name_to_staff.get(db_name_l) if db_name_l else None
+            sid = staff_id_by_solver_key.get(solver_key)
+            staff = staff_by_id.get(int(sid)) if sid is not None else None
             if not staff:
                 continue
             work_count = 0

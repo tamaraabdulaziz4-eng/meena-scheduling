@@ -6,7 +6,7 @@ let scheduleMonth     = new Date().getMonth() + 1;
 let currentBranchId   = null;
 let scheduleStaff     = [];   // staff for current branch
 let entryMap          = {};   // "staffId_dateStr" → entry
-let staffAllowedShifts  = {}; // staff_id → [allowed shift codes]
+// staffAllowedShifts removed: shift types are global, no per-staff filtering.
 let staffMonthSettings  = {}; // staff_id → { min_shifts, max_shifts }
 
 // Shift picker state
@@ -89,13 +89,7 @@ async function loadScheduleData() {
     // Load shift types for this branch
     await loadShiftTypes(currentBranchId);
 
-    // Load allowed shifts per staff from solver config (for cell picker filtering)
-    try {
-      const allowedData = await API.get(`/generate/allowed-shifts?branch_id=${currentBranchId}`);
-      staffAllowedShifts = allowedData.staff_allowed || {};
-    } catch (e) {
-      staffAllowedShifts = {};
-    }
+    // Shift picker shows all shift types (global list).
 
     // Load per-month min/max settings for each staff
     try {
@@ -320,19 +314,7 @@ function cellClick(cell) {
   pickerCell = cell;
   const picker = document.getElementById('shift-picker');
 
-  // Filter shift types to only those allowed for this staff member's section.
-  // Always include O (off), AL, SL (leaves), and OC (on-call) as universal options.
-  // Note: staffAllowedShifts keys are strings (from JSON), so look up with string key.
-  const staffId = cell.dataset.staff; // keep as string to match API keys
-  const allowed = staffAllowedShifts[staffId];  // array or undefined
-  const universalCodes = new Set(['O', 'AL', 'SL', 'OC']);
-  const allowedSet = allowed?.length
-    ? new Set([...allowed, ...universalCodes])
-    : null; // null = show all (fallback for unmapped branches)
-
-  const visibleShifts = allowedSet
-    ? allShiftTypes.filter(st => allowedSet.has(st.code))
-    : allShiftTypes;
+  const visibleShifts = allShiftTypes;
 
   picker.innerHTML = visibleShifts.map(st => `
     <div class="shift-picker-item"
