@@ -26,7 +26,9 @@ async function initApp() {
   document.getElementById('nav-branches').style.display    = isSuperAdmin ? 'flex' : 'none';
   document.getElementById('nav-shifts').style.display      = isAdmin ? 'flex' : 'none';
   document.getElementById('nav-users').style.display       = isSuperAdmin ? 'flex' : 'none';
-  document.getElementById('nav-nest-config').style.display = isSuperAdmin ? 'flex' : 'none';
+  // Nest Config is deprecated; keep hidden.
+  const nestNav = document.getElementById('nav-nest-config');
+  if (nestNav) nestNav.style.display = 'none';
   document.getElementById('nav-audit').style.display       = isAdmin ? 'flex' : 'none';
 
   // Load global data
@@ -96,8 +98,8 @@ async function showPage(page) {
       break;
 
     case 'nest-config':
-      if (currentUser?.role !== 'superadmin') { showPage('schedule'); return; }
-      await renderNestConfigPage();
+      // Deprecated page; keep route for old bookmarks but redirect.
+      showPage('schedule');
       break;
 
     default:
