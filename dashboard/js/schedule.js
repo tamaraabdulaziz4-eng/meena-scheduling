@@ -580,10 +580,6 @@ async function openStaffSettingsModal(tab) {
           <input type="number" min="1" max="14" value="${sec.max_consecutive ?? 4}" style="${inputStyle}"
             onchange="saveSectionMonthSetting(${secId}, 'max_consecutive', this.value, this)">
         </td>
-        <td style="padding:8px 6px;text-align:center">
-          <input type="number" min="1" max="14" value="${sec.min_al_block ?? 1}" style="${inputStyle}"
-            onchange="saveSectionMonthSetting(${secId}, 'min_al_block', this.value, this)">
-        </td>
       </tr>`;
     } else {
       return `<tr>
@@ -593,7 +589,6 @@ async function openStaffSettingsModal(tab) {
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.min_n}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.max_n}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.max_consecutive ?? 4}</td>
-        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.min_al_block ?? 1}</td>
       </tr>`;
     }
   }).join('');
@@ -639,9 +634,8 @@ async function openStaffSettingsModal(tab) {
           <th style="${thStyle}">Min N</th>
           <th style="${thStyle}">Max N</th>
           <th style="${thStyle}">Max Consecutive</th>
-          <th style="${thStyle}">Min AL Block</th>
         </tr></thead>
-        <tbody>${sectionRows || `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">No sections found</td></tr>`}</tbody>
+        <tbody>${sectionRows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No sections found</td></tr>`}</tbody>
       </table>
     </div>
     ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input and will apply from the next Generate.</div>` : ''}
@@ -650,7 +644,7 @@ async function openStaffSettingsModal(tab) {
 }
 
 async function saveSectionMonthSetting(sectionId, field, value, inputEl) {
-  const sec = sectionMonthSettings[sectionId] || { min_m:1, max_m:2, min_n:1, max_n:2, max_consecutive: 4, min_al_block: 1 };
+  const sec = sectionMonthSettings[sectionId] || { min_m:1, max_m:2, min_n:1, max_n:2, max_consecutive: 4 };
   const updated = { ...sec, [field]: parseInt(value) };
   inputEl.disabled = true; inputEl.style.opacity = '0.5';
   try {
@@ -659,7 +653,6 @@ async function saveSectionMonthSetting(sectionId, field, value, inputEl) {
       min_m: updated.min_m, max_m: updated.max_m,
       min_n: updated.min_n, max_n: updated.max_n,
       max_consecutive: updated.max_consecutive ?? 4,
-      min_al_block: updated.min_al_block ?? 1,
     });
     sectionMonthSettings[sectionId] = updated;
     inputEl.style.borderColor = '#27ae60';
