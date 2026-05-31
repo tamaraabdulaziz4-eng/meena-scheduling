@@ -219,9 +219,15 @@ def generate_schedule(nest_name: str, year: int, month: int,
     idx_to_code  = {i: c for c, i in code_to_idx.items()}
     N_SHIFTS     = len(ALL_CODES)
 
+    # If a section does not define allowed shifts, allow all known codes.
+    # The app now treats shift types as global, so per-section allowed lists
+    # are no longer required.
+    #
     # Safety: strip any shift codes from nest config that aren't in SHIFTS.
-    # This prevents KeyError if the DB has codes (e.g. TB) not yet in config.py.
+    # This prevents KeyError if the DB has codes not yet in config.py.
     for _, _, sec in all_staff:
+        if not sec.get("allowed_shifts"):
+            sec["allowed_shifts"] = list(ALL_CODES)
         sec["allowed_shifts"] = [c for c in sec.get("allowed_shifts", []) if c in code_to_idx]
 
     import sys as _sys

@@ -123,9 +123,8 @@ function renderSectionCard(sec) {
       </div>
 
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Allowed Shifts</div>
-          <code style="font-size:12px">${(sec.allowed_shifts || []).join(', ')}</code>
+        <div style="color:var(--muted);font-size:12px">
+          Shift types are global (same for all branches).
         </div>
       </div>
     </div>
@@ -154,7 +153,6 @@ function openNestSectionModal(id = null, nestKeyDefault = '') {
     document.getElementById('ns-section-name').value  = found.section_name;
     document.getElementById('ns-sort-order').value    = found.sort_order ?? 0;
     document.getElementById('ns-staff').value         = (found.staff || []).join('\n');
-    document.getElementById('ns-allowed-shifts').value = (found.allowed_shifts || []).join(',');
 
     // DB names: SOLVER_KEY = DB Name, one per line
     const dbNames = found.staff_db_names || {};
@@ -168,7 +166,6 @@ function openNestSectionModal(id = null, nestKeyDefault = '') {
     document.getElementById('ns-sort-order').value    = '0';
     document.getElementById('ns-staff').value         = '';
     document.getElementById('ns-db-names').value      = '';
-    document.getElementById('ns-allowed-shifts').value = 'M,N,O,AL,SL';
   }
 
   modal.style.display = 'flex';
@@ -201,10 +198,6 @@ async function saveNestSection() {
     if (key && val) staff_db_names[key] = val;
   }
 
-  // Parse allowed shifts
-  const allowed_shifts = document.getElementById('ns-allowed-shifts').value
-    .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-
   const sort_order = Number(document.getElementById('ns-sort-order').value) || 0;
 
   msg.className = 'msg'; msg.textContent = 'Saving…';
@@ -213,7 +206,6 @@ async function saveNestSection() {
     await API.put(`/nest-config/${nestKey}/${encodeURIComponent(secName)}`, {
       staff,
       staff_db_names,
-      allowed_shifts,
       sort_order,
     });
 

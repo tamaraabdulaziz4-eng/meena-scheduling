@@ -324,7 +324,7 @@ def seed_defaults():
 
 
 def seed_nest_config():
-    # allowed_shifts: full list — used for manual cell picker (user can assign any shift)
+    # NOTE: shift types are global; per-section allowed_shifts are no longer used.
     # Auto-generate uses only M/N/O (and forced AL) regardless of other codes.
     # coverage/exact_coverage are legacy fields and are not used for auto-generate.
     _MN  = {'weekday':{'M':1,'N':1},'weekend':{'M':1,'N':1}}
@@ -466,6 +466,13 @@ def branch_to_nest(branch_name: str) -> Optional[str]:
     return None
 
 def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> list:
+    # Shift types are global; sections implicitly allow all codes.
+    global_codes = [r["code"] for r in q("""SELECT code FROM scheduling.shift_types
+                                           WHERE branch_id IS NULL
+                                           ORDER BY sort_order, code""")]
+    if not global_codes:
+        global_codes = ["M","N","O","AL","SL","OC","TB","D","D1","EV","A","B","C","N6","Y3","D_US","R","R1"]
+
     if year and month:
         rows = q("""
             SELECT ns.id,ns.nest_key,ns.section_name,ns.staff,ns.staff_db_names,
@@ -487,6 +494,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
                            2 AS min_o_block
                     FROM scheduling.nest_sections WHERE nest_key=%s
                     ORDER BY sort_order,section_name""", (nest_key,))
+    for r in rows:
+        r["allowed_shifts"] = global_codes
     return rows
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -1158,6 +1167,9 @@ def list_nest_configs(user=Depends(require_superadmin)):
     rows = q("""SELECT id,nest_key,section_name,staff,staff_db_names,
                        allowed_shifts,coverage,exact_coverage,sort_order,updated_at
                 FROM scheduling.nest_sections ORDER BY nest_key,sort_order,section_name""")
+    # Shift types are global now; hide per-section allowed_shifts noise.
+    for r in rows:
+        r.pop("allowed_shifts", None)
     grouped = {}
     for row in rows:
         grouped.setdefault(row["nest_key"], []).append(row)
@@ -1174,13 +1186,11 @@ async def upsert_nest_section(nest_key: str, section_name: str,
     nest_key = nest_key.upper()
     staff          = body.get("staff", [])
     staff_db_names = body.get("staff_db_names", {})
-    allowed_shifts = body.get("allowed_shifts", [])
     coverage       = body.get("coverage", {})
     exact_coverage = body.get("exact_coverage", {})
     sort_order     = body.get("sort_order", 0)
 
     if not isinstance(staff, list): raise HTTPException(400, "staff must be array")
-    if not isinstance(allowed_shifts, list): raise HTTPException(400, "allowed_shifts must be array")
 
     row = q("""INSERT INTO scheduling.nest_sections
                (nest_key,section_name,staff,staff_db_names,allowed_shifts,
@@ -1190,14 +1200,16 @@ async def upsert_nest_section(nest_key: str, section_name: str,
                staff=%s,staff_db_names=%s,allowed_shifts=%s,
                coverage=%s,exact_coverage=%s,sort_order=%s,updated_at=NOW()
                RETURNING *""",
-            (nest_key, section_name, staff, json.dumps(staff_db_names), allowed_shifts,
+            # allowed_shifts no longer used; store empty list
+            (nest_key, section_name, staff, json.dumps(staff_db_names), [],
              json.dumps(coverage), json.dumps(exact_coverage), sort_order,
              # DO UPDATE
-             staff, json.dumps(staff_db_names), allowed_shifts,
+             staff, json.dumps(staff_db_names), [],
              json.dumps(coverage), json.dumps(exact_coverage), sort_order),
             one=True)
     insert_audit(user, "UPDATE_NEST_CONFIG", f"{nest_key}/{section_name}",
-                 f"staff={len(staff)} allowed_shifts={','.join(allowed_shifts)}")
+                 f"staff={len(staff)}")
+    row.pop("allowed_shifts", None)
     return {"section": row}
 
 @app.delete("/api/nest-config/{nsid}")
