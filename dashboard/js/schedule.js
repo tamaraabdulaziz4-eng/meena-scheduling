@@ -295,8 +295,63 @@ function renderRotaGrid() {
     html += staffRows(scheduleStaff, '');
   }
 
+  html += coverageRow(nDays);
+
   html += `</tbody></table>`;
   wrap.innerHTML = html;
+}
+
+// ── 24h coverage check row ────────────────────────────────────────────────────
+// For each day, verify the day is fully covered (24h): there must be at least
+// one M (morning 12h) AND one N (night 12h) across all staff. If either is
+// missing the day is not fully covered → red marker with a tooltip explaining
+// what's missing.
+function coverageRow(nDays) {
+  let cells = '';
+  for (let i = 0; i < nDays; i++) {
+    const d       = i + 1;
+    const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+    // Count M and N across all staff for this day
+    let mCount = 0, nCount = 0;
+    scheduleStaff.forEach(s => {
+      const entry = entryMap[`${s.id}_${dateStr}`];
+      const code  = entry?.shift_code;
+      if (code === 'M') mCount++;
+      else if (code === 'N') nCount++;
+    });
+
+    const hasM = mCount >= 1;
+    const hasN = nCount >= 1;
+    const covered = hasM && hasN;
+
+    let marker, color, title;
+    if (covered) {
+      marker = '✓';
+      color  = '#00C896';
+      title  = `Day ${d}: fully covered (M:${mCount} · N:${nCount})`;
+    } else {
+      marker = '✕';
+      color  = '#E63946';
+      const missing = [];
+      if (!hasM) missing.push('M (morning)');
+      if (!hasN) missing.push('N (night)');
+      title  = `Day ${d}: NOT 24h covered — missing ${missing.join(' + ')} (M:${mCount} · N:${nCount})`;
+    }
+
+    cells += `<td style="text-align:center;padding:3px 0;background:${covered?'rgba(0,200,150,0.10)':'rgba(230,57,70,0.18)'}"
+      title="${title}">
+      <span style="font-weight:800;font-size:12px;color:${color}">${marker}</span>
+    </td>`;
+  }
+
+  return `<tr class="rota-coverage-row" style="border-top:2px solid var(--accent)">
+    <td class="rota-name-col" style="padding:4px 8px !important;white-space:nowrap;font-weight:700;font-size:11px;color:var(--muted)">
+      24h Coverage
+    </td>
+    ${cells}
+    <td></td>
+  </tr>`;
 }
 
 // ── Cell click → shift picker ─────────────────────────────────────────────────
