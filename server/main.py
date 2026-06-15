@@ -235,7 +235,6 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS min_shifts INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS max_shifts INTEGER NOT NULL DEFAULT 17;")
             cur.execute("UPDATE scheduling.staff SET max_shifts=17 WHERE max_shifts=0 OR max_shifts IS NULL;")
-            cur.execute("ALTER TABLE scheduling.staff_month_settings ADD COLUMN IF NOT EXISTS max_consecutive INTEGER NOT NULL DEFAULT 4;")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.section_month_settings (
                     id SERIAL PRIMARY KEY,
@@ -271,6 +270,8 @@ def init_schema():
                     UNIQUE(staff_id, year, month)
                 );
             """)
+            # Safe now that staff_month_settings exists (was previously run too early).
+            cur.execute("ALTER TABLE scheduling.staff_month_settings ADD COLUMN IF NOT EXISTS max_consecutive INTEGER NOT NULL DEFAULT 4;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -1411,17 +1412,33 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
             sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
 
     def calc_staff_limits(solver_key, max_consec, db_min_shifts, db_max_shifts):
+        # ── Hours-based target ────────────────────────────────────────────────
+        # Saudi labour: 48 working hours/week. Monthly target hours scale with
+        # the number of days in the month:
+        #     target_hours = (n_days / 7) * 48
+        # Each annual-leave (AL) day is counted as a normal 8-hour working day,
+        # so it consumes 8 hours from the target. The remaining hours are then
+        # converted to 12-hour M/N shifts:
+        #     shifts = round((target_hours - leave_days * 8) / 12)
+        #
+        # Example (Wafa, 30-day month, 10 AL days):
+        #     target  = (30/7)*48 = 205.7h
+        #     remain  = 205.7 - 80 = 125.7h
+        #     shifts  = round(125.7 / 12) = 10
+        WEEKLY_HOURS   = 48
+        LEAVE_DAY_HRS  = 8     # an AL/leave day = one normal 8-hour working day
+        SHIFT_HOURS    = 12    # M and N are 12-hour shifts
+
         al_days_set = set(al_schedule.get(solver_key, []))
         leave_days  = len(al_days_set)
-        available   = n_days_in_month - leave_days
-        if available < 0:
-            available = 0
+        available   = max(0, n_days_in_month - leave_days)
 
-        # Max possible work days given the "k on, 2 off" rule plus AL days.
-        # For each contiguous availability block of length L (between AL days),
-        # the maximum work days is:
-        #   floor(L/(k+2))*k + min(k, L%(k+2))
-        # This matches the enforced HC5a rest rule.
+        target_hours    = (n_days_in_month / 7.0) * WEEKLY_HOURS
+        remaining_hours = max(0.0, target_hours - leave_days * LEAVE_DAY_HRS)
+        target_shifts   = round(remaining_hours / SHIFT_HOURS)
+
+        # ── Physical feasibility cap (k-on / 2-off rest rule) ─────────────────
+        # The most work days achievable, given AL gaps and the "k on, 2 off" rule.
         def _block_max_work(L: int, k: int) -> int:
             if L <= 0:
                 return 0
@@ -1445,24 +1462,29 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
                 max_work_feasible += _block_max_work(block_len, max_consec)
         else:
             max_work_feasible = available
-        sec_info      = sk_to_mn.get(solver_key, {"slots_per_day": 2, "staff_count": 5})
-        slots_per_day = sec_info["slots_per_day"]
-        staff_count   = sec_info["staff_count"]
-        # Fair share: total slots in month / staff count, scaled by personal availability
-        total_slots   = slots_per_day * n_days_in_month
-        fair_target   = min(db_max_shifts, (total_slots / staff_count) * (available / n_days_in_month))
-        # Give ±20% tolerance so solver has room to balance
-        auto_min = max(0, _math_staff.floor(fair_target * 0.80))
-        auto_max = min(db_max_shifts, _math_staff.ceil(fair_target * 1.20))
 
-        requested_min = max(branch_min_shifts_default, int(db_min_shifts or 0), auto_min)
-        # Hard feasibility cap: can't require more work days than the person can
-        # physically work (available days) or their configured max.
-        hard_cap = min(int(db_max_shifts), int(max_work_feasible))
-        eff_min = min(requested_min, hard_cap)
+        # ── Apply ceilings ────────────────────────────────────────────────────
+        # The configured per-staff/per-month max_shifts is a hard ceiling, and
+        # the schedule can never demand more than what's physically feasible.
+        ceiling = min(int(db_max_shifts), int(max_work_feasible))
 
-        eff_max = max(eff_min, min(int(db_max_shifts), auto_max))
-        return {"min_shifts": eff_min, "max_shifts": eff_max, "max_consecutive": max_consec}
+        # Target (from hours) is what we aim for, but never above the ceiling.
+        eff_target = min(target_shifts, ceiling)
+
+        # If an explicit DB min is set, honour it but keep it within the ceiling.
+        eff_min = min(max(int(db_min_shifts or 0), eff_target), ceiling)
+        eff_min = max(0, eff_min)
+
+        # Give the solver a small upward tolerance (+1) so it can balance fairness
+        # and coverage, but never exceed the ceiling.
+        eff_max = min(ceiling, max(eff_min, eff_target + 1))
+
+        return {
+            "min_shifts": eff_min,
+            "max_shifts": eff_max,
+            "max_consecutive": max_consec,
+            "target_shifts": target_shifts,
+        }
 
     # Build per-solver-key limits
     staff_limits = {}
@@ -1472,13 +1494,12 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
         db_min_shifts = int(ms.get("min_shifts", 0))                           if ms else 0
         db_max_shifts = int(ms.get("max_shifts", 17))                          if ms else 17
         staff_limits[sk] = calc_staff_limits(sk, max_consec, db_min_shifts, db_max_shifts)
-        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} db_min={db_min_shifts} db_max={db_max_shifts} branch_min={branch_min_shifts_default} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']}")
+        print(f"[Generate] staff_limit {sk}: leaves={len(al_schedule.get(sk,[]))} db_max={db_max_shifts} target_shifts={staff_limits[sk].get('target_shifts')} → min={staff_limits[sk]['min_shifts']} max={staff_limits[sk]['max_shifts']} max_consec={staff_limits[sk]['max_consecutive']}")
 
-    # Use branch-level max_consecutive as fallback (taken as min across staff, or 4)
-    max_consecutive = min(
-        (v["max_consecutive"] for v in staff_limits.values()),
-        default=4
-    )
+    # Branch-level fallback for max_consecutive. Per-staff values live in
+    # staff_limits and per-section values in section_limits; the solver reads
+    # those directly. This is only the default when neither is set.
+    max_consecutive = branch_max_consecutive
 
     # Patch NESTS so the solver reads the DB-provided config.
     import generator as _gen
