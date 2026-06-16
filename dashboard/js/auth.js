@@ -16,11 +16,18 @@ async function doLogin() {
     const user = await API.post('/auth/login', { username, password });
     currentUser = user;
     document.getElementById('login-overlay').style.display = 'none';
-    // Branded welcome splash while the app loads its first data
+    // Branded welcome splash stays up while the app loads its first data
+    // (initApp awaits the schedule render). Enforce a minimum on-screen time
+    // so the greeting is readable even when loading is very fast.
     showWelcomeSplash(user.username || username);
+    const _splashStart = Date.now();
     await initApp();
-    // Keep the splash up a touch so the greeting is readable, then fade out
-    setTimeout(hideWelcomeSplash, 900);
+    const MIN_SPLASH_MS = 1600;
+    const elapsed = Date.now() - _splashStart;
+    if (elapsed < MIN_SPLASH_MS) {
+      await new Promise(r => setTimeout(r, MIN_SPLASH_MS - elapsed));
+    }
+    hideWelcomeSplash();
   } catch (err) {
     errEl.textContent = err.message || 'Login failed';
   }
