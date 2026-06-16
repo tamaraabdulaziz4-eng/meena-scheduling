@@ -121,7 +121,7 @@ async function saveStaff() {
     }
     closeStaffModal();
     renderStaffPage();
-    toast(_editStaffId ? 'Staff updated' : 'Staff added');
+    showSuccess(_editStaffId ? 'Staff updated' : 'Staff added');
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
   }

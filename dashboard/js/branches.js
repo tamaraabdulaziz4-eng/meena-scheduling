@@ -72,7 +72,7 @@ async function saveBranch() {
     }
     closeBranchModal();
     renderBranchesList();
-    toast(_editBranchId ? 'Branch updated' : 'Branch added');
+    showSuccess(_editBranchId ? 'Branch updated' : 'Branch added');
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
   }

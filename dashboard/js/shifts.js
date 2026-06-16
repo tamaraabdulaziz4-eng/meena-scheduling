@@ -143,7 +143,7 @@ async function saveShiftType() {
     }
     closeShiftModal();
     renderShiftsPage();
-    toast('Shift saved');
+    showSuccess('Shift saved');
   } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
 }
 

@@ -41,7 +41,7 @@ async function renderSchedulePage() {
 
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${['admin','superadmin'].includes(currentUser.role) ? `
-          <button class="btn btn-ghost btn-sm" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
+          <button class="btn btn-ghost btn-sm btn-glow" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
           <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
           <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
@@ -295,12 +295,21 @@ function renderScheduleStats() {
   const onCall   = Object.values(entryMap).filter(e => e.is_oncall || e.shift_code === 'OC').length;
   const leaves   = Object.values(entryMap).filter(e => ['AL','SL','TB'].includes(e.shift_code)).length;
 
+  const icoStaff = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
+  const icoDays  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>';
+  const icoShift = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
+  const icoCall  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+  const icoLeaf  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+
   bar.innerHTML = `
-    <div class="stat-pill">👥 <strong>${total}</strong> staff</div>
-    <div class="stat-pill">📅 <strong>${nDays}</strong> days</div>
-    <div class="stat-pill">✅ <strong>${working}</strong> shifts assigned</div>
-    <div class="stat-pill">📞 <strong>${onCall}</strong> on-call</div>
-    <div class="stat-pill">🌴 <strong>${leaves}</strong> leaves</div>`;
+    <div class="stat-pill">${icoStaff} <strong data-count="${total}">0</strong> staff</div>
+    <div class="stat-pill">${icoDays} <strong data-count="${nDays}">0</strong> days</div>
+    <div class="stat-pill">${icoShift} <strong data-count="${working}">0</strong> shifts assigned</div>
+    <div class="stat-pill">${icoCall} <strong data-count="${onCall}">0</strong> on-call</div>
+    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>`;
+
+  // Animate each number counting up
+  bar.querySelectorAll('strong[data-count]').forEach(el => countUp(el, parseInt(el.dataset.count) || 0));
 }
 
 // ── Rota Grid ─────────────────────────────────────────────────────────────────
@@ -546,7 +555,9 @@ async function applyShift(code) {
     buildEntryMap();
     renderRotaGrid();
     renderScheduleStats();
-    toast(`${date}: ${code}`, 'ok');
+    // Subtle green flash on the changed cell for instant visual confirmation.
+    const newCell = document.querySelector(`td[data-staff="${staffId}"][data-date="${date}"]`);
+    if (newCell) { newCell.classList.add('cell-flash'); setTimeout(() => newCell.classList.remove('cell-flash'), 700); }
   } catch (err) {
     setCellSaving(savedCell, false);
     toast(err.message, 'err');
@@ -975,7 +986,7 @@ async function runGenerate() {
     renderScheduleStats();
     renderRotaGrid();
 
-    toast(`Schedule generated (${result.solver_status})`);
+    showSuccess('Schedule generated');
 
     // Show diagnostics if any section is non-optimal or infeasible.
     const sections = result.sections || {};

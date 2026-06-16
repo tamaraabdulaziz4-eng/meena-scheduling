@@ -1,6 +1,39 @@
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// Animated success checkmark overlay. Auto-dismisses after ~1.4s.
+function showSuccess(msg = 'Done') {
+  const ov = document.getElementById('success-overlay');
+  if (!ov) return;
+  document.getElementById('success-msg').textContent = msg;
+  ov.classList.remove('out');
+  // restart the SVG animations by reflowing
+  ov.querySelectorAll('.success-circle, .success-path, .success-card, .success-msg').forEach(el => {
+    el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+  });
+  ov.classList.add('show');
+  clearTimeout(ov._t);
+  ov._t = setTimeout(() => {
+    ov.classList.add('out');
+    setTimeout(() => { ov.classList.remove('show', 'out'); }, 300);
+  }, 1400);
+}
+
+// Count a number up from 0 to target inside an element (for KPIs).
+function countUp(el, target, dur = 700) {
+  if (!el) return;
+  const start = performance.now();
+  const from = 0;
+  function tick(now) {
+    const p = Math.min((now - start) / dur, 1);
+    const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+    el.textContent = Math.round(from + (target - from) * eased);
+    if (p < 1) requestAnimationFrame(tick);
+    else el.textContent = target;
+  }
+  requestAnimationFrame(tick);
+}
+
 // ── Toast ────────────────────────────────────────────────────────────────────
 let _toastTimer;
 function toast(msg, type = 'ok') {

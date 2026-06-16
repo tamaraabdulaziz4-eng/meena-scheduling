@@ -108,7 +108,7 @@ async function saveUser() {
     }
     closeUserModal();
     renderUsersList();
-    toast(_editUserId ? 'User updated' : 'User created');
+    showSuccess(_editUserId ? 'User updated' : 'User created');
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
   }
