@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260616i">
+<link rel="stylesheet" href="/style.css?v=20260616j">
 </head>
 <body>
 
@@ -60,6 +60,17 @@
   <div class="wsplash-dots"><i></i><i></i><i></i></div>
 </div>
 
+<!-- Success animation overlay -->
+<div id="success-overlay">
+  <div class="success-card">
+    <svg class="success-check" viewBox="0 0 52 52">
+      <circle class="success-circle" cx="26" cy="26" r="24" fill="none"/>
+      <path class="success-path" fill="none" d="M14 27 l8 8 l16 -16"/>
+    </svg>
+    <div class="success-msg" id="success-msg">Done</div>
+  </div>
+</div>
+
 <!-- Sidebar toggle -->
 <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#10094;</button>
 
@@ -78,41 +89,41 @@
     <nav class="sidebar-nav">
       <div class="nav-section-label">Main</div>
       <button class="nav-item active" id="nav-schedule" onclick="showPage('schedule')">
-        <span class="nav-icon">📅</span> Schedule
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span> Schedule
       </button>
       <button class="nav-item" id="nav-staff" onclick="showPage('staff')">
-        <span class="nav-icon">👥</span> Staff
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> Staff
       </button>
       <button class="nav-item" id="nav-leaves" onclick="showPage('leaves')">
-        <span class="nav-icon">🌴</span> Leave
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Leave
       </button>
       <button class="nav-item" id="nav-review" onclick="showPage('review')" style="display:none">
-        <span class="nav-icon">✅</span> Review
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span> Review
         <span id="review-badge" style="display:none;margin-left:auto;background:#FF9F43;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px"></span>
       </button>
 
       <div class="nav-section-label" style="margin-top:8px" id="nav-section-admin">Admin</div>
       <button class="nav-item" id="nav-branches" onclick="showPage('branches')">
-        <span class="nav-icon">🏥</span> Branches
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01"/></svg></span> Branches
       </button>
       <button class="nav-item" id="nav-shifts" onclick="showPage('shifts')">
-        <span class="nav-icon">🕐</span> Shift Types
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span> Shift Types
       </button>
       <button class="nav-item" id="nav-users" onclick="showPage('users')">
-        <span class="nav-icon">🔐</span> Users
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> Users
       </button>
       <button class="nav-item" id="nav-audit" onclick="showPage('audit')">
-        <span class="nav-icon">📋</span> Audit Log
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V3a1 1 0 0 1 1-1z"/><path d="M9 12h6M9 16h6"/></svg></span> Audit Log
       </button>
     </nav>
 
     <div class="sidebar-bottom">
       <button class="nav-item" onclick="toggleTheme()" style="color:rgba(255,255,255,0.5)">
-        <span class="nav-icon" id="theme-icon">🌙</span>
+        <span class="nav-icon" id="theme-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
         <span id="theme-label">Dark Mode</span>
       </button>
       <button class="nav-item" onclick="doLogout()" style="color:rgba(255,107,107,0.8)">
-        <span class="nav-icon">↩</span> Sign Out
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></span> Sign Out
       </button>
     </div>
   </aside>
@@ -394,18 +405,18 @@
 </div>
 
 
-<script src="/js/api.js?v=20260616i"></script>
-<script src="/js/auth.js?v=20260616i"></script>
-<script src="/js/util.js?v=20260616i"></script>
-<script src="/js/branches.js?v=20260616i"></script>
-<script src="/js/users.js?v=20260616i"></script>
-<script src="/js/staff.js?v=20260616i"></script>
-<script src="/js/leaves.js?v=20260616i"></script>
-<script src="/js/shifts.js?v=20260616i"></script>
-<script src="/js/schedule.js?v=20260616i"></script>
-<script src="/js/review.js?v=20260616i"></script>
-<script src="/js/export.js?v=20260616i"></script>
-<script src="/js/audit.js?v=20260616i"></script>
-<script src="/js/main.js?v=20260616i"></script>
+<script src="/js/api.js?v=20260616j"></script>
+<script src="/js/auth.js?v=20260616j"></script>
+<script src="/js/util.js?v=20260616j"></script>
+<script src="/js/branches.js?v=20260616j"></script>
+<script src="/js/users.js?v=20260616j"></script>
+<script src="/js/staff.js?v=20260616j"></script>
+<script src="/js/leaves.js?v=20260616j"></script>
+<script src="/js/shifts.js?v=20260616j"></script>
+<script src="/js/schedule.js?v=20260616j"></script>
+<script src="/js/review.js?v=20260616j"></script>
+<script src="/js/export.js?v=20260616j"></script>
+<script src="/js/audit.js?v=20260616j"></script>
+<script src="/js/main.js?v=20260616j"></script>
 </body>
 </html>
