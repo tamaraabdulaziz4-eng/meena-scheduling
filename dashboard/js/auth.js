@@ -16,7 +16,11 @@ async function doLogin() {
     const user = await API.post('/auth/login', { username, password });
     currentUser = user;
     document.getElementById('login-overlay').style.display = 'none';
-    initApp();
+    // Branded welcome splash while the app loads its first data
+    showWelcomeSplash(user.username || username);
+    await initApp();
+    // Keep the splash up a touch so the greeting is readable, then fade out
+    setTimeout(hideWelcomeSplash, 900);
   } catch (err) {
     errEl.textContent = err.message || 'Login failed';
   }
