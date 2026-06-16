@@ -41,7 +41,9 @@ async function initApp() {
   } catch (e) { console.error('Data load error:', e); }
   hideLoader();
 
-  showPage('schedule');
+  // Await the first page render (schedule) so the welcome splash — which is
+  // shown by doLogin — stays up until the rota is actually on screen.
+  await showPage('schedule');
 }
 
 async function showPage(page) {
