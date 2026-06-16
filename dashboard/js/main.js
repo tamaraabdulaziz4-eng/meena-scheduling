@@ -62,6 +62,11 @@ async function showPage(page) {
   if (navEl) navEl.classList.add('active');
 
   const content = document.getElementById('content');
+  // Smooth fade: dim the old content, render the new page, then fade it back in
+  // so pages don't snap into view abruptly.
+  content.style.transition = 'opacity .18s ease';
+  content.style.opacity = '0';
+  await new Promise(r => setTimeout(r, 120));
 
   switch (page) {
     case 'schedule':
@@ -118,6 +123,8 @@ async function showPage(page) {
     default:
       content.innerHTML = `<div class="empty"><p>Page not found</p></div>`;
   }
+  // Fade the freshly rendered page back in smoothly.
+  requestAnimationFrame(() => { content.style.opacity = '1'; });
 }
 
 // Close shift picker when clicking outside

@@ -1,22 +1,23 @@
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-// Animated success checkmark overlay. Auto-dismisses after ~1.4s.
+// Animated success checkmark overlay. Auto-dismisses after ~1.6s.
 function showSuccess(msg = 'Done') {
   const ov = document.getElementById('success-overlay');
   if (!ov) return;
   document.getElementById('success-msg').textContent = msg;
-  ov.classList.remove('out');
-  // restart the SVG animations by reflowing
-  ov.querySelectorAll('.success-circle, .success-path, .success-card, .success-msg').forEach(el => {
-    el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
-  });
-  ov.classList.add('show');
   clearTimeout(ov._t);
+  ov.classList.remove('out');
+  ov.classList.add('show');           // make it visible FIRST
+  // Now that it's displayed, restart the SVG draw animations reliably.
+  const anim = ov.querySelectorAll('.success-circle, .success-path, .success-msg');
+  anim.forEach(el => { el.style.animation = 'none'; });
+  void ov.offsetWidth;                // force reflow while visible
+  anim.forEach(el => { el.style.animation = ''; });
   ov._t = setTimeout(() => {
     ov.classList.add('out');
-    setTimeout(() => { ov.classList.remove('show', 'out'); }, 300);
-  }, 1400);
+    setTimeout(() => { ov.classList.remove('show', 'out'); }, 350);
+  }, 1600);
 }
 
 // Count a number up from 0 to target inside an element (for KPIs).
