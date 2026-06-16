@@ -1,3 +1,6 @@
+// ── Shared helpers ────────────────────────────────────────────────────────────
+function escapeHtml(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
 // ── Toast ────────────────────────────────────────────────────────────────────
 let _toastTimer;
 function toast(msg, type = 'ok') {
