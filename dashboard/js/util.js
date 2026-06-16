@@ -53,11 +53,16 @@ function showLoader(label = 'Loading…') {
   if (splash && splash.style.display !== 'none' && !splash.classList.contains('done')) return;
   const el = document.getElementById('page-loader');
   document.getElementById('loader-label').textContent = label;
+  el.classList.remove('fading');
   el.classList.add('show');
 }
 function hideLoader() {
   clearInterval(_loaderMsgTimer);
-  document.getElementById('page-loader').classList.remove('show');
+  const el = document.getElementById('page-loader');
+  if (!el) return;
+  // Fade out smoothly, then hide.
+  el.classList.add('fading');
+  setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
 }
 // Loader variant that cycles through several messages (for long waits like Generate)
 function showLoaderCycling(messages = ['Working…'], intervalMs = 1400) {

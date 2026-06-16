@@ -64,9 +64,9 @@ async function showPage(page) {
   const content = document.getElementById('content');
   // Smooth fade: dim the old content, render the new page, then fade it back in
   // so pages don't snap into view abruptly.
-  content.style.transition = 'opacity .18s ease';
+  content.style.transition = 'opacity .22s ease';
   content.style.opacity = '0';
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 140));
 
   switch (page) {
     case 'schedule':
@@ -78,8 +78,7 @@ async function showPage(page) {
       break;
 
     case 'staff':
-      showLoader('Loading staff…');
-      try { await loadStaff(); } finally { hideLoader(); }
+      try { await loadStaff(); } catch(e){}
       renderStaffPage();
       break;
 
@@ -89,24 +88,19 @@ async function showPage(page) {
 
     case 'branches':
       if (!['admin','superadmin'].includes(currentUser?.role)) { showPage('schedule'); return; }
-      showLoader('Loading branches…');
-      try { await loadBranches(); } finally { hideLoader(); }
+      try { await loadBranches(); } catch(e){}
       renderBranchesPage();
       break;
 
     case 'shifts':
       if (!['admin','superadmin'].includes(currentUser?.role)) { showPage('schedule'); return; }
-      showLoader('Loading shift types…');
-      try {
-        await Promise.all([loadBranches(), loadAllShiftTypesRaw()]);
-      } finally { hideLoader(); }
+      try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}
       renderShiftsPage();
       break;
 
     case 'users':
       if (currentUser?.role !== 'superadmin') { showPage('schedule'); return; }
-      showLoader('Loading users…');
-      try { await loadUsers(); } finally { hideLoader(); }
+      try { await loadUsers(); } catch(e){}
       renderUsersPage();
       break;
 
