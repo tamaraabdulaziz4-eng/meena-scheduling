@@ -30,6 +30,13 @@ async function initApp() {
   const nestNav = document.getElementById('nav-nest-config');
   if (nestNav) nestNav.style.display = 'none';
   document.getElementById('nav-audit').style.display       = isAdmin ? 'flex' : 'none';
+  // Review page is manager-only
+  const reviewNav = document.getElementById('nav-review');
+  if (reviewNav) reviewNav.style.display = isSuperAdmin ? 'flex' : 'none';
+  // Pre-load the pending-review count so the badge shows on login
+  if (isSuperAdmin && typeof loadReviewBadgeCount === 'function') {
+    loadReviewBadgeCount();
+  }
 
   // Load global data
   showLoader('Loading data…');
@@ -59,6 +66,10 @@ async function showPage(page) {
   switch (page) {
     case 'schedule':
       await renderSchedulePage();
+      break;
+
+    case 'review':
+      await renderReviewPage();
       break;
 
     case 'staff':
