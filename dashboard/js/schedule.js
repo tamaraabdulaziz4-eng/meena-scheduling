@@ -15,12 +15,21 @@ let pickerCell = null;
 
 async function renderSchedulePage() {
   // Choose branch: a pending branch (e.g. opened from Review) wins; otherwise
-  // admin sees own branch, superadmin defaults to the first.
+  // a team lead sees their own branch, cross-branch roles default to the first.
   if (window._pendingScheduleBranch) {
     currentBranchId = window._pendingScheduleBranch;
     window._pendingScheduleBranch = null;
   } else {
     currentBranchId = currentUser.branch_id || (allBranches[0]?.id);
+  }
+
+  // If there are genuinely no branches yet, show a friendly note instead of
+  // firing a request that would fail.
+  if (!currentBranchId) {
+    setTopbar('Schedule', '', '');
+    document.getElementById('content').innerHTML =
+      `<div class="empty"><div class="empty-icon">🏥</div><p>No branches available yet.</p></div>`;
+    return;
   }
 
   setTopbar('Schedule', '', '');

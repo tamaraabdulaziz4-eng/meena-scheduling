@@ -26,8 +26,8 @@ async function initApp() {
   // "Admin tools" (branches, shift types, users, audit) are for the full admin only.
   // The manager is intentionally kept focused: Schedule, Staff, Leave, Review.
   const showAdminTools = isSuperAdmin;
-  // Staff page: team leads + manager + full admin can view it.
-  const canSeeStaff = ['admin','superadmin','manager'].includes(role);
+  // Staff page stays visible to all roles (view-only for non-editors), as before.
+  const canSeeStaff = true;
   // Reviewers (manager + full admin) get the Review page.
   const isReviewer = ['manager','superadmin'].includes(role);
 
