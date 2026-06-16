@@ -990,6 +990,48 @@ def list_schedules(request: Request, user=Depends(get_current_user)):
                     ORDER BY s.year DESC,s.month DESC""")
     return rows
 
+@app.get("/api/schedules/review-overview")
+def review_overview(request: Request, user=Depends(require_superadmin)):
+    """Manager view: every branch and its schedule status for a given month.
+    Branches with no schedule row yet are surfaced as 'not_submitted' so the
+    manager can see who is late, not just who submitted."""
+    year  = request.query_params.get("year")
+    month = request.query_params.get("month")
+    if not year or not month:
+        raise HTTPException(400, "year and month required")
+    rows = q("""
+        SELECT b.id AS branch_id, b.name AS branch_name,
+               s.id AS schedule_id,
+               COALESCE(s.status, 'not_submitted') AS status,
+               s.is_locked, s.updated_at, s.reviewed_at, s.approved_at,
+               cu.username AS created_by_name,
+               (SELECT COUNT(*) FROM scheduling.staff st WHERE st.branch_id=b.id AND st.active=true) AS staff_count,
+               (SELECT COUNT(*) FROM scheduling.schedule_entries e
+                  WHERE e.schedule_id=s.id AND e.shift_code NOT IN ('O','AL','SL','TB')) AS shift_count
+        FROM scheduling.branches b
+        LEFT JOIN scheduling.schedules s
+          ON s.branch_id=b.id AND s.year=%s AND s.month=%s
+        LEFT JOIN scheduling.users cu ON cu.id=s.created_by
+        ORDER BY
+          CASE COALESCE(s.status,'not_submitted')
+            WHEN 'submitted' THEN 0
+            WHEN 'reviewed'  THEN 1
+            WHEN 'not_submitted' THEN 2
+            WHEN 'draft'     THEN 3
+            WHEN 'approved'  THEN 4
+            ELSE 5 END,
+          b.name
+    """, (int(year), int(month)))
+    # Summary counts for the KPI cards
+    summary = {"pending": 0, "not_submitted": 0, "approved": 0, "draft": 0, "total": len(rows)}
+    for r in rows:
+        st = r["status"]
+        if st in ("submitted", "reviewed"): summary["pending"] += 1
+        elif st == "approved": summary["approved"] += 1
+        elif st == "not_submitted": summary["not_submitted"] += 1
+        elif st == "draft": summary["draft"] += 1
+    return {"branches": rows, "summary": summary}
+
 @app.post("/api/schedules/open")
 async def open_schedule(request: Request, user=Depends(require_admin)):
     body = await request.json()
@@ -1106,19 +1148,29 @@ async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_
 async def update_schedule_status(sid: int, request: Request, user=Depends(require_admin)):
     body = await request.json()
     status = body.get("status")
-    if status not in ("draft","submitted","reviewed","approved"):
+    note   = body.get("note")
+    if status not in ("draft","submitted","reviewed","approved","returned"):
         raise HTTPException(400, "Invalid status")
-    if status == "reviewed" and user["role"] == "admin":
-        raise HTTPException(403, "Only supervisor/superadmin can review")
-    if status == "approved" and user["role"] != "superadmin":
-        raise HTTPException(403, "Only manager can approve")
+    # Team leads (admin) can submit/withdraw their own branch; only managers approve/return.
+    if status in ("reviewed","approved","returned") and user["role"] != "superadmin":
+        raise HTTPException(403, "Only the manager can review, approve, or return")
+
+    # Make sure the column for the manager's note exists (added lazily).
+    q("ALTER TABLE scheduling.schedules ADD COLUMN IF NOT EXISTS review_note TEXT", exec_only=True)
 
     sets = "status=%s, updated_at=NOW()"
     params = [status]
+    # Lock when submitted or approved; unlock when returned to draft/returned.
+    if status in ("submitted","reviewed","approved"):
+        sets += ", is_locked=true"
+    elif status in ("draft","returned"):
+        sets += ", is_locked=false"
     if status == "reviewed":
         sets += ", reviewed_by=%s, reviewed_at=NOW()"; params.append(user["id"])
     if status == "approved":
         sets += ", approved_by=%s, approved_at=NOW()"; params.append(user["id"])
+    if status in ("returned","approved","reviewed"):
+        sets += ", review_note=%s"; params.append(note or None)
     params.append(sid)
     row = q(f"UPDATE scheduling.schedules SET {sets} WHERE id=%s RETURNING *", params, one=True)
     insert_audit(user, f"SCHEDULE_{status.upper()}", f"schedule:{sid}")
@@ -1309,6 +1361,14 @@ async def generate_schedule(request: Request, user=Depends(require_admin)):
 
     if not can_access_branch(user, branch_id):
         raise HTTPException(403, "Forbidden")
+
+    # Protect schedules that are submitted/approved (locked): regenerating would
+    # wipe work that's under review. The team lead must withdraw first.
+    locked_row = q("""SELECT is_locked, status FROM scheduling.schedules
+                      WHERE branch_id=%s AND year=%s AND month=%s""",
+                   (branch_id, year, month), one=True)
+    if locked_row and locked_row.get("is_locked"):
+        raise HTTPException(403, "Schedule is locked (submitted for review). Withdraw it first to regenerate.")
 
     # Load data
     prev_month = 12 if month == 1 else month - 1
