@@ -11,6 +11,9 @@ function toast(msg, type = 'ok') {
 // ── Loader ───────────────────────────────────────────────────────────────────
 let _loaderMsgTimer;
 function showLoader(label = 'Loading…') {
+  // Don't stack the page loader on top of the welcome splash.
+  const splash = document.getElementById('welcome-splash');
+  if (splash && splash.style.display !== 'none' && !splash.classList.contains('done')) return;
   const el = document.getElementById('page-loader');
   document.getElementById('loader-label').textContent = label;
   el.classList.add('show');
