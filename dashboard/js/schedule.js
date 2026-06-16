@@ -14,8 +14,14 @@ let pickerCell = null;
 
 
 async function renderSchedulePage() {
-  // Choose branch: admin sees own, superadmin picks
-  currentBranchId = currentUser.branch_id || (allBranches[0]?.id);
+  // Choose branch: a pending branch (e.g. opened from Review) wins; otherwise
+  // admin sees own branch, superadmin defaults to the first.
+  if (window._pendingScheduleBranch) {
+    currentBranchId = window._pendingScheduleBranch;
+    window._pendingScheduleBranch = null;
+  } else {
+    currentBranchId = currentUser.branch_id || (allBranches[0]?.id);
+  }
 
   setTopbar('Schedule', '', '');
 
@@ -24,7 +30,7 @@ async function renderSchedulePage() {
     <div class="schedule-toolbar">
       ${currentUser.role === 'superadmin' ? `
         <select id="sched-branch-select" onchange="onBranchChange()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;background:var(--card-alt);color:var(--text);font-family:inherit;outline:none;cursor:pointer">
-          ${allBranches.map(b => `<option value="${b.id}">${b.name}</option>`).join('')}
+          ${allBranches.map(b => `<option value="${b.id}" ${b.id === currentBranchId ? 'selected' : ''}>${b.name}</option>`).join('')}
         </select>` : `<span style="font-size:14px;font-weight:700;color:var(--primary)">${currentUser.branch_name || 'My Branch'}</span>`}
 
       <div class="month-nav">
@@ -35,16 +41,18 @@ async function renderSchedulePage() {
 
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${['admin','superadmin'].includes(currentUser.role) ? `
-          <button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>
+          <button class="btn btn-ghost btn-sm" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
           <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
-          <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" title="Staff shift settings">⚙️ Settings</button>
+          <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
         ` : ''}
         <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Print</button>
       </div>
     </div>
 
     <div id="schedule-status-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap"></div>
+
+    <div id="tl-status-banner-wrap"></div>
 
     <div class="stats-row" id="schedule-stats"></div>
 
@@ -102,6 +110,7 @@ async function loadScheduleData() {
     }
 
     renderScheduleStatusBar();
+    renderTeamLeadBanner();
     renderShiftLegend();
     renderScheduleStats();
     renderRotaGrid();
@@ -117,6 +126,95 @@ function buildEntryMap() {
     const dateStr = e.date ? e.date.slice(0,10) : '';
     entryMap[`${e.staff_id}_${dateStr}`] = e;
   }
+}
+
+// ── Team-lead submission status banner ────────────────────────────────────────
+function renderTeamLeadBanner() {
+  const wrap = document.getElementById('tl-status-banner-wrap');
+  if (!wrap || !currentSchedule) return;
+  const status = currentSchedule.status || 'draft';
+  const note   = currentSchedule.review_note;
+  const sid    = currentSchedule.id;
+  const isManager = currentUser?.role === 'superadmin';
+
+  // Managers don't need the submit banner; they use the Review page.
+  if (isManager) { wrap.innerHTML = ''; return; }
+
+  // When the schedule is locked (in review/approved), disable editing tools so
+  // the team lead can't try actions the server will reject anyway.
+  const lockedForReview = ['submitted','reviewed','approved'].includes(status);
+  const genBtn = document.getElementById('btn-generate');
+  const setBtn = document.getElementById('btn-settings');
+  [genBtn, setBtn].forEach(b => {
+    if (!b) return;
+    b.disabled = lockedForReview;
+    b.style.opacity = lockedForReview ? '0.45' : '';
+    b.style.pointerEvents = lockedForReview ? 'none' : '';
+  });
+
+  let html = '';
+  if (status === 'draft' || status === 'returned') {
+    const returned = status === 'returned';
+    html = `
+      <div class="tl-status-banner ${returned ? 'err' : ''}">
+        <div class="ico" style="background:${returned ? 'rgba(255,107,107,.15)' : 'rgba(133,133,168,.15)'}">${returned ? '↩' : '📝'}</div>
+        <div style="flex:1">
+          <div class="ttl">${returned ? 'Returned for edits' : 'Draft — not submitted yet'}</div>
+          <div class="sub">${returned && note ? 'Manager note: ' + escapeHtml(note) : 'Finish the rota, then send it to your manager for review.'}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="submitScheduleForReview(${sid})"
+          style="background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-weight:700">
+          📤 Submit for review
+        </button>
+      </div>`;
+  } else if (status === 'submitted' || status === 'reviewed') {
+    html = `
+      <div class="tl-status-banner warn">
+        <div class="ico" style="background:rgba(255,159,67,.15)">⏳</div>
+        <div style="flex:1">
+          <div class="ttl">Pending manager review</div>
+          <div class="sub">The schedule is locked until the manager reviews it.</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="withdrawSchedule(${sid})">↩ Withdraw</button>
+      </div>`;
+  } else if (status === 'approved') {
+    html = `
+      <div class="tl-status-banner ok">
+        <div class="ico" style="background:rgba(0,200,150,.15)">✓</div>
+        <div style="flex:1">
+          <div class="ttl" style="color:#009B74">Approved</div>
+          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'This schedule has been approved by the manager.'}</div>
+        </div>
+      </div>`;
+  }
+  wrap.innerHTML = html;
+}
+
+async function submitScheduleForReview(scheduleId) {
+  // Don't submit an empty rota — count assigned work shifts first.
+  const hasShifts = currentEntries?.some(e => !['O','AL','SL','TB'].includes(e.shift_code));
+  if (!hasShifts) {
+    toast('Add shifts before submitting for review', 'err');
+    return;
+  }
+  const ok = await showConfirm(
+    'Submit for review',
+    'Send this schedule to your manager? It will be locked until reviewed.',
+    'Submit'
+  );
+  if (!ok) return;
+  try {
+    await API.put(`/schedules/${scheduleId}/status`, { status: 'submitted' });
+    toast('Submitted for review');
+    await loadScheduleData();
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function withdrawSchedule(scheduleId) {
+  try {
+    await API.put(`/schedules/${scheduleId}/status`, { status: 'draft' });
+    toast('Withdrawn — back to draft');
+    await loadScheduleData();
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 
@@ -484,6 +582,13 @@ async function toggleOnCall() {
 
 async function toggleScheduleLock() {
   if (!currentSchedule) return;
+  // If the schedule is in the review pipeline, the manual lock toggle must not
+  // override it. The team lead has to Withdraw (or the manager returns it).
+  const reviewStatuses = ['submitted', 'reviewed', 'approved'];
+  if (reviewStatuses.includes(currentSchedule.status)) {
+    toast('This schedule is in review. Use Withdraw to unlock it.', 'err');
+    return;
+  }
   const willLock = !currentSchedule.is_locked;
   const label = willLock ? 'Lock' : 'Unlock';
   const ok = await showConfirm(
