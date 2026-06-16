@@ -81,7 +81,11 @@ async function changeMonth(delta) {
 }
 
 async function loadScheduleData() {
-  showLoader('Loading schedule…');
+  // Lightweight inline indicator instead of the full-screen loader, so
+  // switching months/branches feels instant and doesn't flash an overlay.
+  // (During first login the welcome splash already covers this.)
+  const wrap = document.getElementById('rota-wrap');
+  if (wrap) wrap.style.opacity = '0.5';
   try {
     // Load staff for this branch
     const staffData = await API.get(`/staff?branch_id=${currentBranchId}`);
@@ -117,7 +121,10 @@ async function loadScheduleData() {
   } catch (err) {
     document.getElementById('rota-wrap').innerHTML =
       `<div class="empty"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
-  } finally { hideLoader(); }
+  } finally {
+    const wrap = document.getElementById('rota-wrap');
+    if (wrap) wrap.style.opacity = '';
+  }
 }
 
 function buildEntryMap() {
