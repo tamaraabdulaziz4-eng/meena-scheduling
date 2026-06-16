@@ -87,31 +87,22 @@ async function loadScheduleData() {
   const wrap = document.getElementById('rota-wrap');
   if (wrap) wrap.style.opacity = '0.5';
   try {
-    // Load staff for this branch
-    const staffData = await API.get(`/staff?branch_id=${currentBranchId}`);
-    scheduleStaff = staffData.filter(s => s.active);
+    // These four requests don't depend on each other, so fire them in parallel
+    // instead of awaiting one after another — much faster, especially on a
+    // cold Railway start.
+    const [staffData, schedData, , monthSettings] = await Promise.all([
+      API.get(`/staff?branch_id=${currentBranchId}`),
+      API.post('/schedules/open', { branch_id: currentBranchId, year: scheduleYear, month: scheduleMonth }),
+      loadShiftTypes(currentBranchId),
+      API.get(`/staff-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`)
+        .catch(() => ({})),
+    ]);
 
-    // Open/get schedule
-    const data = await API.post('/schedules/open', {
-      branch_id: currentBranchId, year: scheduleYear, month: scheduleMonth
-    });
-    currentSchedule = data.schedule;
-    currentEntries  = data.entries;
+    scheduleStaff   = staffData.filter(s => s.active);
+    currentSchedule = schedData.schedule;
+    currentEntries  = schedData.entries;
     buildEntryMap();
-
-    // Load shift types for this branch
-    await loadShiftTypes(currentBranchId);
-
-    // Shift picker shows all shift types (global list).
-
-    // Load per-month min/max settings for each staff
-    try {
-      staffMonthSettings = await API.get(
-        `/staff-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`
-      );
-    } catch (e) {
-      staffMonthSettings = {};
-    }
+    staffMonthSettings = monthSettings || {};
 
     renderScheduleStatusBar();
     renderTeamLeadBanner();
