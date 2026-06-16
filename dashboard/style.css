@@ -126,7 +126,9 @@ body {
   background: linear-gradient(135deg, rgba(139,118,255,.45), rgba(107,78,255,.25));
   opacity: 0; transform: scale(.85); transition: opacity .25s, transform .25s;
 }
-.nav-item > * { position: relative; z-index: 2; }
+.nav-item { z-index: 0; }
+.nav-item::before { z-index: -1; }
+.nav-item > * { position: relative; z-index: 1; }
 .nav-item:hover { color: #fff; transform: translateX(6px); }
 .nav-item:hover::before { opacity: 1; transform: scale(1); }
 .nav-item:hover .nav-icon svg { transform: scale(1.15) rotate(-4deg); }
