@@ -440,17 +440,32 @@ def get_current_user(request: Request) -> dict:
     return verify_token(token)
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in ("admin", "superadmin"):
+    # Team leads, managers, and full admins can all reach schedule editing routes.
+    if user.get("role") not in ("admin", "superadmin", "manager"):
         raise HTTPException(403, "Forbidden")
     return user
 
 def require_superadmin(user: dict = Depends(get_current_user)) -> dict:
+    # Full admin only — branch/user/shift-type management.
     if user.get("role") != "superadmin":
         raise HTTPException(403, "Forbidden")
     return user
 
+def require_reviewer(user: dict = Depends(get_current_user)) -> dict:
+    # Managers and full admins can review/approve/return schedules.
+    if user.get("role") not in ("manager", "superadmin"):
+        raise HTTPException(403, "Forbidden")
+    return user
+
+def require_editor(user: dict = Depends(get_current_user)) -> dict:
+    # Schedule editing (cells, generate): team leads and full admins, NOT managers.
+    if user.get("role") not in ("admin", "superadmin"):
+        raise HTTPException(403, "Managers cannot edit schedules directly")
+    return user
+
 def can_access_branch(user: dict, branch_id) -> bool:
-    if user.get("role") == "superadmin":
+    # Managers and full admins can see every branch; team leads only their own.
+    if user.get("role") in ("superadmin", "manager"):
         return True
     return str(user.get("branch_id")) == str(branch_id)
 
@@ -623,6 +638,8 @@ async def create_user(request: Request, user=Depends(require_superadmin)):
     branch_id = body.get("branch_id") or None
     if not username or not password or not role:
         raise HTTPException(400, "Missing fields")
+    if role not in ("viewer", "admin", "manager", "superadmin"):
+        raise HTTPException(400, "Invalid role")
     if len(password) < 6:
         raise HTTPException(400, "Password min 6 chars")
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -667,7 +684,9 @@ def delete_user(uid: int, user=Depends(require_superadmin)):
 @app.get("/api/staff")
 def list_staff(request: Request, user=Depends(get_current_user)):
     branch_id = request.query_params.get("branch_id")
-    if user["role"] != "superadmin":
+    # Cross-branch roles (superadmin, manager) can query any/all branches;
+    # a team lead is always pinned to their own branch.
+    if user["role"] not in ("superadmin", "manager"):
         branch_id = user.get("branch_id")
     # Guard against UI bugs passing "undefined"/"null" as strings.
     if isinstance(branch_id, str) and branch_id.strip().lower() in ("", "undefined", "null"):
@@ -977,7 +996,7 @@ def delete_shift_type(stid: int, user=Depends(require_admin)):
 
 @app.get("/api/schedules")
 def list_schedules(request: Request, user=Depends(get_current_user)):
-    branch_id = request.query_params.get("branch_id") if user["role"]=="superadmin" else user.get("branch_id")
+    branch_id = request.query_params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
     if branch_id:
         rows = q("""SELECT s.id,s.branch_id,s.year,s.month,s.status,s.created_at,s.updated_at,
                            b.name AS branch_name
@@ -991,7 +1010,7 @@ def list_schedules(request: Request, user=Depends(get_current_user)):
     return rows
 
 @app.get("/api/schedules/review-overview")
-def review_overview(request: Request, user=Depends(require_superadmin)):
+def review_overview(request: Request, user=Depends(require_reviewer)):
     """Manager view: every branch and its schedule status for a given month.
     Branches with no schedule row yet are surfaced as 'not_submitted' so the
     manager can see who is late, not just who submitted."""
@@ -1061,7 +1080,7 @@ def get_entries(schedule_id):
                 WHERE e.schedule_id=%s ORDER BY s.name,e.date""", (schedule_id,))
 
 @app.put("/api/schedules/{sid}/entries")
-async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
+async def save_entry(sid: int, request: Request, user=Depends(require_editor)):
     body = await request.json()
     # Block edits if schedule is locked
     sched = q("SELECT is_locked FROM scheduling.schedules WHERE id=%s", (sid,), one=True)
@@ -1084,7 +1103,7 @@ async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
     return row
 
 @app.put("/api/schedules/{sid}/entries/bulk")
-async def bulk_save_entries(sid: int, request: Request, user=Depends(require_admin)):
+async def bulk_save_entries(sid: int, request: Request, user=Depends(require_editor)):
     body = await request.json()
     entries = body.get("entries", [])
     if not isinstance(entries, list): raise HTTPException(400, "entries must be array")
@@ -1113,12 +1132,12 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_adm
     return {"ok": True, "count": len(entries)}
 
 @app.delete("/api/schedules/{sid}/entries")
-def clear_entries(sid: int, user=Depends(require_admin)):
+def clear_entries(sid: int, user=Depends(require_editor)):
     q("DELETE FROM scheduling.schedule_entries WHERE schedule_id=%s", (sid,), exec_only=True)
     return {"ok": True}
 
 @app.delete("/api/schedules/{sid}/entries/cell")
-async def delete_entry_cell(sid: int, request: Request, user=Depends(require_admin)):
+async def delete_entry_cell(sid: int, request: Request, user=Depends(require_editor)):
     """Delete a single cell entry (makes it blank on the grid)."""
     body = await request.json()
     staff_id = body.get("staff_id")
@@ -1132,7 +1151,7 @@ async def delete_entry_cell(sid: int, request: Request, user=Depends(require_adm
     return {"ok": True}
 
 @app.put("/api/schedules/{sid}/lock")
-async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_admin)):
+async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_editor)):
     """Lock or unlock an entire schedule (branch+month). Locked schedules block all edits."""
     body   = await request.json()
     locked = body.get("locked", True)
@@ -1151,9 +1170,12 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
     note   = body.get("note")
     if status not in ("draft","submitted","reviewed","approved","returned"):
         raise HTTPException(400, "Invalid status")
-    # Team leads (admin) can submit/withdraw their own branch; only managers approve/return.
-    if status in ("reviewed","approved","returned") and user["role"] != "superadmin":
-        raise HTTPException(403, "Only the manager can review, approve, or return")
+    # Team leads (admin) submit/withdraw their own branch; managers (and full
+    # admins) review/approve/return. Keep the two roles from doing each other's job.
+    if status in ("reviewed","approved","returned") and user["role"] not in ("superadmin","manager"):
+        raise HTTPException(403, "Only a manager can review, approve, or return")
+    if status in ("submitted","draft") and user["role"] == "manager":
+        raise HTTPException(403, "Managers don't submit schedules; that's the team lead's step")
 
     # Make sure the column for the manager's note exists (added lazily).
     q("ALTER TABLE scheduling.schedules ADD COLUMN IF NOT EXISTS review_note TEXT", exec_only=True)
@@ -1177,7 +1199,7 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
     return row
 
 @app.delete("/api/schedules/{sid}")
-def delete_schedule(sid: int, user=Depends(require_admin)):
+def delete_schedule(sid: int, user=Depends(require_editor)):
     q("DELETE FROM scheduling.schedules WHERE id=%s", (sid,), exec_only=True)
     return {"ok": True}
 
@@ -1186,7 +1208,7 @@ def delete_schedule(sid: int, user=Depends(require_admin)):
 @app.get("/api/leaves")
 def list_leaves(request: Request, user=Depends(get_current_user)):
     params = request.query_params
-    branch_id = params.get("branch_id") if user["role"]=="superadmin" else user.get("branch_id")
+    branch_id = params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
     year  = params.get("year")
     month = params.get("month")
     conds, vals = ["1=1"], []
@@ -1349,7 +1371,7 @@ def allowed_shifts(request: Request, user=Depends(get_current_user)):
 
 
 @app.post("/api/generate")
-async def generate_schedule(request: Request, user=Depends(require_admin)):
+async def generate_schedule(request: Request, user=Depends(require_editor)):
     import sys as _sys
     _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scheduler'))
     from generator import generate_schedule as solver_generate, NESTS as _NESTS_DEFAULT
