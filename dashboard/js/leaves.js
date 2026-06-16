@@ -140,7 +140,7 @@ function fmtDateDisplay(dateStr) {
 function openLeaveModal() {
   const ls = document.getElementById('leave-staff');
   ls.innerHTML = '<option value="">Select staff…</option>';
-  const filtered = currentUser?.role === 'superadmin'
+  const filtered = ['superadmin','manager'].includes(currentUser?.role)
     ? allStaff
     : allStaff.filter(s => s.branch_id === currentUser?.branch_id);
   filtered.forEach(s => {

@@ -19,24 +19,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initApp() {
   document.getElementById('sidebar-user').textContent = `${currentUser.username} · ${currentUser.role}`;
 
-  // Hide admin nav items for non-admins
-  const isAdmin  = ['admin','superadmin'].includes(currentUser.role);
-  const isSuperAdmin = currentUser.role === 'superadmin';
-  document.getElementById('nav-section-admin').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('nav-branches').style.display    = isSuperAdmin ? 'flex' : 'none';
-  document.getElementById('nav-shifts').style.display      = isAdmin ? 'flex' : 'none';
-  document.getElementById('nav-users').style.display       = isSuperAdmin ? 'flex' : 'none';
+  // Roles: viewer < admin (team lead) < manager < superadmin (full admin)
+  const role = currentUser.role;
+  const isManager = role === 'manager';
+  const isSuperAdmin = role === 'superadmin';
+  // "Admin tools" (branches, shift types, users, audit) are for the full admin only.
+  // The manager is intentionally kept focused: Schedule, Staff, Leave, Review.
+  const showAdminTools = isSuperAdmin;
+  // Staff page: team leads + manager + full admin can view it.
+  const canSeeStaff = ['admin','superadmin','manager'].includes(role);
+  // Reviewers (manager + full admin) get the Review page.
+  const isReviewer = ['manager','superadmin'].includes(role);
+
+  document.getElementById('nav-section-admin').style.display = showAdminTools ? 'block' : 'none';
+  document.getElementById('nav-branches').style.display    = showAdminTools ? 'flex' : 'none';
+  document.getElementById('nav-shifts').style.display      = showAdminTools ? 'flex' : 'none';
+  document.getElementById('nav-users').style.display       = showAdminTools ? 'flex' : 'none';
+  document.getElementById('nav-audit').style.display       = showAdminTools ? 'flex' : 'none';
+  const staffNav = document.getElementById('nav-staff');
+  if (staffNav) staffNav.style.display = canSeeStaff ? 'flex' : 'none';
   // Nest Config is deprecated; keep hidden.
   const nestNav = document.getElementById('nav-nest-config');
   if (nestNav) nestNav.style.display = 'none';
-  document.getElementById('nav-audit').style.display       = isAdmin ? 'flex' : 'none';
-  // Review page is manager-only
+  // Review page for reviewers (manager + full admin)
   const reviewNav = document.getElementById('nav-review');
-  if (reviewNav) reviewNav.style.display = isSuperAdmin ? 'flex' : 'none';
+  if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
   // Pre-load the pending-review count so the badge shows on login
-  if (isSuperAdmin && typeof loadReviewBadgeCount === 'function') {
+  if (isReviewer && typeof loadReviewBadgeCount === 'function') {
     loadReviewBadgeCount();
   }
+  // A manager lands on the Review page by default; others on Schedule.
+  window._defaultPage = isManager ? 'review' : 'schedule';
 
   // Load global data
   showLoader('Loading data…');
@@ -50,7 +63,7 @@ async function initApp() {
 
   // Await the first page render (schedule) so the welcome splash — which is
   // shown by doLogin — stays up until the rota is actually on screen.
-  await showPage('schedule');
+  await showPage(window._defaultPage || 'schedule');
 }
 
 async function showPage(page) {

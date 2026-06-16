@@ -23,6 +23,7 @@ function renderUsersPage() {
 
 const ROLE_BADGE = {
   superadmin: '<span class="badge badge-purple">Superadmin</span>',
+  manager:    '<span class="badge badge-purple">Manager</span>',
   admin:      '<span class="badge badge-yellow">Admin</span>',
   viewer:     '<span class="badge badge-gray">Viewer</span>',
 };
@@ -81,8 +82,9 @@ function closeUserModal() {
 }
 function toggleUserBranch() {
   const role = document.getElementById('user-role').value;
+  // Superadmin and manager are cross-branch, so no single branch to assign.
   document.getElementById('user-branch-wrap').style.display =
-    role === 'superadmin' ? 'none' : 'flex';
+    ['superadmin','manager'].includes(role) ? 'none' : 'flex';
 }
 async function saveUser() {
   const msg      = document.getElementById('user-msg');

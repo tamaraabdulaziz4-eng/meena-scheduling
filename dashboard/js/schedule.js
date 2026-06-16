@@ -28,7 +28,7 @@ async function renderSchedulePage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     <div class="schedule-toolbar">
-      ${currentUser.role === 'superadmin' ? `
+      ${['superadmin','manager'].includes(currentUser.role) ? `
         <select id="sched-branch-select" onchange="onBranchChange()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;background:var(--card-alt);color:var(--text);font-family:inherit;outline:none;cursor:pointer">
           ${allBranches.map(b => `<option value="${b.id}" ${b.id === currentBranchId ? 'selected' : ''}>${b.name}</option>`).join('')}
         </select>` : `<span style="font-size:14px;font-weight:700;color:var(--primary)">${currentUser.branch_name || 'My Branch'}</span>`}
