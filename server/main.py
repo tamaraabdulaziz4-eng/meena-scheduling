@@ -1218,6 +1218,10 @@ async def open_schedule(request: Request, user=Depends(require_admin)):
 
 @app.get("/api/schedules/{sid}/entries")
 def list_entries(sid: int, user=Depends(get_current_user)):
+    # A staff member sees only their own row, via /api/my-schedule — not the
+    # whole team's entries.
+    if user.get("role") == "staff":
+        raise HTTPException(403, "Use /api/my-schedule")
     assert_schedule_access(user, sid)
     return get_entries(sid)
 
@@ -1607,8 +1611,14 @@ async def create_swap(request: Request, user=Depends(require_editor)):
     sb = q("SELECT branch_id,name FROM scheduling.staff WHERE id=%s", (staff_b,), one=True)
     if not sa or not sb:
         raise HTTPException(404, "Staff not found")
+    # A swap is one branch's rota exchanged between two of its own people — both
+    # staff must share a branch, and the requester must be able to access it.
+    if sa["branch_id"] != sb["branch_id"]:
+        raise HTTPException(400, "Both staff must be in the same branch")
     if not can_access_branch(user, sa["branch_id"]):
         raise HTTPException(403, "Forbidden")
+    if date_a[:7] != date_b[:7]:
+        raise HTTPException(400, "Both dates must be in the same month")
     try:
         year, month = int(date_a[:4]), int(date_a[5:7])
     except (ValueError, IndexError):
