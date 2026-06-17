@@ -144,10 +144,10 @@ function renderTeamLeadBanner() {
   const status = currentSchedule.status || 'draft';
   const note   = currentSchedule.review_note;
   const sid    = currentSchedule.id;
-  const isManager = currentUser?.role === 'superadmin';
-
-  // Managers don't need the submit banner; they use the Review page.
-  if (isManager) { wrap.innerHTML = ''; return; }
+  // Reviewers (manager / full admin) don't submit/withdraw — they use the
+  // Review page and can edit directly — so skip the team-lead banner for them.
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
+  if (isReviewer) { wrap.innerHTML = ''; return; }
 
   // When the schedule is locked, disable editing tools so the team lead can't
   // try actions the server will reject anyway. A schedule is "locked" either
@@ -262,6 +262,7 @@ function renderScheduleStatusBar() {
   if (!bar || !currentSchedule) return;
   const s = currentSchedule;
   const isAdmin = ['admin','superadmin'].includes(currentUser?.role);
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
 
   bar.innerHTML = `
     ${isAdmin ? `
@@ -274,6 +275,7 @@ function renderScheduleStatusBar() {
       <span style="font-size:11px;font-weight:600;color:${s.is_locked ? '#e17055' : ''}">
         ${s.is_locked ? '🔒 Locked' : ''}
       </span>`}
+    ${(isReviewer && s.is_locked) ? `<span style="font-size:11px;font-weight:600;color:var(--accent)">✎ You can edit this as a manager</span>` : ''}
     ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${s.created_by_name}</strong></span>` : ''}
   `;
 }
@@ -371,6 +373,10 @@ function renderRotaGrid() {
 
   const nDays   = daysInMonth(scheduleYear, scheduleMonth);
   const isLocked = !!currentSchedule?.is_locked;
+  // Reviewers (manager / full admin) are the authority on a schedule — the lock
+  // exists to stop the team lead changing it mid-review, not the manager. So a
+  // reviewer can still edit cells directly even when the schedule is locked.
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
 
   // Group staff: General first, then US
   const generalStaff = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
@@ -429,7 +435,7 @@ function renderRotaGrid() {
         const txtColor = isBlank ? '#000000' : contrastColor(bgColor);
         const weekend  = dow===5||dow===6 ? 'rgba(107,78,255,0.04)' : '';
 
-        const cellReadonly = isLocked;
+        const cellReadonly = isLocked && !isReviewer;
         const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':''].filter(Boolean).join(' ');
         return `<td class="${classes}"
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
@@ -520,8 +526,10 @@ function coverageRow(nDays) {
 
 // ── Cell click → shift picker ─────────────────────────────────────────────────
 function cellClick(cell) {
-  if (currentSchedule?.is_locked) return;
-  if (!['admin','superadmin'].includes(currentUser?.role)) return;
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
+  // A lock blocks the team lead, but a reviewer can always edit (see renderRotaGrid).
+  if (currentSchedule?.is_locked && !isReviewer) return;
+  if (!['admin','superadmin','manager'].includes(currentUser?.role)) return;
 
   // If picker already open for this cell, close it (toggle)
   if (pickerCell === cell && document.getElementById('shift-picker').style.display === 'grid') {

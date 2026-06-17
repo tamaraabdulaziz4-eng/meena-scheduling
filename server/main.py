@@ -525,6 +525,19 @@ def assert_schedule_access(user: dict, sid) -> dict:
         raise HTTPException(403, "Forbidden")
     return sched
 
+def assert_can_edit_schedule(user: dict, sid) -> dict:
+    """Branch access + lock policy for direct cell edits.
+
+    The lock protects the review hand-off from the *team lead*. A reviewer
+    (manager / full admin) is the authority and may edit a schedule directly
+    even while it's locked/under review; a team lead may only edit it while
+    it's unlocked. Returns the schedule row.
+    """
+    sched = assert_schedule_access(user, sid)
+    if sched.get("is_locked") and user.get("role") not in ("superadmin", "manager"):
+        raise HTTPException(403, "Schedule is locked. Unlock it first.")
+    return sched
+
 # ── Notifications ─────────────────────────────────────────────────────────────
 
 def notify(user_id, message, link=None, ntype="info"):
@@ -1160,12 +1173,10 @@ def get_entries(schedule_id):
                 WHERE e.schedule_id=%s ORDER BY s.name,e.date""", (schedule_id,))
 
 @app.put("/api/schedules/{sid}/entries")
-async def save_entry(sid: int, request: Request, user=Depends(require_editor)):
+async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
     body = await request.json()
-    # Block edits if schedule belongs to another branch or is locked.
-    sched = assert_schedule_access(user, sid)
-    if sched.get("is_locked"):
-        raise HTTPException(403, "Schedule is locked. Unlock it first.")
+    # Right branch, and not locked (unless the editor is a reviewer).
+    assert_can_edit_schedule(user, sid)
     row = q("""INSERT INTO scheduling.schedule_entries
                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
                VALUES (%s,%s,%s,%s,%s,%s,%s)
@@ -1183,12 +1194,10 @@ async def save_entry(sid: int, request: Request, user=Depends(require_editor)):
     return row
 
 @app.put("/api/schedules/{sid}/entries/bulk")
-async def bulk_save_entries(sid: int, request: Request, user=Depends(require_editor)):
+async def bulk_save_entries(sid: int, request: Request, user=Depends(require_admin)):
     body = await request.json()
-    # Same guard as the single-cell save: right branch, and not locked.
-    sched = assert_schedule_access(user, sid)
-    if sched.get("is_locked"):
-        raise HTTPException(403, "Schedule is locked. Unlock it first.")
+    # Same guard as the single-cell save.
+    assert_can_edit_schedule(user, sid)
     entries = body.get("entries", [])
     if not isinstance(entries, list): raise HTTPException(400, "entries must be array")
     pool = get_pool()
@@ -1216,20 +1225,16 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_edi
     return {"ok": True, "count": len(entries)}
 
 @app.delete("/api/schedules/{sid}/entries")
-def clear_entries(sid: int, user=Depends(require_editor)):
-    sched = assert_schedule_access(user, sid)
-    if sched.get("is_locked"):
-        raise HTTPException(403, "Schedule is locked. Unlock it first.")
+def clear_entries(sid: int, user=Depends(require_admin)):
+    assert_can_edit_schedule(user, sid)
     q("DELETE FROM scheduling.schedule_entries WHERE schedule_id=%s", (sid,), exec_only=True)
     return {"ok": True}
 
 @app.delete("/api/schedules/{sid}/entries/cell")
-async def delete_entry_cell(sid: int, request: Request, user=Depends(require_editor)):
+async def delete_entry_cell(sid: int, request: Request, user=Depends(require_admin)):
     """Delete a single cell entry (makes it blank on the grid)."""
     body = await request.json()
-    sched = assert_schedule_access(user, sid)
-    if sched.get("is_locked"):
-        raise HTTPException(403, "Schedule is locked. Unlock it first.")
+    assert_can_edit_schedule(user, sid)
     staff_id = body.get("staff_id")
     date     = body.get("date")
     if not staff_id or not date:
