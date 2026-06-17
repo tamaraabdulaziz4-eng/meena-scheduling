@@ -1,20 +1,35 @@
 // ── Daily radiology cases ─────────────────────────────────────────────────────
 // Manager: live per-branch cards for a day. Team lead / eligible staff: fill &
 // submit (locks) their branch's report.
-let casesDate = fmtDate(new Date());
+// The "reporting day": a night shift runs into the early morning, so before the
+// 08:00 morning handover the shift is still closing OUT YESTERDAY. Default the
+// report date to yesterday until 8 AM so a 1–2 AM entry lands on the right day
+// (and the night-staff eligibility check matches that day's schedule).
+const CASES_ROLLOVER_HOUR = 8;
+function operationalDate() {
+  const d = new Date();
+  if (d.getHours() < CASES_ROLLOVER_HOUR) d.setDate(d.getDate() - 1);
+  return fmtDate(d);
+}
+let casesDate = operationalDate();
 let casesData = null;
 let _casesTimer = null;
 
 function renderCasesPage() {
+  // Fresh "reporting day" default each time the page opens (handles past-midnight entry).
+  casesDate = operationalDate();
   setTopbar('Daily Cases', 'Radiology cases per branch',
     `<button class="btn btn-ghost btn-sm" onclick="printCases()">🖨 Print / PDF</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
     <div id="cases-print-title" style="display:none"></div>
-    <div class="month-nav" style="margin-bottom:14px">
+    <div class="month-nav" style="margin-bottom:4px">
       <button onclick="changeCasesDay(-1)">&#8249;</button>
       <span class="month-label" id="cases-date-label"></span>
       <button onclick="changeCasesDay(1)">&#8250;</button>
+    </div>
+    <div class="no-print" style="font-size:11px;color:var(--muted);margin-bottom:14px">
+      📅 Reporting day — a night shift filed after midnight still belongs to the day it covered.
     </div>
     <div id="cases-summary"></div>
     <div id="cases-cards" class="cases-grid"><div class="empty"><div class="empty-icon">⏳</div><p>Loading…</p></div></div>`;
