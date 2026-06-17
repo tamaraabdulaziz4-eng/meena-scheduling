@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260617j">
+<link rel="stylesheet" href="/style.css?v=20260617k">
 </head>
 <body>
 
@@ -319,11 +319,21 @@
 <div class="modal-overlay" id="holidays-modal-overlay">
   <div class="modal">
     <div class="modal-header">
-      <h3>Public Holidays</h3>
+      <h3>Holidays &amp; Leave Settings</h3>
       <button class="modal-close" onclick="closeHolidaysModal()">✕</button>
     </div>
     <div class="modal-body">
       <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
+          <label>Leave request cutoff (day of month)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="leave-cutoff-input" min="1" max="28" style="width:80px">
+            <button class="btn btn-ghost btn-sm" onclick="saveLeaveCutoff()">Save</button>
+            <span style="font-size:11px;color:var(--muted)">Staff/team leads can't request next-month leave after this day.</span>
+          </div>
+          <div class="msg" id="cutoff-msg" style="margin-top:6px"></div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;font-weight:700;font-size:13px">Public Holidays</div>
         <div class="form-row">
           <div class="form-field" style="flex:1">
             <label>Date *</label>
@@ -506,22 +516,22 @@
 </div>
 
 
-<script src="/js/api.js?v=20260617j"></script>
-<script src="/js/auth.js?v=20260617j"></script>
-<script src="/js/util.js?v=20260617j"></script>
-<script src="/js/branches.js?v=20260617j"></script>
-<script src="/js/users.js?v=20260617j"></script>
-<script src="/js/staff.js?v=20260617j"></script>
-<script src="/js/leaves.js?v=20260617j"></script>
-<script src="/js/swaps.js?v=20260617j"></script>
-<script src="/js/holidays.js?v=20260617j"></script>
-<script src="/js/notifications.js?v=20260617j"></script>
-<script src="/js/portal.js?v=20260617j"></script>
-<script src="/js/shifts.js?v=20260617j"></script>
-<script src="/js/schedule.js?v=20260617j"></script>
-<script src="/js/review.js?v=20260617j"></script>
-<script src="/js/export.js?v=20260617j"></script>
-<script src="/js/audit.js?v=20260617j"></script>
-<script src="/js/main.js?v=20260617j"></script>
+<script src="/js/api.js?v=20260617k"></script>
+<script src="/js/auth.js?v=20260617k"></script>
+<script src="/js/util.js?v=20260617k"></script>
+<script src="/js/branches.js?v=20260617k"></script>
+<script src="/js/users.js?v=20260617k"></script>
+<script src="/js/staff.js?v=20260617k"></script>
+<script src="/js/leaves.js?v=20260617k"></script>
+<script src="/js/swaps.js?v=20260617k"></script>
+<script src="/js/holidays.js?v=20260617k"></script>
+<script src="/js/notifications.js?v=20260617k"></script>
+<script src="/js/portal.js?v=20260617k"></script>
+<script src="/js/shifts.js?v=20260617k"></script>
+<script src="/js/schedule.js?v=20260617k"></script>
+<script src="/js/review.js?v=20260617k"></script>
+<script src="/js/export.js?v=20260617k"></script>
+<script src="/js/audit.js?v=20260617k"></script>
+<script src="/js/main.js?v=20260617k"></script>
 </body>
 </html>

@@ -213,7 +213,14 @@ function openLeaveModal() {
   document.getElementById('leave-date-to').value   = today;
   document.getElementById('leave-type').value      = 'AL';
   document.getElementById('leave-note').value      = '';
-  document.getElementById('leave-msg').textContent = '';
+  // Cutoff hint (staff & team leads are bound by it; managers can override).
+  const msgEl = document.getElementById('leave-msg');
+  if (['staff','admin'].includes(currentUser?.role)) {
+    msgEl.className = 'msg';
+    msgEl.textContent = `Note: requests for a future month close on day ${leaveCutoffDay} of the month before.`;
+  } else {
+    msgEl.textContent = '';
+  }
   document.getElementById('leave-modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('leave-staff').focus(), 50);
 }
@@ -237,6 +244,13 @@ async function saveLeave() {
   if (!date_from)  { msg.className='msg err'; msg.textContent='From date required'; return; }
   if (!date_to)    { msg.className='msg err'; msg.textContent='To date required'; return; }
   if (date_to < date_from) { msg.className='msg err'; msg.textContent='"To" date must be on or after "From" date'; return; }
+  // Cutoff: staff & team leads can't request next-month leave past the deadline.
+  if (['staff','admin'].includes(currentUser?.role)) {
+    for (const d of [date_from, date_to]) {
+      const w = leaveWindowOpen(d);
+      if (!w.ok) { msg.className='msg err'; msg.textContent = w.msg; return; }
+    }
+  }
 
   msg.className = 'msg'; msg.textContent = '';
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }

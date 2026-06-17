@@ -60,6 +60,8 @@ async function initApp() {
   if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
+  // Load org settings (leave cutoff day) so the leave UI can warn early.
+  try { const st = await API.get('/settings'); if (st?.leave_cutoff_day) leaveCutoffDay = st.leave_cutoff_day; } catch (e) {}
   // Pre-load the pending-review count so the badge shows on login
   if (isReviewer && typeof loadReviewBadgeCount === 'function') {
     loadReviewBadgeCount();

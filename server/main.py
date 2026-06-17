@@ -323,6 +323,11 @@ def init_schema():
             """)
             # Leave requests gained an approval workflow; older rows stay 'approved'.
             cur.execute("ALTER TABLE scheduling.leave_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';")
+            # Org-wide key/value settings (e.g. the leave-request cutoff day).
+            cur.execute("""CREATE TABLE IF NOT EXISTS scheduling.app_settings (
+                               key TEXT PRIMARY KEY, value TEXT);""")
+            cur.execute("""INSERT INTO scheduling.app_settings (key,value) VALUES ('leave_cutoff_day','15')
+                           ON CONFLICT (key) DO NOTHING;""")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Multi-stage swap approval: peer → team lead → manager. Track each step.
@@ -521,6 +526,34 @@ def can_access_branch(user: dict, branch_id) -> bool:
     if user.get("role") in ("superadmin", "manager"):
         return True
     return str(user.get("branch_id")) == str(branch_id)
+
+def get_setting(key, default=None):
+    r = q("SELECT value FROM scheduling.app_settings WHERE key=%s", (key,), one=True)
+    return r["value"] if r else default
+
+def get_leave_cutoff_day() -> int:
+    try:
+        d = int(get_setting("leave_cutoff_day", "15"))
+        return d if 1 <= d <= 28 else 15
+    except Exception:
+        return 15
+
+def leave_window_open(target_date_str, cutoff_day, today=None):
+    """Requests for a *future* month must arrive on/before `cutoff_day` of the
+    month before it. Current/past months are not blocked here (handled by the
+    coverage flow / managers). Returns (ok: bool, message: str|None)."""
+    from datetime import date as _date
+    today = today or _date.today()
+    y, m, _d = map(int, str(target_date_str).split("-")[:3])
+    cur_idx, tgt_idx = today.year * 12 + (today.month - 1), y * 12 + (m - 1)
+    if tgt_idx <= cur_idx:
+        return True, None  # this month or earlier
+    pm_year, pm_month = (y, m - 1) if m > 1 else (y - 1, 12)
+    deadline = _date(pm_year, pm_month, min(cutoff_day, 28))
+    if today <= deadline:
+        return True, None
+    return False, (f"Leave requests for {y}-{m:02d} closed on {deadline.isoformat()} "
+                   f"(cutoff: day {cutoff_day} of the previous month).")
 
 def assert_schedule_access(user: dict, sid) -> dict:
     """Resolve a schedule id to its branch and enforce branch access.
@@ -1468,6 +1501,16 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
         raise HTTPException(403, "Forbidden")
     if date_to < date_from: raise HTTPException(400, '"To" date must be on or after "From" date')
 
+    # Cutoff: staff and team leads must submit next-month (and later) leave before
+    # the cutoff day of the prior month. Managers/superadmins may override (e.g.
+    # emergencies) so the schedule can still reflect reality.
+    if user["role"] in ("staff", "admin"):
+        cutoff = get_leave_cutoff_day()
+        for chk in {date_from, date_to}:
+            ok, why = leave_window_open(chk, cutoff)
+            if not ok:
+                raise HTTPException(400, why)
+
     # Approval workflow: a manager/full-admin records leave as already approved;
     # a team lead's entry is a *request* that a reviewer must approve before the
     # generator will honour it. (Generation only counts approved leave.)
@@ -1879,6 +1922,27 @@ async def create_holiday(request: Request, user=Depends(require_superadmin)):
 def delete_holiday(hid: int, user=Depends(require_superadmin)):
     q("DELETE FROM scheduling.holidays WHERE id=%s", (hid,), exec_only=True)
     return {"ok": True}
+
+# ── App settings ──────────────────────────────────────────────────────────────
+
+@app.get("/api/settings")
+def read_settings(user=Depends(get_current_user)):
+    return {"leave_cutoff_day": get_leave_cutoff_day()}
+
+@app.put("/api/settings")
+async def write_settings(request: Request, user=Depends(require_superadmin)):
+    body = await request.json()
+    if "leave_cutoff_day" in body:
+        try:
+            d = int(body["leave_cutoff_day"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "leave_cutoff_day must be a number")
+        if not (1 <= d <= 28):
+            raise HTTPException(400, "leave_cutoff_day must be between 1 and 28")
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('leave_cutoff_day',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (str(d),), exec_only=True)
+        insert_audit(user, "SET_LEAVE_CUTOFF", f"day:{d}")
+    return {"leave_cutoff_day": get_leave_cutoff_day()}
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
 

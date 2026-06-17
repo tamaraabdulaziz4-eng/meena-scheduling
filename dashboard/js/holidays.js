@@ -18,8 +18,23 @@ async function openHolidaysModal() {
   document.getElementById('holiday-msg').textContent = '';
   document.getElementById('holiday-date').value = '';
   document.getElementById('holiday-name').value = '';
+  document.getElementById('cutoff-msg').textContent = '';
+  const ci = document.getElementById('leave-cutoff-input');
+  if (ci) ci.value = (typeof leaveCutoffDay !== 'undefined' ? leaveCutoffDay : 15);
   document.getElementById('holidays-modal-overlay').classList.add('open');
   await reloadHolidayList();
+}
+
+async function saveLeaveCutoff() {
+  const msg = document.getElementById('cutoff-msg');
+  const v = parseInt(document.getElementById('leave-cutoff-input').value, 10);
+  if (!(v >= 1 && v <= 28)) { msg.className = 'msg err'; msg.textContent = 'Day must be between 1 and 28'; return; }
+  try {
+    const r = await API.put('/settings', { leave_cutoff_day: v });
+    leaveCutoffDay = r.leave_cutoff_day;
+    msg.className = 'msg'; msg.textContent = '';
+    toast(`Leave cutoff set to day ${leaveCutoffDay}`);
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
 
 function closeHolidaysModal() {

@@ -190,5 +190,26 @@ g1 = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": 
 check("generate warns on pending leaves (409)", g1.status_code == 409, f"{g1.status_code} {g1.text}")
 check("warning flags pending_leaves", (g1.json().get("detail") or {}).get("confirm_required") == "pending_leaves", g1.text)
 
+print("\n== scenario 9: leave cutoff for future months ==")
+from datetime import date as _date
+check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)
+check("window closed after cutoff", M.leave_window_open("2026-09-10", 15, today=_date(2026,8,20))[0] is False)
+check("far-future window open",     M.leave_window_open("2026-12-10", 15, today=_date(2026,8,20))[0] is True)
+check("current-month always open",  M.leave_window_open("2026-08-10", 15, today=_date(2026,8,20))[0] is True)
+# API: with cutoff=1, next month is closed for staff but a manager can override
+admin.put("/api/settings", json={"leave_cutoff_day": 1})
+import datetime as _dt
+t = _dt.date.today()
+nm = (t.month % 12) + 1; nmy = t.year + (1 if t.month == 12 else 0)
+nd = f"{nmy}-{nm:02d}-10"
+mgrL = mgr.post("/api/leaves", json={"staff_id": A["id"], "date_from": nd, "date_to": nd, "leave_type": "AL"})
+check("manager bypasses cutoff", mgrL.status_code == 200, mgrL.text)
+stL = staffA.post("/api/leaves", json={"date_from": nd, "date_to": nd, "leave_type": "AL"})
+if t.day > 1:
+    check("staff blocked past cutoff", stL.status_code == 400, f"{stL.status_code} {stL.text}")
+else:
+    check("staff cutoff (today is day 1 — skipped)", True)
+admin.put("/api/settings", json={"leave_cutoff_day": 15})
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
