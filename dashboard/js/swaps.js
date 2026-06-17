@@ -12,7 +12,9 @@ async function loadSwaps() {
 }
 
 function renderSwapsPage() {
-  const canRequest = ['admin','superadmin'].includes(currentUser?.role);
+  // Anyone but a plain viewer can start a swap — a staff member requests with a
+  // colleague; team leads/managers may also raise one on someone's behalf.
+  const canRequest = currentUser?.role && currentUser.role !== 'viewer';
   setTopbar('Shift Swaps', 'Request and approve shift exchanges',
     canRequest ? `<button class="btn btn-sm" onclick="openSwapModal()">+ Request Swap</button>` : ''
   );
