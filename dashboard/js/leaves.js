@@ -112,14 +112,30 @@ function renderLeavesList() {
 }
 
 async function setLeaveRangeStatus(ids, status) {
+  // Approve day-by-day so the server can flag a coverage gap on any single day.
+  // Once the reviewer confirms "approve anyway", it applies to the rest.
+  let confirmed = false, cancelled = false;
   showLoader(status === 'approved' ? 'Approving…' : 'Rejecting…');
   try {
-    await Promise.all(ids.map(id => API.put(`/leaves/${id}/status`, { status })));
-    ids.forEach(id => { const lv = allLeaves.find(l => l.id === id); if (lv) lv.status = status; });
-    renderLeavesList();
-    toast(`Leave ${status}`);
+    for (const id of ids) {
+      try {
+        await API.put(`/leaves/${id}/status`, confirmed ? { status, confirm: true } : { status });
+      } catch (e) {
+        if (status === 'approved' && e?.data?.detail?.confirm_required === 'coverage_gap') {
+          hideLoader();
+          const ok = await showConfirm('⚠ Coverage gap', e.message, 'Approve anyway', 'confirm-ok');
+          showLoader('Approving…');
+          if (!ok) { cancelled = true; break; }
+          confirmed = true;
+          await API.put(`/leaves/${id}/status`, { status, confirm: true });
+        } else { throw e; }
+      }
+    }
+    if (!cancelled) toast(`Leave ${status}`);
   } catch (e) { toast(e.message, 'err'); }
   finally { hideLoader(); }
+  // Reload so the list reflects exactly what the server recorded.
+  try { await filterLeaves(); } catch (e) { /* page may have changed */ }
 }
 
 // Group individual leave rows into date ranges (same staff + type + consecutive days)

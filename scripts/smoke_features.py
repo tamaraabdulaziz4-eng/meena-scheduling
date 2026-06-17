@@ -163,5 +163,32 @@ check("manager approves leave", apm is not None and apm.status_code == 200, geta
 gen = mgr.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH})
 check("manager blocked from generate (403)", gen.status_code == 403, gen.status_code)
 
+print("\n== scenario 7: coverage-gap warning on late leave approval ==")
+# Put A as the only person on shift M on 08-25, then request leave that day.
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-25", "shift_code": "M"})
+staffA.post("/api/leaves", json={"date_from": f"{YEAR}-08-25", "date_to": f"{YEAR}-08-25", "leave_type": "AL"})
+lvs = admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+g = next((l for l in lvs if l["staff_id"] == A["id"] and l["date"] == f"{YEAR}-08-25"), None)
+r1 = admin.put(f"/api/leaves/{g['id']}/status", json={"status": "approved"})
+check("gap leave warns before approving (409)", r1.status_code == 409, f"{r1.status_code} {r1.text}")
+check("warning flags coverage_gap", (r1.json().get("detail") or {}).get("confirm_required") == "coverage_gap", r1.text)
+r2 = admin.put(f"/api/leaves/{g['id']}/status", json={"status": "approved", "confirm": True})
+check("approve-anyway with confirm succeeds", r2.status_code == 200, r2.text)
+ents = admin.get(f"/api/schedules/{sid}/entries").json()
+gal = next((e for e in ents if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-25"), None)
+check("gap day now AL", gal and gal["shift_code"] == "AL", gal)
+# team lead notified of the gap
+nl = lead.get("/api/notifications").json()
+check("team lead notified of coverage gap", any("gap" in (n["message"] or "").lower() for n in nl["notifications"]), nl)
+
+print("\n== scenario 8: generate warns when leaves are still pending ==")
+# leave a pending request on the books for this month
+staffB.post("/api/leaves", json={"date_from": f"{YEAR}-08-26", "date_to": f"{YEAR}-08-26", "leave_type": "AL"})
+# (schedule is currently locked from scenario 5; unlock so generate reaches the leave check)
+admin.put(f"/api/schedules/{sid}/status", json={"status": "draft"})
+g1 = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH})
+check("generate warns on pending leaves (409)", g1.status_code == 409, f"{g1.status_code} {g1.text}")
+check("warning flags pending_leaves", (g1.json().get("detail") or {}).get("confirm_required") == "pending_leaves", g1.text)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

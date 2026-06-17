@@ -616,6 +616,24 @@ def clear_leave_from_schedule(staff_id, date, code):
          WHERE schedule_id=%s AND staff_id=%s AND date=%s AND shift_code=%s""",
       (sched["id"], staff_id, date, code), exec_only=True)
 
+def leave_coverage_gap(staff_id, date):
+    """If this staff member is scheduled a *working* shift that day and is the
+    only one on it, return that shift code (a coverage gap); else None. Used to
+    warn before an approved leave silently leaves a day uncovered."""
+    sched = _schedule_for_leave(staff_id, date)
+    if not sched:
+        return None
+    cur = q("""SELECT shift_code FROM scheduling.schedule_entries
+               WHERE schedule_id=%s AND staff_id=%s AND date=%s""",
+            (sched["id"], staff_id, date), one=True)
+    code = cur and cur["shift_code"]
+    if not code or code in ("O", "AL", "SL", "TB", "OC"):
+        return None  # wasn't working that day → no gap
+    others = q("""SELECT COUNT(*) AS n FROM scheduling.schedule_entries
+                  WHERE schedule_id=%s AND date=%s AND shift_code=%s AND staff_id<>%s""",
+               (sched["id"], date, code, staff_id), one=True)
+    return None if (others and others["n"] > 0) else code
+
 # ── Nest helpers ──────────────────────────────────────────────────────────────
 
 def branch_to_nest(branch_name: str) -> Optional[str]:
@@ -1516,11 +1534,23 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_r
     if status not in ("approved", "rejected"):
         raise HTTPException(400, "status must be 'approved' or 'rejected'")
     lv = q("""SELECT l.created_by, l.staff_id, l.leave_type, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
-                     s.name AS staff_name
+                     s.name AS staff_name, s.branch_id
               FROM scheduling.leave_requests l
               JOIN scheduling.staff s ON s.id=l.staff_id WHERE l.id=%s""", (lid,), one=True)
     if not lv:
         raise HTTPException(404, "Leave not found")
+    # Coverage guard: if approving overwrites a working shift the person was the
+    # only one covering that day, warn the approver first (unless they confirm),
+    # then record it and alert the branch lead so the gap gets filled.
+    gap_code = None
+    if status == "approved":
+        gap_code = leave_coverage_gap(lv["staff_id"], lv["date"])
+        if gap_code and not body.get("confirm"):
+            raise HTTPException(409, {
+                "error": f"{lv['staff_name']} is the only one on shift {gap_code} on {lv['date']}. "
+                         f"Approving leaves that shift uncovered — approve anyway?",
+                "confirm_required": "coverage_gap",
+            })
     row = q("""UPDATE scheduling.leave_requests SET status=%s WHERE id=%s
                RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,leave_type,status,note""",
             (status, lid), one=True)
@@ -1528,6 +1558,11 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_r
     # Reflect the decision on the rota: approved → mark the leave, rejected → clear it.
     if status == "approved":
         apply_leave_to_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
+        if gap_code:
+            notify_branch_leads(lv["branch_id"],
+                                f"Coverage gap: {lv['staff_name']} on leave {lv['date']} leaves shift "
+                                f"{gap_code} uncovered — please reassign or regenerate",
+                                link="schedule", ntype="leave")
     else:
         clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
     if lv.get("created_by"):
@@ -1952,10 +1987,6 @@ def allowed_shifts(request: Request, user=Depends(get_current_user)):
 
 @app.post("/api/generate")
 async def generate_schedule(request: Request, user=Depends(require_editor)):
-    import sys as _sys
-    _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scheduler'))
-    from generator import generate_schedule as solver_generate, NESTS as _NESTS_DEFAULT
-
     body = await request.json()
     branch_id = body.get("branch_id")
     year      = body.get("year")
@@ -1981,6 +2012,26 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         if st in ("reviewed", "approved"):
             raise HTTPException(403, "The manager has reviewed/approved this schedule. Ask the manager to return it before regenerating.")
         raise HTTPException(403, "Schedule is locked. Unlock it (the 🔒 toggle) before regenerating.")
+
+    # Nudge: if leave requests for this month are still pending, the generator
+    # won't account for them (it only honours approved leave). Warn once, but
+    # let the user proceed if they confirm.
+    pend = q("""SELECT COUNT(*) AS n FROM scheduling.leave_requests l
+                JOIN scheduling.staff s ON s.id=l.staff_id
+                WHERE s.branch_id=%s AND l.status='pending'
+                  AND EXTRACT(YEAR FROM l.date)=%s AND EXTRACT(MONTH FROM l.date)=%s""",
+             (branch_id, year, month), one=True)
+    if pend and pend["n"] and not body.get("confirm"):
+        raise HTTPException(409, {
+            "error": f"There are {pend['n']} pending leave request(s) for this month that the "
+                     f"generator won't include. Approve or decline them first, or generate anyway.",
+            "confirm_required": "pending_leaves",
+        })
+
+    # Heavy solver import only after the cheap guards have passed.
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scheduler'))
+    from generator import generate_schedule as solver_generate, NESTS as _NESTS_DEFAULT
 
     # Load data
     prev_month = 12 if month == 1 else month - 1

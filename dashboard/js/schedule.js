@@ -1040,11 +1040,29 @@ async function runGenerate() {
     'Finalising…',
   ], 1500);
   try {
-    const result = await API.post('/generate', {
-      branch_id: currentBranchId,
-      year:      scheduleYear,
-      month:     scheduleMonth,
-    });
+    let result, confirmGen = false;
+    while (true) {
+      try {
+        result = await API.post('/generate', {
+          branch_id: currentBranchId,
+          year:      scheduleYear,
+          month:     scheduleMonth,
+          confirm:   confirmGen,
+        });
+        break;
+      } catch (err) {
+        // Pending leave requests for this month — warn, then let them proceed.
+        if (!confirmGen && err?.data?.detail?.confirm_required === 'pending_leaves') {
+          hideLoader();
+          const ok = await showConfirm('Pending leave requests', err.message, 'Generate anyway', 'confirm-ok');
+          if (!ok) { msg.textContent = ''; return; }
+          confirmGen = true;
+          showLoaderCycling(['Solving the schedule…', 'Finalising…'], 1500);
+          continue;
+        }
+        throw err;
+      }
+    }
     currentSchedule = result.schedule;
 
     // Reload entries
