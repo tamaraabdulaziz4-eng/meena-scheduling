@@ -52,9 +52,9 @@ async function initApp() {
   // Review page for reviewers (manager + full admin)
   const reviewNav = document.getElementById('nav-review');
   if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
-  // Swaps page for anyone who can edit or review (not plain viewers/staff).
+  // Swaps page for everyone except plain viewers (staff request & track theirs).
   const swapsNav = document.getElementById('nav-swaps');
-  if (swapsNav) swapsNav.style.display = ['admin','superadmin','manager'].includes(role) ? 'flex' : 'none';
+  if (swapsNav) swapsNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // A staff member can still reach the Leave page (their own requests only).
   const leavesNav = document.getElementById('nav-leaves');
   if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
@@ -121,7 +121,7 @@ async function showPage(page) {
       break;
 
     case 'swaps':
-      if (!['admin','superadmin','manager'].includes(currentUser?.role)) { showPage('schedule'); return; }
+      if (currentUser?.role === 'viewer') { showPage('schedule'); return; }
       try { await loadStaff(); } catch(e){}
       renderSwapsPage();
       break;

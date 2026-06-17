@@ -31,7 +31,7 @@ function renderSwapsPage() {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>#</th><th>Branch</th><th>Staff A</th><th>Date A</th><th></th><th>Staff B</th><th>Date B</th><th>Status</th><th>Actions</th>
+          <th>#</th><th>Branch</th><th>Swap</th><th>Progress</th><th>Actions</th>
         </tr></thead>
         <tbody id="swaps-tbody"></tbody>
       </table>
@@ -46,39 +46,89 @@ async function refreshSwaps() {
   finally { hideLoader(); }
 }
 
+// The 3-step approval chain, rendered as a stepper.
+const SWAP_STEP_ORDER = ['pending_peer', 'pending_lead', 'pending_manager', 'approved'];
+function swapStepper(s) {
+  // Each step: done if the swap has moved past it.
+  const idx = SWAP_STEP_ORDER.indexOf(s.status);
+  const rejected = s.status === 'rejected';
+  const steps = [
+    { key: 'peer',    label: 'Colleague',  when: s.peer_at, who: s.staff_b_name },
+    { key: 'lead',    label: 'Team Lead',  when: s.lead_at, who: s.lead_name },
+    { key: 'manager', label: 'Manager',    when: s.mgr_at,  who: s.mgr_name },
+  ];
+  return `<div class="swap-stepper">` + steps.map((step, i) => {
+    // step i is "done" once status index > i (peer done at pending_lead=1, etc.)
+    const done = idx > i;
+    const current = !rejected && idx === i;
+    const cls = done ? 'done' : (current ? 'current' : '');
+    const mark = done ? '✓' : (current ? '●' : '○');
+    const sub = done && step.who ? escapeHtml(step.who) : (current ? 'waiting' : '');
+    return `<span class="swap-step ${cls}" title="${step.label}${sub?': '+sub:''}">
+        <b>${mark}</b> ${step.label}${sub ? `<i>${sub}</i>` : ''}</span>`;
+  }).join('<span class="swap-arrow">›</span>') + `</div>` +
+  (rejected ? `<div class="swap-rejected">✕ Declined${s.reject_name ? ' by ' + escapeHtml(s.reject_name) : ''}${s.reject_note ? ' — ' + escapeHtml(s.reject_note) : ''}</div>` : '');
+}
+
+// What action (if any) can the current user take on this swap right now?
+function swapActionsFor(s) {
+  const role = currentUser?.role;
+  const myStaff = currentUser?.staff_id;
+  const isSuper = role === 'superadmin';
+  const isReviewer = ['manager','superadmin'].includes(role);
+  const hasBranch = ['admin','manager','superadmin'].includes(role); // branch enforced server-side
+  let primary = null;  // {label}
+  if (s.status === 'pending_peer'    && ((role === 'staff' && myStaff === s.staff_b) || isSuper)) primary = 'Accept';
+  else if (s.status === 'pending_lead'    && hasBranch) primary = 'Approve';
+  else if (s.status === 'pending_manager' && isReviewer) primary = 'Approve';
+
+  // Reject/cancel: peer, requester, branch lead/manager, or superadmin — while still open.
+  const canReject = !['approved','rejected'].includes(s.status) &&
+    (isSuper || hasBranch ||
+     (role === 'staff' && (myStaff === s.staff_a || myStaff === s.staff_b)));
+  const amRequester = role === 'staff' && myStaff === s.staff_a;
+
+  let html = '';
+  if (primary) html += `<button class="action-btn" onclick="actSwap(${s.id},'${primary==='Accept'?'accept':'approve'}','${primary}')">${primary}</button> `;
+  if (canReject) html += `<button class="action-btn danger" onclick="actSwap(${s.id},'reject')">${amRequester && s.status==='pending_peer' ? 'Cancel' : 'Reject'}</button>`;
+  return html || '—';
+}
+
 function renderSwapsList() {
   const tb = document.getElementById('swaps-tbody');
   if (!tb) return;
-  const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
   if (!allSwaps.length) {
-    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted)">No swap requests</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No swap requests</td></tr>`;
     return;
   }
-  const badge = { pending:'badge-orange', approved:'badge-green', rejected:'badge-gray' };
   tb.innerHTML = allSwaps.map((s, i) => `
     <tr>
       <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
-      <td style="font-size:12px;color:var(--muted)">${s.branch_name || '—'}</td>
-      <td style="font-weight:600">${escapeHtml(s.staff_a_name)}</td>
-      <td>${fmtDateDisplay(s.date_a)}</td>
-      <td style="text-align:center;color:var(--accent)">↔</td>
-      <td style="font-weight:600">${escapeHtml(s.staff_b_name)}</td>
-      <td>${fmtDateDisplay(s.date_b)}</td>
-      <td><span class="badge ${badge[s.status]||'badge-gray'}">${s.status}</span></td>
-      <td>${(isReviewer && s.status === 'pending') ? `
-        <button class="action-btn" onclick="decideSwap(${s.id},'approved')">Approve</button>
-        <button class="action-btn danger" onclick="decideSwap(${s.id},'rejected')">Reject</button>` : '—'}</td>
+      <td style="font-size:12px;color:var(--muted)">${escapeHtml(s.branch_name || '—')}</td>
+      <td>
+        <div style="font-weight:600">${escapeHtml(s.staff_a_name)} <span style="color:var(--accent)">↔</span> ${escapeHtml(s.staff_b_name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${fmtDateDisplay(s.date_a)} ↔ ${fmtDateDisplay(s.date_b)}</div>
+      </td>
+      <td>${swapStepper(s)}</td>
+      <td style="white-space:nowrap">${swapActionsFor(s)}</td>
     </tr>`).join('');
 }
 
-async function decideSwap(id, status) {
-  if (status === 'approved') {
-    const ok = await showConfirm('Approve swap', 'This will exchange the two shifts on the schedule. Continue?', 'Approve', 'confirm-ok');
+async function actSwap(id, action, label) {
+  if (action === 'approve' || action === 'accept') {
+    const ok = await showConfirm(`${label || 'Approve'} swap`,
+      action === 'accept'
+        ? 'Accept this shift swap with your colleague?'
+        : 'Approve this step? Final manager approval will exchange the shifts.',
+      label || 'Approve', 'confirm-ok');
+    if (!ok) return;
+  } else {
+    const ok = await showConfirm('Reject swap', 'Decline this shift swap request?', 'Reject');
     if (!ok) return;
   }
   try {
-    await API.put(`/swaps/${id}/status`, { status });
-    toast(`Swap ${status}`);
+    await API.put(`/swaps/${id}/action`, { action });
+    toast('Done');
     await refreshSwaps();
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -93,7 +143,12 @@ function swapStaffOptions() {
 }
 
 function openSwapModal() {
-  document.getElementById('swap-a-staff').innerHTML = swapStaffOptions();
+  const isStaff = currentUser?.role === 'staff';
+  const aStaff = document.getElementById('swap-a-staff');
+  const aField = aStaff.closest('.form-field');
+  // A staff member is always "Staff A" (themselves) — hide that picker.
+  if (aField) aField.style.display = isStaff ? 'none' : '';
+  aStaff.innerHTML = swapStaffOptions();
   document.getElementById('swap-b-staff').innerHTML = swapStaffOptions();
   const today = fmtDate(new Date());
   document.getElementById('swap-a-date').value = today;
@@ -110,13 +165,14 @@ function closeSwapModal() {
 async function saveSwap() {
   const msg = document.getElementById('swap-msg');
   const btn = document.getElementById('swap-save-btn');
-  const staff_a = document.getElementById('swap-a-staff').value;
+  const isStaff = currentUser?.role === 'staff';
+  const staff_a = isStaff ? (currentUser?.staff_id || '') : document.getElementById('swap-a-staff').value;
   const date_a  = document.getElementById('swap-a-date').value;
   const staff_b = document.getElementById('swap-b-staff').value;
   const date_b  = document.getElementById('swap-b-date').value;
   const note    = document.getElementById('swap-note').value.trim();
-  if (!staff_a || !staff_b) { msg.className='msg err'; msg.textContent='Pick both staff members'; return; }
-  if (staff_a === staff_b && date_a === date_b) { msg.className='msg err'; msg.textContent='Pick two different shifts to swap'; return; }
+  if (!staff_a || !staff_b) { msg.className='msg err'; msg.textContent='Pick the colleague to swap with'; return; }
+  if (String(staff_a) === String(staff_b)) { msg.className='msg err'; msg.textContent='Pick a different colleague'; return; }
   if (!date_a || !date_b) { msg.className='msg err'; msg.textContent='Both dates are required'; return; }
   msg.className='msg'; msg.textContent='';
   if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }

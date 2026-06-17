@@ -325,6 +325,13 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.leave_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
+            # Multi-stage swap approval: peer → team lead → manager. Track each step.
+            for _col in ("peer_at TIMESTAMP",
+                         "lead_by INTEGER", "lead_at TIMESTAMP",
+                         "mgr_by INTEGER", "mgr_at TIMESTAMP",
+                         "reject_by INTEGER", "reject_role TEXT", "reject_at TIMESTAMP",
+                         "reject_note TEXT"):
+                cur.execute(f"ALTER TABLE scheduling.shift_swaps ADD COLUMN IF NOT EXISTS {_col};")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -561,6 +568,18 @@ def notify_roles(roles, message, link=None, ntype="info", exclude_user=None):
     for u in users:
         if exclude_user and u["id"] == exclude_user:
             continue
+        notify(u["id"], message, link, ntype)
+
+def notify_staff_member(staff_id, message, link=None, ntype="info"):
+    """Notify the user account linked to a staff record, if one exists."""
+    u = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (staff_id,), one=True)
+    if u:
+        notify(u["id"], message, link, ntype)
+
+def notify_branch_leads(branch_id, message, link=None, ntype="info"):
+    """Notify the team lead(s) of a branch (role 'admin' pinned to that branch)."""
+    leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
+    for u in leads:
         notify(u["id"], message, link, ntype)
 
 # ── Leave ↔ schedule sync ─────────────────────────────────────────────────────
@@ -1572,111 +1591,193 @@ def mark_all_notifications_read(user=Depends(get_current_user)):
       (user["id"],), exec_only=True)
     return {"ok": True}
 
-# ── Shift swaps ───────────────────────────────────────────────────────────────
+# ── Shift swaps (multi-stage approval) ────────────────────────────────────────
+# Flow: pending_peer → pending_lead → pending_manager → approved.
+#   1. A staff member requests a swap with a colleague.
+#   2. The colleague (peer) accepts.
+#   3. The team lead approves.
+#   4. The manager gives final approval → the two cells are exchanged.
+# A reject at any stage ends it. A superadmin can push through any stage.
+
+SWAP_STAGES = ("pending_peer", "pending_lead", "pending_manager", "approved", "rejected")
 
 def _swap_with_names(extra_where="", vals=()):
     return q(f"""SELECT sw.*,
                         TO_CHAR(sw.date_a,'YYYY-MM-DD') AS date_a,
                         TO_CHAR(sw.date_b,'YYYY-MM-DD') AS date_b,
+                        TO_CHAR(sw.peer_at,'YYYY-MM-DD"T"HH24:MI:SS') AS peer_at,
+                        TO_CHAR(sw.lead_at,'YYYY-MM-DD"T"HH24:MI:SS') AS lead_at,
+                        TO_CHAR(sw.mgr_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS mgr_at,
+                        TO_CHAR(sw.reject_at,'YYYY-MM-DD"T"HH24:MI:SS') AS reject_at,
                         sa.name AS staff_a_name, sb.name AS staff_b_name,
-                        b.name AS branch_name
+                        b.name AS branch_name,
+                        ul.username AS lead_name, um.username AS mgr_name, ur.username AS reject_name
                  FROM scheduling.shift_swaps sw
                  JOIN scheduling.staff sa ON sa.id=sw.staff_a
                  JOIN scheduling.staff sb ON sb.id=sw.staff_b
                  LEFT JOIN scheduling.branches b ON b.id=sw.branch_id
+                 LEFT JOIN scheduling.users ul ON ul.id=sw.lead_by
+                 LEFT JOIN scheduling.users um ON um.id=sw.mgr_by
+                 LEFT JOIN scheduling.users ur ON ur.id=sw.reject_by
                  {extra_where} ORDER BY sw.created_at DESC LIMIT 200""", vals)
+
+def _swap_label(sw):
+    sa = q("SELECT name FROM scheduling.staff WHERE id=%s", (sw["staff_a"],), one=True) or {}
+    sb = q("SELECT name FROM scheduling.staff WHERE id=%s", (sw["staff_b"],), one=True) or {}
+    return f"{sa.get('name','?')} ({sw['date_a']}) ↔ {sb.get('name','?')} ({sw['date_b']})"
+
+def _apply_swap(sw):
+    """Exchange the two cells on the month's schedule (missing cell = Off)."""
+    sched = q("""SELECT id FROM scheduling.schedules
+                 WHERE branch_id=%s AND year=%s AND month=%s""",
+              (sw["branch_id"], sw["year"], sw["month"]), one=True)
+    if not sched:
+        raise HTTPException(409, "No schedule exists for this month to apply the swap")
+    sid = sched["id"]
+    def cell(staff_id, d):
+        r = q("""SELECT shift_code,is_oncall,cross_branch_id FROM scheduling.schedule_entries
+                 WHERE schedule_id=%s AND staff_id=%s AND date=%s""", (sid, staff_id, d), one=True)
+        return r or {"shift_code": "O", "is_oncall": False, "cross_branch_id": None}
+    a = cell(sw["staff_a"], sw["date_a"])
+    b = cell(sw["staff_b"], sw["date_b"])
+    def put(staff_id, d, c):
+        q("""INSERT INTO scheduling.schedule_entries
+             (schedule_id,staff_id,date,shift_code,is_oncall,cross_branch_id)
+             VALUES (%s,%s,%s,%s,%s,%s)
+             ON CONFLICT (schedule_id,staff_id,date) DO UPDATE
+             SET shift_code=EXCLUDED.shift_code,is_oncall=EXCLUDED.is_oncall,
+                 cross_branch_id=EXCLUDED.cross_branch_id""",
+          (sid, staff_id, d, c["shift_code"], c["is_oncall"], c["cross_branch_id"]), exec_only=True)
+    put(sw["staff_a"], sw["date_a"], b)
+    put(sw["staff_b"], sw["date_b"], a)
 
 @app.get("/api/swaps")
 def list_swaps(request: Request, user=Depends(get_current_user)):
     p = request.query_params
     conds, vals = [], []
-    # Team leads only see their own branch; reviewers can filter by branch.
-    if user["role"] in ("superadmin", "manager"):
+    role = user["role"]
+    if role == "staff":
+        # A staff member sees swaps they're part of (as requester or peer).
+        conds.append("(sw.staff_a=%s OR sw.staff_b=%s)")
+        vals += [user.get("staff_id"), user.get("staff_id")]
+    elif role in ("superadmin", "manager"):
         if p.get("branch_id"): conds.append("sw.branch_id=%s"); vals.append(p["branch_id"])
-    else:
+    else:  # team lead
         conds.append("sw.branch_id=%s"); vals.append(user.get("branch_id"))
     if p.get("status"): conds.append("sw.status=%s"); vals.append(p["status"])
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     return _swap_with_names(where, vals)
 
 @app.post("/api/swaps")
-async def create_swap(request: Request, user=Depends(require_editor)):
+async def create_swap(request: Request, user=Depends(get_current_user)):
+    role = user["role"]
+    if role not in ("staff", "admin", "manager", "superadmin"):
+        raise HTTPException(403, "Forbidden")
     body = await request.json()
-    staff_a, date_a = body.get("staff_a"), body.get("date_a")
-    staff_b, date_b = body.get("staff_b"), body.get("date_b")
+    date_a, date_b = body.get("date_a"), body.get("date_b")
+    staff_a, staff_b = body.get("staff_a"), body.get("staff_b")
     note = body.get("note")
+    # A staff member always requests on their own behalf.
+    if role == "staff":
+        staff_a = user.get("staff_id")
     if not all([staff_a, date_a, staff_b, date_b]):
         raise HTTPException(400, "staff_a, date_a, staff_b, date_b are required")
+    if str(staff_a) == str(staff_b):
+        raise HTTPException(400, "Pick a different colleague to swap with")
     sa = q("SELECT branch_id,name FROM scheduling.staff WHERE id=%s", (staff_a,), one=True)
     sb = q("SELECT branch_id,name FROM scheduling.staff WHERE id=%s", (staff_b,), one=True)
     if not sa or not sb:
         raise HTTPException(404, "Staff not found")
-    # A swap is one branch's rota exchanged between two of its own people — both
-    # staff must share a branch, and the requester must be able to access it.
     if sa["branch_id"] != sb["branch_id"]:
         raise HTTPException(400, "Both staff must be in the same branch")
-    if not can_access_branch(user, sa["branch_id"]):
-        raise HTTPException(403, "Forbidden")
     if date_a[:7] != date_b[:7]:
         raise HTTPException(400, "Both dates must be in the same month")
+    if role != "staff" and not can_access_branch(user, sa["branch_id"]):
+        raise HTTPException(403, "Forbidden")
     try:
         year, month = int(date_a[:4]), int(date_a[5:7])
     except (ValueError, IndexError):
         raise HTTPException(400, "date_a must be YYYY-MM-DD")
     row = q("""INSERT INTO scheduling.shift_swaps
-               (branch_id,year,month,staff_a,date_a,staff_b,date_b,note,created_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+               (branch_id,year,month,staff_a,date_a,staff_b,date_b,note,created_by,status)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending_peer') RETURNING id""",
             (sa["branch_id"], year, month, staff_a, date_a, staff_b, date_b, note, user["id"]), one=True)
     insert_audit(user, "SWAP_REQUEST", f"swap:{row['id']}", f"{sa['name']} {date_a} ↔ {sb['name']} {date_b}")
-    notify_roles(("manager", "superadmin"),
-                 f"Swap request: {sa['name']} ({date_a}) ↔ {sb['name']} ({date_b})",
-                 link="swaps", ntype="swap")
+    # The colleague must accept first.
+    notify_staff_member(staff_b,
+                        f"{sa['name']} asked to swap shifts with you ({date_a} ↔ {date_b}) — please accept or decline",
+                        link="swaps", ntype="swap")
     return {"id": row["id"], "ok": True}
 
-@app.put("/api/swaps/{swid}/status")
-async def decide_swap(swid: int, request: Request, user=Depends(require_reviewer)):
+@app.put("/api/swaps/{swid}/action")
+async def act_on_swap(swid: int, request: Request, user=Depends(get_current_user)):
+    """Advance (accept/approve) or reject a swap, depending on the caller's role
+    and the swap's current stage."""
     body = await request.json()
-    status = body.get("status")
-    if status not in ("approved", "rejected"):
-        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    action = (body.get("action") or "").lower()
+    note   = body.get("note")
+    if action not in ("accept", "approve", "reject"):
+        raise HTTPException(400, "action must be accept, approve or reject")
     sw = q("SELECT * FROM scheduling.shift_swaps WHERE id=%s", (swid,), one=True)
     if not sw:
         raise HTTPException(404, "Swap not found")
-    if sw["status"] != "pending":
-        raise HTTPException(400, f"Swap already {sw['status']}")
+    st = sw["status"]
+    if st in ("approved", "rejected"):
+        raise HTTPException(400, f"Swap already {st}")
 
-    if status == "approved":
-        # Exchange the two cells on the relevant schedule. Missing cells count
-        # as Off ('O') so a swap with an empty day still works.
-        sched = q("""SELECT id FROM scheduling.schedules
-                     WHERE branch_id=%s AND year=%s AND month=%s""",
-                  (sw["branch_id"], sw["year"], sw["month"]), one=True)
-        if not sched:
-            raise HTTPException(409, "No schedule exists for this month to swap")
-        sid = sched["id"]
-        def cell(staff_id, d):
-            r = q("""SELECT shift_code,is_oncall,cross_branch_id FROM scheduling.schedule_entries
-                     WHERE schedule_id=%s AND staff_id=%s AND date=%s""", (sid, staff_id, d), one=True)
-            return r or {"shift_code": "O", "is_oncall": False, "cross_branch_id": None}
-        a = cell(sw["staff_a"], sw["date_a"])
-        b = cell(sw["staff_b"], sw["date_b"])
-        def put(staff_id, d, c):
-            q("""INSERT INTO scheduling.schedule_entries
-                 (schedule_id,staff_id,date,shift_code,is_oncall,cross_branch_id)
-                 VALUES (%s,%s,%s,%s,%s,%s)
-                 ON CONFLICT (schedule_id,staff_id,date) DO UPDATE
-                 SET shift_code=EXCLUDED.shift_code,is_oncall=EXCLUDED.is_oncall,
-                     cross_branch_id=EXCLUDED.cross_branch_id""",
-              (sid, staff_id, d, c["shift_code"], c["is_oncall"], c["cross_branch_id"]), exec_only=True)
-        put(sw["staff_a"], sw["date_a"], b)
-        put(sw["staff_b"], sw["date_b"], a)
+    role = user["role"]
+    sid = user.get("staff_id")
+    is_super     = role == "superadmin"
+    is_peer      = role == "staff" and sid == sw["staff_b"]
+    is_requester = role == "staff" and sid == sw["staff_a"]
+    has_branch   = role in ("admin", "manager", "superadmin") and can_access_branch(user, sw["branch_id"])
+    is_reviewer  = role in ("manager", "superadmin")
+    label = _swap_label(sw)
 
-    q("""UPDATE scheduling.shift_swaps SET status=%s, decided_by=%s, decided_at=NOW()
-         WHERE id=%s""", (status, user["id"], swid), exec_only=True)
-    insert_audit(user, f"SWAP_{status.upper()}", f"swap:{swid}")
-    if sw.get("created_by"):
-        notify(sw["created_by"], f"Your shift swap request was {status}", link="swaps", ntype=status)
-    return {"ok": True, "status": status}
+    if action == "reject":
+        # The peer, the requester (cancel), the branch lead/manager, or a superadmin.
+        if not (is_super or is_peer or is_requester or has_branch):
+            raise HTTPException(403, "You can't reject this swap")
+        q("""UPDATE scheduling.shift_swaps
+             SET status='rejected', reject_by=%s, reject_role=%s, reject_at=NOW(), reject_note=%s
+             WHERE id=%s""", (user["id"], role, note, swid), exec_only=True)
+        insert_audit(user, "SWAP_REJECTED", f"swap:{swid}", label)
+        notify_staff_member(sw["staff_a"], f"Shift swap declined: {label}", link="swaps", ntype="rejected")
+        notify_staff_member(sw["staff_b"], f"Shift swap declined: {label}", link="swaps", ntype="rejected")
+        return {"ok": True, "status": "rejected"}
+
+    # accept / approve → advance one stage
+    if st == "pending_peer":
+        if not (is_peer or is_super):
+            raise HTTPException(403, "Only the colleague being swapped with can accept")
+        q("UPDATE scheduling.shift_swaps SET status='pending_lead', peer_at=NOW() WHERE id=%s", (swid,), exec_only=True)
+        insert_audit(user, "SWAP_PEER_OK", f"swap:{swid}", label)
+        notify_branch_leads(sw["branch_id"], f"Shift swap awaiting your approval: {label}", link="swaps", ntype="swap")
+        return {"ok": True, "status": "pending_lead"}
+
+    if st == "pending_lead":
+        if not (has_branch or is_super):
+            raise HTTPException(403, "Only the team lead or a manager can approve at this step")
+        q("UPDATE scheduling.shift_swaps SET status='pending_manager', lead_by=%s, lead_at=NOW() WHERE id=%s",
+          (user["id"], swid), exec_only=True)
+        insert_audit(user, "SWAP_LEAD_OK", f"swap:{swid}", label)
+        notify_roles(("manager", "superadmin"),
+                     f"Shift swap approved by team lead — needs final approval: {label}",
+                     link="swaps", ntype="swap")
+        return {"ok": True, "status": "pending_manager"}
+
+    if st == "pending_manager":
+        if not is_reviewer:
+            raise HTTPException(403, "Only a manager can give final approval")
+        _apply_swap(sw)
+        q("UPDATE scheduling.shift_swaps SET status='approved', mgr_by=%s, mgr_at=NOW() WHERE id=%s",
+          (user["id"], swid), exec_only=True)
+        insert_audit(user, "SWAP_APPROVED", f"swap:{swid}", label)
+        notify_staff_member(sw["staff_a"], f"Your shift swap was approved and applied: {label}", link="swaps", ntype="approved")
+        notify_staff_member(sw["staff_b"], f"Shift swap approved and applied: {label}", link="swaps", ntype="approved")
+        return {"ok": True, "status": "approved"}
+
+    raise HTTPException(400, f"Unexpected swap status {st}")
 
 # ── Public holidays ───────────────────────────────────────────────────────────
 

@@ -1014,3 +1014,17 @@ body.dark .logo-box { background: rgba(255,255,255,.92); }
 }
 .portal-day .pd-shift sup { font-size: 8px; }
 .portal-day .pd-time { font-size: 9px; color: var(--muted); }
+
+/* ── Shift-swap approval stepper ──────────────────────────────────────────── */
+.swap-stepper { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.swap-step {
+  display: inline-flex; flex-direction: column; align-items: flex-start;
+  font-size: 11px; color: var(--muted); line-height: 1.2; padding: 2px 6px;
+  border-radius: 6px; border: 1px solid var(--border);
+}
+.swap-step b { font-weight: 800; }
+.swap-step i { font-style: normal; font-size: 9px; opacity: .8; }
+.swap-step.done    { color: #00A87D; border-color: rgba(0,200,150,.35); background: rgba(0,200,150,.08); }
+.swap-step.current { color: var(--accent); border-color: rgba(107,78,255,.4); background: rgba(107,78,255,.08); }
+.swap-arrow { color: var(--muted); font-size: 12px; }
+.swap-rejected { font-size: 11px; color: #cc4444; margin-top: 4px; font-weight: 600; }
