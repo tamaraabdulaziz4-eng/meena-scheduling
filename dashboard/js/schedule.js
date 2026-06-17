@@ -195,7 +195,8 @@ function renderTeamLeadBanner() {
           📤 Submit for review
         </button>
       </div>`;
-  } else if (status === 'submitted' || status === 'reviewed') {
+  } else if (status === 'submitted') {
+    // Manager hasn't acted yet — the team lead can still pull it back.
     html = `
       <div class="tl-status-banner warn">
         <div class="ico" style="background:rgba(255,159,67,.15)">⏳</div>
@@ -205,13 +206,23 @@ function renderTeamLeadBanner() {
         </div>
         <button class="btn btn-ghost btn-sm" onclick="withdrawSchedule(${sid})">↩ Withdraw</button>
       </div>`;
+  } else if (status === 'reviewed') {
+    // Manager has already reviewed it — only the manager can reopen it now.
+    html = `
+      <div class="tl-status-banner warn">
+        <div class="ico" style="background:rgba(255,159,67,.15)">👀</div>
+        <div style="flex:1">
+          <div class="ttl">Reviewed by manager — locked</div>
+          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'To make changes, ask your manager to return the schedule.'}</div>
+        </div>
+      </div>`;
   } else if (status === 'approved') {
     html = `
       <div class="tl-status-banner ok">
         <div class="ico" style="background:rgba(0,200,150,.15)">✓</div>
         <div style="flex:1">
-          <div class="ttl" style="color:#009B74">Approved</div>
-          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'This schedule has been approved by the manager.'}</div>
+          <div class="ttl" style="color:#009B74">Approved — locked</div>
+          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'This schedule is approved. To make changes, ask your manager to return it.'}</div>
         </div>
       </div>`;
   }

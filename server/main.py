@@ -1256,7 +1256,7 @@ async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_
 
 @app.put("/api/schedules/{sid}/status")
 async def update_schedule_status(sid: int, request: Request, user=Depends(require_admin)):
-    assert_schedule_access(user, sid)
+    current = assert_schedule_access(user, sid)
     body = await request.json()
     status = body.get("status")
     note   = body.get("note")
@@ -1264,10 +1264,16 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
         raise HTTPException(400, "Invalid status")
     # Team leads (admin) submit/withdraw their own branch; managers (and full
     # admins) review/approve/return. Keep the two roles from doing each other's job.
-    if status in ("reviewed","approved","returned") and user["role"] not in ("superadmin","manager"):
+    is_reviewer = user["role"] in ("superadmin", "manager")
+    if status in ("reviewed","approved","returned") and not is_reviewer:
         raise HTTPException(403, "Only a manager can review, approve, or return")
     if status in ("submitted","draft") and user["role"] == "manager":
         raise HTTPException(403, "Managers don't submit schedules; that's the team lead's step")
+    # Once the manager has reviewed or approved, a team lead can no longer pull
+    # the schedule back (withdraw → draft, or re-submit). Only a manager can
+    # reopen it via "return". This keeps the manager's sign-off meaningful.
+    if not is_reviewer and status in ("draft","submitted") and current.get("status") in ("reviewed","approved"):
+        raise HTTPException(403, "The manager has already reviewed this schedule. Ask the manager to return it before editing.")
 
     # Make sure the column for the manager's note exists (added lazily).
     q("ALTER TABLE scheduling.schedules ADD COLUMN IF NOT EXISTS review_note TEXT", exec_only=True)
@@ -1698,10 +1704,10 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         # Telling a draft user to "Withdraw" is misleading — there's no Withdraw
         # button in that state; they need to Unlock instead.
         st = (locked_row.get("status") or "draft")
-        if st in ("submitted", "reviewed"):
+        if st == "submitted":
             raise HTTPException(403, "Schedule is locked (submitted for review). Withdraw it first to regenerate.")
-        if st == "approved":
-            raise HTTPException(403, "Schedule is approved and locked. Ask a manager to return it before regenerating.")
+        if st in ("reviewed", "approved"):
+            raise HTTPException(403, "The manager has reviewed/approved this schedule. Ask the manager to return it before regenerating.")
         raise HTTPException(403, "Schedule is locked. Unlock it (the 🔒 toggle) before regenerating.")
 
     # Load data
