@@ -106,6 +106,12 @@ function renderReviewList() {
         <button class="btn review" onclick="openReviewSchedule(${b.branch_id})">Review</button>
         <button class="btn approve" onclick="reviewAction(${b.schedule_id}, 'approved')">Approve</button>
         <button class="btn return" onclick="reviewAction(${b.schedule_id}, 'returned')">Return</button>`;
+    } else if (b.status === 'approved') {
+      // Already approved but the team wants to change something — reopen it
+      // (unlocks it and sends it back to the team lead for edits).
+      actions = `
+        <button class="btn review" onclick="openReviewSchedule(${b.branch_id})">View</button>
+        <button class="btn return" onclick="reviewAction(${b.schedule_id}, 'returned')">↩ Reopen</button>`;
     } else if (b.status === 'not_submitted') {
       actions = `<button class="btn review" onclick="openReviewSchedule(${b.branch_id})">Open</button>`;
     } else {

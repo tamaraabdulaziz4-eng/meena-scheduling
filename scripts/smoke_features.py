@@ -267,5 +267,14 @@ uiddg = next(u["id"] for u in admin.get("/api/users").json() if u["username"] ==
 admin.put(f"/api/users/{uiddg}", json={"role": "viewer"})
 check("downgraded user blocked from admin action", dg.post("/api/staff", json={"name": "x", "branch_id": bid}).status_code == 403)
 
+print("\n== scenario 12: reviewer reopens an approved schedule ==")
+admin.put(f"/api/schedules/{sid}/status", json={"status": "approved"})
+le = lead.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-07", "shift_code": "M"})
+check("team lead blocked while approved", le.status_code == 403, le.status_code)
+rb = admin.put(f"/api/schedules/{sid}/status", json={"status": "returned", "note": "reopen"})
+check("reviewer reopened (returned)", rb.status_code == 200 and rb.json().get("status") == "returned", rb.text)
+le2 = lead.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-07", "shift_code": "M"})
+check("team lead can edit after reopen", le2.status_code == 200, le2.text)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

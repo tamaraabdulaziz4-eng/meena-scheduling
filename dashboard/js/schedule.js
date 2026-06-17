@@ -659,11 +659,12 @@ async function toggleOnCall() {
 
 async function toggleScheduleLock() {
   if (!currentSchedule) return;
-  // If the schedule is in the review pipeline, the manual lock toggle must not
-  // override it. The team lead has to Withdraw (or the manager returns it).
+  // A team lead can't override the lock on a schedule that's in the review
+  // pipeline — but a reviewer (manager / full admin) can unlock it to edit.
   const reviewStatuses = ['submitted', 'reviewed', 'approved'];
-  if (reviewStatuses.includes(currentSchedule.status)) {
-    toast('This schedule is in review. Use Withdraw to unlock it.', 'err');
+  const isReviewer = ['superadmin', 'manager'].includes(currentUser?.role);
+  if (reviewStatuses.includes(currentSchedule.status) && !isReviewer) {
+    toast('This schedule is in review — ask a manager to return it.', 'err');
     return;
   }
   const willLock = !currentSchedule.is_locked;
