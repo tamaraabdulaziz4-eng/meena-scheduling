@@ -147,20 +147,39 @@ function renderTeamLeadBanner() {
   // Managers don't need the submit banner; they use the Review page.
   if (isManager) { wrap.innerHTML = ''; return; }
 
-  // When the schedule is locked (in review/approved), disable editing tools so
-  // the team lead can't try actions the server will reject anyway.
+  // When the schedule is locked, disable editing tools so the team lead can't
+  // try actions the server will reject anyway. A schedule is "locked" either
+  // because it's in the review pipeline (submitted/reviewed/approved) OR because
+  // someone hit the manual 🔒 toggle while it was still a draft/returned. Both
+  // cases block Generate server-side, so both must disable the button — otherwise
+  // the user clicks Generate, gets a "withdraw it first" error, and finds no
+  // Withdraw button to use.
   const lockedForReview = ['submitted','reviewed','approved'].includes(status);
+  const manuallyLocked  = !!currentSchedule.is_locked && !lockedForReview;
+  const editingLocked   = lockedForReview || manuallyLocked;
   const genBtn = document.getElementById('btn-generate');
   const setBtn = document.getElementById('btn-settings');
   [genBtn, setBtn].forEach(b => {
     if (!b) return;
-    b.disabled = lockedForReview;
-    b.style.opacity = lockedForReview ? '0.45' : '';
-    b.style.pointerEvents = lockedForReview ? 'none' : '';
+    b.disabled = editingLocked;
+    b.style.opacity = editingLocked ? '0.45' : '';
+    b.style.pointerEvents = editingLocked ? 'none' : '';
   });
 
   let html = '';
-  if (status === 'draft' || status === 'returned') {
+  if (manuallyLocked) {
+    // Draft/returned but manually locked: Generate is blocked but there's no
+    // review step to withdraw from — surface an Unlock action instead.
+    html = `
+      <div class="tl-status-banner warn">
+        <div class="ico" style="background:rgba(243,156,18,.15)">🔒</div>
+        <div style="flex:1">
+          <div class="ttl">Schedule locked</div>
+          <div class="sub">This schedule is manually locked, so it can't be generated or edited. Unlock it to make changes.</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="toggleScheduleLock()">🔓 Unlock</button>
+      </div>`;
+  } else if (status === 'draft' || status === 'returned') {
     const returned = status === 'returned';
     html = `
       <div class="tl-status-banner ${returned ? 'err' : ''}">
@@ -620,6 +639,7 @@ async function toggleScheduleLock() {
   try {
     currentSchedule = await API.put(`/schedules/${currentSchedule.id}/lock`, { locked: willLock });
     renderScheduleStatusBar();
+    renderTeamLeadBanner();
     renderRotaGrid();
     toast(willLock ? '🔒 Schedule locked' : '🔓 Schedule unlocked', 'ok');
   } catch (err) { toast(err.message, 'err'); }

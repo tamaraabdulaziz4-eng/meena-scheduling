@@ -1390,7 +1390,17 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                       WHERE branch_id=%s AND year=%s AND month=%s""",
                    (branch_id, year, month), one=True)
     if locked_row and locked_row.get("is_locked"):
-        raise HTTPException(403, "Schedule is locked (submitted for review). Withdraw it first to regenerate.")
+        # Tailor the remedy to *why* it's locked. A schedule can be locked either
+        # because it's in the review pipeline (status submitted/reviewed/approved)
+        # or because someone hit the manual 🔒 toggle while it was still a draft.
+        # Telling a draft user to "Withdraw" is misleading — there's no Withdraw
+        # button in that state; they need to Unlock instead.
+        st = (locked_row.get("status") or "draft")
+        if st in ("submitted", "reviewed"):
+            raise HTTPException(403, "Schedule is locked (submitted for review). Withdraw it first to regenerate.")
+        if st == "approved":
+            raise HTTPException(403, "Schedule is approved and locked. Ask a manager to return it before regenerating.")
+        raise HTTPException(403, "Schedule is locked. Unlock it (the 🔒 toggle) before regenerating.")
 
     # Load data
     prev_month = 12 if month == 1 else month - 1
