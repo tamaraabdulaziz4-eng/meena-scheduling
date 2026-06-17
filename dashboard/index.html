@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260617c">
+<link rel="stylesheet" href="/style.css?v=20260617d">
 </head>
 <body>
 
@@ -88,6 +88,9 @@
 
     <nav class="sidebar-nav">
       <div class="nav-section-label">Main</div>
+      <button class="nav-item" id="nav-myschedule" onclick="showPage('myschedule')" style="display:none">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01"/></svg></span> My Schedule
+      </button>
       <button class="nav-item active" id="nav-schedule" onclick="showPage('schedule')">
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span> Schedule
       </button>
@@ -428,6 +431,7 @@
             <label>Role</label>
             <select id="user-role" onchange="toggleUserBranch()">
               <option value="viewer">Viewer</option>
+              <option value="staff">Staff (sees own schedule, requests leave)</option>
               <option value="admin">Admin (Team Leader)</option>
               <option value="manager">Manager (Reviews schedules)</option>
               <option value="superadmin">Superadmin (Full access)</option>
@@ -437,6 +441,10 @@
             <label>Branch</label>
             <select id="user-branch"><option value="">— All branches —</option></select>
           </div>
+        </div>
+        <div class="form-field" id="user-staff-wrap" style="display:none">
+          <label>Linked staff member *</label>
+          <select id="user-staff"><option value="">Select staff…</option></select>
         </div>
         <div class="msg" id="user-msg"></div>
       </div>
@@ -498,21 +506,22 @@
 </div>
 
 
-<script src="/js/api.js?v=20260617c"></script>
-<script src="/js/auth.js?v=20260617c"></script>
-<script src="/js/util.js?v=20260617c"></script>
-<script src="/js/branches.js?v=20260617c"></script>
-<script src="/js/users.js?v=20260617c"></script>
-<script src="/js/staff.js?v=20260617c"></script>
-<script src="/js/leaves.js?v=20260617c"></script>
-<script src="/js/swaps.js?v=20260617c"></script>
-<script src="/js/holidays.js?v=20260617c"></script>
-<script src="/js/notifications.js?v=20260617c"></script>
-<script src="/js/shifts.js?v=20260617c"></script>
-<script src="/js/schedule.js?v=20260617c"></script>
-<script src="/js/review.js?v=20260617c"></script>
-<script src="/js/export.js?v=20260617c"></script>
-<script src="/js/audit.js?v=20260617c"></script>
-<script src="/js/main.js?v=20260617c"></script>
+<script src="/js/api.js?v=20260617d"></script>
+<script src="/js/auth.js?v=20260617d"></script>
+<script src="/js/util.js?v=20260617d"></script>
+<script src="/js/branches.js?v=20260617d"></script>
+<script src="/js/users.js?v=20260617d"></script>
+<script src="/js/staff.js?v=20260617d"></script>
+<script src="/js/leaves.js?v=20260617d"></script>
+<script src="/js/swaps.js?v=20260617d"></script>
+<script src="/js/holidays.js?v=20260617d"></script>
+<script src="/js/notifications.js?v=20260617d"></script>
+<script src="/js/portal.js?v=20260617d"></script>
+<script src="/js/shifts.js?v=20260617d"></script>
+<script src="/js/schedule.js?v=20260617d"></script>
+<script src="/js/review.js?v=20260617d"></script>
+<script src="/js/export.js?v=20260617d"></script>
+<script src="/js/audit.js?v=20260617d"></script>
+<script src="/js/main.js?v=20260617d"></script>
 </body>
 </html>

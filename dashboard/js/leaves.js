@@ -13,11 +13,13 @@ async function loadLeaves(branchId, year, month) {
 function renderLeavesPage() {
   const canEdit = ['admin','superadmin'].includes(currentUser?.role);
   const isSuper = currentUser?.role === 'superadmin';
+  const isStaff = currentUser?.role === 'staff';
+  const title = isStaff ? 'My Leave' : 'Leave Management';
   const actions = [
     isSuper ? `<button class="btn btn-ghost btn-sm" onclick="openHolidaysModal()">🗓 Holidays</button>` : '',
-    canEdit ? `<button class="btn btn-sm" onclick="openLeaveModal()">+ Add Leave</button>` : '',
+    (canEdit || isStaff) ? `<button class="btn btn-sm" onclick="openLeaveModal()">${isStaff ? '🌴 Request Leave' : '+ Add Leave'}</button>` : '',
   ].filter(Boolean).join(' ');
-  setTopbar('Leave Management', 'Annual leave, sick leave, time-back', actions);
+  setTopbar(title, 'Annual leave, sick leave, time-back', actions);
   const c = document.getElementById('content');
   c.innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
@@ -63,6 +65,7 @@ async function filterLeaves() {
 
 function renderLeavesList() {
   const tb     = document.getElementById('leaves-tbody');
+  if (!tb) return;  // e.g. a staff member requested leave from the My Schedule page
   const canEdit = ['admin','superadmin'].includes(currentUser?.role);
   const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
   if (!allLeaves.length) {
@@ -170,15 +173,21 @@ function fmtDateDisplay(dateStr) {
 // ── Modal ─────────────────────────────────────────────────────────────────────
 function openLeaveModal() {
   const ls = document.getElementById('leave-staff');
+  const staffField = ls.closest('.form-field');
+  const isStaff = currentUser?.role === 'staff';
+  // A staff member requests leave only for themselves — hide the picker entirely.
+  if (staffField) staffField.style.display = isStaff ? 'none' : '';
   ls.innerHTML = '<option value="">Select staff…</option>';
-  const filtered = ['superadmin','manager'].includes(currentUser?.role)
-    ? allStaff
-    : allStaff.filter(s => s.branch_id === currentUser?.branch_id);
-  filtered.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.id; opt.textContent = `${s.name} (${s.branch_name || '?'})`;
-    ls.appendChild(opt);
-  });
+  if (!isStaff) {
+    const filtered = ['superadmin','manager'].includes(currentUser?.role)
+      ? allStaff
+      : allStaff.filter(s => s.branch_id === currentUser?.branch_id);
+    filtered.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id; opt.textContent = `${s.name} (${s.branch_name || '?'})`;
+      ls.appendChild(opt);
+    });
+  }
 
   const today = fmtDate(new Date());
   document.getElementById('leave-date-from').value = today;
@@ -197,13 +206,15 @@ function closeLeaveModal() {
 async function saveLeave() {
   const msg        = document.getElementById('leave-msg');
   const btn        = document.getElementById('leave-save-btn');
-  const staff_id   = document.getElementById('leave-staff').value;
+  const isStaff    = currentUser?.role === 'staff';
+  // Staff request for themselves; the backend pins it to their own record.
+  const staff_id   = isStaff ? (currentUser?.staff_id || '') : document.getElementById('leave-staff').value;
   const date_from  = document.getElementById('leave-date-from').value;
   const date_to    = document.getElementById('leave-date-to').value;
   const leave_type = document.getElementById('leave-type').value;
   const note       = document.getElementById('leave-note').value.trim();
 
-  if (!staff_id)   { msg.className='msg err'; msg.textContent='Select a staff member'; return; }
+  if (!isStaff && !staff_id) { msg.className='msg err'; msg.textContent='Select a staff member'; return; }
   if (!date_from)  { msg.className='msg err'; msg.textContent='From date required'; return; }
   if (!date_to)    { msg.className='msg err'; msg.textContent='To date required'; return; }
   if (date_to < date_from) { msg.className='msg err'; msg.textContent='"To" date must be on or after "From" date'; return; }

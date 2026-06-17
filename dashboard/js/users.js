@@ -25,6 +25,7 @@ const ROLE_BADGE = {
   superadmin: '<span class="badge badge-purple">Superadmin</span>',
   manager:    '<span class="badge badge-purple">Manager</span>',
   admin:      '<span class="badge badge-yellow">Admin</span>',
+  staff:      '<span class="badge badge-green">Staff</span>',
   viewer:     '<span class="badge badge-gray">Viewer</span>',
 };
 
@@ -74,6 +75,18 @@ function openUserModal(id) {
     bs.appendChild(opt);
   });
 
+  // Populate the linked-staff select (used only for the Staff role)
+  const ss = document.getElementById('user-staff');
+  if (ss) {
+    ss.innerHTML = '<option value="">Select staff…</option>';
+    (allStaff || []).forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id; opt.textContent = `${s.name} (${s.branch_name || '?'})`;
+      if (u?.staff_id === s.id) opt.selected = true;
+      ss.appendChild(opt);
+    });
+  }
+
   toggleUserBranch();
   document.getElementById('user-modal-overlay').classList.add('open');
 }
@@ -82,9 +95,13 @@ function closeUserModal() {
 }
 function toggleUserBranch() {
   const role = document.getElementById('user-role').value;
-  // Superadmin and manager are cross-branch, so no single branch to assign.
+  const isStaff = role === 'staff';
+  // A staff account picks a staff member (its branch follows that record), so
+  // hide the manual branch picker; show the staff picker instead.
   document.getElementById('user-branch-wrap').style.display =
-    ['superadmin','manager'].includes(role) ? 'none' : 'flex';
+    (['superadmin','manager'].includes(role) || isStaff) ? 'none' : 'flex';
+  const sw = document.getElementById('user-staff-wrap');
+  if (sw) sw.style.display = isStaff ? 'block' : 'none';
 }
 async function saveUser() {
   const msg      = document.getElementById('user-msg');
@@ -92,12 +109,15 @@ async function saveUser() {
   const password = document.getElementById('user-password').value;
   const role     = document.getElementById('user-role').value;
   const branch_id = document.getElementById('user-branch').value || null;
+  const staff_id  = document.getElementById('user-staff')?.value || null;
 
   if (!username) { msg.className = 'msg err'; msg.textContent = 'Username required'; return; }
   if (!_editUserId && !password) { msg.className = 'msg err'; msg.textContent = 'Password required'; return; }
+  if (role === 'staff' && !staff_id) { msg.className = 'msg err'; msg.textContent = 'Pick the staff member this account belongs to'; return; }
 
   try {
     const body = { username, role, branch_id: branch_id ? Number(branch_id) : null };
+    if (role === 'staff') body.staff_id = Number(staff_id);
     if (password) body.password = password;
 
     if (_editUserId) {

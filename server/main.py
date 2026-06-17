@@ -323,6 +323,8 @@ def init_schema():
             """)
             # Leave requests gained an approval workflow; older rows stay 'approved'.
             cur.execute("ALTER TABLE scheduling.leave_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';")
+            # A 'staff' user account is linked to one staff record (self-service portal).
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -561,6 +563,37 @@ def notify_roles(roles, message, link=None, ntype="info", exclude_user=None):
             continue
         notify(u["id"], message, link, ntype)
 
+# ── Leave ↔ schedule sync ─────────────────────────────────────────────────────
+
+def _schedule_for_leave(staff_id, date):
+    """The schedule id covering this staff member's branch for the leave's month."""
+    return q("""SELECT sc.id FROM scheduling.schedules sc
+                JOIN scheduling.staff s ON s.branch_id=sc.branch_id
+                WHERE s.id=%s
+                  AND sc.year=EXTRACT(YEAR FROM %s::date)::int
+                  AND sc.month=EXTRACT(MONTH FROM %s::date)::int""",
+             (staff_id, date, date), one=True)
+
+def apply_leave_to_schedule(staff_id, date, code):
+    """Mark the cell as leave (AL/SL/TB) so an approved leave shows on the rota
+    immediately — not only after a regenerate."""
+    sched = _schedule_for_leave(staff_id, date)
+    if not sched:
+        return
+    q("""INSERT INTO scheduling.schedule_entries (schedule_id,staff_id,date,shift_code)
+         VALUES (%s,%s,%s,%s)
+         ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET shift_code=EXCLUDED.shift_code""",
+      (sched["id"], staff_id, date, code), exec_only=True)
+
+def clear_leave_from_schedule(staff_id, date, code):
+    """Undo apply_leave_to_schedule: if the cell still shows this leave, blank it."""
+    sched = _schedule_for_leave(staff_id, date)
+    if not sched:
+        return
+    q("""UPDATE scheduling.schedule_entries SET shift_code='O'
+         WHERE schedule_id=%s AND staff_id=%s AND date=%s AND shift_code=%s""",
+      (sched["id"], staff_id, date, code), exec_only=True)
+
 # ── Nest helpers ──────────────────────────────────────────────────────────────
 
 def branch_to_nest(branch_name: str) -> Optional[str]:
@@ -667,6 +700,7 @@ async def login(request: Request, response: Response):
         raise HTTPException(401, "Invalid credentials")
 
     payload = {k: user[k] for k in ("id","username","role","branch_id","branch_name")}
+    payload["staff_id"] = user.get("staff_id")
     token = sign_token(payload)
     response.set_cookie("token", token, httponly=True, samesite="lax",
                         max_age=JWT_DAYS * 86400)
@@ -717,8 +751,11 @@ def delete_branch(bid: int, user=Depends(require_superadmin)):
 
 @app.get("/api/users")
 def list_users(user=Depends(require_superadmin)):
-    return q("""SELECT u.id,u.username,u.role,u.branch_id,u.created_at,b.name AS branch_name
-                FROM scheduling.users u LEFT JOIN scheduling.branches b ON b.id=u.branch_id
+    return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
+                       b.name AS branch_name, st.name AS staff_name
+                FROM scheduling.users u
+                LEFT JOIN scheduling.branches b ON b.id=u.branch_id
+                LEFT JOIN scheduling.staff st ON st.id=u.staff_id
                 ORDER BY u.created_at""")
 
 @app.post("/api/users")
@@ -728,18 +765,29 @@ async def create_user(request: Request, user=Depends(require_superadmin)):
     password = body.get("password") or ""
     role     = body.get("role") or ""
     branch_id = body.get("branch_id") or None
+    staff_id  = body.get("staff_id") or None
     if not username or not password or not role:
         raise HTTPException(400, "Missing fields")
-    if role not in ("viewer", "admin", "manager", "superadmin"):
+    if role not in ("viewer", "admin", "manager", "superadmin", "staff"):
         raise HTTPException(400, "Invalid role")
     if len(password) < 6:
         raise HTTPException(400, "Password min 6 chars")
+    # A staff account must be linked to a staff record; its branch follows that record.
+    if role == "staff":
+        if not staff_id:
+            raise HTTPException(400, "A staff account must be linked to a staff member")
+        st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+        if not st:
+            raise HTTPException(404, "Staff member not found")
+        branch_id = st["branch_id"]
+    else:
+        staff_id = None
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     try:
-        row = q("""INSERT INTO scheduling.users (username,password,role,branch_id)
-                   VALUES (%s,%s,%s,%s)
-                   RETURNING id,username,role,branch_id,created_at""",
-                (username, hashed, role, branch_id), one=True)
+        row = q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id)
+                   VALUES (%s,%s,%s,%s,%s)
+                   RETURNING id,username,role,branch_id,staff_id,created_at""",
+                (username, hashed, role, branch_id, staff_id), one=True)
         insert_audit(user, "CREATE_USER", username)
         return row
     except psycopg2.errors.UniqueViolation:
@@ -756,12 +804,24 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     sets, params = [], []
     if body.get("username") is not None: sets.append("username=%s"); params.append(body["username"])
     if body.get("role")     is not None: sets.append("role=%s");     params.append(body["role"])
-    if "branch_id" in body:              sets.append("branch_id=%s"); params.append(body["branch_id"] or None)
+    # A staff account stays pinned to its staff member's branch.
+    if body.get("role") == "staff" and body.get("staff_id"):
+        st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (body["staff_id"],), one=True)
+        sets.append("staff_id=%s"); params.append(body["staff_id"])
+        sets.append("branch_id=%s"); params.append(st["branch_id"] if st else None)
+    elif body.get("role") and body.get("role") != "staff":
+        sets.append("staff_id=%s"); params.append(None)
+        if "branch_id" in body: sets.append("branch_id=%s"); params.append(body["branch_id"] or None)
+    elif "branch_id" in body:
+        sets.append("branch_id=%s"); params.append(body["branch_id"] or None)
     if sets:
         params.append(uid)
         q(f"UPDATE scheduling.users SET {','.join(sets)} WHERE id=%s", params, exec_only=True)
-    return q("""SELECT u.id,u.username,u.role,u.branch_id,u.created_at,b.name AS branch_name
-                FROM scheduling.users u LEFT JOIN scheduling.branches b ON b.id=u.branch_id
+    return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
+                       b.name AS branch_name, st.name AS staff_name
+                FROM scheduling.users u
+                LEFT JOIN scheduling.branches b ON b.id=u.branch_id
+                LEFT JOIN scheduling.staff st ON st.id=u.staff_id
                 WHERE u.id=%s""", (uid,), one=True)
 
 @app.delete("/api/users/{uid}")
@@ -1323,11 +1383,15 @@ def delete_schedule(sid: int, user=Depends(require_editor)):
 @app.get("/api/leaves")
 def list_leaves(request: Request, user=Depends(get_current_user)):
     params = request.query_params
-    branch_id = params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
+    conds, vals = ["1=1"], []
+    if user["role"] == "staff":
+        # A staff member only ever sees their own leave.
+        conds.append("l.staff_id=%s"); vals.append(user.get("staff_id"))
+    else:
+        branch_id = params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
+        if branch_id: conds.append("s.branch_id=%s"); vals.append(branch_id)
     year  = params.get("year")
     month = params.get("month")
-    conds, vals = ["1=1"], []
-    if branch_id: conds.append("s.branch_id=%s"); vals.append(branch_id)
     if year:      conds.append("EXTRACT(YEAR FROM l.date)=%s");  vals.append(year)
     if month:     conds.append("EXTRACT(MONTH FROM l.date)=%s"); vals.append(month)
     return q(f"""SELECT l.id,l.staff_id,TO_CHAR(l.date,'YYYY-MM-DD') AS date,
@@ -1339,18 +1403,25 @@ def list_leaves(request: Request, user=Depends(get_current_user)):
                  WHERE {' AND '.join(conds)} ORDER BY l.date""", vals)
 
 @app.post("/api/leaves")
-async def create_leave(request: Request, user=Depends(require_admin)):
+async def create_leave(request: Request, user=Depends(get_current_user)):
     body = await request.json()
     staff_id  = body.get("staff_id")
     date_from = body.get("date_from")
     date_to   = body.get("date_to") or date_from
     leave_type = body.get("leave_type", "AL")
     note = body.get("note")
+    # A staff member can only request leave for themselves; everyone else needs
+    # editor rights. Viewers can't create leave at all.
+    if user["role"] == "staff":
+        staff_id = user.get("staff_id")
+    elif user["role"] not in ("admin", "manager", "superadmin"):
+        raise HTTPException(403, "Forbidden")
     if not staff_id or not date_from:
         raise HTTPException(400, "staff_id and date_from required")
     staff = q("SELECT * FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
     if not staff: raise HTTPException(404, "Staff not found")
-    if not can_access_branch(user, staff["branch_id"]): raise HTTPException(403, "Forbidden")
+    if user["role"] != "staff" and not can_access_branch(user, staff["branch_id"]):
+        raise HTTPException(403, "Forbidden")
     if date_to < date_from: raise HTTPException(400, '"To" date must be on or after "From" date')
 
     # Approval workflow: a manager/full-admin records leave as already approved;
@@ -1380,7 +1451,11 @@ async def create_leave(request: Request, user=Depends(require_admin)):
                        RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
                                  leave_type,status,note,created_by,created_at""",
                     (staff_id, d, leave_type, new_status, note, user["id"]), one=True)
-            if row: leaves.append(row)
+            if row:
+                leaves.append(row)
+                # Leave entered as approved (by a reviewer) goes straight onto the rota.
+                if new_status == "approved":
+                    apply_leave_to_schedule(staff_id, d, leave_type)
         except Exception: pass
 
     if new_status == "pending" and leaves:
@@ -1392,7 +1467,9 @@ async def create_leave(request: Request, user=Depends(require_admin)):
 @app.delete("/api/leaves/{lid}")
 def delete_leave(lid: int, user=Depends(require_admin)):
     # A team lead may only delete leaves for their own branch's staff.
-    lv = q("""SELECT s.branch_id FROM scheduling.leave_requests l
+    lv = q("""SELECT s.branch_id, l.staff_id, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
+                     l.leave_type, l.status
+              FROM scheduling.leave_requests l
               JOIN scheduling.staff s ON s.id=l.staff_id WHERE l.id=%s""",
            (lid,), one=True)
     if not lv:
@@ -1400,6 +1477,9 @@ def delete_leave(lid: int, user=Depends(require_admin)):
     if not can_access_branch(user, lv["branch_id"]):
         raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.leave_requests WHERE id=%s", (lid,), exec_only=True)
+    # If it had been placed on the rota, take it back off.
+    if lv["status"] == "approved":
+        clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
     return {"ok": True}
 
 @app.put("/api/leaves/{lid}/status")
@@ -1409,7 +1489,7 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_r
     status = body.get("status")
     if status not in ("approved", "rejected"):
         raise HTTPException(400, "status must be 'approved' or 'rejected'")
-    lv = q("""SELECT l.created_by, l.leave_type, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
+    lv = q("""SELECT l.created_by, l.staff_id, l.leave_type, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
                      s.name AS staff_name
               FROM scheduling.leave_requests l
               JOIN scheduling.staff s ON s.id=l.staff_id WHERE l.id=%s""", (lid,), one=True)
@@ -1419,11 +1499,51 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_r
                RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,leave_type,status,note""",
             (status, lid), one=True)
     insert_audit(user, f"LEAVE_{status.upper()}", f"leave:{lid}", f"{lv['staff_name']} {lv['date']}")
+    # Reflect the decision on the rota: approved → mark the leave, rejected → clear it.
+    if status == "approved":
+        apply_leave_to_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
+    else:
+        clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
     if lv.get("created_by"):
         notify(lv["created_by"],
                f"{lv['staff_name']}'s {lv['leave_type']} leave on {lv['date']} was {status}",
                link="leaves", ntype=status)
     return row
+
+# ── Staff self-service portal ─────────────────────────────────────────────────
+
+@app.get("/api/my-schedule")
+def my_schedule(request: Request, user=Depends(get_current_user)):
+    """The logged-in staff member's own row for a month (read-only)."""
+    staff_id = user.get("staff_id")
+    if not staff_id:
+        raise HTTPException(403, "This account isn't linked to a staff member")
+    from datetime import date as _date
+    today = _date.today()
+    p = request.query_params
+    year  = int(p.get("year")  or today.year)
+    month = int(p.get("month") or today.month)
+    staff = q("""SELECT s.id,s.name,s.branch_id,b.name AS branch_name
+                 FROM scheduling.staff s LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                 WHERE s.id=%s""", (staff_id,), one=True)
+    if not staff:
+        raise HTTPException(404, "Staff record not found")
+    sched = q("""SELECT id,status,is_locked FROM scheduling.schedules
+                 WHERE branch_id=%s AND year=%s AND month=%s""",
+              (staff["branch_id"], year, month), one=True)
+    entries = []
+    if sched:
+        entries = q("""SELECT TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code, e.is_oncall,
+                              b.name AS cross_branch_name
+                       FROM scheduling.schedule_entries e
+                       LEFT JOIN scheduling.branches b ON b.id=e.cross_branch_id
+                       WHERE e.schedule_id=%s AND e.staff_id=%s ORDER BY e.date""",
+                    (sched["id"], staff_id))
+    # A draft/returned rota isn't final yet — the UI flags that for the staff member.
+    finalised = bool(sched) and sched.get("status") in ("submitted","reviewed","approved")
+    return {"staff": staff, "year": year, "month": month,
+            "status": (sched or {}).get("status"),
+            "finalised": finalised, "entries": entries}
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
