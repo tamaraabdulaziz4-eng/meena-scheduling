@@ -11,7 +11,10 @@ async function loadLeaves(branchId, year, month) {
 }
 
 function renderLeavesPage() {
-  const canEdit = ['admin','superadmin'].includes(currentUser?.role);
+  // Managers are reviewers too — they add/approve/delete leave (matches the
+  // backend's require_admin / require_reviewer). Only 'admin','superadmin' here
+  // would hide approval from a manager-role account.
+  const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
   const isSuper = currentUser?.role === 'superadmin';
   const isStaff = currentUser?.role === 'staff';
   const title = isStaff ? 'My Leave' : 'Leave Management';
@@ -66,7 +69,7 @@ async function filterLeaves() {
 function renderLeavesList() {
   const tb     = document.getElementById('leaves-tbody');
   if (!tb) return;  // e.g. a staff member requested leave from the My Schedule page
-  const canEdit = ['admin','superadmin'].includes(currentUser?.role);
+  const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
   const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
   if (!allLeaves.length) {
     tb.innerHTML = `<tr><td colspan="${canEdit?10:9}" style="text-align:center;padding:24px;color:var(--muted)">No leave records found</td></tr>`;
