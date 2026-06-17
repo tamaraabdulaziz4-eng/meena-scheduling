@@ -60,6 +60,8 @@ function openUserModal(id) {
   document.getElementById('user-edit-id').value   = id || '';
   document.getElementById('user-username').value  = u?.username || '';
   document.getElementById('user-password').value  = '';
+  document.getElementById('user-email').value     = u?.email || '';
+  document.getElementById('user-email-notif').checked = u ? (u.email_notifications !== false) : true;
   document.getElementById('user-role').value      = u?.role || 'viewer';
   document.getElementById('user-pw-hint').style.display = id ? 'inline' : 'none';
   document.getElementById('user-pw-hint').textContent   = id ? '(leave blank to keep current)' : '(required)';
@@ -116,7 +118,9 @@ async function saveUser() {
   if (role === 'staff' && !staff_id) { msg.className = 'msg err'; msg.textContent = 'Pick the staff member this account belongs to'; return; }
 
   try {
-    const body = { username, role, branch_id: branch_id ? Number(branch_id) : null };
+    const body = { username, role, branch_id: branch_id ? Number(branch_id) : null,
+                   email: document.getElementById('user-email').value.trim(),
+                   email_notifications: !!document.getElementById('user-email-notif').checked };
     if (role === 'staff') body.staff_id = Number(staff_id);
     if (password) body.password = password;
 

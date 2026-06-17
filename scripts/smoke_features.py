@@ -307,5 +307,21 @@ rs2 = staffA.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray"
               "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 2, "submit": False})
 check("can_report staff allowed", rs2.status_code == 200, rs2.text)
 
+print("\n== scenario 14: email notifications (SMTP_CAPTURE) ==")
+um1 = admin.post("/api/users", json={"username": f"zzmail{sfx}", "password": "pass123",
+                 "role": "admin", "branch_id": bid, "email": "mail@example.com"}).json()
+M._email_outbox.clear()
+M.notify(um1["id"], "Test message")
+check("email queued for opted-in user", any(e["to"] == "mail@example.com" for e in M._email_outbox), M._email_outbox)
+admin.put(f"/api/users/{um1['id']}", json={"email_notifications": False})
+M._email_outbox.clear()
+M.notify(um1["id"], "Should not email")
+check("no email when opted out", len(M._email_outbox) == 0, M._email_outbox)
+um2 = admin.post("/api/users", json={"username": f"zznomail{sfx}", "password": "pass123",
+                 "role": "admin", "branch_id": bid}).json()
+M._email_outbox.clear()
+M.notify(um2["id"], "x")
+check("no email when no address on file", len(M._email_outbox) == 0, M._email_outbox)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

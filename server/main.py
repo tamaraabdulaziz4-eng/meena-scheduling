@@ -332,6 +332,9 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS token_epoch INTEGER NOT NULL DEFAULT 0;")
+            # Email + per-user opt-out for emailed notifications.
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS email TEXT;")
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN NOT NULL DEFAULT true;")
             # Daily radiology-cases report (one row per branch per day).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.daily_cases (
@@ -673,13 +676,60 @@ def assert_can_edit_schedule(user: dict, sid) -> dict:
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
+# ── Email notifications (SMTP, configured by env) ─────────────────────────────
+# Env: SMTP_HOST, SMTP_PORT(587), SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_SSL(0/1).
+# Not configured → skip (in-app only). SMTP_CAPTURE=1 → in-memory outbox (tests).
+_email_outbox = []
+
+def send_email(to, subject, body):
+    if not to:
+        return
+    if os.environ.get("SMTP_CAPTURE"):
+        _email_outbox.append({"to": to, "subject": subject, "body": body})
+        return
+    if not os.environ.get("SMTP_HOST"):
+        return  # email not configured → in-app only
+    def _worker():
+        try:
+            import smtplib
+            from email.message import EmailMessage
+            msg = EmailMessage()
+            msg["From"] = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.set_content(body + "\n\nOpen the scheduling system to view details.")
+            host = os.environ["SMTP_HOST"]
+            port = int(os.environ.get("SMTP_PORT", "587"))
+            user = os.environ.get("SMTP_USER")
+            pwd  = os.environ.get("SMTP_PASS")
+            if os.environ.get("SMTP_SSL", "0") == "1":
+                srv = smtplib.SMTP_SSL(host, port, timeout=15)
+            else:
+                srv = smtplib.SMTP(host, port, timeout=15); srv.starttls()
+            if user:
+                srv.login(user, pwd or "")
+            srv.send_message(msg); srv.quit()
+        except Exception as e:
+            print(f"[email] failed to {to}: {e}")
+    import threading
+    threading.Thread(target=_worker, daemon=True).start()
+
 def notify(user_id, message, link=None, ntype="info"):
-    """Create one in-app notification. Best-effort: never break the caller."""
+    """Create one in-app notification, and email it if the user opted in.
+    Best-effort: never break the caller."""
     if not user_id:
         return
     try:
         q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
              VALUES (%s,%s,%s,%s)""", (user_id, message, link, ntype), exec_only=True)
+    except Exception:
+        pass
+    # Fan out to email (best-effort, async).
+    try:
+        u = q("""SELECT email, COALESCE(email_notifications,true) AS en
+                 FROM scheduling.users WHERE id=%s""", (user_id,), one=True)
+        if u and u.get("email") and u.get("en"):
+            send_email(u["email"], "Meena Scheduling", message)
     except Exception:
         pass
 
@@ -920,6 +970,7 @@ def delete_branch(bid: int, user=Depends(require_superadmin)):
 @app.get("/api/users")
 def list_users(user=Depends(require_superadmin)):
     return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
+                       u.email, COALESCE(u.email_notifications,true) AS email_notifications,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
@@ -951,11 +1002,12 @@ async def create_user(request: Request, user=Depends(require_superadmin)):
     else:
         staff_id = None
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    email = (body.get("email") or "").strip() or None
     try:
-        row = q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id)
-                   VALUES (%s,%s,%s,%s,%s)
-                   RETURNING id,username,role,branch_id,staff_id,created_at""",
-                (username, hashed, role, branch_id, staff_id), one=True)
+        row = q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
+                   VALUES (%s,%s,%s,%s,%s,%s)
+                   RETURNING id,username,role,branch_id,staff_id,email,created_at""",
+                (username, hashed, role, branch_id, staff_id, email), one=True)
         insert_audit(user, "CREATE_USER", username)
         return row
     except psycopg2.errors.UniqueViolation:
@@ -974,6 +1026,8 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     sets, params = [], []
     if body.get("username") is not None: sets.append("username=%s"); params.append(body["username"])
     if body.get("role")     is not None: sets.append("role=%s");     params.append(body["role"])
+    if "email" in body: sets.append("email=%s"); params.append((body.get("email") or "").strip() or None)
+    if "email_notifications" in body: sets.append("email_notifications=%s"); params.append(bool(body["email_notifications"]))
     # A staff account stays pinned to its staff member's branch.
     if body.get("role") == "staff" and body.get("staff_id"):
         st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (body["staff_id"],), one=True)
@@ -988,6 +1042,7 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
         params.append(uid)
         q(f"UPDATE scheduling.users SET {','.join(sets)} WHERE id=%s", params, exec_only=True)
     return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
+                       u.email, COALESCE(u.email_notifications,true) AS email_notifications,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
