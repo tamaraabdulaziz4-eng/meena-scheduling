@@ -51,9 +51,11 @@ async function renderSchedulePage() {
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${['admin','superadmin'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm btn-glow" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
+          <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
+        ` : ''}
+        ${['admin','superadmin','manager'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
           <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
-          <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
         ` : ''}
         <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Print</button>
       </div>

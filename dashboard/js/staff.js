@@ -7,7 +7,8 @@ async function loadStaff() {
 }
 
 function renderStaffPage() {
-  const canEdit = ['admin','superadmin'].includes(currentUser?.role);
+  // Managers manage staff too (backend require_admin allows admin/superadmin/manager).
+  const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
   setTopbar('Staff', 'Manage radiology staff',
     canEdit ? `<button class="btn btn-sm" onclick="openStaffModal()">+ Add Staff</button>` : ''
   );
@@ -76,10 +77,13 @@ function openStaffModal(id) {
   document.getElementById('staff-name').value    = s?.name || '';
   document.getElementById('staff-msg').textContent = '';
 
-  // Branch select — superadmin sees all, admin sees only their branch
+  // Branch select — cross-branch roles (superadmin, manager) see all branches;
+  // a team lead is pinned to their own.
   const bs = document.getElementById('staff-branch');
   bs.innerHTML = '';
-  const branches = currentUser?.role === 'superadmin' ? allBranches : allBranches.filter(b => b.id === currentUser?.branch_id);
+  const branches = ['superadmin','manager'].includes(currentUser?.role)
+    ? allBranches
+    : allBranches.filter(b => b.id === currentUser?.branch_id);
   branches.forEach(b => {
     const opt = document.createElement('option');
     opt.value = b.id; opt.textContent = b.name;

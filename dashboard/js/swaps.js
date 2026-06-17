@@ -18,17 +18,20 @@ function renderSwapsPage() {
   setTopbar('Shift Swaps', 'Request and approve shift exchanges',
     canRequest ? `<button class="btn btn-sm" onclick="openSwapModal()">+ Request Swap</button>` : ''
   );
-  const isSuper = currentUser?.role === 'superadmin';
+  // Cross-branch roles get a branch filter.
+  const crossBranch = ['superadmin','manager'].includes(currentUser?.role);
   const c = document.getElementById('content');
   c.innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <select id="swap-filter-status" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none">
         <option value="">All statuses</option>
-        <option value="pending">Pending</option>
+        <option value="pending_peer">Awaiting colleague</option>
+        <option value="pending_lead">Awaiting team lead</option>
+        <option value="pending_manager">Awaiting manager</option>
         <option value="approved">Approved</option>
         <option value="rejected">Rejected</option>
       </select>
-      ${isSuper ? `<select id="swap-filter-branch" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
+      ${crossBranch ? `<select id="swap-filter-branch" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
     </div>
     <div class="table-wrap">
       <table>

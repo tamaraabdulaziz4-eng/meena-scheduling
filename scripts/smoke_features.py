@@ -145,5 +145,23 @@ check("team lead blocked on locked schedule (403)", le.status_code == 403, le.st
 me = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-15", "shift_code": "D"})
 check("manager can edit locked schedule", me.status_code == 200, me.text)
 
+print("\n== scenario 6: a real 'manager'-role account can manage/approve ==")
+um = admin.post("/api/users", json={"username": f"zzmgr{sfx}", "password": "pass123", "role": "manager"})
+check("create manager user", um.status_code == 200, um.text)
+mgr = login(f"zzmgr{sfx}", "pass123")
+# manager can add staff (any branch)
+ms = mgr.post("/api/staff", json={"name": "ZZ Mgr Added", "branch_id": bid})
+check("manager can add staff", ms.status_code == 200, ms.text)
+# manager can approve a pending leave (request one from staff B first)
+lrB = staffB.post("/api/leaves", json={"date_from": f"{YEAR}-08-12", "date_to": f"{YEAR}-08-12", "leave_type": "AL"})
+lvs = mgr.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+lvB = next((l for l in lvs if l["staff_id"] == B["id"] and l["status"] == "pending"), None)
+check("manager sees pending leave", lvB is not None, lvs)
+apm = mgr.put(f"/api/leaves/{lvB['id']}/status", json={"status": "approved"}) if lvB else None
+check("manager approves leave", apm is not None and apm.status_code == 200, getattr(apm, "text", None))
+# manager cannot generate (editor-only)
+gen = mgr.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH})
+check("manager blocked from generate (403)", gen.status_code == 403, gen.status_code)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
