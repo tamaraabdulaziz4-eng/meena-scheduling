@@ -722,8 +722,8 @@ def _email_html(message):
            f'text-decoration:none;padding:11px 24px;border-radius:8px;font-weight:600;font-size:14px">'
            f'Open the system</a>') if url else ""
     site_link = f'<a href="https://{site}" style="color:#6B4EFF;text-decoration:none">{site}</a>'
-    return f"""<!doctype html><html><body style="margin:0;background:#f4f5fb;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#2b2b3a">
-  <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e7f0">
+    return f"""<!doctype html><html dir="ltr"><body dir="ltr" style="margin:0;background:#f4f5fb;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#2b2b3a;direction:ltr;text-align:left">
+  <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e7f0;direction:ltr;text-align:left">
     <div style="padding:20px 24px;border-bottom:1px solid #eee">{header}</div>
     <div style="padding:24px">
       <p style="font-size:15px;line-height:1.65;margin:0 0 20px">{safe}</p>
@@ -734,7 +734,7 @@ def _email_html(message):
       <span style="color:#8a8aa0">{_sig_title()}</span><br>
       Email: <a href="mailto:{_sig_email()}" style="color:#6B4EFF;text-decoration:none">{_sig_email()}</a> ·
       Mobile: {_sig_mobile()}<br>
-      <span style="color:#8a8aa0">{org} · Subsidiary of Tawuniya · شركة تابعة للتعاونية</span><br>
+      <span style="color:#8a8aa0">{org} · Subsidiary of Tawuniya</span><br>
       {site_link} · {addr}
     </div>
   </div></body></html>"""
