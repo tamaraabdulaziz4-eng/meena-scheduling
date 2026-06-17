@@ -211,5 +211,42 @@ else:
     check("staff cutoff (today is day 1 — skipped)", True)
 admin.put("/api/settings", json={"leave_cutoff_day": 15})
 
+print("\n== scenario 10: Phase-1 security hardening ==")
+# another branch + a staff member in it
+branchB = next(b for b in branches if b["id"] != bid)
+bidB = branchB["id"]
+sB = admin.post("/api/staff", json={"name": "ZZ Other-Branch", "branch_id": bidB}).json()
+# C-04: cell validation (independent of who edits)
+admin.put(f"/api/schedules/{sid}/status", json={"status": "draft"})  # ensure unlocked
+e_wrongbranch = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": sB["id"], "date": f"{YEAR}-08-03", "shift_code": "M"})
+check("reject staff from another branch", e_wrongbranch.status_code == 400, e_wrongbranch.text)
+e_wrongmonth = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-09-03", "shift_code": "M"})
+check("reject date outside schedule month", e_wrongmonth.status_code == 400, e_wrongmonth.text)
+e_badcode = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-03", "shift_code": "XYZ"})
+check("reject unknown shift code", e_badcode.status_code == 400, e_badcode.text)
+# C-03: team lead can't unlock an approved schedule; a reviewer can
+admin.put(f"/api/schedules/{sid}/status", json={"status": "approved"})
+u_lead = lead.put(f"/api/schedules/{sid}/lock", json={"locked": False})
+check("team lead can't unlock approved schedule", u_lead.status_code == 403, u_lead.status_code)
+u_mgr = admin.put(f"/api/schedules/{sid}/lock", json={"locked": False})
+check("reviewer can unlock", u_mgr.status_code == 200, u_mgr.text)
+admin.put(f"/api/schedules/{sid}/status", json={"status": "draft"})
+# H-05: team lead can't move their staff to a branch they don't manage
+mv = lead.put(f"/api/staff/{A['id']}", json={"branch_id": bidB})
+check("team lead can't move staff to another branch", mv.status_code == 403, mv.status_code)
+# H-03: team lead can't read another branch's settings
+bs = lead.get(f"/api/branch-settings/{bidB}")
+check("team lead blocked from another branch's settings", bs.status_code == 403, bs.status_code)
+# C-01: seed_admin is idempotent (won't reset an existing password)
+M.q("UPDATE scheduling.users SET password='SENTINEL' WHERE username='admin'", exec_only=True)
+M.seed_admin()
+pw = M.q("SELECT password FROM scheduling.users WHERE username='admin'", one=True)["password"]
+check("seed_admin does not reset existing password", pw == "SENTINEL", pw)
+# H-02: login throttle kicks in after repeated failures
+from fastapi.testclient import TestClient as _TC
+tc = _TC(app)
+codes = [tc.post("/api/auth/login", json={"username": "nobody", "password": "x"}).status_code for _ in range(9)]
+check("login throttle returns 429 after many fails", codes[-1] == 429, codes)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

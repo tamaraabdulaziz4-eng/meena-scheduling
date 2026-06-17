@@ -39,9 +39,9 @@ function renderUsersList() {
   tb.innerHTML = allUsers.map((u, i) => `
     <tr>
       <td>${i+1}</td>
-      <td><strong>${u.username}</strong></td>
-      <td>${ROLE_BADGE[u.role] || u.role}</td>
-      <td>${u.branch_name || '—'}</td>
+      <td><strong>${escapeHtml(u.username)}</strong></td>
+      <td>${ROLE_BADGE[u.role] || escapeHtml(u.role)}</td>
+      <td>${escapeHtml(u.branch_name || '—')}</td>
       <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
       <td>
         <button class="action-btn" onclick="openUserModal(${u.id})">Edit</button>
@@ -81,7 +81,7 @@ function openUserModal(id) {
     ss.innerHTML = '<option value="">Select staff…</option>';
     (allStaff || []).forEach(s => {
       const opt = document.createElement('option');
-      opt.value = s.id; opt.textContent = `${s.name} (${s.branch_name || '?'})`;
+      opt.value = s.id; opt.textContent = `${s.name} (${s.branch_name || '?'})`;  // textContent — safe
       if (u?.staff_id === s.id) opt.selected = true;
       ss.appendChild(opt);
     });

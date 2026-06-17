@@ -466,14 +466,15 @@ def seed_nest_config():
 
 
 def seed_admin():
-    pwd = bcrypt.hashpw(ADMIN_PASS.encode(), bcrypt.gensalt()).decode()
+    # Create the bootstrap admin once. Never overwrite an existing account's
+    # password/role on restart — that would wipe a manual password change and
+    # was an account-takeover risk.
     existing = q("SELECT id FROM scheduling.users WHERE username=%s", (ADMIN_USER,), one=True)
     if existing:
-        q("UPDATE scheduling.users SET password=%s, role='superadmin' WHERE username=%s",
-          (pwd, ADMIN_USER), exec_only=True)
-    else:
-        q("INSERT INTO scheduling.users (username,password,role) VALUES (%s,%s,'superadmin')",
-          (ADMIN_USER, pwd), exec_only=True)
+        return
+    pwd = bcrypt.hashpw(ADMIN_PASS.encode(), bcrypt.gensalt()).decode()
+    q("INSERT INTO scheduling.users (username,password,role) VALUES (%s,%s,'superadmin')",
+      (ADMIN_USER, pwd), exec_only=True)
     print(f'Admin user "{ADMIN_USER}" ready.')
 
 
@@ -482,13 +483,48 @@ def seed_admin():
 def sign_token(payload: dict) -> str:
     data = dict(payload)
     data["exp"] = datetime.now(timezone.utc) + timedelta(days=JWT_DAYS)
-    return jwt.encode(data, JWT_SECRET, algorithm=JWT_ALG)
+    return jwt.encode(data, get_jwt_secret(), algorithm=JWT_ALG)
+
+_JWT_SECRET_CACHE = None
+def get_jwt_secret() -> str:
+    """Use a strong env secret if provided; otherwise fall back to a random
+    secret persisted once in the DB (stable across restarts/workers) so the
+    insecure default 'scheduling_secret' is never actually used to sign tokens."""
+    global _JWT_SECRET_CACHE
+    if _JWT_SECRET_CACHE:
+        return _JWT_SECRET_CACHE
+    env = os.environ.get("JWT_SECRET", "")
+    if env and env != "scheduling_secret":
+        _JWT_SECRET_CACHE = env
+        return env
+    import secrets as _secrets
+    try:
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('jwt_secret',%s)
+             ON CONFLICT (key) DO NOTHING""", (_secrets.token_hex(32),), exec_only=True)
+        row = q("SELECT value FROM scheduling.app_settings WHERE key='jwt_secret'", one=True)
+        _JWT_SECRET_CACHE = (row or {}).get("value") or "scheduling_secret"
+    except Exception:
+        _JWT_SECRET_CACHE = env or "scheduling_secret"
+    return _JWT_SECRET_CACHE
 
 def verify_token(token: str) -> dict:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALG])
     except JWTError:
         raise HTTPException(401, "Session expired")
+
+# Simple in-memory login throttle (per username) to blunt brute force.
+_login_fails: dict = {}
+def _login_throttle_check(username):
+    import time as _t
+    now = _t.time()
+    arr = [t for t in _login_fails.get(username, []) if now - t < 300]
+    _login_fails[username] = arr
+    if len(arr) >= 8:
+        raise HTTPException(429, "Too many failed attempts. Try again in a few minutes.")
+def _login_throttle_fail(username):
+    import time as _t
+    _login_fails.setdefault(username, []).append(_t.time())
 
 def get_current_user(request: Request) -> dict:
     token = request.cookies.get("token") or \
@@ -569,6 +605,27 @@ def assert_schedule_access(user: dict, sid) -> dict:
     if not can_access_branch(user, sched.get("branch_id")):
         raise HTTPException(403, "Forbidden")
     return sched
+
+def schedule_validation_sets(sched):
+    """Valid staff ids (this branch) and shift codes for entry validation."""
+    sids = {r["id"] for r in q("SELECT id FROM scheduling.staff WHERE branch_id=%s", (sched["branch_id"],))}
+    codes = {r["code"] for r in q("SELECT code FROM scheduling.shift_types")}
+    codes.add("O")
+    return sids, codes
+
+def check_entry(sched, sids, codes, staff_id, date, shift_code):
+    """Reject cells that don't belong on this schedule (wrong branch staff, a
+    date outside its month, or an unknown shift code)."""
+    if staff_id not in sids:
+        raise HTTPException(400, "Staff member is not in this schedule's branch")
+    try:
+        y, m = int(str(date)[:4]), int(str(date)[5:7])
+    except Exception:
+        raise HTTPException(400, "Invalid date")
+    if y != sched["year"] or m != sched["month"]:
+        raise HTTPException(400, "Date is outside this schedule's month")
+    if (shift_code or "O") not in codes:
+        raise HTTPException(400, f"Unknown shift code: {shift_code}")
 
 def assert_can_edit_schedule(user: dict, sid) -> dict:
     """Branch access + lock policy for direct cell edits.
@@ -716,7 +773,11 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
 
 app = FastAPI(title="Meena Scheduling")
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+# The dashboard is served from the same origin, so cross-origin access is off by
+# default. Set CORS_ORIGINS (comma-separated) only if a separate frontend needs it.
+_CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_CORS_ORIGINS,
+                   allow_credentials=bool(_CORS_ORIGINS),
                    allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
@@ -763,19 +824,21 @@ async def login(request: Request, response: Response):
     if not username or not password:
         raise HTTPException(400, "Username and password required")
 
+    _login_throttle_check(username)
     user = q("""SELECT u.*, b.name AS branch_name FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
                 WHERE u.username=%s""", (username,), one=True)
-    if not user:
+    if not user or not bcrypt.checkpw(password.encode(), user["password"].encode()):
+        _login_throttle_fail(username)
         raise HTTPException(401, "Invalid credentials")
-
-    if not bcrypt.checkpw(password.encode(), user["password"].encode()):
-        raise HTTPException(401, "Invalid credentials")
+    _login_fails.pop(username, None)  # clear on success
 
     payload = {k: user[k] for k in ("id","username","role","branch_id","branch_name")}
     payload["staff_id"] = user.get("staff_id")
     token = sign_token(payload)
+    # Secure cookie in production (HTTPS). Set COOKIE_SECURE=0 only for local HTTP.
     response.set_cookie("token", token, httponly=True, samesite="lax",
+                        secure=os.environ.get("COOKIE_SECURE", "1") != "0",
                         max_age=JWT_DAYS * 86400)
     return payload
 
@@ -952,6 +1015,9 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
     existing = q("SELECT * FROM scheduling.staff WHERE id=%s", (sid,), one=True)
     if not existing: raise HTTPException(404, "Not found")
     if not can_access_branch(user, existing["branch_id"]): raise HTTPException(403, "Forbidden")
+    # Moving the staff member to another branch needs access to that branch too.
+    if "branch_id" in body and body["branch_id"] and not can_access_branch(user, body["branch_id"]):
+        raise HTTPException(403, "You can't move staff to a branch you don't manage")
     sets, params = [], []
     for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts"):
         if field in body:
@@ -974,6 +1040,7 @@ def delete_staff(sid: int, user=Depends(require_admin)):
 
 @app.get("/api/branch-settings/{bid}")
 def get_branch_settings(bid: int, user=Depends(get_current_user)):
+    if not can_access_branch(user, bid): raise HTTPException(403, "Forbidden")
     row = q("SELECT * FROM scheduling.branch_settings WHERE branch_id=%s", (bid,), one=True)
     if not row:
         return {"branch_id": bid, "max_consecutive": 4, "min_shifts_default": 17}
@@ -1008,6 +1075,7 @@ def get_staff_month_settings(request: Request, user=Depends(get_current_user)):
     month     = request.query_params.get("month")
     if not branch_id or not year or not month:
         raise HTTPException(400, "branch_id, year, month required")
+    if not can_access_branch(user, branch_id): raise HTTPException(403, "Forbidden")
     bs = q("SELECT min_shifts_default FROM scheduling.branch_settings WHERE branch_id=%s", (int(branch_id),), one=True) or {}
     rows = q("""
         SELECT s.id AS staff_id,
@@ -1313,7 +1381,9 @@ def get_entries(schedule_id):
 async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
     body = await request.json()
     # Right branch, and not locked (unless the editor is a reviewer).
-    assert_can_edit_schedule(user, sid)
+    sched = assert_can_edit_schedule(user, sid)
+    sids, codes = schedule_validation_sets(sched)
+    check_entry(sched, sids, codes, body.get("staff_id"), body.get("date"), body.get("shift_code", "O"))
     row = q("""INSERT INTO scheduling.schedule_entries
                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
                VALUES (%s,%s,%s,%s,%s,%s,%s)
@@ -1334,9 +1404,12 @@ async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
 async def bulk_save_entries(sid: int, request: Request, user=Depends(require_admin)):
     body = await request.json()
     # Same guard as the single-cell save.
-    assert_can_edit_schedule(user, sid)
+    sched = assert_can_edit_schedule(user, sid)
     entries = body.get("entries", [])
     if not isinstance(entries, list): raise HTTPException(400, "entries must be array")
+    sids, codes = schedule_validation_sets(sched)
+    for e in entries:
+        check_entry(sched, sids, codes, e.get("staff_id"), e.get("date"), e.get("shift_code", "O"))
     pool = get_pool()
     conn = pool.getconn()
     try:
@@ -1385,9 +1458,14 @@ async def delete_entry_cell(sid: int, request: Request, user=Depends(require_adm
 @app.put("/api/schedules/{sid}/lock")
 async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_editor)):
     """Lock or unlock an entire schedule (branch+month). Locked schedules block all edits."""
-    assert_schedule_access(user, sid)
+    sched = assert_schedule_access(user, sid)
     body   = await request.json()
     locked = body.get("locked", True)
+    # Once a schedule is in the review pipeline, a team lead can't quietly unlock
+    # it to edit/delete — only a reviewer can reopen it (via Return).
+    if not locked and sched.get("status") in ("submitted", "reviewed", "approved") \
+       and user["role"] not in ("manager", "superadmin"):
+        raise HTTPException(403, "This schedule is in review — ask a manager to return it.")
     row = q("""UPDATE scheduling.schedules SET is_locked=%s, updated_at=NOW()
                WHERE id=%s RETURNING *""", (locked, sid), one=True)
     if not row:
@@ -1451,7 +1529,10 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
 
 @app.delete("/api/schedules/{sid}")
 def delete_schedule(sid: int, user=Depends(require_editor)):
-    assert_schedule_access(user, sid)
+    sched = assert_schedule_access(user, sid)
+    if sched.get("status") in ("submitted", "reviewed", "approved") \
+       and user["role"] not in ("manager", "superadmin"):
+        raise HTTPException(403, "Can't delete a schedule that's in review/approved.")
     q("DELETE FROM scheduling.schedules WHERE id=%s", (sid,), exec_only=True)
     return {"ok": True}
 

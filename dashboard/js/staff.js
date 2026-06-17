@@ -37,7 +37,7 @@ function renderStaffPage() {
     section.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div>
-          <div style="font-size:14px;font-weight:700;color:var(--primary)">${branch}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--primary)">${escapeHtml(branch)}</div>
           <div style="font-size:11px;color:var(--muted)">${staff.length} staff member${staff.length!==1?'s':''}</div>
         </div>
       </div>
@@ -50,7 +50,7 @@ function renderStaffPage() {
           <tbody>${staff.map((s, i) => `
             <tr>
               <td>${i+1}</td>
-              <td><strong>${s.name}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}</td>
+              <td><strong>${escapeHtml(s.name)}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}</td>
               <td>${(() => {
                 const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
                 const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';

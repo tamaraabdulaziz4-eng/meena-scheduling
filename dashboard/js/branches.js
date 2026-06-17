@@ -35,7 +35,7 @@ function renderBranchesList() {
   tb.innerHTML = allBranches.map((b, i) => `
     <tr>
       <td>${i+1}</td>
-      <td><strong>${b.name}</strong></td>
+      <td><strong>${escapeHtml(b.name)}</strong></td>
       <td>${b.created_at ? new Date(b.created_at).toLocaleDateString() : '—'}</td>
       ${currentUser?.role === 'superadmin' ? `
       <td>
