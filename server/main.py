@@ -691,16 +691,22 @@ def _org_website():
 def _org_address():
     return os.environ.get("ORG_ADDRESS", "King Abdul Aziz Branch Rd, An Nafal, Riyadh 13312, KSA")
 
+# Personal sender identity — emails go out under this name so staff feel a real
+# person is on top of things. All overridable by env.
+def _sig_name():   return os.environ.get("SIGNATURE_NAME", "Abdulaziz Alanazi")
+def _sig_title():  return os.environ.get("SIGNATURE_TITLE", "Radiology Specialist")
+def _sig_email():  return os.environ.get("SIGNATURE_EMAIL", "Abdulaziz.alanazi@meena-health.com")
+def _sig_mobile(): return os.environ.get("SIGNATURE_MOBILE", "(966) 581453234")
+
 def _email_text(message):
-    org = _org_name()
     url = os.environ.get("APP_URL", "").strip()
     lines = [message or ""]
     if url:
         lines += ["", f"Open the system: {url}"]
-    lines += ["", "—", org, "Subsidiary of Tawuniya",
-              _org_website(), _org_address(), "",
-              "This is an automated message; please do not reply.",
-              "رسالة آلية من نظام الجدولة، الرجاء عدم الرد."]
+    lines += ["", "—", _sig_name(), _sig_title(),
+              f"Email: {_sig_email()}", f"Mobile: {_sig_mobile()}",
+              f"{_org_name()} · Subsidiary of Tawuniya",
+              _org_website(), _org_address()]
     return "\n".join(lines)
 
 def _email_html(message):
@@ -723,11 +729,13 @@ def _email_html(message):
       <p style="font-size:15px;line-height:1.65;margin:0 0 20px">{safe}</p>
       {btn}
     </div>
-    <div style="padding:18px 24px;background:#fafafe;border-top:1px solid #eee;font-size:12px;color:#6b6b80;line-height:1.7">
-      <b style="color:#4b3fb3">{org}</b><br>
-      <span style="color:#8a8aa0">Subsidiary of Tawuniya · شركة تابعة للتعاونية</span><br>
-      {site_link} · {addr}<br>
-      <span style="color:#a0a0b5;font-size:11px">This is an automated message — please do not reply. · رسالة آلية، الرجاء عدم الرد.</span>
+    <div style="padding:18px 24px;background:#fafafe;border-top:1px solid #eee;font-size:12px;color:#5b5b70;line-height:1.7">
+      <b style="color:#2b2b3a;font-size:13px">{_sig_name()}</b><br>
+      <span style="color:#8a8aa0">{_sig_title()}</span><br>
+      Email: <a href="mailto:{_sig_email()}" style="color:#6B4EFF;text-decoration:none">{_sig_email()}</a> ·
+      Mobile: {_sig_mobile()}<br>
+      <span style="color:#8a8aa0">{org} · Subsidiary of Tawuniya · شركة تابعة للتعاونية</span><br>
+      {site_link} · {addr}
     </div>
   </div></body></html>"""
 
@@ -747,7 +755,11 @@ def send_email(to, subject, body):
             from email.utils import formataddr
             msg = EmailMessage()
             from_addr = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
-            msg["From"] = from_addr if "<" in from_addr else formataddr((_org_name(), from_addr))
+            # Send under the person's name so it reads as a personal follow-up.
+            msg["From"] = from_addr if "<" in from_addr else formataddr((_sig_name(), from_addr))
+            reply_to = _sig_email()
+            if reply_to:
+                msg["Reply-To"] = reply_to
             msg["To"] = to
             msg["Subject"] = subject
             msg.set_content(_email_text(body))
