@@ -677,15 +677,52 @@ def assert_can_edit_schedule(user: dict, sid) -> dict:
 # ── Notifications ─────────────────────────────────────────────────────────────
 
 # ── Email notifications (SMTP, configured by env) ─────────────────────────────
-# Env: SMTP_HOST, SMTP_PORT(587), SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_SSL(0/1).
-# Not configured → skip (in-app only). SMTP_CAPTURE=1 → in-memory outbox (tests).
+# Env: SMTP_HOST, SMTP_PORT(587), SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_SSL(0/1),
+#      APP_URL (link target), ORG_NAME (branding). Not configured → in-app only.
+# SMTP_CAPTURE=1 → in-memory outbox (tests).
 _email_outbox = []
+
+def _org_name():
+    return os.environ.get("ORG_NAME", "Meena Health — Radiology Scheduling")
+
+def _email_text(message):
+    org = _org_name()
+    url = os.environ.get("APP_URL", "").strip()
+    lines = [message or ""]
+    if url:
+        lines += ["", f"Open the system: {url}"]
+    lines += ["", "—", org,
+              "This is an automated message; please do not reply.",
+              "رسالة آلية من نظام الجدولة، الرجاء عدم الرد."]
+    return "\n".join(lines)
+
+def _email_html(message):
+    org = _org_name()
+    url = os.environ.get("APP_URL", "").strip()
+    safe = (message or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    btn = (f'<a href="{url}" style="display:inline-block;background:#6B4EFF;color:#fff;'
+           f'text-decoration:none;padding:11px 24px;border-radius:8px;font-weight:600;font-size:14px">'
+           f'Open the system</a>') if url else ""
+    return f"""<!doctype html><html><body style="margin:0;background:#f4f5fb;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#2b2b3a">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e7f0">
+    <div style="background:linear-gradient(135deg,#6B4EFF,#8E7BFF);color:#fff;padding:18px 24px;font-size:16px;font-weight:700">{org}</div>
+    <div style="padding:24px">
+      <p style="font-size:15px;line-height:1.65;margin:0 0 20px">{safe}</p>
+      {btn}
+    </div>
+    <div style="padding:16px 24px;background:#fafafe;border-top:1px solid #eee;font-size:11px;color:#8a8aa0;line-height:1.7">
+      <b>{org}</b><br>
+      This is an automated message — please do not reply.<br>
+      رسالة آلية من نظام الجدولة، الرجاء عدم الرد.
+    </div>
+  </div></body></html>"""
 
 def send_email(to, subject, body):
     if not to:
         return
     if os.environ.get("SMTP_CAPTURE"):
-        _email_outbox.append({"to": to, "subject": subject, "body": body})
+        _email_outbox.append({"to": to, "subject": subject, "body": body,
+                              "html": _email_html(body)})
         return
     if not os.environ.get("SMTP_HOST"):
         return  # email not configured → in-app only
@@ -693,11 +730,14 @@ def send_email(to, subject, body):
         try:
             import smtplib
             from email.message import EmailMessage
+            from email.utils import formataddr
             msg = EmailMessage()
-            msg["From"] = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
+            from_addr = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
+            msg["From"] = from_addr if "<" in from_addr else formataddr((_org_name(), from_addr))
             msg["To"] = to
             msg["Subject"] = subject
-            msg.set_content(body + "\n\nOpen the scheduling system to view details.")
+            msg.set_content(_email_text(body))
+            msg.add_alternative(_email_html(body), subtype="html")
             host = os.environ["SMTP_HOST"]
             port = int(os.environ.get("SMTP_PORT", "587"))
             user = os.environ.get("SMTP_USER")

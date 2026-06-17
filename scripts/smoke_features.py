@@ -313,6 +313,8 @@ um1 = admin.post("/api/users", json={"username": f"zzmail{sfx}", "password": "pa
 M._email_outbox.clear()
 M.notify(um1["id"], "Test message")
 check("email queued for opted-in user", any(e["to"] == "mail@example.com" for e in M._email_outbox), M._email_outbox)
+_h = (M._email_outbox[0].get("html") if M._email_outbox else "") or ""
+check("email uses branded HTML template", "Test message" in _h and "Meena" in _h, _h[:120])
 admin.put(f"/api/users/{um1['id']}", json={"email_notifications": False})
 M._email_outbox.clear()
 M.notify(um1["id"], "Should not email")
