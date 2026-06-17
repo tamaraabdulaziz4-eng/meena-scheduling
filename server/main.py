@@ -685,13 +685,20 @@ _email_outbox = []
 def _org_name():
     return os.environ.get("ORG_NAME", "Meena Health — Radiology Scheduling")
 
+def _org_website():
+    return os.environ.get("ORG_WEBSITE", "www.meena-health.com")
+
+def _org_address():
+    return os.environ.get("ORG_ADDRESS", "King Abdul Aziz Branch Rd, An Nafal, Riyadh 13312, KSA")
+
 def _email_text(message):
     org = _org_name()
     url = os.environ.get("APP_URL", "").strip()
     lines = [message or ""]
     if url:
         lines += ["", f"Open the system: {url}"]
-    lines += ["", "—", org,
+    lines += ["", "—", org, "Subsidiary of Tawuniya",
+              _org_website(), _org_address(), "",
               "This is an automated message; please do not reply.",
               "رسالة آلية من نظام الجدولة، الرجاء عدم الرد."]
     return "\n".join(lines)
@@ -699,21 +706,28 @@ def _email_text(message):
 def _email_html(message):
     org = _org_name()
     url = os.environ.get("APP_URL", "").strip()
+    site = _org_website()
+    addr = _org_address()
+    logo = (url + "/meena_email_logo.jpeg") if url else ""
     safe = (message or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    header = (f'<img src="{logo}" alt="Meena" height="40" style="display:block">'
+              if logo else f'<span style="font-size:18px;font-weight:800;color:#4b3fb3">{org}</span>')
     btn = (f'<a href="{url}" style="display:inline-block;background:#6B4EFF;color:#fff;'
            f'text-decoration:none;padding:11px 24px;border-radius:8px;font-weight:600;font-size:14px">'
            f'Open the system</a>') if url else ""
+    site_link = f'<a href="https://{site}" style="color:#6B4EFF;text-decoration:none">{site}</a>'
     return f"""<!doctype html><html><body style="margin:0;background:#f4f5fb;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#2b2b3a">
-  <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e7f0">
-    <div style="background:linear-gradient(135deg,#6B4EFF,#8E7BFF);color:#fff;padding:18px 24px;font-size:16px;font-weight:700">{org}</div>
+  <div style="max-width:540px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e7f0">
+    <div style="padding:20px 24px;border-bottom:1px solid #eee">{header}</div>
     <div style="padding:24px">
       <p style="font-size:15px;line-height:1.65;margin:0 0 20px">{safe}</p>
       {btn}
     </div>
-    <div style="padding:16px 24px;background:#fafafe;border-top:1px solid #eee;font-size:11px;color:#8a8aa0;line-height:1.7">
-      <b>{org}</b><br>
-      This is an automated message — please do not reply.<br>
-      رسالة آلية من نظام الجدولة، الرجاء عدم الرد.
+    <div style="padding:18px 24px;background:#fafafe;border-top:1px solid #eee;font-size:12px;color:#6b6b80;line-height:1.7">
+      <b style="color:#4b3fb3">{org}</b><br>
+      <span style="color:#8a8aa0">Subsidiary of Tawuniya · شركة تابعة للتعاونية</span><br>
+      {site_link} · {addr}<br>
+      <span style="color:#a0a0b5;font-size:11px">This is an automated message — please do not reply. · رسالة آلية، الرجاء عدم الرد.</span>
     </div>
   </div></body></html>"""
 
@@ -929,6 +943,11 @@ def serve_logo():
 @app.get("/logo.png")
 def serve_logo2():
     p = os.path.join(DASHBOARD, "logo.png")
+    return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
+
+@app.get("/meena_email_logo.jpeg")
+def serve_email_logo():
+    p = os.path.join(DASHBOARD, "meena_email_logo.jpeg")
     return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
 
 # ═══════════════════════════════════════════════════════════════════════════════
