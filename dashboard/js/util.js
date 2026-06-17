@@ -176,6 +176,27 @@ function fmtDate(date) {
 }
 function monthLabel(year, month) { return `${MONTHS[month-1]} ${year}`; }
 
+// ── Hijri (Umm al-Qura) dates via the browser's Intl calendar ─────────────────
+// No external library: modern browsers ship the islamic-umalqura calendar.
+let _hijriDayFmt, _hijriFullFmt;
+try {
+  _hijriDayFmt  = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { day: 'numeric', month: 'short' });
+  _hijriFullFmt = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', { day: 'numeric', month: 'long', year: 'numeric' });
+} catch (e) { _hijriDayFmt = _hijriFullFmt = null; }
+
+// Short Hijri "DD Mon" for a Gregorian y/m/d (1-based month). '' if unsupported.
+function hijriShort(year, month, day) {
+  if (!_hijriDayFmt) return '';
+  try { return _hijriDayFmt.format(new Date(year, month - 1, day)); }
+  catch (e) { return ''; }
+}
+// Full Arabic Hijri date for tooltips/labels.
+function hijriFull(year, month, day) {
+  if (!_hijriFullFmt) return '';
+  try { return _hijriFullFmt.format(new Date(year, month - 1, day)) + ' هـ'; }
+  catch (e) { return ''; }
+}
+
 // ── Topbar ────────────────────────────────────────────────────────────────────
 function setTopbar(title, meta = '', actionsHtml = '') {
   document.getElementById('topbar-title').textContent = title;

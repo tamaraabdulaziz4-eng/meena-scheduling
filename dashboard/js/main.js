@@ -44,6 +44,11 @@ async function initApp() {
   // Review page for reviewers (manager + full admin)
   const reviewNav = document.getElementById('nav-review');
   if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
+  // Swaps page for anyone who can edit or review (not plain viewers).
+  const swapsNav = document.getElementById('nav-swaps');
+  if (swapsNav) swapsNav.style.display = ['admin','superadmin','manager'].includes(role) ? 'flex' : 'none';
+  // Kick off in-app notification polling once the user is in.
+  if (typeof startNotifPolling === 'function') startNotifPolling();
   // Pre-load the pending-review count so the badge shows on login
   if (isReviewer && typeof loadReviewBadgeCount === 'function') {
     loadReviewBadgeCount();
@@ -97,6 +102,12 @@ async function showPage(page) {
 
     case 'leaves':
       renderLeavesPage();
+      break;
+
+    case 'swaps':
+      if (!['admin','superadmin','manager'].includes(currentUser?.role)) { showPage('schedule'); return; }
+      try { await loadStaff(); } catch(e){}
+      renderSwapsPage();
       break;
 
     case 'branches':

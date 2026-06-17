@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260616p">
+<link rel="stylesheet" href="/style.css?v=20260617a">
 </head>
 <body>
 
@@ -97,6 +97,9 @@
       <button class="nav-item" id="nav-leaves" onclick="showPage('leaves')">
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Leave
       </button>
+      <button class="nav-item" id="nav-swaps" onclick="showPage('swaps')">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span> Swaps
+      </button>
       <button class="nav-item" id="nav-review" onclick="showPage('review')" style="display:none">
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span> Review
         <span id="review-badge" style="display:none;margin-left:auto;background:#FF9F43;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px"></span>
@@ -135,7 +138,22 @@
         <div class="topbar-title" id="topbar-title">Schedule</div>
         <div class="topbar-meta" id="topbar-meta"></div>
       </div>
-      <div class="topbar-right" id="topbar-actions"></div>
+      <div class="topbar-right">
+        <div id="topbar-actions" style="display:flex;gap:8px;align-items:center"></div>
+        <div class="notif-wrap">
+          <button class="notif-bell" id="notif-bell" onclick="toggleNotifPanel()" title="Notifications" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span class="notif-badge" id="notif-badge" style="display:none"></span>
+          </button>
+          <div class="notif-panel" id="notif-panel" style="display:none">
+            <div class="notif-head">
+              <span>Notifications</span>
+              <button onclick="markAllNotifsRead()">Mark all read</button>
+            </div>
+            <div id="notif-list"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="content" id="content">
@@ -246,6 +264,80 @@
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeLeaveModal()">Cancel</button>
       <button class="btn btn-sm" id="leave-save-btn" onclick="saveLeave()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Shift Swap Modal ── -->
+<div class="modal-overlay" id="swap-modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Request Shift Swap</h3>
+      <button class="modal-close" onclick="closeSwapModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="form-row">
+          <div class="form-field" style="flex:1">
+            <label>Staff A *</label>
+            <select id="swap-a-staff"></select>
+          </div>
+          <div class="form-field" style="flex:1">
+            <label>Date A *</label>
+            <input type="date" id="swap-a-date">
+          </div>
+        </div>
+        <div style="text-align:center;color:var(--accent);font-weight:700">↕ swap with ↕</div>
+        <div class="form-row">
+          <div class="form-field" style="flex:1">
+            <label>Staff B *</label>
+            <select id="swap-b-staff"></select>
+          </div>
+          <div class="form-field" style="flex:1">
+            <label>Date B *</label>
+            <input type="date" id="swap-b-date">
+          </div>
+        </div>
+        <div class="form-field">
+          <label>Note</label>
+          <input type="text" id="swap-note" placeholder="Optional reason">
+        </div>
+        <div class="msg" id="swap-msg"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeSwapModal()">Cancel</button>
+      <button class="btn btn-sm" id="swap-save-btn" onclick="saveSwap()">Submit Request</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Public Holidays Modal ── -->
+<div class="modal-overlay" id="holidays-modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Public Holidays</h3>
+      <button class="modal-close" onclick="closeHolidaysModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="form-row">
+          <div class="form-field" style="flex:1">
+            <label>Date *</label>
+            <input type="date" id="holiday-date">
+          </div>
+          <div class="form-field" style="flex:2">
+            <label>Name *</label>
+            <input type="text" id="holiday-name" placeholder="e.g. Eid al-Fitr">
+          </div>
+        </div>
+        <div class="msg" id="holiday-msg"></div>
+        <button class="btn btn-sm" onclick="saveHoliday()" style="align-self:flex-start">+ Add Holiday</button>
+        <div id="holiday-list" style="max-height:300px;overflow:auto;border-top:1px solid var(--border);margin-top:4px"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeHolidaysModal()">Close</button>
     </div>
   </div>
 </div>
@@ -406,18 +498,21 @@
 </div>
 
 
-<script src="/js/api.js?v=20260616p"></script>
-<script src="/js/auth.js?v=20260616p"></script>
-<script src="/js/util.js?v=20260616p"></script>
-<script src="/js/branches.js?v=20260616p"></script>
-<script src="/js/users.js?v=20260616p"></script>
-<script src="/js/staff.js?v=20260616p"></script>
-<script src="/js/leaves.js?v=20260616p"></script>
-<script src="/js/shifts.js?v=20260616p"></script>
-<script src="/js/schedule.js?v=20260616p"></script>
-<script src="/js/review.js?v=20260616p"></script>
-<script src="/js/export.js?v=20260616p"></script>
-<script src="/js/audit.js?v=20260616p"></script>
-<script src="/js/main.js?v=20260616p"></script>
+<script src="/js/api.js?v=20260617a"></script>
+<script src="/js/auth.js?v=20260617a"></script>
+<script src="/js/util.js?v=20260617a"></script>
+<script src="/js/branches.js?v=20260617a"></script>
+<script src="/js/users.js?v=20260617a"></script>
+<script src="/js/staff.js?v=20260617a"></script>
+<script src="/js/leaves.js?v=20260617a"></script>
+<script src="/js/swaps.js?v=20260617a"></script>
+<script src="/js/holidays.js?v=20260617a"></script>
+<script src="/js/notifications.js?v=20260617a"></script>
+<script src="/js/shifts.js?v=20260617a"></script>
+<script src="/js/schedule.js?v=20260617a"></script>
+<script src="/js/review.js?v=20260617a"></script>
+<script src="/js/export.js?v=20260617a"></script>
+<script src="/js/audit.js?v=20260617a"></script>
+<script src="/js/main.js?v=20260617a"></script>
 </body>
 </html>

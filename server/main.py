@@ -283,6 +283,47 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.section_month_settings ALTER COLUMN min_o_block SET DEFAULT 2;")
             # Note: older DBs may have extra columns; migrations are additive.
 
+            # ── Feature tables: notifications, leave workflow, swaps, holidays ──
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.notifications (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES scheduling.users(id) ON DELETE CASCADE,
+                    type TEXT NOT NULL DEFAULT 'info',
+                    message TEXT NOT NULL,
+                    link TEXT,
+                    is_read BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS notifications_user_unread
+                    ON scheduling.notifications (user_id, is_read);
+
+                CREATE TABLE IF NOT EXISTS scheduling.shift_swaps (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL, month INTEGER NOT NULL,
+                    staff_a INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    date_a DATE NOT NULL,
+                    staff_b INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    date_b DATE NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    note TEXT,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    decided_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    decided_at TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS scheduling.holidays (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            # Leave requests gained an approval workflow; older rows stay 'approved'.
+            cur.execute("ALTER TABLE scheduling.leave_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -483,6 +524,29 @@ def assert_schedule_access(user: dict, sid) -> dict:
     if not can_access_branch(user, sched.get("branch_id")):
         raise HTTPException(403, "Forbidden")
     return sched
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+def notify(user_id, message, link=None, ntype="info"):
+    """Create one in-app notification. Best-effort: never break the caller."""
+    if not user_id:
+        return
+    try:
+        q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
+             VALUES (%s,%s,%s,%s)""", (user_id, message, link, ntype), exec_only=True)
+    except Exception:
+        pass
+
+def notify_roles(roles, message, link=None, ntype="info", exclude_user=None):
+    """Notify every user holding one of `roles` (used to alert reviewers)."""
+    try:
+        users = q("SELECT id FROM scheduling.users WHERE role = ANY(%s)", (list(roles),))
+    except Exception:
+        users = []
+    for u in users:
+        if exclude_user and u["id"] == exclude_user:
+            continue
+        notify(u["id"], message, link, ntype)
 
 # ── Nest helpers ──────────────────────────────────────────────────────────────
 
@@ -1224,6 +1288,17 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
     params.append(sid)
     row = q(f"UPDATE scheduling.schedules SET {sets} WHERE id=%s RETURNING *", params, one=True)
     insert_audit(user, f"SCHEDULE_{status.upper()}", f"schedule:{sid}")
+
+    # ── Notify the other side of the review hand-off ──────────────────────────
+    bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (row["branch_id"],), one=True) or {}).get("name", "")
+    period = f"{row['year']}-{str(row['month']).zfill(2)}"
+    if status == "submitted":
+        notify_roles(("manager", "superadmin"),
+                     f"{bname} {period} schedule submitted for review",
+                     link="review", ntype="review")
+    elif status in ("reviewed", "approved", "returned") and row.get("created_by"):
+        verb = {"reviewed": "reviewed", "approved": "approved", "returned": "returned for edits"}[status]
+        notify(row["created_by"], f"{bname} {period} schedule was {verb}", link="schedule", ntype=status)
     return row
 
 @app.delete("/api/schedules/{sid}")
@@ -1267,6 +1342,11 @@ async def create_leave(request: Request, user=Depends(require_admin)):
     if not can_access_branch(user, staff["branch_id"]): raise HTTPException(403, "Forbidden")
     if date_to < date_from: raise HTTPException(400, '"To" date must be on or after "From" date')
 
+    # Approval workflow: a manager/full-admin records leave as already approved;
+    # a team lead's entry is a *request* that a reviewer must approve before the
+    # generator will honour it. (Generation only counts approved leave.)
+    new_status = "approved" if user["role"] in ("superadmin", "manager") else "pending"
+
     # Expand date range
     from datetime import date as _date, timedelta as _td
     try:
@@ -1282,15 +1362,21 @@ async def create_leave(request: Request, user=Depends(require_admin)):
         try:
             row = q("""INSERT INTO scheduling.leave_requests
                        (staff_id,date,leave_type,status,note,created_by)
-                       VALUES (%s,%s,%s,'approved',%s,%s)
+                       VALUES (%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (staff_id,date) DO UPDATE
-                       SET leave_type=EXCLUDED.leave_type,note=EXCLUDED.note,created_by=EXCLUDED.created_by
+                       SET leave_type=EXCLUDED.leave_type,note=EXCLUDED.note,
+                           status=EXCLUDED.status,created_by=EXCLUDED.created_by
                        RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
                                  leave_type,status,note,created_by,created_at""",
-                    (staff_id, d, leave_type, note, user["id"]), one=True)
+                    (staff_id, d, leave_type, new_status, note, user["id"]), one=True)
             if row: leaves.append(row)
         except Exception: pass
-    return {"inserted": len(leaves), "leaves": leaves}
+
+    if new_status == "pending" and leaves:
+        notify_roles(("manager", "superadmin"),
+                     f"{staff['name']}: {len(leaves)} day(s) {leave_type} leave awaiting approval",
+                     link="leaves", ntype="leave")
+    return {"inserted": len(leaves), "leaves": leaves, "status": new_status}
 
 @app.delete("/api/leaves/{lid}")
 def delete_leave(lid: int, user=Depends(require_admin)):
@@ -1303,6 +1389,182 @@ def delete_leave(lid: int, user=Depends(require_admin)):
     if not can_access_branch(user, lv["branch_id"]):
         raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.leave_requests WHERE id=%s", (lid,), exec_only=True)
+    return {"ok": True}
+
+@app.put("/api/leaves/{lid}/status")
+async def update_leave_status(lid: int, request: Request, user=Depends(require_reviewer)):
+    """A reviewer (manager / full admin) approves or rejects a pending leave."""
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("approved", "rejected"):
+        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    lv = q("""SELECT l.created_by, l.leave_type, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
+                     s.name AS staff_name
+              FROM scheduling.leave_requests l
+              JOIN scheduling.staff s ON s.id=l.staff_id WHERE l.id=%s""", (lid,), one=True)
+    if not lv:
+        raise HTTPException(404, "Leave not found")
+    row = q("""UPDATE scheduling.leave_requests SET status=%s WHERE id=%s
+               RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,leave_type,status,note""",
+            (status, lid), one=True)
+    insert_audit(user, f"LEAVE_{status.upper()}", f"leave:{lid}", f"{lv['staff_name']} {lv['date']}")
+    if lv.get("created_by"):
+        notify(lv["created_by"],
+               f"{lv['staff_name']}'s {lv['leave_type']} leave on {lv['date']} was {status}",
+               link="leaves", ntype=status)
+    return row
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+@app.get("/api/notifications")
+def list_notifications(user=Depends(get_current_user)):
+    rows = q("""SELECT id,type,message,link,is_read,
+                       TO_CHAR(created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
+                FROM scheduling.notifications WHERE user_id=%s
+                ORDER BY created_at DESC LIMIT 50""", (user["id"],))
+    unread = sum(1 for r in rows if not r["is_read"])
+    return {"notifications": rows, "unread": unread}
+
+@app.put("/api/notifications/{nid}/read")
+def mark_notification_read(nid: int, user=Depends(get_current_user)):
+    q("UPDATE scheduling.notifications SET is_read=true WHERE id=%s AND user_id=%s",
+      (nid, user["id"]), exec_only=True)
+    return {"ok": True}
+
+@app.put("/api/notifications/read-all")
+def mark_all_notifications_read(user=Depends(get_current_user)):
+    q("UPDATE scheduling.notifications SET is_read=true WHERE user_id=%s AND is_read=false",
+      (user["id"],), exec_only=True)
+    return {"ok": True}
+
+# ── Shift swaps ───────────────────────────────────────────────────────────────
+
+def _swap_with_names(extra_where="", vals=()):
+    return q(f"""SELECT sw.*,
+                        TO_CHAR(sw.date_a,'YYYY-MM-DD') AS date_a,
+                        TO_CHAR(sw.date_b,'YYYY-MM-DD') AS date_b,
+                        sa.name AS staff_a_name, sb.name AS staff_b_name,
+                        b.name AS branch_name
+                 FROM scheduling.shift_swaps sw
+                 JOIN scheduling.staff sa ON sa.id=sw.staff_a
+                 JOIN scheduling.staff sb ON sb.id=sw.staff_b
+                 LEFT JOIN scheduling.branches b ON b.id=sw.branch_id
+                 {extra_where} ORDER BY sw.created_at DESC LIMIT 200""", vals)
+
+@app.get("/api/swaps")
+def list_swaps(request: Request, user=Depends(get_current_user)):
+    p = request.query_params
+    conds, vals = [], []
+    # Team leads only see their own branch; reviewers can filter by branch.
+    if user["role"] in ("superadmin", "manager"):
+        if p.get("branch_id"): conds.append("sw.branch_id=%s"); vals.append(p["branch_id"])
+    else:
+        conds.append("sw.branch_id=%s"); vals.append(user.get("branch_id"))
+    if p.get("status"): conds.append("sw.status=%s"); vals.append(p["status"])
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    return _swap_with_names(where, vals)
+
+@app.post("/api/swaps")
+async def create_swap(request: Request, user=Depends(require_editor)):
+    body = await request.json()
+    staff_a, date_a = body.get("staff_a"), body.get("date_a")
+    staff_b, date_b = body.get("staff_b"), body.get("date_b")
+    note = body.get("note")
+    if not all([staff_a, date_a, staff_b, date_b]):
+        raise HTTPException(400, "staff_a, date_a, staff_b, date_b are required")
+    sa = q("SELECT branch_id,name FROM scheduling.staff WHERE id=%s", (staff_a,), one=True)
+    sb = q("SELECT branch_id,name FROM scheduling.staff WHERE id=%s", (staff_b,), one=True)
+    if not sa or not sb:
+        raise HTTPException(404, "Staff not found")
+    if not can_access_branch(user, sa["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    try:
+        year, month = int(date_a[:4]), int(date_a[5:7])
+    except (ValueError, IndexError):
+        raise HTTPException(400, "date_a must be YYYY-MM-DD")
+    row = q("""INSERT INTO scheduling.shift_swaps
+               (branch_id,year,month,staff_a,date_a,staff_b,date_b,note,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (sa["branch_id"], year, month, staff_a, date_a, staff_b, date_b, note, user["id"]), one=True)
+    insert_audit(user, "SWAP_REQUEST", f"swap:{row['id']}", f"{sa['name']} {date_a} ↔ {sb['name']} {date_b}")
+    notify_roles(("manager", "superadmin"),
+                 f"Swap request: {sa['name']} ({date_a}) ↔ {sb['name']} ({date_b})",
+                 link="swaps", ntype="swap")
+    return {"id": row["id"], "ok": True}
+
+@app.put("/api/swaps/{swid}/status")
+async def decide_swap(swid: int, request: Request, user=Depends(require_reviewer)):
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("approved", "rejected"):
+        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    sw = q("SELECT * FROM scheduling.shift_swaps WHERE id=%s", (swid,), one=True)
+    if not sw:
+        raise HTTPException(404, "Swap not found")
+    if sw["status"] != "pending":
+        raise HTTPException(400, f"Swap already {sw['status']}")
+
+    if status == "approved":
+        # Exchange the two cells on the relevant schedule. Missing cells count
+        # as Off ('O') so a swap with an empty day still works.
+        sched = q("""SELECT id FROM scheduling.schedules
+                     WHERE branch_id=%s AND year=%s AND month=%s""",
+                  (sw["branch_id"], sw["year"], sw["month"]), one=True)
+        if not sched:
+            raise HTTPException(409, "No schedule exists for this month to swap")
+        sid = sched["id"]
+        def cell(staff_id, d):
+            r = q("""SELECT shift_code,is_oncall,cross_branch_id FROM scheduling.schedule_entries
+                     WHERE schedule_id=%s AND staff_id=%s AND date=%s""", (sid, staff_id, d), one=True)
+            return r or {"shift_code": "O", "is_oncall": False, "cross_branch_id": None}
+        a = cell(sw["staff_a"], sw["date_a"])
+        b = cell(sw["staff_b"], sw["date_b"])
+        def put(staff_id, d, c):
+            q("""INSERT INTO scheduling.schedule_entries
+                 (schedule_id,staff_id,date,shift_code,is_oncall,cross_branch_id)
+                 VALUES (%s,%s,%s,%s,%s,%s)
+                 ON CONFLICT (schedule_id,staff_id,date) DO UPDATE
+                 SET shift_code=EXCLUDED.shift_code,is_oncall=EXCLUDED.is_oncall,
+                     cross_branch_id=EXCLUDED.cross_branch_id""",
+              (sid, staff_id, d, c["shift_code"], c["is_oncall"], c["cross_branch_id"]), exec_only=True)
+        put(sw["staff_a"], sw["date_a"], b)
+        put(sw["staff_b"], sw["date_b"], a)
+
+    q("""UPDATE scheduling.shift_swaps SET status=%s, decided_by=%s, decided_at=NOW()
+         WHERE id=%s""", (status, user["id"], swid), exec_only=True)
+    insert_audit(user, f"SWAP_{status.upper()}", f"swap:{swid}")
+    if sw.get("created_by"):
+        notify(sw["created_by"], f"Your shift swap request was {status}", link="swaps", ntype=status)
+    return {"ok": True, "status": status}
+
+# ── Public holidays ───────────────────────────────────────────────────────────
+
+@app.get("/api/holidays")
+def list_holidays(request: Request, user=Depends(get_current_user)):
+    p = request.query_params
+    conds, vals = [], []
+    if p.get("year"):  conds.append("EXTRACT(YEAR FROM date)=%s");  vals.append(p["year"])
+    if p.get("month"): conds.append("EXTRACT(MONTH FROM date)=%s"); vals.append(p["month"])
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    return q(f"""SELECT id,TO_CHAR(date,'YYYY-MM-DD') AS date,name
+                 FROM scheduling.holidays {where} ORDER BY date""", vals)
+
+@app.post("/api/holidays")
+async def create_holiday(request: Request, user=Depends(require_superadmin)):
+    body = await request.json()
+    date, name = body.get("date"), (body.get("name") or "").strip()
+    if not date or not name:
+        raise HTTPException(400, "date and name are required")
+    row = q("""INSERT INTO scheduling.holidays (date,name,created_by) VALUES (%s,%s,%s)
+               ON CONFLICT (date) DO UPDATE SET name=EXCLUDED.name
+               RETURNING id,TO_CHAR(date,'YYYY-MM-DD') AS date,name""",
+            (date, name, user["id"]), one=True)
+    insert_audit(user, "HOLIDAY_ADD", f"holiday:{row['id']}", f"{date} {name}")
+    return row
+
+@app.delete("/api/holidays/{hid}")
+def delete_holiday(hid: int, user=Depends(require_superadmin)):
+    q("DELETE FROM scheduling.holidays WHERE id=%s", (hid,), exec_only=True)
     return {"ok": True}
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
@@ -1453,6 +1715,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                               l.leave_type FROM scheduling.leave_requests l
                        JOIN scheduling.staff s ON s.id=l.staff_id
                        WHERE s.branch_id=%s
+                         AND l.status='approved'
                          AND EXTRACT(YEAR FROM l.date)=%s
                          AND EXTRACT(MONTH FROM l.date)=%s""", (branch_id, year, month))
     branch     = q("SELECT id,name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True)

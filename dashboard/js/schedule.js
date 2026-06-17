@@ -105,6 +105,8 @@ async function loadScheduleData() {
       loadShiftTypes(currentBranchId),
       API.get(`/staff-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`)
         .catch(() => ({})),
+      (typeof loadHolidaysForMonth === 'function'
+        ? loadHolidaysForMonth(scheduleYear, scheduleMonth) : Promise.resolve()),
     ]);
 
     scheduleStaff   = staffData.filter(s => s.active);
@@ -329,12 +331,23 @@ function renderScheduleStats() {
   const icoCall  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
   const icoLeaf  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
 
+  // Hijri month span for this Gregorian month (e.g. "Dhuʻl-Q. – Dhuʻl-H. 1447").
+  let hijriPill = '';
+  if (typeof _hijriFullFmt !== 'undefined' && _hijriFullFmt) {
+    const part = (d) => new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{month:'short'}).format(new Date(scheduleYear, scheduleMonth-1, d));
+    const yr   = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{year:'numeric'}).format(new Date(scheduleYear, scheduleMonth-1, 15));
+    const m1 = part(1), m2 = part(nDays);
+    const span = (m1 === m2) ? m1 : `${m1}–${m2}`;
+    hijriPill = `<div class="stat-pill" title="Hijri (Umm al-Qura)">🌙 <strong>${span} ${yr}</strong></div>`;
+  }
+
   bar.innerHTML = `
     <div class="stat-pill">${icoStaff} <strong data-count="${total}">0</strong> staff</div>
     <div class="stat-pill">${icoDays} <strong data-count="${nDays}">0</strong> days</div>
     <div class="stat-pill">${icoShift} <strong data-count="${working}">0</strong> shifts assigned</div>
     <div class="stat-pill">${icoCall} <strong data-count="${onCall}">0</strong> on-call</div>
-    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>`;
+    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>
+    ${hijriPill}`;
 
   // Animate each number counting up
   bar.querySelectorAll('strong[data-count]').forEach(el => countUp(el, parseInt(el.dataset.count) || 0));
@@ -361,7 +374,13 @@ function renderRotaGrid() {
         ${Array.from({length:nDays},(_,i)=>{
           const d = i+1;
           const dow = dayOfWeek(scheduleYear, scheduleMonth, d);
-          return `<th style="${dow===5||dow===6?'background:rgba(107,78,255,0.12);':''}${d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear()?'border-bottom:2px solid var(--accent);':''}">${d}</th>`;
+          const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          const holiday = (typeof holidayMap !== 'undefined') ? holidayMap[dateStr] : null;
+          const hij = (typeof hijriFull === 'function') ? hijriFull(scheduleYear, scheduleMonth, d) : '';
+          const isToday = d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear();
+          const title = [hij, holiday ? ('🎌 ' + holiday) : ''].filter(Boolean).join(' — ');
+          const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5||dow===6?'background:rgba(107,78,255,0.12);':'');
+          return `<th title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid #FF6B6B;':''}">${d}${holiday?'<span style="color:#FF6B6B">•</span>':''}</th>`;
         }).join('')}
         <th style="min-width:60px">Shifts</th>
       </tr>
