@@ -2453,13 +2453,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     # those directly. This is only the default when neither is set.
     max_consecutive = branch_max_consecutive
 
-    # Patch NESTS so the solver reads the DB-provided config.
-    import generator as _gen
-    original_nests = _gen.NESTS
-    patched = dict(original_nests)
-    patched[nest_name] = nest_cfg_for_solver
-    _gen.NESTS = patched
-
+    # Config is passed per-section to the solver (nest_cfg=...), so there's no
+    # need to mutate the shared generator.NESTS global anymore.
     print(f"[Generate] nest={nest_name} year={year} month={month}")
     print(f"[Generate] active_staff ({len(active_staff)}): {[s['name'] for s in active_staff]}")
     print(f"[Generate] al_schedule: {al_schedule}")
@@ -2543,11 +2538,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         sec_staff_limits = {sk: staff_limits.get(sk, {}) for sk in staff_keys}
         sec_limits = {sec_name: section_limits_for_solver.get(sec_name, {})}
 
-        # Patch solver nests with only this section
+        # Pass this section's config straight to the solver (no global mutation).
         sec_nest_cfg = {"sections": {sec_name: sec_cfg}}
-        _gen.NESTS = dict(original_nests)
-        _gen.NESTS[nest_name] = sec_nest_cfg
-
         sec_result = solver_generate(
             nest_name=nest_name, year=year, month=month,
             al_schedule=sec_al, prev_tail=sec_prev_tail,
@@ -2555,6 +2547,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             max_consecutive=max_consecutive,
             staff_limits=sec_staff_limits,
             section_limits=sec_limits,
+            nest_cfg=sec_nest_cfg,
         )
 
         if sec_result["status"] == "INFEASIBLE" or not sec_result.get("schedule"):
@@ -2594,9 +2587,6 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             total_work += work_count
             summary.append({"staff_id": staff["id"], "staff_name": staff["name"], "shifts": work_count})
 
-    # restore nests
-    _gen.NESTS = original_nests
-
     ok_sections = [k for k, v in section_results.items() if v.get("status") in ("OPTIMAL", "FEASIBLE")]
     if not ok_sections:
         raise HTTPException(422, detail={
@@ -2611,12 +2601,19 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                     RETURNING *""",
                  (branch_id, year, month, user["id"]), one=True)
 
-    q("DELETE FROM scheduling.schedule_entries WHERE schedule_id=%s", (schedule["id"],), exec_only=True)
-
+    # Persist atomically. Only refresh the staff we actually (re)generated — a
+    # section that came back infeasible keeps its existing rota instead of being
+    # wiped. Delete + insert happen in ONE transaction so a failure can't leave
+    # the schedule half-empty.
+    ok_staff_ids = sorted({e["staff_id"] for e in flat_entries})
     pool = get_pool()
     conn = pool.getconn()
     try:
         with conn.cursor() as cur:
+            if ok_staff_ids:
+                cur.execute("""DELETE FROM scheduling.schedule_entries
+                               WHERE schedule_id=%s AND staff_id = ANY(%s)""",
+                            (schedule["id"], ok_staff_ids))
             for e in flat_entries:
                 cur.execute("""INSERT INTO scheduling.schedule_entries
                                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)

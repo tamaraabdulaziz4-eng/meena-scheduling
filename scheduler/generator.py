@@ -182,7 +182,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
                       time_limit: int = 60,
                       max_consecutive: int = 4,
                       staff_limits: dict = None,
-                      section_limits: dict = None) -> dict:
+                      section_limits: dict = None,
+                      nest_cfg: dict = None) -> dict:
     """
     staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits
     max_consecutive: max working days in a row (default 5)
@@ -197,7 +198,21 @@ def generate_schedule(nest_name: str, year: int, month: int,
     prev_tail       = prev_tail   or {}
     staff_limits    = staff_limits or {}
     section_limits  = section_limits or {}
-    nest_cfg        = NESTS[nest_name]
+    # Prefer an explicitly-passed config (avoids mutating the shared NESTS global
+    # — two concurrent requests would otherwise read each other's settings).
+    nest_cfg        = nest_cfg if nest_cfg is not None else NESTS[nest_name]
+
+    def eff_max_consec(p, sec_name):
+        """Strictest max-consecutive among section, per-staff, and branch default.
+        A tighter per-staff limit (e.g. 1) must win over a looser section limit."""
+        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
+        vals = []
+        for v in (sec_lim.get("max_consecutive"),
+                  (staff_limits.get(p, {}) or {}).get("max_consecutive"),
+                  max_consecutive):
+            if v:
+                vals.append(int(v))
+        return min(vals) if vals else max_consecutive
 
     # Auto-generate only assigns M and N (plus O/AL/SL)
     # User can manually add other shifts after generation
@@ -374,12 +389,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
         if not tail:
             continue
         allowed = set(sec["allowed_shifts"])
-        # Section/staff max_consecutive (k) for cross-month logic
-        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
-        k = sec_lim.get("max_consecutive")
-        if k is None:
-            k = staff_limits.get(p, {}).get("max_consecutive", max_consecutive)
-        k = int(k) if k else max_consecutive
+        # Section/staff max_consecutive (k) for cross-month logic — strictest wins.
+        k = eff_max_consec(p, sec_name)
 
         last_code = tail[-1]   # the very last day of prev month
 
@@ -492,17 +503,15 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 "N": (int(sec.get("min_n", 1)), int(sec.get("max_n", 2))),
             }
             for code, (mn_min, mn_max) in mn_limits.items():
-                if sec_staff_count >= mn_min:
-                    # Min: only enforce if not already covered by exact/coverage
-                    if code not in already_covered_codes:
-                        avail = [p for p, sn, _ in all_staff
-                                 if sn == sec_name
-                                 and not (p in al_schedule and day in al_schedule[p])]
-                        if len(avail) >= mn_min:
-                            model.add(sum(sec_bools(code)) >= mn_min)
-                    # Max: only cap if section has more staff than the cap
-                    if sec_staff_count > mn_max:
-                        model.add(sum(sec_bools(code)) <= mn_max)
+                # Min coverage is a HARD requirement: if too few staff are
+                # available that day (e.g. due to leave) the model is INFEASIBLE
+                # and the caller surfaces a clear diagnostic — we never silently
+                # ship a day with no morning/night cover.
+                if mn_min > 0 and code not in already_covered_codes:
+                    model.add(sum(sec_bools(code)) >= mn_min)
+                # Max: only cap if section has more staff than the cap
+                if sec_staff_count > mn_max:
+                    model.add(sum(sec_bools(code)) <= mn_max)
 
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
     MORNING_CODES = ["M", "D", "D1", "A", "EV", "B", "Y3", "D_US"]
@@ -561,11 +570,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # ── Hard Constraint 5: Max consecutive working shifts (per-staff) ───────────
     WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
     for p, sec_name, sec in all_staff:
-        limits  = staff_limits.get(p, {})
-        # Prefer section-level max_consecutive if provided, else per-staff, else branch default
-        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
-        sec_max_c = sec_lim.get("max_consecutive")
-        p_max_c = sec_max_c if sec_max_c is not None else limits.get("max_consecutive", max_consecutive)
+        # Strictest max-consecutive among section / per-staff / branch.
+        p_max_c = eff_max_consec(p, sec_name)
         window  = p_max_c + 1
         work_in_allowed = [c for c in WORK_CODES if c in AUTO_WORK_SHIFTS]
         for d in range(n_days - p_max_c):
@@ -585,11 +591,7 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # For each section, if a person works `k` consecutive days (k=max_consecutive),
     # the next 2 days must be Off (or AL). This encodes the "4 on, 2 off" rule.
     for p, sec_name, sec in all_staff:
-        sec_lim = section_limits.get(sec_name, {}) if isinstance(section_limits, dict) else {}
-        k = sec_lim.get("max_consecutive")
-        if k is None:
-            k = staff_limits.get(p, {}).get("max_consecutive", max_consecutive)
-        k = int(k) if k else max_consecutive
+        k = eff_max_consec(p, sec_name)
         if k <= 0:
             continue
 
@@ -617,34 +619,27 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 b_o = get_bool(p, d, "O")
                 model.add(b_o == 1).only_enforce_if(all_work)
 
-    # ── Hard Constraint 5d: No isolated Off (O) days ─────────────────────────
-    # If enabled per section (`min_o_block` >= 2), any Off day must be part of
-    # a block of at least 2 consecutive Off days (O O). Month edges must also
-    # respect this (day 1 O => day 2 O, last day O => previous day O).
+    # ── Hard Constraint 5d: Minimum Off (O) block length ─────────────────────
+    # If enabled per section (`min_o_block` = L >= 2), scheduled Off days must
+    # come in runs of at least L consecutive O's. We enforce this by forbidding
+    # every O-run of length 1..L-1. AL/work days have O=0 so they naturally bound
+    # a run, and month edges count as boundaries — so edge runs must also be ≥ L.
     for p, sec_name, sec in all_staff:
-        min_o_block = int((sec.get("min_o_block", 2) or 2))
-        if min_o_block < 2:
+        L = int((sec.get("min_o_block", 2) or 2))
+        if L < 2:
             continue
-        p_al = set(al_schedule.get(p, []))
-        for d in range(n_days):
-            day = d + 1
-            if day in p_al:
-                continue
-            b_o = get_bool(p, d, "O")
-
-            # Determine if this O has an adjacent O (previous or next day), skipping AL days.
-            adj = []
-            if d - 1 >= 0 and (day - 1) not in p_al:
-                adj.append(get_bool(p, d - 1, "O"))
-            if d + 1 < n_days and (day + 1) not in p_al:
-                adj.append(get_bool(p, d + 1, "O"))
-
-            if not adj:
-                # If today is O, it would be isolated.
-                model.add(b_o == 0)
-            else:
-                # If today is O, at least one adjacent day must be O.
-                model.add_bool_or(adj).only_enforce_if(b_o)
+        o_bool = [get_bool(p, d, "O") for d in range(n_days)]
+        for r in range(1, L):                      # forbidden run lengths
+            for s in range(0, n_days - r + 1):
+                terms = []                          # literals true iff a run of exactly r starts at s
+                if s > 0:                           # left boundary: O(s-1) == 0
+                    terms.append(o_bool[s - 1].negated())
+                for i in range(r):                  # the run itself: O(s..s+r-1) == 1
+                    terms.append(o_bool[s + i])
+                if s + r < n_days:                  # right boundary: O(s+r) == 0
+                    terms.append(o_bool[s + r].negated())
+                # Forbid that exact pattern.
+                model.add_bool_or([t.negated() for t in terms])
 
     # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
     for p, sec_name, sec in all_staff:
