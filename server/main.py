@@ -469,6 +469,21 @@ def can_access_branch(user: dict, branch_id) -> bool:
         return True
     return str(user.get("branch_id")) == str(branch_id)
 
+def assert_schedule_access(user: dict, sid) -> dict:
+    """Resolve a schedule id to its branch and enforce branch access.
+
+    The per-schedule-id routes (entries, lock, status, delete) take only a
+    schedule id, so without this a branch-locked team lead could edit another
+    branch's schedule just by guessing its id — which the docs explicitly
+    promise can't happen. Returns the schedule row so callers can reuse it.
+    """
+    sched = q("SELECT * FROM scheduling.schedules WHERE id=%s", (sid,), one=True)
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    if not can_access_branch(user, sched.get("branch_id")):
+        raise HTTPException(403, "Forbidden")
+    return sched
+
 # ── Nest helpers ──────────────────────────────────────────────────────────────
 
 def branch_to_nest(branch_name: str) -> Optional[str]:
@@ -1066,6 +1081,7 @@ async def open_schedule(request: Request, user=Depends(require_admin)):
 
 @app.get("/api/schedules/{sid}/entries")
 def list_entries(sid: int, user=Depends(get_current_user)):
+    assert_schedule_access(user, sid)
     return get_entries(sid)
 
 def get_entries(schedule_id):
@@ -1082,9 +1098,9 @@ def get_entries(schedule_id):
 @app.put("/api/schedules/{sid}/entries")
 async def save_entry(sid: int, request: Request, user=Depends(require_editor)):
     body = await request.json()
-    # Block edits if schedule is locked
-    sched = q("SELECT is_locked FROM scheduling.schedules WHERE id=%s", (sid,), one=True)
-    if sched and sched.get("is_locked"):
+    # Block edits if schedule belongs to another branch or is locked.
+    sched = assert_schedule_access(user, sid)
+    if sched.get("is_locked"):
         raise HTTPException(403, "Schedule is locked. Unlock it first.")
     row = q("""INSERT INTO scheduling.schedule_entries
                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
@@ -1105,6 +1121,10 @@ async def save_entry(sid: int, request: Request, user=Depends(require_editor)):
 @app.put("/api/schedules/{sid}/entries/bulk")
 async def bulk_save_entries(sid: int, request: Request, user=Depends(require_editor)):
     body = await request.json()
+    # Same guard as the single-cell save: right branch, and not locked.
+    sched = assert_schedule_access(user, sid)
+    if sched.get("is_locked"):
+        raise HTTPException(403, "Schedule is locked. Unlock it first.")
     entries = body.get("entries", [])
     if not isinstance(entries, list): raise HTTPException(400, "entries must be array")
     pool = get_pool()
@@ -1133,6 +1153,9 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_edi
 
 @app.delete("/api/schedules/{sid}/entries")
 def clear_entries(sid: int, user=Depends(require_editor)):
+    sched = assert_schedule_access(user, sid)
+    if sched.get("is_locked"):
+        raise HTTPException(403, "Schedule is locked. Unlock it first.")
     q("DELETE FROM scheduling.schedule_entries WHERE schedule_id=%s", (sid,), exec_only=True)
     return {"ok": True}
 
@@ -1140,6 +1163,9 @@ def clear_entries(sid: int, user=Depends(require_editor)):
 async def delete_entry_cell(sid: int, request: Request, user=Depends(require_editor)):
     """Delete a single cell entry (makes it blank on the grid)."""
     body = await request.json()
+    sched = assert_schedule_access(user, sid)
+    if sched.get("is_locked"):
+        raise HTTPException(403, "Schedule is locked. Unlock it first.")
     staff_id = body.get("staff_id")
     date     = body.get("date")
     if not staff_id or not date:
@@ -1153,6 +1179,7 @@ async def delete_entry_cell(sid: int, request: Request, user=Depends(require_edi
 @app.put("/api/schedules/{sid}/lock")
 async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_editor)):
     """Lock or unlock an entire schedule (branch+month). Locked schedules block all edits."""
+    assert_schedule_access(user, sid)
     body   = await request.json()
     locked = body.get("locked", True)
     row = q("""UPDATE scheduling.schedules SET is_locked=%s, updated_at=NOW()
@@ -1165,6 +1192,7 @@ async def toggle_schedule_lock(sid: int, request: Request, user=Depends(require_
 
 @app.put("/api/schedules/{sid}/status")
 async def update_schedule_status(sid: int, request: Request, user=Depends(require_admin)):
+    assert_schedule_access(user, sid)
     body = await request.json()
     status = body.get("status")
     note   = body.get("note")
@@ -1200,6 +1228,7 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
 
 @app.delete("/api/schedules/{sid}")
 def delete_schedule(sid: int, user=Depends(require_editor)):
+    assert_schedule_access(user, sid)
     q("DELETE FROM scheduling.schedules WHERE id=%s", (sid,), exec_only=True)
     return {"ok": True}
 
@@ -1240,8 +1269,11 @@ async def create_leave(request: Request, user=Depends(require_admin)):
 
     # Expand date range
     from datetime import date as _date, timedelta as _td
-    cur = _date(*map(int, date_from.split('-')))
-    end = _date(*map(int, date_to.split('-')))
+    try:
+        cur = _date(*map(int, date_from.split('-')))
+        end = _date(*map(int, date_to.split('-')))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Dates must be valid YYYY-MM-DD")
     dates, leaves = [], []
     while cur <= end and len(dates) < 365:
         dates.append(str(cur)); cur += _td(days=1)
@@ -1262,6 +1294,14 @@ async def create_leave(request: Request, user=Depends(require_admin)):
 
 @app.delete("/api/leaves/{lid}")
 def delete_leave(lid: int, user=Depends(require_admin)):
+    # A team lead may only delete leaves for their own branch's staff.
+    lv = q("""SELECT s.branch_id FROM scheduling.leave_requests l
+              JOIN scheduling.staff s ON s.id=l.staff_id WHERE l.id=%s""",
+           (lid,), one=True)
+    if not lv:
+        raise HTTPException(404, "Leave not found")
+    if not can_access_branch(user, lv["branch_id"]):
+        raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.leave_requests WHERE id=%s", (lid,), exec_only=True)
     return {"ok": True}
 
