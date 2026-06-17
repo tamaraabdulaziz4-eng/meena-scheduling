@@ -282,5 +282,30 @@ check("reviewer reopened (returned)", rb.status_code == 200 and rb.json().get("s
 le2 = lead.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-07", "shift_code": "M"})
 check("team lead can edit after reopen", le2.status_code == 200, le2.text)
 
+print("\n== scenario 13: daily radiology cases report ==")
+CD = f"{YEAR}-08-28"
+r = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 23, "ct": 0,
+              "us": 14, "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 29,
+              "bmd_not_done": 0, "mamo_not_done": 1, "submit": True})
+check("team lead submits cases", r.status_code == 200, r.text)
+check("total_cases auto-computed (37)", r.json().get("total_cases") == 37, r.json())
+check("locked after submit", r.json().get("locked") is True, r.json())
+r2 = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 1, "submit": False})
+check("locked report rejects edit", r2.status_code == 403, r2.status_code)
+ov = admin.get(f"/api/daily-cases/overview?date={CD}").json()
+n3 = next(b for b in ov["branches"] if b["branch_id"] == bid)
+check("overview shows the branch case", n3["case"] and n3["case"]["total_cases"] == 37, n3)
+check("overview counts submitted", ov["summary"]["submitted"] >= 1, ov["summary"])
+check("manager reopens", admin.put("/api/daily-cases/reopen", json={"branch_id": bid, "date": CD}).status_code == 200)
+r3 = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 10, "ct": 0, "us": 0,
+              "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 5, "submit": False})
+check("editable after reopen", r3.status_code == 200 and r3.json()["total_cases"] == 10, r3.text)
+rs = staffA.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 1, "submit": False})
+check("ineligible staff blocked (not night / no flag)", rs.status_code == 403, rs.status_code)
+admin.put(f"/api/staff/{A['id']}", json={"can_report": True})
+rs2 = staffA.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 2, "ct": 1, "us": 0,
+              "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 2, "submit": False})
+check("can_report staff allowed", rs2.status_code == 200, rs2.text)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

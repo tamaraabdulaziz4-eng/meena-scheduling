@@ -96,6 +96,9 @@ function openStaffModal(id) {
   const secEl = document.getElementById('staff-section');
   secEl.value = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
 
+  const cr = document.getElementById('staff-can-report');
+  if (cr) cr.checked = !!s?.can_report;
+
   document.getElementById('staff-modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('staff-name').focus(), 50);
 }
@@ -112,7 +115,8 @@ async function saveStaff() {
   if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
   if (!specs[0]) { msg.className = 'msg err'; msg.textContent = 'Select a section'; return; }
 
-  const body = { name, branch_id: bid ? Number(bid) : null, speciality: specs };
+  const body = { name, branch_id: bid ? Number(bid) : null, speciality: specs,
+                 can_report: !!document.getElementById('staff-can-report')?.checked };
 
   try {
     if (_editStaffId) {

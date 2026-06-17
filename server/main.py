@@ -332,6 +332,23 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS token_epoch INTEGER NOT NULL DEFAULT 0;")
+            # Daily radiology-cases report (one row per branch per day).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.daily_cases (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    date DATE NOT NULL,
+                    xray INT NOT NULL DEFAULT 0, ct INT NOT NULL DEFAULT 0, us INT NOT NULL DEFAULT 0,
+                    mamo INT NOT NULL DEFAULT 0, bmd INT NOT NULL DEFAULT 0, insert_cd INT NOT NULL DEFAULT 0,
+                    total_pt INT NOT NULL DEFAULT 0,
+                    bmd_not_done INT NOT NULL DEFAULT 0, mamo_not_done INT NOT NULL DEFAULT 0,
+                    locked BOOLEAN NOT NULL DEFAULT false,
+                    submitted_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    submitted_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(branch_id, date)
+                );""")
+            # Per-staff override: allowed to file the daily cases report.
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS can_report BOOLEAN NOT NULL DEFAULT false;")
             # Multi-stage swap approval: peer → team lead → manager. Track each step.
             for _col in ("peer_at TIMESTAMP",
                          "lead_by INTEGER", "lead_at TIMESTAMP",
@@ -1018,10 +1035,11 @@ async def create_staff(request: Request, user=Depends(require_admin)):
     if not name: raise HTTPException(400, "Name required")
     branch_id = body.get("branch_id")
     if not can_access_branch(user, branch_id): raise HTTPException(403, "Forbidden")
-    row = q("""INSERT INTO scheduling.staff (name,phone,branch_id,speciality,is_cross_branch)
-               VALUES (%s,%s,%s,%s,%s) RETURNING *""",
+    row = q("""INSERT INTO scheduling.staff (name,phone,branch_id,speciality,is_cross_branch,can_report)
+               VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
             (name, body.get("phone"), branch_id,
-             body.get("speciality", ["General"]), body.get("is_cross_branch", False)),
+             body.get("speciality", ["General"]), body.get("is_cross_branch", False),
+             bool(body.get("can_report", False))),
             one=True)
     insert_audit(user, "CREATE_STAFF", name)
     return row
@@ -1036,7 +1054,7 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
     if "branch_id" in body and body["branch_id"] and not can_access_branch(user, body["branch_id"]):
         raise HTTPException(403, "You can't move staff to a branch you don't manage")
     sets, params = [], []
-    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts"):
+    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts","can_report"):
         if field in body:
             sets.append(f"{field}=%s")
             params.append(body[field] if body[field] != "" else None)
@@ -2041,6 +2059,134 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (str(d),), exec_only=True)
         insert_audit(user, "SET_LEAVE_CUTOFF", f"day:{d}")
     return {"leave_cutoff_day": get_leave_cutoff_day()}
+
+# ── Daily radiology cases report ──────────────────────────────────────────────
+
+_CASE_FIELDS = ("xray", "ct", "us", "mamo", "bmd", "insert_cd",
+                "total_pt", "bmd_not_done", "mamo_not_done")
+
+def _can_submit_cases(user, branch_id, date_str):
+    """Who may file/edit a branch's daily report: a reviewer (any branch), the
+    branch team lead, or a staff member of that branch who is either flagged
+    can_report or scheduled on Night (N) that day."""
+    role = user["role"]
+    if role in ("superadmin", "manager"):
+        return True
+    if not can_access_branch(user, branch_id):
+        return False
+    if role == "admin":
+        return True
+    if role == "staff":
+        sid = user.get("staff_id")
+        st = q("SELECT can_report FROM scheduling.staff WHERE id=%s", (sid,), one=True)
+        if st and st.get("can_report"):
+            return True
+        on_night = q("""SELECT 1 FROM scheduling.schedule_entries e
+                        JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                        WHERE sc.branch_id=%s AND e.staff_id=%s AND e.date=%s AND e.shift_code='N'""",
+                     (branch_id, sid, date_str), one=True)
+        return bool(on_night)
+    return False
+
+def _case_row(row):
+    if not row:
+        return None
+    row = dict(row)
+    row["total_cases"] = sum(int(row.get(f) or 0) for f in ("xray","ct","us","mamo","bmd","insert_cd"))
+    return row
+
+@app.get("/api/daily-cases")
+def get_daily_case(request: Request, user=Depends(get_current_user)):
+    p = request.query_params
+    branch_id = p.get("branch_id") or user.get("branch_id")
+    date = p.get("date")
+    if not branch_id or not date:
+        raise HTTPException(400, "branch_id and date required")
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
+    row = q("""SELECT dc.*, TO_CHAR(dc.date,'YYYY-MM-DD') AS date,
+                      TO_CHAR(dc.submitted_at,'YYYY-MM-DD"T"HH24:MI:SS') AS submitted_at,
+                      u.username AS submitted_by_name
+               FROM scheduling.daily_cases dc
+               LEFT JOIN scheduling.users u ON u.id=dc.submitted_by
+               WHERE dc.branch_id=%s AND dc.date=%s""", (branch_id, date), one=True)
+    return {"case": _case_row(row), "can_edit": _can_submit_cases(user, int(branch_id), date)}
+
+@app.get("/api/daily-cases/overview")
+def daily_cases_overview(request: Request, user=Depends(get_current_user)):
+    date = request.query_params.get("date")
+    if not date:
+        raise HTTPException(400, "date required")
+    # Branches the user can see.
+    if user["role"] in ("superadmin", "manager"):
+        branches = q("SELECT id,name FROM scheduling.branches ORDER BY name")
+    else:
+        branches = q("SELECT id,name FROM scheduling.branches WHERE id=%s", (user.get("branch_id"),))
+    rows = q("""SELECT dc.*, TO_CHAR(dc.date,'YYYY-MM-DD') AS date,
+                       TO_CHAR(dc.submitted_at,'YYYY-MM-DD"T"HH24:MI:SS') AS submitted_at,
+                       u.username AS submitted_by_name
+                FROM scheduling.daily_cases dc
+                LEFT JOIN scheduling.users u ON u.id=dc.submitted_by
+                WHERE dc.date=%s""", (date,))
+    by_branch = {r["branch_id"]: _case_row(r) for r in rows}
+    out, summary = [], {"branches": len(branches), "submitted": 0,
+                        "total_cases": 0, "total_pt": 0, "bmd_not_done": 0, "mamo_not_done": 0}
+    for b in branches:
+        c = by_branch.get(b["id"])
+        out.append({"branch_id": b["id"], "branch_name": b["name"], "case": c})
+        if c and c.get("locked"):
+            summary["submitted"] += 1
+        if c:
+            summary["total_cases"]  += c["total_cases"]
+            summary["total_pt"]     += int(c.get("total_pt") or 0)
+            summary["bmd_not_done"] += int(c.get("bmd_not_done") or 0)
+            summary["mamo_not_done"]+= int(c.get("mamo_not_done") or 0)
+    return {"date": date, "branches": out, "summary": summary}
+
+@app.post("/api/daily-cases")
+async def save_daily_case(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    branch_id = body.get("branch_id") or user.get("branch_id")
+    date = body.get("date")
+    if not branch_id or not date:
+        raise HTTPException(400, "branch_id and date required")
+    if not _can_submit_cases(user, int(branch_id), date):
+        raise HTTPException(403, "You can't file the cases report for this branch/day")
+    existing = q("SELECT locked FROM scheduling.daily_cases WHERE branch_id=%s AND date=%s",
+                 (branch_id, date), one=True)
+    if existing and existing.get("locked") and user["role"] not in ("superadmin", "manager"):
+        raise HTTPException(403, "This report is submitted/locked. Ask a manager to reopen it.")
+    submit = bool(body.get("submit"))
+    field_vals = [int(body.get(f) or 0) for f in _CASE_FIELDS]
+    cols = ",".join(_CASE_FIELDS)
+    ph   = ",".join(["%s"] * len(_CASE_FIELDS))
+    upd  = ",".join(f"{f}=EXCLUDED.{f}" for f in _CASE_FIELDS)
+    sa   = "NOW()" if submit else "NULL"   # submitted_at literal (not user input)
+    # Set locked/submitted in BOTH the insert and the conflict-update so a brand
+    # new row gets locked on submit (the DO UPDATE only fires on a conflict).
+    row = q(f"""INSERT INTO scheduling.daily_cases
+                (branch_id,date,{cols},locked,submitted_by,submitted_at)
+                VALUES (%s,%s,{ph},%s,%s,{sa})
+                ON CONFLICT (branch_id,date) DO UPDATE SET
+                  {upd}, locked=EXCLUDED.locked, submitted_by=EXCLUDED.submitted_by,
+                  submitted_at=EXCLUDED.submitted_at, updated_at=NOW()
+                RETURNING *, TO_CHAR(date,'YYYY-MM-DD') AS date""",
+            [branch_id, date, *field_vals, submit, (user["id"] if submit else None)],
+            one=True)
+    insert_audit(user, "DAILY_CASES_" + ("SUBMIT" if submit else "SAVE"),
+                 f"branch:{branch_id}", date)
+    return _case_row(row)
+
+@app.put("/api/daily-cases/reopen")
+async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):
+    body = await request.json()
+    branch_id, date = body.get("branch_id"), body.get("date")
+    if not branch_id or not date:
+        raise HTTPException(400, "branch_id and date required")
+    q("UPDATE scheduling.daily_cases SET locked=false WHERE branch_id=%s AND date=%s",
+      (branch_id, date), exec_only=True)
+    insert_audit(user, "DAILY_CASES_REOPEN", f"branch:{branch_id}", date)
+    return {"ok": True}
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
 

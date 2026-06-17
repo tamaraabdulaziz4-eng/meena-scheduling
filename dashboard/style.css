@@ -1028,3 +1028,36 @@ body.dark .logo-box { background: rgba(255,255,255,.92); }
 .swap-step.current { color: var(--accent); border-color: rgba(107,78,255,.4); background: rgba(107,78,255,.08); }
 .swap-arrow { color: var(--muted); font-size: 12px; }
 .swap-rejected { font-size: 11px; color: #cc4444; margin-top: 4px; font-weight: 600; }
+
+/* ── Daily cases ──────────────────────────────────────────────────────────── */
+.cases-summary { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.cs-pill { background: var(--card-alt); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; font-size: 13px; }
+.cs-pill b { font-size: 17px; }
+.cs-pill.warn { color: #cc4444; border-color: rgba(255,107,107,.4); background: rgba(255,107,107,.08); }
+.cases-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.case-card { border: 1.5px solid var(--border); border-radius: 14px; padding: 14px; background: var(--card); }
+.case-card.done { border-color: rgba(0,200,150,.4); }
+.case-card.pending { border-color: rgba(255,159,67,.45); background: rgba(255,159,67,.04); }
+.cc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; margin-bottom: 8px; }
+.cc-ok { font-size: 11px; color: #00A87D; font-weight: 600; }
+.cc-pending { font-size: 11px; color: #c9880a; font-weight: 700; }
+.cc-big { display: flex; gap: 18px; margin: 6px 0 10px; }
+.cc-big b { font-size: 24px; font-weight: 800; color: var(--primary); }
+.cc-big span { font-size: 11px; color: var(--muted); margin-left: 4px; }
+.cc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-chip { font-size: 11px; background: var(--card-alt); border: 1px solid var(--border); border-radius: 8px; padding: 3px 8px; }
+.cc-warn { margin-top: 8px; font-size: 12px; color: #cc4444; font-weight: 600; }
+.cc-empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+.cc-actions { margin-top: 10px; }
+.case-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.case-grid label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
+.case-grid input { padding: 6px 8px; border: 1.5px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--text); font-size: 14px; }
+.case-total-row { font-size: 14px; background: var(--card-alt); padding: 8px 12px; border-radius: 8px; }
+.case-total-row b { font-size: 18px; color: var(--primary); }
+
+@media print {
+  .sidebar, .topbar, .month-nav, .no-print, .cc-actions, .sidebar-toggle { display: none !important; }
+  .main, .content { margin: 0 !important; padding: 0 !important; }
+  #cases-print-title { display: block !important; font-size: 20px; font-weight: 800; margin-bottom: 12px; }
+  .case-card { break-inside: avoid; border-color: #ccc; }
+}

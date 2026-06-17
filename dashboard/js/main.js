@@ -58,6 +58,9 @@ async function initApp() {
   // A staff member can still reach the Leave page (their own requests only).
   const leavesNav = document.getElementById('nav-leaves');
   if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
+  // Daily Cases: managers/leads view; staff (night/eligible) fill.
+  const casesNav = document.getElementById('nav-cases');
+  if (casesNav) casesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
   // Load org settings (leave cutoff day) so the leave UI can warn early.
@@ -126,6 +129,11 @@ async function showPage(page) {
       if (currentUser?.role === 'viewer') { showPage('schedule'); return; }
       try { await loadStaff(); } catch(e){}
       renderSwapsPage();
+      break;
+
+    case 'cases':
+      if (currentUser?.role === 'viewer') { showPage('schedule'); return; }
+      renderCasesPage();
       break;
 
     case 'branches':
