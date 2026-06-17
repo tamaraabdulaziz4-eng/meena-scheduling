@@ -590,15 +590,14 @@ def get_leave_cutoff_day() -> int:
         return 15
 
 def leave_window_open(target_date_str, cutoff_day, today=None):
-    """Requests for a *future* month must arrive on/before `cutoff_day` of the
-    month before it. Current/past months are not blocked here (handled by the
-    coverage flow / managers). Returns (ok: bool, message: str|None)."""
+    """A leave request for month M must arrive on/before `cutoff_day` of the
+    PREVIOUS month (M-1). That blocks both same-month requests (their deadline
+    already passed) and next-month requests made after the cutoff — the schedule
+    for M is built right after the cutoff. Managers bypass this (handled by the
+    caller). Returns (ok: bool, message: str|None)."""
     from datetime import date as _date
     today = today or _date.today()
     y, m, _d = map(int, str(target_date_str).split("-")[:3])
-    cur_idx, tgt_idx = today.year * 12 + (today.month - 1), y * 12 + (m - 1)
-    if tgt_idx <= cur_idx:
-        return True, None  # this month or earlier
     pm_year, pm_month = (y, m - 1) if m > 1 else (y - 1, 12)
     deadline = _date(pm_year, pm_month, min(cutoff_day, 28))
     if today <= deadline:

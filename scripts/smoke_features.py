@@ -195,7 +195,9 @@ from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)
 check("window closed after cutoff", M.leave_window_open("2026-09-10", 15, today=_date(2026,8,20))[0] is False)
 check("far-future window open",     M.leave_window_open("2026-12-10", 15, today=_date(2026,8,20))[0] is True)
-check("current-month always open",  M.leave_window_open("2026-08-10", 15, today=_date(2026,8,20))[0] is True)
+check("same-month request blocked", M.leave_window_open("2026-08-10", 15, today=_date(2026,8,20))[0] is False)
+check("next-month before cutoff open", M.leave_window_open("2026-07-10", 15, today=_date(2026,6,10))[0] is True)
+check("next-month after cutoff blocked", M.leave_window_open("2026-07-10", 15, today=_date(2026,6,16))[0] is False)
 # API: with cutoff=1, next month is closed for staff but a manager can override
 admin.put("/api/settings", json={"leave_cutoff_day": 1})
 import datetime as _dt
@@ -210,6 +212,10 @@ if t.day > 1:
 else:
     check("staff cutoff (today is day 1 — skipped)", True)
 admin.put("/api/settings", json={"leave_cutoff_day": 15})
+# Same-month request from a staff member is always blocked (deadline long past)
+cm = f"{t.year}-{t.month:02d}-{min(t.day, 28):02d}"
+stCM = staffA.post("/api/leaves", json={"date_from": cm, "date_to": cm, "leave_type": "AL"})
+check("staff blocked for current month", stCM.status_code == 400, f"{stCM.status_code} {stCM.text}")
 
 print("\n== scenario 10: Phase-1 security hardening ==")
 # another branch + a staff member in it

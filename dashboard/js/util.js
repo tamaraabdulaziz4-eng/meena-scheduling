@@ -178,21 +178,19 @@ function monthLabel(year, month) { return `${MONTHS[month-1]} ${year}`; }
 
 // Org-wide leave-request cutoff (day of the prior month). Loaded at login.
 let leaveCutoffDay = 15;
-// Mirror of the backend rule: a request for a *future* month must arrive on/before
-// the cutoff day of the month before it. Returns { ok, msg }.
+// Mirror of the backend rule: a request for month M must arrive on/before the
+// cutoff day of the PREVIOUS month — so same-month and late next-month requests
+// are both blocked. Returns { ok, msg }.
 function leaveWindowOpen(targetDateStr, cutoffDay = leaveCutoffDay) {
   const [y, m] = String(targetDateStr).split('-').map(n => parseInt(n, 10));
   const today = new Date();
-  const curIdx = today.getFullYear() * 12 + today.getMonth();
-  const tgtIdx = y * 12 + (m - 1);
-  if (tgtIdx <= curIdx) return { ok: true };
   const pmYear = m > 1 ? y : y - 1;
   const pmMonth = m > 1 ? m - 1 : 12;
   const deadline = new Date(pmYear, pmMonth - 1, Math.min(cutoffDay, 28));
   deadline.setHours(23, 59, 59, 999);
   if (today <= deadline) return { ok: true };
   const ds = `${pmYear}-${String(pmMonth).padStart(2,'0')}-${String(Math.min(cutoffDay,28)).padStart(2,'0')}`;
-  return { ok: false, msg: `Leave requests for ${y}-${String(m).padStart(2,'0')} closed on ${ds} (cutoff: day ${cutoffDay} of the previous month).` };
+  return { ok: false, msg: `Leave requests for ${y}-${String(m).padStart(2,'0')} closed on ${ds} (must be requested before day ${cutoffDay} of the previous month).` };
 }
 
 // ── Hijri (Umm al-Qura) dates via the browser's Intl calendar ─────────────────

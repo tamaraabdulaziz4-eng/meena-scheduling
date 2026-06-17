@@ -217,7 +217,7 @@ function openLeaveModal() {
   const msgEl = document.getElementById('leave-msg');
   if (['staff','admin'].includes(currentUser?.role)) {
     msgEl.className = 'msg';
-    msgEl.textContent = `Note: requests for a future month close on day ${leaveCutoffDay} of the month before.`;
+    msgEl.textContent = `Note: a month's leave must be requested before day ${leaveCutoffDay} of the previous month — no same-month requests.`;
   } else {
     msgEl.textContent = '';
   }
