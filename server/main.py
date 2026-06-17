@@ -332,6 +332,9 @@ def init_schema():
                          "reject_by INTEGER", "reject_role TEXT", "reject_at TIMESTAMP",
                          "reject_note TEXT"):
                 cur.execute(f"ALTER TABLE scheduling.shift_swaps ADD COLUMN IF NOT EXISTS {_col};")
+            # Legacy single-step swaps used status='pending'; map them onto the
+            # first stage of the new chain so they remain actionable.
+            cur.execute("UPDATE scheduling.shift_swaps SET status='pending_peer' WHERE status='pending';")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -1698,6 +1701,15 @@ async def create_swap(request: Request, user=Depends(get_current_user)):
         year, month = int(date_a[:4]), int(date_a[5:7])
     except (ValueError, IndexError):
         raise HTTPException(400, "date_a must be YYYY-MM-DD")
+    # Don't let two open swaps fight over the same cell — reject if either of
+    # these two shifts is already tied up in a pending swap.
+    dup = q("""SELECT 1 FROM scheduling.shift_swaps
+               WHERE status IN ('pending_peer','pending_lead','pending_manager')
+                 AND ((staff_a=%s AND date_a=%s) OR (staff_b=%s AND date_b=%s)
+                   OR (staff_a=%s AND date_a=%s) OR (staff_b=%s AND date_b=%s))""",
+            (staff_a, date_a, staff_a, date_a, staff_b, date_b, staff_b, date_b), one=True)
+    if dup:
+        raise HTTPException(409, "One of these shifts is already part of a pending swap")
     row = q("""INSERT INTO scheduling.shift_swaps
                (branch_id,year,month,staff_a,date_a,staff_b,date_b,note,created_by,status)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending_peer') RETURNING id""",
@@ -1738,19 +1750,31 @@ async def act_on_swap(swid: int, request: Request, user=Depends(get_current_user
         # The peer, the requester (cancel), the branch lead/manager, or a superadmin.
         if not (is_super or is_peer or is_requester or has_branch):
             raise HTTPException(403, "You can't reject this swap")
-        q("""UPDATE scheduling.shift_swaps
+        # Atomic: only reject if it's still open (guards against a concurrent approve).
+        claimed = q("""UPDATE scheduling.shift_swaps
              SET status='rejected', reject_by=%s, reject_role=%s, reject_at=NOW(), reject_note=%s
-             WHERE id=%s""", (user["id"], role, note, swid), exec_only=True)
+             WHERE id=%s AND status NOT IN ('approved','rejected') RETURNING id""",
+             (user["id"], role, note, swid), one=True)
+        if not claimed:
+            raise HTTPException(409, "Swap was already completed")
         insert_audit(user, "SWAP_REJECTED", f"swap:{swid}", label)
         notify_staff_member(sw["staff_a"], f"Shift swap declined: {label}", link="swaps", ntype="rejected")
         notify_staff_member(sw["staff_b"], f"Shift swap declined: {label}", link="swaps", ntype="rejected")
         return {"ok": True, "status": "rejected"}
 
-    # accept / approve → advance one stage
+    # accept / approve → advance exactly one stage. Each transition is an atomic
+    # UPDATE guarded on the current status, so a double-click / concurrent action
+    # is a no-op (RETURNING gives no row) rather than advancing or applying twice.
     if st == "pending_peer":
-        if not (is_peer or is_super):
-            raise HTTPException(403, "Only the colleague being swapped with can accept")
-        q("UPDATE scheduling.shift_swaps SET status='pending_lead', peer_at=NOW() WHERE id=%s", (swid,), exec_only=True)
+        # The peer accepts. If the colleague has no user account to act with, a
+        # branch lead / manager / superadmin may accept on their behalf.
+        peer_unlinked = not q("SELECT 1 FROM scheduling.users WHERE staff_id=%s", (sw["staff_b"],), one=True)
+        if not (is_peer or is_super or (peer_unlinked and has_branch)):
+            raise HTTPException(403, "Only the colleague being swapped with can accept this")
+        claimed = q("""UPDATE scheduling.shift_swaps SET status='pending_lead', peer_at=NOW()
+                       WHERE id=%s AND status='pending_peer' RETURNING id""", (swid,), one=True)
+        if not claimed:
+            raise HTTPException(409, "Swap already moved to the next step")
         insert_audit(user, "SWAP_PEER_OK", f"swap:{swid}", label)
         notify_branch_leads(sw["branch_id"], f"Shift swap awaiting your approval: {label}", link="swaps", ntype="swap")
         return {"ok": True, "status": "pending_lead"}
@@ -1758,8 +1782,10 @@ async def act_on_swap(swid: int, request: Request, user=Depends(get_current_user
     if st == "pending_lead":
         if not (has_branch or is_super):
             raise HTTPException(403, "Only the team lead or a manager can approve at this step")
-        q("UPDATE scheduling.shift_swaps SET status='pending_manager', lead_by=%s, lead_at=NOW() WHERE id=%s",
-          (user["id"], swid), exec_only=True)
+        claimed = q("""UPDATE scheduling.shift_swaps SET status='pending_manager', lead_by=%s, lead_at=NOW()
+                       WHERE id=%s AND status='pending_lead' RETURNING id""", (user["id"], swid), one=True)
+        if not claimed:
+            raise HTTPException(409, "Swap already moved to the next step")
         insert_audit(user, "SWAP_LEAD_OK", f"swap:{swid}", label)
         notify_roles(("manager", "superadmin"),
                      f"Shift swap approved by team lead — needs final approval: {label}",
@@ -1769,9 +1795,19 @@ async def act_on_swap(swid: int, request: Request, user=Depends(get_current_user
     if st == "pending_manager":
         if not is_reviewer:
             raise HTTPException(403, "Only a manager can give final approval")
+        # Make sure the rota exists *before* we mark approved, so we never end up
+        # "approved" without the cells actually being exchanged.
+        sched = q("""SELECT id FROM scheduling.schedules
+                     WHERE branch_id=%s AND year=%s AND month=%s""",
+                  (sw["branch_id"], sw["year"], sw["month"]), one=True)
+        if not sched:
+            raise HTTPException(409, "No schedule exists for this month to apply the swap")
+        # Claim the final approval atomically; only the winner applies the swap.
+        claimed = q("""UPDATE scheduling.shift_swaps SET status='approved', mgr_by=%s, mgr_at=NOW()
+                       WHERE id=%s AND status='pending_manager' RETURNING id""", (user["id"], swid), one=True)
+        if not claimed:
+            raise HTTPException(409, "Swap was already finalised")
         _apply_swap(sw)
-        q("UPDATE scheduling.shift_swaps SET status='approved', mgr_by=%s, mgr_at=NOW() WHERE id=%s",
-          (user["id"], swid), exec_only=True)
         insert_audit(user, "SWAP_APPROVED", f"swap:{swid}", label)
         notify_staff_member(sw["staff_a"], f"Your shift swap was approved and applied: {label}", link="swaps", ntype="approved")
         notify_staff_member(sw["staff_b"], f"Shift swap approved and applied: {label}", link="swaps", ntype="approved")
