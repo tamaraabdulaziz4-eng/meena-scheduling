@@ -105,6 +105,8 @@ async function loadScheduleData() {
       loadShiftTypes(currentBranchId),
       API.get(`/staff-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`)
         .catch(() => ({})),
+      (typeof loadHolidaysForMonth === 'function'
+        ? loadHolidaysForMonth(scheduleYear, scheduleMonth) : Promise.resolve()),
     ]);
 
     scheduleStaff   = staffData.filter(s => s.active);
@@ -142,25 +144,44 @@ function renderTeamLeadBanner() {
   const status = currentSchedule.status || 'draft';
   const note   = currentSchedule.review_note;
   const sid    = currentSchedule.id;
-  const isManager = currentUser?.role === 'superadmin';
+  // Reviewers (manager / full admin) don't submit/withdraw — they use the
+  // Review page and can edit directly — so skip the team-lead banner for them.
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
+  if (isReviewer) { wrap.innerHTML = ''; return; }
 
-  // Managers don't need the submit banner; they use the Review page.
-  if (isManager) { wrap.innerHTML = ''; return; }
-
-  // When the schedule is locked (in review/approved), disable editing tools so
-  // the team lead can't try actions the server will reject anyway.
+  // When the schedule is locked, disable editing tools so the team lead can't
+  // try actions the server will reject anyway. A schedule is "locked" either
+  // because it's in the review pipeline (submitted/reviewed/approved) OR because
+  // someone hit the manual 🔒 toggle while it was still a draft/returned. Both
+  // cases block Generate server-side, so both must disable the button — otherwise
+  // the user clicks Generate, gets a "withdraw it first" error, and finds no
+  // Withdraw button to use.
   const lockedForReview = ['submitted','reviewed','approved'].includes(status);
+  const manuallyLocked  = !!currentSchedule.is_locked && !lockedForReview;
+  const editingLocked   = lockedForReview || manuallyLocked;
   const genBtn = document.getElementById('btn-generate');
   const setBtn = document.getElementById('btn-settings');
   [genBtn, setBtn].forEach(b => {
     if (!b) return;
-    b.disabled = lockedForReview;
-    b.style.opacity = lockedForReview ? '0.45' : '';
-    b.style.pointerEvents = lockedForReview ? 'none' : '';
+    b.disabled = editingLocked;
+    b.style.opacity = editingLocked ? '0.45' : '';
+    b.style.pointerEvents = editingLocked ? 'none' : '';
   });
 
   let html = '';
-  if (status === 'draft' || status === 'returned') {
+  if (manuallyLocked) {
+    // Draft/returned but manually locked: Generate is blocked but there's no
+    // review step to withdraw from — surface an Unlock action instead.
+    html = `
+      <div class="tl-status-banner warn">
+        <div class="ico" style="background:rgba(243,156,18,.15)">🔒</div>
+        <div style="flex:1">
+          <div class="ttl">Schedule locked</div>
+          <div class="sub">This schedule is manually locked, so it can't be generated or edited. Unlock it to make changes.</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="toggleScheduleLock()">🔓 Unlock</button>
+      </div>`;
+  } else if (status === 'draft' || status === 'returned') {
     const returned = status === 'returned';
     html = `
       <div class="tl-status-banner ${returned ? 'err' : ''}">
@@ -174,7 +195,8 @@ function renderTeamLeadBanner() {
           📤 Submit for review
         </button>
       </div>`;
-  } else if (status === 'submitted' || status === 'reviewed') {
+  } else if (status === 'submitted') {
+    // Manager hasn't acted yet — the team lead can still pull it back.
     html = `
       <div class="tl-status-banner warn">
         <div class="ico" style="background:rgba(255,159,67,.15)">⏳</div>
@@ -184,13 +206,23 @@ function renderTeamLeadBanner() {
         </div>
         <button class="btn btn-ghost btn-sm" onclick="withdrawSchedule(${sid})">↩ Withdraw</button>
       </div>`;
+  } else if (status === 'reviewed') {
+    // Manager has already reviewed it — only the manager can reopen it now.
+    html = `
+      <div class="tl-status-banner warn">
+        <div class="ico" style="background:rgba(255,159,67,.15)">👀</div>
+        <div style="flex:1">
+          <div class="ttl">Reviewed by manager — locked</div>
+          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'To make changes, ask your manager to return the schedule.'}</div>
+        </div>
+      </div>`;
   } else if (status === 'approved') {
     html = `
       <div class="tl-status-banner ok">
         <div class="ico" style="background:rgba(0,200,150,.15)">✓</div>
         <div style="flex:1">
-          <div class="ttl" style="color:#009B74">Approved</div>
-          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'This schedule has been approved by the manager.'}</div>
+          <div class="ttl" style="color:#009B74">Approved — locked</div>
+          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'This schedule is approved. To make changes, ask your manager to return it.'}</div>
         </div>
       </div>`;
   }
@@ -230,6 +262,7 @@ function renderScheduleStatusBar() {
   if (!bar || !currentSchedule) return;
   const s = currentSchedule;
   const isAdmin = ['admin','superadmin'].includes(currentUser?.role);
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
 
   bar.innerHTML = `
     ${isAdmin ? `
@@ -242,6 +275,7 @@ function renderScheduleStatusBar() {
       <span style="font-size:11px;font-weight:600;color:${s.is_locked ? '#e17055' : ''}">
         ${s.is_locked ? '🔒 Locked' : ''}
       </span>`}
+    ${(isReviewer && s.is_locked) ? `<span style="font-size:11px;font-weight:600;color:var(--accent)">✎ You can edit this as a manager</span>` : ''}
     ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${s.created_by_name}</strong></span>` : ''}
   `;
 }
@@ -310,12 +344,23 @@ function renderScheduleStats() {
   const icoCall  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
   const icoLeaf  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
 
+  // Hijri month span for this Gregorian month (e.g. "Dhuʻl-Q. – Dhuʻl-H. 1447").
+  let hijriPill = '';
+  if (typeof _hijriFullFmt !== 'undefined' && _hijriFullFmt) {
+    const part = (d) => new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{month:'short'}).format(new Date(scheduleYear, scheduleMonth-1, d));
+    const yr   = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{year:'numeric'}).format(new Date(scheduleYear, scheduleMonth-1, 15));
+    const m1 = part(1), m2 = part(nDays);
+    const span = (m1 === m2) ? m1 : `${m1}–${m2}`;
+    hijriPill = `<div class="stat-pill" title="Hijri (Umm al-Qura)">🌙 <strong>${span} ${yr}</strong></div>`;
+  }
+
   bar.innerHTML = `
     <div class="stat-pill">${icoStaff} <strong data-count="${total}">0</strong> staff</div>
     <div class="stat-pill">${icoDays} <strong data-count="${nDays}">0</strong> days</div>
     <div class="stat-pill">${icoShift} <strong data-count="${working}">0</strong> shifts assigned</div>
     <div class="stat-pill">${icoCall} <strong data-count="${onCall}">0</strong> on-call</div>
-    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>`;
+    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>
+    ${hijriPill}`;
 
   // Animate each number counting up
   bar.querySelectorAll('strong[data-count]').forEach(el => countUp(el, parseInt(el.dataset.count) || 0));
@@ -328,6 +373,10 @@ function renderRotaGrid() {
 
   const nDays   = daysInMonth(scheduleYear, scheduleMonth);
   const isLocked = !!currentSchedule?.is_locked;
+  // Reviewers (manager / full admin) are the authority on a schedule — the lock
+  // exists to stop the team lead changing it mid-review, not the manager. So a
+  // reviewer can still edit cells directly even when the schedule is locked.
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
 
   // Group staff: General first, then US
   const generalStaff = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
@@ -342,7 +391,13 @@ function renderRotaGrid() {
         ${Array.from({length:nDays},(_,i)=>{
           const d = i+1;
           const dow = dayOfWeek(scheduleYear, scheduleMonth, d);
-          return `<th style="${dow===5||dow===6?'background:rgba(107,78,255,0.12);':''}${d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear()?'border-bottom:2px solid var(--accent);':''}">${d}</th>`;
+          const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          const holiday = (typeof holidayMap !== 'undefined') ? holidayMap[dateStr] : null;
+          const hij = (typeof hijriFull === 'function') ? hijriFull(scheduleYear, scheduleMonth, d) : '';
+          const isToday = d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear();
+          const title = [hij, holiday ? ('🎌 ' + holiday) : ''].filter(Boolean).join(' — ');
+          const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5||dow===6?'background:rgba(107,78,255,0.12);':'');
+          return `<th title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid #FF6B6B;':''}">${d}${holiday?'<span style="color:#FF6B6B">•</span>':''}</th>`;
         }).join('')}
         <th style="min-width:60px">Shifts</th>
       </tr>
@@ -380,7 +435,7 @@ function renderRotaGrid() {
         const txtColor = isBlank ? '#000000' : contrastColor(bgColor);
         const weekend  = dow===5||dow===6 ? 'rgba(107,78,255,0.04)' : '';
 
-        const cellReadonly = isLocked;
+        const cellReadonly = isLocked && !isReviewer;
         const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':''].filter(Boolean).join(' ');
         return `<td class="${classes}"
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
@@ -471,8 +526,10 @@ function coverageRow(nDays) {
 
 // ── Cell click → shift picker ─────────────────────────────────────────────────
 function cellClick(cell) {
-  if (currentSchedule?.is_locked) return;
-  if (!['admin','superadmin'].includes(currentUser?.role)) return;
+  const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
+  // A lock blocks the team lead, but a reviewer can always edit (see renderRotaGrid).
+  if (currentSchedule?.is_locked && !isReviewer) return;
+  if (!['admin','superadmin','manager'].includes(currentUser?.role)) return;
 
   // If picker already open for this cell, close it (toggle)
   if (pickerCell === cell && document.getElementById('shift-picker').style.display === 'grid') {
@@ -620,6 +677,7 @@ async function toggleScheduleLock() {
   try {
     currentSchedule = await API.put(`/schedules/${currentSchedule.id}/lock`, { locked: willLock });
     renderScheduleStatusBar();
+    renderTeamLeadBanner();
     renderRotaGrid();
     toast(willLock ? '🔒 Schedule locked' : '🔓 Schedule unlocked', 'ok');
   } catch (err) { toast(err.message, 'err'); }

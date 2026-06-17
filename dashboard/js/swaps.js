@@ -1,0 +1,189 @@
+// ── Shift swaps page ──────────────────────────────────────────────────────────
+let allSwaps = [];
+
+async function loadSwaps() {
+  const bid = document.getElementById('swap-filter-branch')?.value || '';
+  const st  = document.getElementById('swap-filter-status')?.value || '';
+  let params = [];
+  if (bid) params.push(`branch_id=${bid}`);
+  if (st)  params.push(`status=${st}`);
+  allSwaps = await API.get(`/swaps${params.length ? '?' + params.join('&') : ''}`);
+  return allSwaps;
+}
+
+function renderSwapsPage() {
+  const canRequest = ['admin','superadmin'].includes(currentUser?.role);
+  setTopbar('Shift Swaps', 'Request and approve shift exchanges',
+    canRequest ? `<button class="btn btn-sm" onclick="openSwapModal()">+ Request Swap</button>` : ''
+  );
+  const isSuper = currentUser?.role === 'superadmin';
+  const c = document.getElementById('content');
+  c.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
+      <select id="swap-filter-status" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none">
+        <option value="">All statuses</option>
+        <option value="pending">Pending</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      ${isSuper ? `<select id="swap-filter-branch" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Branch</th><th>Swap</th><th>Progress</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="swaps-tbody"></tbody>
+      </table>
+    </div>`;
+  refreshSwaps();
+}
+
+async function refreshSwaps() {
+  showLoader('Loading swaps…');
+  try { await loadSwaps(); renderSwapsList(); }
+  catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
+}
+
+// The 3-step approval chain, rendered as a stepper.
+const SWAP_STEP_ORDER = ['pending_peer', 'pending_lead', 'pending_manager', 'approved'];
+function swapStepper(s) {
+  // Each step: done if the swap has moved past it.
+  const idx = SWAP_STEP_ORDER.indexOf(s.status);
+  const rejected = s.status === 'rejected';
+  const steps = [
+    { key: 'peer',    label: 'Colleague',  when: s.peer_at, who: s.staff_b_name },
+    { key: 'lead',    label: 'Team Lead',  when: s.lead_at, who: s.lead_name },
+    { key: 'manager', label: 'Manager',    when: s.mgr_at,  who: s.mgr_name },
+  ];
+  return `<div class="swap-stepper">` + steps.map((step, i) => {
+    // step i is "done" once status index > i (peer done at pending_lead=1, etc.)
+    const done = idx > i;
+    const current = !rejected && idx === i;
+    const cls = done ? 'done' : (current ? 'current' : '');
+    const mark = done ? '✓' : (current ? '●' : '○');
+    const sub = done && step.who ? escapeHtml(step.who) : (current ? 'waiting' : '');
+    return `<span class="swap-step ${cls}" title="${step.label}${sub?': '+sub:''}">
+        <b>${mark}</b> ${step.label}${sub ? `<i>${sub}</i>` : ''}</span>`;
+  }).join('<span class="swap-arrow">›</span>') + `</div>` +
+  (rejected ? `<div class="swap-rejected">✕ Declined${s.reject_name ? ' by ' + escapeHtml(s.reject_name) : ''}${s.reject_note ? ' — ' + escapeHtml(s.reject_note) : ''}</div>` : '');
+}
+
+// What action (if any) can the current user take on this swap right now?
+function swapActionsFor(s) {
+  const role = currentUser?.role;
+  const myStaff = currentUser?.staff_id;
+  const isSuper = role === 'superadmin';
+  const isReviewer = ['manager','superadmin'].includes(role);
+  const hasBranch = ['admin','manager','superadmin'].includes(role); // branch enforced server-side
+  let primary = null;  // {label}
+  if (s.status === 'pending_peer'    && ((role === 'staff' && myStaff === s.staff_b) || isSuper)) primary = 'Accept';
+  else if (s.status === 'pending_lead'    && hasBranch) primary = 'Approve';
+  else if (s.status === 'pending_manager' && isReviewer) primary = 'Approve';
+
+  // Reject/cancel: peer, requester, branch lead/manager, or superadmin — while still open.
+  const canReject = !['approved','rejected'].includes(s.status) &&
+    (isSuper || hasBranch ||
+     (role === 'staff' && (myStaff === s.staff_a || myStaff === s.staff_b)));
+  const amRequester = role === 'staff' && myStaff === s.staff_a;
+
+  let html = '';
+  if (primary) html += `<button class="action-btn" onclick="actSwap(${s.id},'${primary==='Accept'?'accept':'approve'}','${primary}')">${primary}</button> `;
+  if (canReject) html += `<button class="action-btn danger" onclick="actSwap(${s.id},'reject')">${amRequester && s.status==='pending_peer' ? 'Cancel' : 'Reject'}</button>`;
+  return html || '—';
+}
+
+function renderSwapsList() {
+  const tb = document.getElementById('swaps-tbody');
+  if (!tb) return;
+  if (!allSwaps.length) {
+    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No swap requests</td></tr>`;
+    return;
+  }
+  tb.innerHTML = allSwaps.map((s, i) => `
+    <tr>
+      <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
+      <td style="font-size:12px;color:var(--muted)">${escapeHtml(s.branch_name || '—')}</td>
+      <td>
+        <div style="font-weight:600">${escapeHtml(s.staff_a_name)} <span style="color:var(--accent)">↔</span> ${escapeHtml(s.staff_b_name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${fmtDateDisplay(s.date_a)} ↔ ${fmtDateDisplay(s.date_b)}</div>
+      </td>
+      <td>${swapStepper(s)}</td>
+      <td style="white-space:nowrap">${swapActionsFor(s)}</td>
+    </tr>`).join('');
+}
+
+async function actSwap(id, action, label) {
+  if (action === 'approve' || action === 'accept') {
+    const ok = await showConfirm(`${label || 'Approve'} swap`,
+      action === 'accept'
+        ? 'Accept this shift swap with your colleague?'
+        : 'Approve this step? Final manager approval will exchange the shifts.',
+      label || 'Approve', 'confirm-ok');
+    if (!ok) return;
+  } else {
+    const ok = await showConfirm('Reject swap', 'Decline this shift swap request?', 'Reject');
+    if (!ok) return;
+  }
+  try {
+    await API.put(`/swaps/${id}/action`, { action });
+    toast('Done');
+    await refreshSwaps();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ── Request modal ─────────────────────────────────────────────────────────────
+function swapStaffOptions() {
+  const filtered = ['superadmin','manager'].includes(currentUser?.role)
+    ? allStaff
+    : allStaff.filter(s => s.branch_id === currentUser?.branch_id);
+  return '<option value="">Select staff…</option>' +
+    filtered.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${escapeHtml(s.branch_name || '?')})</option>`).join('');
+}
+
+function openSwapModal() {
+  const isStaff = currentUser?.role === 'staff';
+  const aStaff = document.getElementById('swap-a-staff');
+  const aField = aStaff.closest('.form-field');
+  // A staff member is always "Staff A" (themselves) — hide that picker.
+  if (aField) aField.style.display = isStaff ? 'none' : '';
+  aStaff.innerHTML = swapStaffOptions();
+  document.getElementById('swap-b-staff').innerHTML = swapStaffOptions();
+  const today = fmtDate(new Date());
+  document.getElementById('swap-a-date').value = today;
+  document.getElementById('swap-b-date').value = today;
+  document.getElementById('swap-note').value = '';
+  document.getElementById('swap-msg').textContent = '';
+  document.getElementById('swap-modal-overlay').classList.add('open');
+}
+
+function closeSwapModal() {
+  document.getElementById('swap-modal-overlay').classList.remove('open');
+}
+
+async function saveSwap() {
+  const msg = document.getElementById('swap-msg');
+  const btn = document.getElementById('swap-save-btn');
+  const isStaff = currentUser?.role === 'staff';
+  const staff_a = isStaff ? (currentUser?.staff_id || '') : document.getElementById('swap-a-staff').value;
+  const date_a  = document.getElementById('swap-a-date').value;
+  const staff_b = document.getElementById('swap-b-staff').value;
+  const date_b  = document.getElementById('swap-b-date').value;
+  const note    = document.getElementById('swap-note').value.trim();
+  if (!staff_a || !staff_b) { msg.className='msg err'; msg.textContent='Pick the colleague to swap with'; return; }
+  if (String(staff_a) === String(staff_b)) { msg.className='msg err'; msg.textContent='Pick a different colleague'; return; }
+  if (!date_a || !date_b) { msg.className='msg err'; msg.textContent='Both dates are required'; return; }
+  msg.className='msg'; msg.textContent='';
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+  try {
+    await API.post('/swaps', { staff_a: Number(staff_a), date_a, staff_b: Number(staff_b), date_b, note });
+    closeSwapModal();
+    toast('Swap request submitted');
+    if (currentPage === 'swaps') await refreshSwaps();
+  } catch (e) {
+    msg.className='msg err'; msg.textContent = e.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit Request'; }
+  }
+}

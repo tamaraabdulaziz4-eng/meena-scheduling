@@ -957,3 +957,74 @@ body.dark .logo-box { background: rgba(255,255,255,.92); }
 
 /* stat pill icons */
 .stat-pill svg { width: 15px; height: 15px; vertical-align: -2px; opacity: .7; }
+
+/* ── Notifications ─────────────────────────────────────────────────────────── */
+.notif-wrap { position: relative; }
+.notif-bell {
+  position: relative; background: var(--card-alt); border: 1.5px solid var(--border);
+  color: var(--text); width: 38px; height: 38px; border-radius: 10px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: border-color .15s;
+}
+.notif-bell:hover { border-color: var(--accent); color: var(--accent); }
+.notif-bell svg { width: 18px; height: 18px; }
+.notif-badge {
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px;
+  background: #FF6B6B; color: #fff; font-size: 10px; font-weight: 800; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg);
+}
+.notif-panel {
+  position: absolute; top: 46px; right: 0; width: 340px; max-height: 460px; overflow: auto;
+  background: var(--card); border: 1.5px solid var(--border); border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.22); z-index: 1200;
+}
+.notif-head {
+  display: flex; align-items: center; justify-content: space-between; padding: 12px 14px;
+  border-bottom: 1px solid var(--border); font-weight: 700; font-size: 13px;
+  position: sticky; top: 0; background: var(--card);
+}
+.notif-head button {
+  background: none; border: none; color: var(--accent); font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.notif-item {
+  display: flex; gap: 10px; align-items: flex-start; padding: 11px 14px; cursor: pointer;
+  border-bottom: 1px solid var(--border); transition: background .12s;
+}
+.notif-item:hover { background: var(--card-alt); }
+.notif-item.unread { background: rgba(107,78,255,0.06); }
+.notif-ico { font-size: 16px; line-height: 1.3; }
+.notif-msg { font-size: 13px; color: var(--text); line-height: 1.35; }
+.notif-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.notif-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex-shrink: 0; }
+
+/* ── Staff portal (My Schedule) ───────────────────────────────────────────── */
+.portal-grid-wrap {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(82px, 1fr)); gap: 8px;
+}
+.portal-day {
+  border: 1.5px solid var(--border); border-radius: 10px; padding: 6px; text-align: center;
+  background: var(--card); display: flex; flex-direction: column; gap: 3px;
+}
+.portal-day .pd-top { display: flex; justify-content: space-between; align-items: baseline; }
+.portal-day .pd-num { font-weight: 800; font-size: 14px; color: var(--text); }
+.portal-day .pd-dow { font-size: 10px; color: var(--muted); font-weight: 600; }
+.portal-day .pd-hijri { font-size: 9px; color: var(--muted); }
+.portal-day .pd-shift {
+  border-radius: 7px; padding: 5px 2px; font-weight: 800; font-size: 13px; margin-top: 2px;
+}
+.portal-day .pd-shift sup { font-size: 8px; }
+.portal-day .pd-time { font-size: 9px; color: var(--muted); }
+
+/* ── Shift-swap approval stepper ──────────────────────────────────────────── */
+.swap-stepper { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.swap-step {
+  display: inline-flex; flex-direction: column; align-items: flex-start;
+  font-size: 11px; color: var(--muted); line-height: 1.2; padding: 2px 6px;
+  border-radius: 6px; border: 1px solid var(--border);
+}
+.swap-step b { font-weight: 800; }
+.swap-step i { font-style: normal; font-size: 9px; opacity: .8; }
+.swap-step.done    { color: #00A87D; border-color: rgba(0,200,150,.35); background: rgba(0,200,150,.08); }
+.swap-step.current { color: var(--accent); border-color: rgba(107,78,255,.4); background: rgba(107,78,255,.08); }
+.swap-arrow { color: var(--muted); font-size: 12px; }
+.swap-rejected { font-size: 11px; color: #cc4444; margin-top: 4px; font-weight: 600; }

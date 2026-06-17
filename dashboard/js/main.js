@@ -19,17 +19,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initApp() {
   document.getElementById('sidebar-user').textContent = `${currentUser.username} · ${currentUser.role}`;
 
-  // Roles: viewer < admin (team lead) < manager < superadmin (full admin)
+  // Roles: viewer < staff < admin (team lead) < manager < superadmin (full admin)
   const role = currentUser.role;
+  const isStaff = role === 'staff';
   const isManager = role === 'manager';
   const isSuperAdmin = role === 'superadmin';
   // "Admin tools" (branches, shift types, users, audit) are for the full admin only.
   // The manager is intentionally kept focused: Schedule, Staff, Leave, Review.
   const showAdminTools = isSuperAdmin;
-  // Staff page stays visible to all roles (view-only for non-editors), as before.
-  const canSeeStaff = true;
+  // A staff member gets a stripped-down portal: only My Schedule + Leave.
+  const canSeeStaff = !isStaff;
   // Reviewers (manager + full admin) get the Review page.
   const isReviewer = ['manager','superadmin'].includes(role);
+
+  // Staff self-service nav item.
+  const mySchedNav = document.getElementById('nav-myschedule');
+  if (mySchedNav) mySchedNav.style.display = isStaff ? 'flex' : 'none';
+  // Hide the team rota / staff list / etc. from a staff member.
+  const schedNav = document.getElementById('nav-schedule');
+  if (schedNav) schedNav.style.display = isStaff ? 'none' : 'flex';
 
   document.getElementById('nav-section-admin').style.display = showAdminTools ? 'block' : 'none';
   document.getElementById('nav-branches').style.display    = showAdminTools ? 'flex' : 'none';
@@ -44,12 +52,20 @@ async function initApp() {
   // Review page for reviewers (manager + full admin)
   const reviewNav = document.getElementById('nav-review');
   if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
+  // Swaps page for everyone except plain viewers (staff request & track theirs).
+  const swapsNav = document.getElementById('nav-swaps');
+  if (swapsNav) swapsNav.style.display = (role === 'viewer') ? 'none' : 'flex';
+  // A staff member can still reach the Leave page (their own requests only).
+  const leavesNav = document.getElementById('nav-leaves');
+  if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
+  // Kick off in-app notification polling once the user is in.
+  if (typeof startNotifPolling === 'function') startNotifPolling();
   // Pre-load the pending-review count so the badge shows on login
   if (isReviewer && typeof loadReviewBadgeCount === 'function') {
     loadReviewBadgeCount();
   }
-  // A manager lands on the Review page by default; others on Schedule.
-  window._defaultPage = isManager ? 'review' : 'schedule';
+  // Staff land on their own schedule; a manager on Review; others on Schedule.
+  window._defaultPage = isStaff ? 'myschedule' : (isManager ? 'review' : 'schedule');
 
   // Load global data
   showLoader('Loading data…');
@@ -82,7 +98,12 @@ async function showPage(page) {
   await new Promise(r => setTimeout(r, 140));
 
   switch (page) {
+    case 'myschedule':
+      await renderMySchedulePage();
+      break;
+
     case 'schedule':
+      if (currentUser?.role === 'staff') { showPage('myschedule'); return; }
       await renderSchedulePage();
       break;
 
@@ -97,6 +118,12 @@ async function showPage(page) {
 
     case 'leaves':
       renderLeavesPage();
+      break;
+
+    case 'swaps':
+      if (currentUser?.role === 'viewer') { showPage('schedule'); return; }
+      try { await loadStaff(); } catch(e){}
+      renderSwapsPage();
       break;
 
     case 'branches':

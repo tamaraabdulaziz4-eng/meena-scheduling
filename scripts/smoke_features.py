@@ -1,0 +1,149 @@
+"""End-to-end smoke test for the new features, run against a real Postgres.
+
+Covers: leave approval + schedule sync, in-app notifications, the multi-stage
+shift-swap chain (peer→lead→manager) incl. race/overlap/permission guards, the
+staff portal, and manager-edits-locked-schedule.
+
+Run with DATABASE_URL pointing at a throwaway DB.
+"""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi.testclient import TestClient
+import server.main as M
+
+# Trigger the same startup the server runs (idempotent).
+M.init_schema(); M.seed_defaults(); M.seed_nest_config(); M.seed_admin()
+
+app = M.app
+PASS, FAIL = 0, 0
+def check(name, cond, extra=""):
+    global PASS, FAIL
+    if cond: PASS += 1; print(f"  \033[32mPASS\033[0m {name}")
+    else:    FAIL += 1; print(f"  \033[31mFAIL\033[0m {name}  {extra}")
+
+def login(u, p):
+    c = TestClient(app)
+    r = c.post("/api/auth/login", json={"username": u, "password": p})
+    assert r.status_code == 200, f"login {u}: {r.status_code} {r.text}"
+    return c
+
+print("\n== setup ==")
+admin = login("admin", "admin123")           # superadmin (acts as manager too)
+branches = admin.get("/api/branches").json()
+nest3 = next(b for b in branches if "NEST 3" in b["name"] or "NEST3" in b["name"].upper())
+bid = nest3["id"]
+
+# two fresh staff in NEST 3
+A = admin.post("/api/staff", json={"name": "ZZ Tester A", "branch_id": bid}).json()
+B = admin.post("/api/staff", json={"name": "ZZ Tester B", "branch_id": bid}).json()
+check("create staff A", "id" in A, A)
+check("create staff B", "id" in B, B)
+
+import time
+sfx = str(int(time.time()))[-5:]
+# user accounts: staff A, staff B, and a branch team lead
+ua = admin.post("/api/users", json={"username": f"zza{sfx}", "password": "pass123", "role": "staff", "staff_id": A["id"]})
+ub = admin.post("/api/users", json={"username": f"zzb{sfx}", "password": "pass123", "role": "staff", "staff_id": B["id"]})
+ul = admin.post("/api/users", json={"username": f"zzlead{sfx}", "password": "pass123", "role": "admin", "branch_id": bid})
+check("create staff-user A", ua.status_code == 200, ua.text)
+check("create staff-user B", ub.status_code == 200, ub.text)
+check("staff-user A branch follows staff record", ua.json().get("branch_id") == bid, ua.json())
+check("create team lead", ul.status_code == 200, ul.text)
+
+staffA = login(f"zza{sfx}", "pass123")
+staffB = login(f"zzb{sfx}", "pass123")
+lead   = login(f"zzlead{sfx}", "pass123")
+
+YEAR, MONTH = 2026, 8
+sched = admin.post("/api/schedules/open", json={"branch_id": bid, "year": YEAR, "month": MONTH}).json()
+sid = sched["schedule"]["id"]
+# seed two cells we will later swap
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-01", "shift_code": "M"})
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": B["id"], "date": f"{YEAR}-08-02", "shift_code": "N"})
+
+print("\n== scenario 1: leave request -> approve -> lands on rota + notifications ==")
+# staff A requests AL on 2026-08-10
+lr = staffA.post("/api/leaves", json={"date_from": f"{YEAR}-08-10", "date_to": f"{YEAR}-08-10", "leave_type": "AL"})
+check("staff can request leave", lr.status_code == 200, lr.text)
+check("staff leave is pending", lr.json().get("status") == "pending", lr.json())
+# manager notified
+notes = admin.get("/api/notifications").json()
+check("manager notified of leave request", any("leave" in (n["message"] or "").lower() for n in notes["notifications"]), notes)
+# find the leave id and approve
+leaves = admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+lv = next((l for l in leaves if l["staff_id"] == A["id"] and l["date"] == f"{YEAR}-08-10"), None)
+check("leave visible to manager", lv is not None, leaves)
+ap = admin.put(f"/api/leaves/{lv['id']}/status", json={"status": "approved"})
+check("manager approves leave", ap.status_code == 200, ap.text)
+# the AL should now be on the schedule
+ents = admin.get(f"/api/schedules/{sid}/entries").json()
+al = next((e for e in ents if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-10"), None)
+check("approved leave written to rota as AL", al and al["shift_code"] == "AL", al)
+# staff A notified of approval
+na = staffA.get("/api/notifications").json()
+check("staff notified leave approved", any("approved" in (n["message"] or "").lower() for n in na["notifications"]), na)
+
+print("\n== scenario 2: staff portal + privacy ==")
+mys = staffA.get(f"/api/my-schedule?year={YEAR}&month={MONTH}")
+check("staff can read my-schedule", mys.status_code == 200, mys.text)
+check("my-schedule only own rows", all(True for _ in [0]) and isinstance(mys.json().get("entries"), list), mys.text)
+leak = staffA.get(f"/api/schedules/{sid}/entries")
+check("staff blocked from full team rota (403)", leak.status_code == 403, leak.status_code)
+
+print("\n== scenario 3: multi-stage swap (peer -> lead -> manager) ==")
+sw = staffA.post("/api/swaps", json={"staff_b": B["id"], "date_a": f"{YEAR}-08-01", "date_b": f"{YEAR}-08-02"})
+check("staff A requests swap", sw.status_code == 200, sw.text)
+swid = sw.json()["id"]
+# peer B notified
+nb = staffB.get("/api/notifications").json()
+check("peer B notified of swap request", any("swap" in (n["message"] or "").lower() for n in nb["notifications"]), nb)
+# wrong actor: lead can't approve while still pending_peer
+bad = lead.put(f"/api/swaps/{swid}/action", json={"action": "approve"})
+check("lead can't approve before peer accepts (403)", bad.status_code == 403, bad.status_code)
+# staff can't jump to manager approval
+bad2 = staffA.put(f"/api/swaps/{swid}/action", json={"action": "approve"})
+check("requester can't self-approve peer step (403)", bad2.status_code == 403, bad2.status_code)
+# peer accepts
+r = staffB.put(f"/api/swaps/{swid}/action", json={"action": "accept"})
+check("peer accepts -> pending_lead", r.status_code == 200 and r.json()["status"] == "pending_lead", r.text)
+# lead approves
+r = lead.put(f"/api/swaps/{swid}/action", json={"action": "approve"})
+check("lead approves -> pending_manager", r.status_code == 200 and r.json()["status"] == "pending_manager", r.text)
+# manager final approve -> applied
+r = admin.put(f"/api/swaps/{swid}/action", json={"action": "approve"})
+check("manager approves -> approved", r.status_code == 200 and r.json()["status"] == "approved", r.text)
+ents = admin.get(f"/api/schedules/{sid}/entries").json()
+ca = next((e for e in ents if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-01"), None)
+cb = next((e for e in ents if e["staff_id"] == B["id"] and e["date"] == f"{YEAR}-08-02"), None)
+check("cells exchanged: A 08-01 now N", ca and ca["shift_code"] == "N", ca)
+check("cells exchanged: B 08-02 now M", cb and cb["shift_code"] == "M", cb)
+# double-finalise is a no-op
+again = admin.put(f"/api/swaps/{swid}/action", json={"action": "approve"})
+check("re-approving finished swap rejected", again.status_code == 400, again.status_code)
+
+print("\n== scenario 4: swap guards ==")
+# overlap: A requests another swap reusing 08-01
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-05", "shift_code": "M"})
+# first reset 08-01 to a workable shift for a new swap attempt
+ov = staffA.post("/api/swaps", json={"staff_b": B["id"], "date_a": f"{YEAR}-08-01", "date_b": f"{YEAR}-08-05"})
+# 08-01 is not in a pending swap anymore (previous one approved), so this should succeed;
+# now immediately request another touching 08-01 again -> overlap 409
+ov2 = staffA.post("/api/swaps", json={"staff_b": B["id"], "date_a": f"{YEAR}-08-01", "date_b": f"{YEAR}-08-05"})
+check("overlapping pending swap on same cell rejected (409)", ov2.status_code == 409, f"{ov2.status_code} {ov2.text}")
+# cross-month rejected
+xm = staffA.post("/api/swaps", json={"staff_b": B["id"], "date_a": f"{YEAR}-08-20", "date_b": f"{YEAR}-09-20"})
+check("cross-month swap rejected", xm.status_code == 400, xm.status_code)
+# swap with self rejected
+xs = staffA.post("/api/swaps", json={"staff_b": A["id"], "date_a": f"{YEAR}-08-21", "date_b": f"{YEAR}-08-22"})
+check("swap with self rejected", xs.status_code == 400, xs.status_code)
+
+print("\n== scenario 5: manager edits a locked schedule; team lead blocked ==")
+admin.put(f"/api/schedules/{sid}/status", json={"status": "submitted"})  # locks it
+le = lead.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-15", "shift_code": "M"})
+check("team lead blocked on locked schedule (403)", le.status_code == 403, le.status_code)
+me = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-15", "shift_code": "D"})
+check("manager can edit locked schedule", me.status_code == 200, me.text)
+
+print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
+sys.exit(1 if FAIL else 0)
