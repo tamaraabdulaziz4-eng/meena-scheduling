@@ -330,6 +330,8 @@ def init_schema():
                            ON CONFLICT (key) DO NOTHING;""")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
+            # Session epoch: bumped on password change to invalidate old tokens.
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS token_epoch INTEGER NOT NULL DEFAULT 0;")
             # Multi-stage swap approval: peer → team lead → manager. Track each step.
             for _col in ("peer_at TIMESTAMP",
                          "lead_by INTEGER", "lead_at TIMESTAMP",
@@ -531,7 +533,20 @@ def get_current_user(request: Request) -> dict:
             request.headers.get("authorization", "").replace("Bearer ", "")
     if not token:
         raise HTTPException(401, "Not authenticated")
-    return verify_token(token)
+    payload = verify_token(token)
+    # Re-validate against the DB so a deleted/downgraded account (or one whose
+    # password was changed) can't keep using an old 30-day token. We trust the
+    # live row for role/branch, not whatever was baked into the token.
+    row = q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,
+                      COALESCE(u.token_epoch,0) AS token_epoch, b.name AS branch_name
+               FROM scheduling.users u
+               LEFT JOIN scheduling.branches b ON b.id=u.branch_id
+               WHERE u.id=%s""", (payload.get("id"),), one=True)
+    if not row:
+        raise HTTPException(401, "Account no longer exists")
+    if int(payload.get("epoch", 0)) != int(row["token_epoch"]):
+        raise HTTPException(401, "Session expired — please sign in again")
+    return row
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
     # Team leads, managers, and full admins can all reach schedule editing routes.
@@ -835,6 +850,7 @@ async def login(request: Request, response: Response):
 
     payload = {k: user[k] for k in ("id","username","role","branch_id","branch_name")}
     payload["staff_id"] = user.get("staff_id")
+    payload["epoch"] = int(user.get("token_epoch") or 0)
     token = sign_token(payload)
     # Secure cookie in production (HTTPS). Set COOKIE_SECURE=0 only for local HTTP.
     response.set_cookie("token", token, httponly=True, samesite="lax",
@@ -936,7 +952,9 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     if password:
         if len(password) < 6: raise HTTPException(400, "Password min 6 chars")
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        q("UPDATE scheduling.users SET password=%s WHERE id=%s", (hashed, uid), exec_only=True)
+        # Bump the session epoch so any existing tokens for this user stop working.
+        q("UPDATE scheduling.users SET password=%s, token_epoch=COALESCE(token_epoch,0)+1 WHERE id=%s",
+          (hashed, uid), exec_only=True)
     sets, params = [], []
     if body.get("username") is not None: sets.append("username=%s"); params.append(body["username"])
     if body.get("role")     is not None: sets.append("role=%s");     params.append(body["role"])
@@ -2563,6 +2581,19 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             "elapsed": sec_result.get("elapsed"),
             "staff": staff_keys,
         }
+
+        # Safety net: run the validator on the solved section before saving.
+        # The solver enforces the hard rules, so this should be clean — any
+        # surfaced error means a regression. Guarded so it never blocks saving.
+        try:
+            from validator import validate_schedule as _validate
+            vres = _validate(sec_result.get("schedule") or {}, nest_name, year, month,
+                             al_schedule=sec_al, nest_cfg=sec_nest_cfg)
+            if vres.get("errors"):
+                section_results[sec_name]["validation_errors"] = vres["errors"][:10]
+                print(f"[Generate] validator flagged {sec_name}: {vres['errors'][:3]}")
+        except Exception as _ve:
+            print(f"[Generate] validator skipped for {sec_name}: {_ve}")
 
         # Add entries from this section only
         for solver_key, row in (sec_result.get("schedule") or {}).items():

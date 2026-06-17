@@ -8,7 +8,8 @@ from config import SHIFTS, WORK_SHIFTS, REST_SHIFTS, WEEKEND_DAYS_OF_WEEK, NESTS
 
 
 def validate_schedule(schedule: dict, nest_name: str, year: int, month: int,
-                      al_schedule: dict = None, dominant_shifts: dict = None) -> dict:
+                      al_schedule: dict = None, dominant_shifts: dict = None,
+                      nest_cfg: dict = None) -> dict:
     """
     Validate a generated or manually-edited schedule.
 
@@ -24,7 +25,7 @@ def validate_schedule(schedule: dict, nest_name: str, year: int, month: int,
         warnings → soft violations (review, not blocking)
     """
     al_schedule = al_schedule or {}
-    nest_cfg = NESTS[nest_name]
+    nest_cfg = nest_cfg if nest_cfg is not None else NESTS[nest_name]
     n_days = calendar.monthrange(year, month)[1]
 
     errors   = []

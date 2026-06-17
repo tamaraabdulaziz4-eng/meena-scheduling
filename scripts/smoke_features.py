@@ -248,5 +248,24 @@ tc = _TC(app)
 codes = [tc.post("/api/auth/login", json={"username": "nobody", "password": "x"}).status_code for _ in range(9)]
 check("login throttle returns 429 after many fails", codes[-1] == 429, codes)
 
+print("\n== scenario 11: session invalidation (H-01) ==")
+admin.post("/api/users", json={"username": f"zzvic{sfx}", "password": "pass123", "role": "admin", "branch_id": bid})
+vic = login(f"zzvic{sfx}", "pass123")
+check("victim session works", vic.get("/api/auth/me").status_code == 200)
+uid = next(u["id"] for u in admin.get("/api/users").json() if u["username"] == f"zzvic{sfx}")
+# password change bumps epoch → old token rejected
+admin.put(f"/api/users/{uid}", json={"password": "newpass123"})
+check("old token rejected after password change", vic.get("/api/auth/me").status_code == 401)
+# deleted account → token rejected
+vic2 = login(f"zzvic{sfx}", "newpass123")
+admin.delete(f"/api/users/{uid}")
+check("token rejected after account deleted", vic2.get("/api/auth/me").status_code == 401)
+# role downgrade takes effect immediately (live role, not token role)
+admin.post("/api/users", json={"username": f"zzdg{sfx}", "password": "pass123", "role": "admin", "branch_id": bid})
+dg = login(f"zzdg{sfx}", "pass123")
+uiddg = next(u["id"] for u in admin.get("/api/users").json() if u["username"] == f"zzdg{sfx}")
+admin.put(f"/api/users/{uiddg}", json={"role": "viewer"})
+check("downgraded user blocked from admin action", dg.post("/api/staff", json={"name": "x", "branch_id": bid}).status_code == 403)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
