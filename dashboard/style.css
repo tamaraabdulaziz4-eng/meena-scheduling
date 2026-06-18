@@ -1,19 +1,21 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --primary:   #2B2458;
+  /* Meena brand palette (from the brand guide): vivid violet #8358FD,
+     deep purple #4D3C82 → #261E4F, light airy lavender. */
+  --primary:   #261E4F;
   --accent:    #6B4EFF;
-  --accent2:   #8B76FF;
+  --accent2:   #8358FD;
   --green:     #00C896;
   --orange:    #FF6B6B;
   --yellow:    #FFBA49;
-  --bg:        #f3f1fc;
-  --card:      #EEF0FB;
+  --bg:        #f4f2fc;
+  --card:      #EDEBF9;
   --card-alt:  #ffffff;
-  --text:      #2B2458;
+  --text:      #261E4F;
   --muted:     #8585A8;
-  --border:    #DDD9F5;
-  --sidebar-bg:    #2B2458;
+  --border:    #E0DCF5;
+  --sidebar-bg:    #261E4F;
   --topbar-bg:     #ffffff;
   --table-head-bg: #E8E6F8;
   --table-row-hover: #F0EEFF;
@@ -100,7 +102,7 @@ body {
 .nav-section-label {
   padding: 14px 10px 6px;
   font-size: 9px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 1px; color: rgba(255,255,255,0.4);
+  letter-spacing: 1px; color: #9b9bb5;
 }
 .nav-item {
   display: flex; align-items: center; gap: 11px;
@@ -133,7 +135,7 @@ body {
 .sidebar-toggle {
   position: fixed; left: 0; top: 50%; transform: translateY(-50%);
   z-index: 100;
-  background: linear-gradient(135deg, #8B76FF, #6B4EFF);
+  background: linear-gradient(135deg, #8358FD, #6B4EFF);
   color: white;
   border: none; border-radius: 0 10px 10px 0;
   width: 18px; height: 48px; cursor: pointer; font-size: 10px;
@@ -244,7 +246,7 @@ body {
 .onb-pill:hover { border-color: var(--accent); }
 .onb-pill.active {
   border-color: var(--accent); color: #fff;
-  background: linear-gradient(135deg, #8B76FF, #6B4EFF);
+  background: linear-gradient(135deg, #8358FD, #6B4EFF);
   box-shadow: 0 8px 20px rgba(107,78,255,.32);
 }
 #register-view select, #reg-branch {
@@ -574,13 +576,13 @@ tr:hover td { background: var(--table-row-hover); }
   50%     { transform: translateY(-14px) scale(1.03); }
 }
 .loader-label {
-  font-size: 15px; font-weight: 600; color: #2B2458; letter-spacing: .2px;
+  font-size: 15px; font-weight: 600; color: var(--primary); letter-spacing: .2px;
   position: relative; z-index: 2; animation: loaderMsgFade .4s ease;
 }
 .ploader-dots { display: flex; gap: 8px; position: relative; z-index: 2; }
 .ploader-dots i {
   width: 9px; height: 9px; border-radius: 50%;
-  background: linear-gradient(135deg, #8B76FF, #6B4EFF);
+  background: linear-gradient(135deg, #8358FD, #6B4EFF);
   animation: ploaderDot 1.2s ease-in-out infinite;
 }
 .ploader-dots i:nth-child(2) { animation-delay: .2s; }
@@ -909,12 +911,12 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
 @keyframes wsplashBob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 .wsplash-logo img { height: 50px; display: block; }
 .wsplash-greeting {
-  font-size: 32px; font-weight: 800; color: #2B2458; letter-spacing: -.5px;
+  font-size: 32px; font-weight: 800; color: var(--primary); letter-spacing: -.5px;
   text-align: center; position: relative; z-index: 2; min-height: 42px;
   animation: wsplashGreetIn 1s cubic-bezier(.16,1,.3,1) .3s both;
 }
 .wsplash-name {
-  background: linear-gradient(135deg, #8B76FF, #6B4EFF);
+  background: linear-gradient(135deg, #8358FD, #6B4EFF);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 @keyframes wsplashGreetIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
@@ -927,7 +929,7 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
 .wsplash-dots { margin-top: 30px; display: flex; gap: 8px; position: relative; z-index: 2; }
 .wsplash-dots i {
   width: 9px; height: 9px; border-radius: 50%;
-  background: linear-gradient(135deg, #8B76FF, #6B4EFF);
+  background: linear-gradient(135deg, #8358FD, #6B4EFF);
   animation: wsplashDot 1.2s ease-in-out infinite;
 }
 .wsplash-dots i:nth-child(2) { animation-delay: .2s; }
