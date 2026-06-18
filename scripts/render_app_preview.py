@@ -11,16 +11,18 @@ PAD=16
 # ── white sidebar ──
 sbx,sby,sbw=PAD,PAD,232; sbh=H-2*PAD
 d.rounded_rectangle([sbx,sby,sbx+sbw,sby+sbh],26,fill="#ffffff",outline=BORDER,width=1)
-# logo (purple M) — use transparent png
+# full Meena × Tawuniya lockup
 try:
-    lg=Image.open("/home/user/meena-scheduling/dashboard/meena_logo_transparent.png").convert("RGBA")
-    lw=120; lh=int(lg.height*lw/lg.width); lg=lg.resize((lw,lh))
-    img.paste(lg,(sbx+20,sby+22),lg)
-except Exception as e: print("logo",e)
-d.text((sbx+20,sby+62),"STAFF SCHEDULING",font=fn(8,True),fill=TEXT)
-d.line([sbx+16,sby+86,sbx+sbw-16,sby+86],fill=BORDER)
+    lg=Image.open("/home/user/meena-scheduling/dashboard/meena_onboarding_logo.jpeg").convert("RGB")
+    lw=sbw-40; lh=int(lg.height*lw/lg.width); lg=lg.resize((lw,lh))
+    img.paste(lg,(sbx+20,sby+20))
+    logo_bottom=sby+20+lh
+except Exception as e:
+    print("logo",e); logo_bottom=sby+80
+d.text((sbx+20,logo_bottom+8),"STAFF SCHEDULING",font=fn(8,True),fill=TEXT)
+d.line([sbx+16,logo_bottom+30,sbx+sbw-16,logo_bottom+30],fill=BORDER)
 nav=[("Home",True),("Schedule",False),("Staff",False),("Leave",False),("Swaps",False),("Daily Cases",False),("Review",False)]
-ny=sby+104
+ny=logo_bottom+48
 for name,active in nav:
     iy=ny
     if active:
