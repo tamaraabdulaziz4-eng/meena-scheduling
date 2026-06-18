@@ -46,32 +46,23 @@ function toast(msg, type = 'ok') {
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
+// Ordinary loads use only the slim top progress bar (no full-screen takeover),
+// so the heavy "loader screen" never flashes — let alone twice. The full-screen
+// #page-loader is reserved for the Generate cycling loader (showLoaderCycling).
 let _loaderMsgTimer, _loaderHideTimer;
-// While a page transition is running we suppress the full-screen splash and let
-// the slim top progress bar carry the feedback — stops the two from fighting
-// (the old "content dims → full overlay pops → dims again" jump).
-let _navigating = false;
 function showLoader(label = 'Loading…') {
-  // Don't stack the page loader on top of the welcome splash.
-  const splash = document.getElementById('welcome-splash');
-  if (splash && splash.style.display !== 'none' && !splash.classList.contains('done')) return;
-  if (_navigating) { startTopBar(); return; }   // routed to the top bar instead
-  clearTimeout(_loaderHideTimer);               // cancel any pending hide (race fix)
-  const el = document.getElementById('page-loader');
-  document.getElementById('loader-label').textContent = label;
-  el.classList.remove('fading');
-  el.classList.add('show');
+  startTopBar();
 }
 function hideLoader() {
   clearInterval(_loaderMsgTimer);
-  if (_navigating) { stopTopBar(); return; }
+  stopTopBar();
+  // If a heavy op (Generate) put up the full-screen loader, dismiss it too.
   const el = document.getElementById('page-loader');
-  if (!el) return;
-  // Fade out smoothly, then hide. Keep the timer cancellable so a quick
-  // show-right-after-hide doesn't get wiped by this stale callback.
-  el.classList.add('fading');
-  clearTimeout(_loaderHideTimer);
-  _loaderHideTimer = setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
+  if (el && el.classList.contains('show')) {
+    el.classList.add('fading');
+    clearTimeout(_loaderHideTimer);
+    _loaderHideTimer = setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
+  }
 }
 
 // ── Slim top progress bar ─────────────────────────────────────────────────────

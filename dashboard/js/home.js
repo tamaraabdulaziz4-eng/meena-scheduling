@@ -24,6 +24,7 @@ async function renderHomePage() {
   }
   if (['manager', 'superadmin', 'admin'].includes(d.role)) {
     cards.push(kpiCard('Pending leave', d.pending_leaves, '🌴', 'leaves', d.pending_leaves > 0));
+    cards.push(kpiCard('New registrations', d.pending_registrations || 0, '🧾', 'staff', (d.pending_registrations || 0) > 0));
   }
   cards.push(kpiCard('Swaps need you', d.pending_swaps, '🔄', 'swaps', d.pending_swaps > 0));
   if (ct.total) {

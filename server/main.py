@@ -359,6 +359,19 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS self_registered BOOLEAN NOT NULL DEFAULT false;")
             cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_employee_id
                            ON scheduling.staff(employee_id) WHERE employee_id IS NOT NULL;""")
+            # Self-registrations wait here for the branch team lead to approve.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.staff_registrations (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    branch_id INTEGER REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    employee_id TEXT, email TEXT, phone TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL,
+                    reviewed_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    reviewed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
             # Password-reset tokens (forgot-password via email). Stored hashed.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.password_resets (
@@ -1193,18 +1206,75 @@ async def register_staff(request: Request):
     branch_id = _int_or_400(branch_id)
     if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
         raise HTTPException(400, "Unknown branch")
-    # Upsert on Employee ID so a re-submission updates rather than duplicates.
-    row = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, self_registered)
-               VALUES (%s,%s,%s,%s,%s,true)
-               ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
-               DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
-                             email=EXCLUDED.email, phone=EXCLUDED.phone, self_registered=true
-               RETURNING id, name""", (name, branch_id, emp_id, email, phone), one=True)
+    # Queue it for the branch team lead — a re-submission for the same Employee ID
+    # replaces the earlier pending one rather than piling up.
+    q("""DELETE FROM scheduling.staff_registrations
+         WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
+      (emp_id,), exec_only=True)
+    q("""INSERT INTO scheduling.staff_registrations (name, branch_id, employee_id, email, phone)
+         VALUES (%s,%s,%s,%s,%s)""", (name, branch_id, emp_id, email, phone), exec_only=True)
     bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
+    notify_branch_leads(branch_id, f"New staff registration to review: {name} — ID {emp_id}",
+                        link="staff", ntype="info")
     notify_roles(("manager", "superadmin"),
                  f"New staff registration: {name} ({bname}) — ID {emp_id}",
                  link="staff", ntype="info")
-    return {"ok": True, "message": "Thanks! Your details were submitted."}
+    return {"ok": True, "message": "Thanks! Your details were submitted and are awaiting approval."}
+
+@app.get("/api/registrations")
+def list_registrations(request: Request, user=Depends(require_admin)):
+    """Pending self-registrations: a team lead sees their own branch, a
+    manager/superadmin sees all."""
+    if user["role"] in ("manager", "superadmin"):
+        rows = q("""SELECT r.*, b.name AS branch_name FROM scheduling.staff_registrations r
+                    LEFT JOIN scheduling.branches b ON b.id=r.branch_id
+                    WHERE r.status='pending' ORDER BY r.created_at""")
+    else:
+        rows = q("""SELECT r.*, b.name AS branch_name FROM scheduling.staff_registrations r
+                    LEFT JOIN scheduling.branches b ON b.id=r.branch_id
+                    WHERE r.status='pending' AND r.branch_id=%s ORDER BY r.created_at""",
+                 (user.get("branch_id"),))
+    return rows
+
+@app.post("/api/registrations/{rid}/approve")
+async def approve_registration(rid: int, request: Request, user=Depends(require_admin)):
+    """Approve a registration → create (or upsert by Employee ID) the staff record."""
+    reg = q("SELECT * FROM scheduling.staff_registrations WHERE id=%s", (rid,), one=True)
+    if not reg:
+        raise HTTPException(404, "Registration not found")
+    if reg["status"] != "pending":
+        raise HTTPException(400, f"Already {reg['status']}")
+    if not can_access_branch(user, reg["branch_id"]):
+        raise HTTPException(403, "You can only approve registrations for your own branch")
+    try:
+        staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, self_registered)
+                     VALUES (%s,%s,%s,%s,%s,true)
+                     ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
+                     DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
+                                   email=EXCLUDED.email, phone=EXCLUDED.phone, self_registered=true
+                     RETURNING id, name""",
+                  (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"]),
+                  one=True)
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(409, "That Employee/National ID is already on a staff record")
+    q("""UPDATE scheduling.staff_registrations
+         SET status='approved', staff_id=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
+      (staff["id"], user["id"], rid), exec_only=True)
+    insert_audit(user, "REGISTRATION_APPROVE", reg["name"], f"emp:{reg['employee_id']}")
+    return {"ok": True, "staff": staff}
+
+@app.post("/api/registrations/{rid}/reject")
+async def reject_registration(rid: int, request: Request, user=Depends(require_admin)):
+    reg = q("SELECT * FROM scheduling.staff_registrations WHERE id=%s", (rid,), one=True)
+    if not reg:
+        raise HTTPException(404, "Registration not found")
+    if not can_access_branch(user, reg["branch_id"]):
+        raise HTTPException(403, "You can only review registrations for your own branch")
+    q("""UPDATE scheduling.staff_registrations
+         SET status='rejected', reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
+      (user["id"], rid), exec_only=True)
+    insert_audit(user, "REGISTRATION_REJECT", reg["name"], f"emp:{reg['employee_id']}")
+    return {"ok": True}
 
 @app.get("/api/auth/me")
 def me(user=Depends(get_current_user)):
@@ -2586,6 +2656,14 @@ def dashboard_summary(user=Depends(get_current_user)):
     else:
         pending_swaps = 0
 
+    # Self-registrations awaiting approval (team lead: own branch; reviewer: all).
+    if is_reviewer:
+        pending_registrations = c("SELECT COUNT(*) AS c FROM scheduling.staff_registrations WHERE status='pending'")
+    elif role == "admin":
+        pending_registrations = c("SELECT COUNT(*) AS c FROM scheduling.staff_registrations WHERE status='pending' AND branch_id=%s", (bid,))
+    else:
+        pending_registrations = 0
+
     # Today's daily-cases submission progress.
     date = _operational_date_server()
     if is_reviewer:
@@ -2601,6 +2679,7 @@ def dashboard_summary(user=Depends(get_current_user)):
         "pending_reviews": pending_reviews,
         "pending_leaves": pending_leaves,
         "pending_swaps": pending_swaps,
+        "pending_registrations": pending_registrations,
         "cases_today": {"submitted": submitted, "total": total_branches, "date": date},
         "role": role,
     }

@@ -212,12 +212,6 @@ body {
 /* keep real content above the orbs */
 .content > * { position: relative; z-index: 1; }
 
-/* ── Page transition: fast, light fade + micro-slide (no full-screen flash) ── */
-.content { transition: opacity .13s ease, transform .13s ease; }
-.content.page-leaving  { opacity: 0; transform: translateY(6px); }
-.content.page-entering { opacity: 0; transform: translateY(6px); }
-/* removing .page-entering on the next frame animates it to the resting state */
-
 /* ── Home dashboard KPI cards ── */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
 .kpi-card {

@@ -123,7 +123,7 @@ async function renderRoute(page) {
     case 'myschedule': await renderMySchedulePage(); break;
     case 'schedule':   await renderSchedulePage(); break;
     case 'review':     await renderReviewPage(); break;
-    case 'staff':      try { await loadStaff(); } catch(e){}  renderStaffPage(); break;
+    case 'staff':      try { await loadStaff(); } catch(e){}  await renderStaffPage(); break;
     case 'leaves':     await renderLeavesPage(); break;
     case 'swaps':      try { await loadStaff(); } catch(e){}  renderSwapsPage(); break;
     case 'cases':      renderCasesPage(); break;
@@ -136,9 +136,11 @@ async function renderRoute(page) {
   }
 }
 
-// Monotonic token: if the user navigates again mid-transition, the older render
-// bails (and the newer one finalises #content), so they never fight.
-let _navSeq = 0, _navDepth = 0;
+// Monotonic token: if the user navigates again mid-load, the older render bails
+// (and the newer one finalises #content), so they never fight. No page fade —
+// the old content stays put until the new one is ready, with only the slim top
+// bar for feedback. Instant and flash-free.
+let _navSeq = 0;
 async function showPage(requested) {
   const page = resolvePage(requested);
   const seq = ++_navSeq;
@@ -151,28 +153,16 @@ async function showPage(requested) {
   // On a phone, picking a page closes the slide-in drawer.
   if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
 
-  const content = document.getElementById('content');
-  _navDepth++; _navigating = true;
   startTopBar();
   try {
-    // Quick fade-out (fast & light — no full-screen takeover).
-    content.classList.add('page-leaving');
-    await new Promise(r => setTimeout(r, 90));
-    if (seq !== _navSeq) return;               // superseded by a newer click
-
     try { await renderRoute(page); }
     catch (e) { console.error('Page render error:', e); }
-    if (seq !== _navSeq) return;               // superseded while loading data
-
-    // Land at the top of the new page, then fade/slide it in.
+    if (seq !== _navSeq) return;               // superseded by a newer navigation
+    const content = document.getElementById('content');
     content.scrollTop = 0;
     const main = document.getElementById('main'); if (main) main.scrollTop = 0;
-    content.classList.remove('page-leaving');
-    content.classList.add('page-entering');
-    requestAnimationFrame(() => requestAnimationFrame(() => content.classList.remove('page-entering')));
   } finally {
-    stopTopBar();                              // balances this call's startTopBar
-    if (--_navDepth === 0) _navigating = false;
+    stopTopBar();
   }
 }
 

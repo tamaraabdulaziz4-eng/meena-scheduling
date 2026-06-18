@@ -1,14 +1,23 @@
 // ── Staff page ────────────────────────────────────────────────────────────────
 let allStaff = [];
+let pendingRegs = [];
 
 async function loadStaff() {
   allStaff = await API.get('/staff');
   return allStaff;
 }
 
-function renderStaffPage() {
+async function loadRegistrations() {
+  // Only editors have the endpoint; ignore failures (e.g. viewers).
+  try { pendingRegs = await API.get('/registrations'); }
+  catch (e) { pendingRegs = []; }
+  return pendingRegs;
+}
+
+async function renderStaffPage() {
   // Managers manage staff too (backend require_admin allows admin/superadmin/manager).
   const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
+  if (canEdit) await loadRegistrations();
   setTopbar('Staff', 'Manage radiology staff',
     canEdit ? `<button class="btn btn-sm" onclick="openStaffModal()">+ Add Staff</button>` : ''
   );
@@ -23,8 +32,10 @@ function renderStaffPage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div id="staff-pending"></div>
     <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
 
+  if (canEdit) renderPendingRegs();
   const container = document.getElementById('staff-branch-sections');
   if (!allStaff.length) {
     container.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><p>No staff added yet</p><small>Add staff members to get started</small></div>`;
@@ -70,6 +81,55 @@ function renderStaffPage() {
       </div>`;
     container.appendChild(section);
   });
+}
+
+function renderPendingRegs() {
+  const box = document.getElementById('staff-pending');
+  if (!box) return;
+  if (!pendingRegs.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="card" style="margin-bottom:20px;border-color:rgba(255,159,67,.5)">
+      <div style="font-size:14px;font-weight:700;color:var(--primary);margin-bottom:4px">⏳ Pending registrations (${pendingRegs.length})</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Staff who registered themselves — approve to add them, or reject.</div>
+      <div class="table-wrap" style="border-radius:10px">
+        <table>
+          <thead><tr><th>Name</th><th>Branch</th><th>ID</th><th>Email / Mobile</th><th>Actions</th></tr></thead>
+          <tbody>${pendingRegs.map(r => `
+            <tr>
+              <td><strong>${escapeHtml(r.name)}</strong></td>
+              <td style="font-size:12px;color:var(--muted)">${escapeHtml(r.branch_name || '—')}</td>
+              <td style="font-size:12px">${escapeHtml(r.employee_id || '—')}</td>
+              <td style="font-size:12px;color:var(--muted)">${escapeHtml(r.email || '—')}${r.phone ? '<br>' + escapeHtml(r.phone) : ''}</td>
+              <td style="white-space:nowrap">
+                <button class="action-btn" onclick="approveReg(${r.id})">Approve</button>
+                <button class="action-btn danger" onclick="rejectReg(${r.id})">Reject</button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function approveReg(id) {
+  try {
+    await API.post(`/registrations/${id}/approve`, {});
+    pendingRegs = pendingRegs.filter(r => r.id !== id);
+    await loadStaff();
+    renderStaffPage();
+    toast('Registration approved — staff added');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function rejectReg(id) {
+  const ok = await showConfirm('Reject registration', 'Reject this self-registration?');
+  if (!ok) return;
+  try {
+    await API.post(`/registrations/${id}/reject`, {});
+    pendingRegs = pendingRegs.filter(r => r.id !== id);
+    renderPendingRegs();
+    toast('Registration rejected');
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 let _editStaffId = null;
