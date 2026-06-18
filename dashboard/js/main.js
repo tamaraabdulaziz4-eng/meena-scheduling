@@ -18,6 +18,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (!authed) {
     showLoginView();
+    // Tell the user if they landed here because of an idle timeout.
+    if (sessionStorage.getItem('idleLogout')) {
+      sessionStorage.removeItem('idleLogout');
+      const e = document.getElementById('login-error');
+      if (e) e.textContent = 'You were signed out due to inactivity.';
+    }
     return;
   }
 
@@ -75,6 +81,8 @@ async function initApp() {
   if (casesNav) casesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
+  // Auto sign-out after a stretch of inactivity.
+  if (typeof startIdleWatch === 'function') startIdleWatch();
   // Load org settings (leave cutoff day) so the leave UI can warn early.
   try { const st = await API.get('/settings'); if (st?.leave_cutoff_day) leaveCutoffDay = st.leave_cutoff_day; } catch (e) {}
   // Pre-load the pending-review count so the badge shows on login

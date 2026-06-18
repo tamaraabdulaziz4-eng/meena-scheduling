@@ -127,6 +127,31 @@ async function doLogout() {
   location.reload();
 }
 
+// ── Idle auto-logout ──────────────────────────────────────────────────────────
+// Sign the user out after a stretch of no activity (mouse/touch/key/scroll), so
+// an unattended screen doesn't stay logged in. Client-side: clears the cookie
+// and reloads to the login page with a notice.
+const IDLE_LIMIT_MS = 5 * 60 * 1000;     // 5 minutes — change here to adjust
+let _lastActivity = Date.now();
+let _idleTimer = null;
+function _bumpActivity() { _lastActivity = Date.now(); }
+function startIdleWatch() {
+  ['mousedown', 'keydown', 'touchstart', 'scroll', 'click', 'mousemove'].forEach(
+    ev => window.addEventListener(ev, _bumpActivity, { passive: true }));
+  if (_idleTimer) clearInterval(_idleTimer);
+  _idleTimer = setInterval(() => {
+    if (Date.now() - _lastActivity >= IDLE_LIMIT_MS) {
+      clearInterval(_idleTimer); _idleTimer = null;
+      idleLogout();
+    }
+  }, 20000);                              // re-check every 20s
+}
+async function idleLogout() {
+  try { sessionStorage.setItem('idleLogout', '1'); } catch (e) {}
+  await API.post('/auth/logout').catch(() => {});
+  location.reload();
+}
+
 async function checkAuth() {
   try {
     currentUser = await API.get('/auth/me');
