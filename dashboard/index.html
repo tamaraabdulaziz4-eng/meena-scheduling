@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260618j">
+<link rel="stylesheet" href="/style.css?v=20260618k">
 </head>
 <body>
 
@@ -29,22 +29,58 @@
     <div class="login-logo">
       <img src="/meena_logo_transparent.png" alt="Meena Health" style="height:44px;display:block">
     </div>
-    <h2>Staff Scheduling</h2>
-    <p>Sign in to manage your rota</p>
-    <div class="login-field">
-      <label>Username</label>
-      <input type="text" id="login-username" placeholder="username" autocomplete="username">
-    </div>
-    <div class="login-field">
-      <label>Password</label>
-      <div style="position:relative">
-        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" style="width:100%;padding-right:36px">
-        <button type="button" onclick="togglePw()"
-          style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#888;padding:0">👁</button>
+
+    <!-- Sign-in view -->
+    <div id="login-view">
+      <h2>Staff Scheduling</h2>
+      <p>Sign in to manage your rota</p>
+      <div class="login-field">
+        <label>Username</label>
+        <input type="text" id="login-username" placeholder="username" autocomplete="username">
       </div>
+      <div class="login-field">
+        <label>Password</label>
+        <div style="position:relative">
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" style="width:100%;padding-right:36px">
+          <button type="button" onclick="togglePw()"
+            style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#888;padding:0">👁</button>
+        </div>
+      </div>
+      <button class="login-btn" onclick="doLogin()">Sign In</button>
+      <div class="login-error" id="login-error"></div>
+      <button type="button" onclick="showForgotView()"
+        style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;margin-top:14px;font-family:inherit">Forgot password?</button>
     </div>
-    <button class="login-btn" onclick="doLogin()">Sign In</button>
-    <div class="login-error" id="login-error"></div>
+
+    <!-- Forgot-password view -->
+    <div id="forgot-view" style="display:none">
+      <h2>Reset password</h2>
+      <p>Enter your username or email and we'll send a reset link.</p>
+      <div class="login-field">
+        <label>Username or email</label>
+        <input type="text" id="forgot-ident" placeholder="username or you@example.com" autocomplete="username">
+      </div>
+      <button class="login-btn" onclick="sendResetLink()">Send reset link</button>
+      <div class="login-error" id="forgot-msg" style="color:var(--muted)"></div>
+      <button type="button" onclick="showLoginView()"
+        style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;margin-top:14px;font-family:inherit">← Back to sign in</button>
+    </div>
+
+    <!-- Set-new-password view (opened from the emailed link) -->
+    <div id="reset-view" style="display:none">
+      <h2>Set a new password</h2>
+      <p>Choose a new password for your account.</p>
+      <div class="login-field">
+        <label>New password</label>
+        <div style="position:relative">
+          <input type="password" id="reset-password" placeholder="at least 6 characters" autocomplete="new-password" style="width:100%;padding-right:36px">
+          <button type="button" onclick="togglePw('reset-password')"
+            style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#888;padding:0">👁</button>
+        </div>
+      </div>
+      <button class="login-btn" onclick="submitNewPassword()">Save new password</button>
+      <div class="login-error" id="reset-msg"></div>
+    </div>
   </div>
 </div>
 
@@ -594,24 +630,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260618j"></script>
-<script src="/js/auth.js?v=20260618j"></script>
-<script src="/js/util.js?v=20260618j"></script>
-<script src="/js/branches.js?v=20260618j"></script>
-<script src="/js/users.js?v=20260618j"></script>
-<script src="/js/staff.js?v=20260618j"></script>
-<script src="/js/leaves.js?v=20260618j"></script>
-<script src="/js/swaps.js?v=20260618j"></script>
-<script src="/js/holidays.js?v=20260618j"></script>
-<script src="/js/notifications.js?v=20260618j"></script>
-<script src="/js/portal.js?v=20260618j"></script>
-<script src="/js/cases.js?v=20260618j"></script>
-<script src="/js/home.js?v=20260618j"></script>
-<script src="/js/shifts.js?v=20260618j"></script>
-<script src="/js/schedule.js?v=20260618j"></script>
-<script src="/js/review.js?v=20260618j"></script>
-<script src="/js/export.js?v=20260618j"></script>
-<script src="/js/audit.js?v=20260618j"></script>
-<script src="/js/main.js?v=20260618j"></script>
+<script src="/js/api.js?v=20260618k"></script>
+<script src="/js/auth.js?v=20260618k"></script>
+<script src="/js/util.js?v=20260618k"></script>
+<script src="/js/branches.js?v=20260618k"></script>
+<script src="/js/users.js?v=20260618k"></script>
+<script src="/js/staff.js?v=20260618k"></script>
+<script src="/js/leaves.js?v=20260618k"></script>
+<script src="/js/swaps.js?v=20260618k"></script>
+<script src="/js/holidays.js?v=20260618k"></script>
+<script src="/js/notifications.js?v=20260618k"></script>
+<script src="/js/portal.js?v=20260618k"></script>
+<script src="/js/cases.js?v=20260618k"></script>
+<script src="/js/home.js?v=20260618k"></script>
+<script src="/js/shifts.js?v=20260618k"></script>
+<script src="/js/schedule.js?v=20260618k"></script>
+<script src="/js/review.js?v=20260618k"></script>
+<script src="/js/export.js?v=20260618k"></script>
+<script src="/js/audit.js?v=20260618k"></script>
+<script src="/js/main.js?v=20260618k"></script>
 </body>
 </html>

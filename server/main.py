@@ -352,6 +352,17 @@ def init_schema():
                 );""")
             # Per-staff override: allowed to file the daily cases report.
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS can_report BOOLEAN NOT NULL DEFAULT false;")
+            # Password-reset tokens (forgot-password via email). Stored hashed.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.password_resets (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES scheduling.users(id) ON DELETE CASCADE,
+                    token_hash TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    used BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pwreset_hash ON scheduling.password_resets(token_hash);")
             # Multi-stage swap approval: peer → team lead → manager. Track each step.
             for _col in ("peer_at TIMESTAMP",
                          "lead_by INTEGER", "lead_at TIMESTAMP",
@@ -1078,6 +1089,65 @@ async def login(request: Request, response: Response):
 def logout(response: Response):
     response.delete_cookie("token")
     return {"ok": True}
+
+def _hash_reset_token(tok: str) -> str:
+    import hashlib
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+@app.post("/api/auth/forgot")
+async def forgot_password(request: Request):
+    """Start a password reset. Emails a time-limited link to the address on file.
+    Always returns the same generic message so it can't be used to probe which
+    usernames/emails exist."""
+    body = await request.json()
+    ident = (body.get("username") or body.get("email") or "").strip().lower()
+    generic = {"ok": True, "message": "If an account with that username/email exists, a reset link has been sent."}
+    if not ident:
+        return generic
+    user = q("""SELECT id, username, email FROM scheduling.users
+                WHERE lower(username)=%s OR lower(email)=%s""", (ident, ident), one=True)
+    if not user or not user.get("email"):
+        return generic   # don't reveal non-existence / missing email
+    import secrets
+    from datetime import datetime, timezone, timedelta
+    tok = secrets.token_urlsafe(32)
+    # Invalidate any earlier outstanding tokens, then store the new one (hashed).
+    q("UPDATE scheduling.password_resets SET used=true WHERE user_id=%s AND used=false",
+      (user["id"],), exec_only=True)
+    q("""INSERT INTO scheduling.password_resets (user_id, token_hash, expires_at)
+         VALUES (%s,%s,%s)""",
+      (user["id"], _hash_reset_token(tok), datetime.now(timezone.utc) + timedelta(hours=1)),
+      exec_only=True)
+    app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
+    link = f"{app_url}/?reset={tok}" if app_url else f"/?reset={tok}"
+    send_email(user["email"], "Meena Scheduling — password reset",
+               f"We received a request to reset the password for your account ({user['username']}).\n\n"
+               f"Open this link to set a new password (valid for 1 hour):\n{link}\n\n"
+               f"If you didn't request this, you can safely ignore this email.")
+    insert_audit({"id": user["id"], "username": user["username"]}, "PASSWORD_RESET_REQUEST", user["username"])
+    return generic
+
+@app.post("/api/auth/reset")
+async def reset_password(request: Request):
+    """Finish a reset: consume the token, set the new password, and invalidate
+    every existing session for that user."""
+    body = await request.json()
+    tok = (body.get("token") or "").strip()
+    password = body.get("password") or ""
+    if not tok or len(password) < 6:
+        raise HTTPException(400, "A valid token and a password of at least 6 characters are required")
+    row = q("""SELECT pr.id, pr.user_id FROM scheduling.password_resets pr
+               WHERE pr.token_hash=%s AND pr.used=false AND pr.expires_at > NOW()""",
+            (_hash_reset_token(tok),), one=True)
+    if not row:
+        raise HTTPException(400, "This reset link is invalid or has expired. Please request a new one.")
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    # Set password + bump epoch (kills old tokens), and consume this reset token.
+    q("UPDATE scheduling.users SET password=%s, token_epoch=COALESCE(token_epoch,0)+1 WHERE id=%s",
+      (hashed, row["user_id"]), exec_only=True)
+    q("UPDATE scheduling.password_resets SET used=true WHERE id=%s", (row["id"],), exec_only=True)
+    insert_audit({"id": row["user_id"], "username": "self"}, "PASSWORD_RESET_DONE", f"user:{row['user_id']}")
+    return {"ok": True, "message": "Your password has been reset. You can now sign in."}
 
 @app.get("/api/auth/me")
 def me(user=Depends(get_current_user)):

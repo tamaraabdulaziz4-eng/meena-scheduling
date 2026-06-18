@@ -3,13 +3,17 @@ let currentPage = 'schedule';
 
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
-  showLoader('Starting…');
 
+  // A password-reset link (?reset=TOKEN) jumps straight to the set-password form.
+  const resetToken = new URLSearchParams(location.search).get('reset');
+  if (resetToken) { startPasswordReset(resetToken); return; }
+
+  showLoader('Starting…');
   const authed = await checkAuth();
   hideLoader();
 
   if (!authed) {
-    document.getElementById('login-overlay').style.display = 'flex';
+    showLoginView();
     return;
   }
 

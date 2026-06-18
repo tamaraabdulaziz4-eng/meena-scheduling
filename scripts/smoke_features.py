@@ -445,5 +445,33 @@ check("submitter gets no self 'submitted' notification",
 check("a manager IS notified of the submission",
       any("submitted for review" in (n["message"] or "").lower() for n in m_new), m_new)
 
+print("\n== scenario 17: forgot / reset password ==")
+import re
+anon = TestClient(app)
+admin.post("/api/users", json={"username": f"zzreset{sfx}", "password": "oldpass123",
+           "role": "admin", "branch_id": bid, "email": "reset@example.com"})
+M._email_outbox.clear()
+fr = anon.post("/api/auth/forgot", json={"username": f"zzreset{sfx}"})
+check("forgot returns generic ok", fr.status_code == 200 and fr.json().get("ok") is True, fr.text)
+mail = [e for e in M._email_outbox if e["to"] == "reset@example.com"]
+check("reset email sent to the address on file", len(mail) == 1, M._email_outbox)
+mtok = re.search(r"/\?reset=([A-Za-z0-9_\-]+)", mail[-1]["body"] if mail else "")
+check("reset email carries a token link", bool(mtok), mail[-1]["body"] if mail else None)
+token = mtok.group(1) if mtok else ""
+bad = anon.post("/api/auth/reset", json={"token": "not-a-real-token", "password": "whatever123"})
+check("invalid reset token rejected", bad.status_code == 400, bad.status_code)
+rr = anon.post("/api/auth/reset", json={"token": token, "password": "newpass456"})
+check("reset succeeds with a valid token", rr.status_code == 200, rr.text)
+check("old password no longer works",
+      anon.post("/api/auth/login", json={"username": f"zzreset{sfx}", "password": "oldpass123"}).status_code == 401)
+check("new password works",
+      anon.post("/api/auth/login", json={"username": f"zzreset{sfx}", "password": "newpass456"}).status_code == 200)
+check("reset token is single-use",
+      anon.post("/api/auth/reset", json={"token": token, "password": "another789"}).status_code == 400)
+M._email_outbox.clear()
+fr2 = anon.post("/api/auth/forgot", json={"username": "nobody-here-9999"})
+check("forgot hides non-existent accounts (generic + no email)",
+      fr2.status_code == 200 and len(M._email_outbox) == 0, M._email_outbox)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
