@@ -121,10 +121,18 @@ async function doLogin() {
   }
 }
 
+// Return to a CLEAN login screen — drop any ?reset=/?register= still in the URL
+// so logging out never reopens the "set new password" / registration views.
+function _goToLogin() {
+  const clean = location.origin + location.pathname;
+  if (location.href !== clean) window.location.replace(clean);
+  else window.location.reload();
+}
+
 async function doLogout() {
   await API.post('/auth/logout').catch(() => {});
   currentUser = null;
-  location.reload();
+  _goToLogin();
 }
 
 // ── Idle auto-logout ──────────────────────────────────────────────────────────
@@ -149,7 +157,7 @@ function startIdleWatch() {
 async function idleLogout() {
   try { sessionStorage.setItem('idleLogout', '1'); } catch (e) {}
   await API.post('/auth/logout').catch(() => {});
-  location.reload();
+  _goToLogin();
 }
 
 async function checkAuth() {
