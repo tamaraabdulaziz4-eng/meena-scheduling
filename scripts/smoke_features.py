@@ -221,6 +221,22 @@ check("staff blocked for current month", stCM.status_code == 400, f"{stCM.status
 stBad = staffA.post("/api/leaves", json={"date_from": "not-a-date", "date_to": "not-a-date", "leave_type": "AL"})
 check("malformed leave date → 400 (not 500)", stBad.status_code == 400, f"{stBad.status_code} {stBad.text}")
 
+print("\n== scenario 9b: staff withdraws own pending request ==")
+staffA.post("/api/leaves", json={"date_from": f"{YEAR}-08-22", "date_to": f"{YEAR}-08-22", "leave_type": "AL"})
+wlv = next((l for l in staffA.get(f"/api/leaves?year={YEAR}&month={MONTH}").json() if l["date"] == f"{YEAR}-08-22"), None)
+check("withdrawable request visible to staff", wlv is not None, wlv)
+xb = staffB.delete(f"/api/leaves/{wlv['id']}")
+check("staff can't withdraw another's request", xb.status_code == 403, xb.status_code)
+wd = staffA.delete(f"/api/leaves/{wlv['id']}")
+check("staff withdraws own pending request", wd.status_code == 200, wd.text)
+gone = staffA.get(f"/api/leaves?year={YEAR}&month={MONTH}").json()
+check("withdrawn request removed", not any(l["date"] == f"{YEAR}-08-22" for l in gone), gone)
+appr = next((l for l in admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+             if l["staff_id"] == A["id"] and l["status"] == "approved"), None)
+if appr:
+    wa = staffA.delete(f"/api/leaves/{appr['id']}")
+    check("staff can't withdraw an approved leave", wa.status_code == 400, wa.status_code)
+
 print("\n== scenario 10: Phase-1 security hardening ==")
 # another branch + a staff member in it
 branchB = next(b for b in branches if b["id"] != bid)

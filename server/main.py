@@ -1807,8 +1807,7 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
     return {"inserted": len(leaves), "leaves": leaves, "status": new_status}
 
 @app.delete("/api/leaves/{lid}")
-def delete_leave(lid: int, user=Depends(require_admin)):
-    # A team lead may only delete leaves for their own branch's staff.
+def delete_leave(lid: int, user=Depends(get_current_user)):
     lv = q("""SELECT s.branch_id, l.staff_id, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
                      l.leave_type, l.status
               FROM scheduling.leave_requests l
@@ -1816,7 +1815,19 @@ def delete_leave(lid: int, user=Depends(require_admin)):
            (lid,), one=True)
     if not lv:
         raise HTTPException(404, "Leave not found")
-    if not can_access_branch(user, lv["branch_id"]):
+    if user["role"] == "staff":
+        # A staff member may withdraw only their OWN request, and only while it's
+        # still pending — cancelling an already-approved leave is on the rota, so
+        # it goes back through a manager.
+        if lv["staff_id"] != user.get("staff_id"):
+            raise HTTPException(403, "Forbidden")
+        if lv["status"] != "pending":
+            raise HTTPException(400, "Only a pending request can be withdrawn — ask a manager to change approved leave")
+    elif user["role"] in ("admin", "manager", "superadmin"):
+        # A team lead may only delete leaves for their own branch's staff.
+        if not can_access_branch(user, lv["branch_id"]):
+            raise HTTPException(403, "Forbidden")
+    else:
         raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.leave_requests WHERE id=%s", (lid,), exec_only=True)
     # If it had been placed on the rota, take it back off.

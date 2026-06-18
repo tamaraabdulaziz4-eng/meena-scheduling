@@ -37,7 +37,7 @@ function renderLeavesPage() {
       <table>
         <thead><tr>
           <th>#</th><th>Staff</th><th>Branch</th><th>From</th><th>To</th><th>Days</th><th>Type</th><th>Status</th><th>Note</th>
-          ${canEdit ? '<th>Actions</th>' : ''}
+          ${(canEdit || isStaff) ? '<th>Actions</th>' : ''}
         </tr></thead>
         <tbody id="leaves-tbody"></tbody>
       </table>
@@ -71,8 +71,9 @@ function renderLeavesList() {
   if (!tb) return;  // e.g. a staff member requested leave from the My Schedule page
   const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
   const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
+  const isStaff = currentUser?.role === 'staff';
   if (!allLeaves.length) {
-    tb.innerHTML = `<tr><td colspan="${canEdit?10:9}" style="text-align:center;padding:24px;color:var(--muted)">No leave records found</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="${(canEdit||isStaff)?10:9}" style="text-align:center;padding:24px;color:var(--muted)">No leave records found</td></tr>`;
     return;
   }
 
@@ -95,6 +96,13 @@ function renderLeavesList() {
                     <button class="action-btn danger" onclick="setLeaveRangeStatus(${idsArg},'rejected')">Reject</button> `;
       }
       actions += `<button class="action-btn danger" onclick="deleteLeaveRange(${idsArg})">Delete</button></td>`;
+    } else if (isStaff) {
+      // A staff member can withdraw their own request while it's still pending.
+      actions = '<td style="white-space:nowrap">';
+      actions += st === 'pending'
+        ? `<button class="action-btn danger" onclick="withdrawLeaveRange(${idsArg})">Withdraw</button>`
+        : '<span style="font-size:11px;color:var(--muted)">—</span>';
+      actions += '</td>';
     }
     return `<tr>
       <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
@@ -275,6 +283,20 @@ async function saveLeave() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
+}
+
+async function withdrawLeaveRange(ids) {
+  const ok = await showConfirm('Withdraw request',
+    `Withdraw your ${ids.length} day${ids.length !== 1 ? 's' : ''} leave request?`, 'Withdraw');
+  if (!ok) return;
+  showLoader('Withdrawing…');
+  try {
+    await Promise.all(ids.map(id => API.delete(`/leaves/${id}`)));
+    allLeaves = allLeaves.filter(l => !ids.includes(l.id));
+    renderLeavesList();
+    toast('Request withdrawn');
+  } catch (err) { toast(err.message, 'err'); }
+  finally { hideLoader(); }
 }
 
 async function deleteLeaveRange(ids) {
