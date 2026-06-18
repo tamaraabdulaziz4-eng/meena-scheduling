@@ -364,5 +364,16 @@ M._email_outbox.clear()
 M.notify(um2["id"], "x")
 check("no email when no address on file", len(M._email_outbox) == 0, M._email_outbox)
 
+print("\n== scenario 14b: Resend payload ==")
+import os as _os
+_os.environ["RESEND_FROM"] = "Abdulaziz Alanazi <Abdulaziz.alanazi@meena-health.com>"
+pl = M._resend_payload("nurse@example.com", "Meena Scheduling", "Your shift swap was approved")
+check("resend 'to' is a list", pl["to"] == ["nurse@example.com"], pl["to"])
+check("resend 'from' is the verified-domain identity", pl["from"] == _os.environ["RESEND_FROM"], pl["from"])
+check("resend includes html + text", "Your shift swap" in pl["html"] and "Your shift swap" in pl["text"], list(pl))
+check("resend sets reply_to", pl.get("reply_to") == M._sig_email(), pl.get("reply_to"))
+check("resend subject passthrough", pl["subject"] == "Meena Scheduling", pl["subject"])
+_os.environ.pop("RESEND_FROM", None)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

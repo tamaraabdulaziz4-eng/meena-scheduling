@@ -689,10 +689,14 @@ def assert_can_edit_schedule(user: dict, sid) -> dict:
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
-# ── Email notifications (SMTP, configured by env) ─────────────────────────────
-# Env: SMTP_HOST, SMTP_PORT(587), SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_SSL(0/1),
-#      APP_URL (link target), ORG_NAME (branding). Not configured → in-app only.
-# SMTP_CAPTURE=1 → in-memory outbox (tests).
+# ── Email notifications ───────────────────────────────────────────────────────
+# Preferred: Resend HTTP API — set RESEND_API_KEY (and optionally RESEND_FROM,
+#   e.g. "Abdulaziz Alanazi <Abdulaziz.alanazi@meena-health.com>"; defaults to
+#   the signature name+email, which must be on the domain you verified in Resend).
+# Fallback: SMTP — SMTP_HOST, SMTP_PORT(587), SMTP_USER, SMTP_PASS, SMTP_FROM,
+#   SMTP_SSL(0/1).
+# Shared: APP_URL (link/logo target), ORG_NAME (branding). Neither configured →
+#   in-app notifications only. SMTP_CAPTURE=1 → in-memory outbox (tests).
 _email_outbox = []
 
 def _org_name():
@@ -752,6 +756,40 @@ def _email_html(message):
     </div>
   </div></body></html>"""
 
+def _email_from():
+    """The From header/address. Defaults to the personal identity on the
+    verified domain so it reads as a real follow-up."""
+    return (os.environ.get("RESEND_FROM") or os.environ.get("SMTP_FROM")
+            or f"{_sig_name()} <{_sig_email()}>")
+
+def _resend_payload(to, subject, body):
+    """Build the JSON body for Resend's send-email API (pure → unit-testable)."""
+    payload = {
+        "from": _email_from(),
+        "to": [to] if isinstance(to, str) else list(to),
+        "subject": subject,
+        "html": _email_html(body),
+        "text": _email_text(body),
+    }
+    reply_to = _sig_email()
+    if reply_to:
+        payload["reply_to"] = reply_to
+    return payload
+
+def _resend_send(to, subject, body):
+    import json, urllib.request, urllib.error
+    data = json.dumps(_resend_payload(to, subject, body)).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails", data=data, method="POST",
+        headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        # Surface Resend's error body (bad From domain, etc.) so it's debuggable.
+        raise RuntimeError(f"Resend {e.code}: {e.read().decode('utf-8', 'replace')}") from None
+
 def send_email(to, subject, body):
     if not to:
         return
@@ -759,10 +797,14 @@ def send_email(to, subject, body):
         _email_outbox.append({"to": to, "subject": subject, "body": body,
                               "html": _email_html(body)})
         return
-    if not os.environ.get("SMTP_HOST"):
+    use_resend = bool(os.environ.get("RESEND_API_KEY"))
+    if not use_resend and not os.environ.get("SMTP_HOST"):
         return  # email not configured → in-app only
     def _worker():
         try:
+            if use_resend:
+                _resend_send(to, subject, body)
+                return
             import smtplib
             from email.message import EmailMessage
             from email.utils import formataddr
