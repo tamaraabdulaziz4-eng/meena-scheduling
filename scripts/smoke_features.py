@@ -385,5 +385,34 @@ check("email-test actually delivered (captured)", any(e["to"] == "boss@example.c
 etf = lead.post("/api/email-test", json={"to": "x@example.com"})
 check("email-test is superadmin-only", etf.status_code in (401, 403), etf.status_code)
 
+print("\n== scenario 15: notification hygiene (no dup / no self-notify) ==")
+# (a) Batch-approving an N-day leave range → ONE summary notification, not N.
+lead_before = {n["id"] for n in lead.get("/api/notifications").json()["notifications"]}
+lead.post("/api/leaves", json={"staff_id": B["id"], "date_from": f"{YEAR}-08-15",
+          "date_to": f"{YEAR}-08-17", "leave_type": "AL"})   # created_by = team lead
+lvls = admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+bids3 = [l["id"] for l in lvls if l["staff_id"] == B["id"]
+         and l["date"] in (f"{YEAR}-08-15", f"{YEAR}-08-16", f"{YEAR}-08-17") and l["status"] == "pending"]
+check("3-day pending leave created", len(bids3) == 3, bids3)
+rb = admin.put("/api/leaves/status", json={"ids": bids3, "status": "approved", "confirm": True})
+check("batch approve ok", rb.status_code == 200 and rb.json().get("updated") == 3, rb.text)
+lead_new = [n for n in lead.get("/api/notifications").json()["notifications"] if n["id"] not in lead_before]
+summary = [n for n in lead_new if "leave day" in (n["message"] or "").lower()]
+check("batch approval sends ONE summary (not one per day)", len(summary) == 1, summary)
+check("summary mentions the day count", "3 leave day" in (summary[0]["message"] if summary else ""), summary)
+
+# (b) Submitting a schedule does NOT self-notify the submitter, but DOES notify a manager.
+s11 = admin.post("/api/schedules/open", json={"branch_id": bid, "year": YEAR, "month": 11}).json()
+sid11 = s11["schedule"]["id"]
+a_before = {n["id"] for n in admin.get("/api/notifications").json()["notifications"]}
+m_before = {n["id"] for n in mgr.get("/api/notifications").json()["notifications"]}
+admin.put(f"/api/schedules/{sid11}/status", json={"status": "submitted"})
+a_new = [n for n in admin.get("/api/notifications").json()["notifications"] if n["id"] not in a_before]
+m_new = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in m_before]
+check("submitter gets no self 'submitted' notification",
+      not any("submitted for review" in (n["message"] or "").lower() for n in a_new), a_new)
+check("a manager IS notified of the submission",
+      any("submitted for review" in (n["message"] or "").lower() for n in m_new), m_new)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

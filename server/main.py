@@ -924,6 +924,13 @@ def clear_leave_from_schedule(staff_id, date, code):
          WHERE schedule_id=%s AND staff_id=%s AND date=%s AND shift_code=%s""",
       (sched["id"], staff_id, date, code), exec_only=True)
 
+def _leave_rota_sync(lv, status):
+    """Reflect a leave decision on the rota: approved → mark it, else clear it."""
+    if status == "approved":
+        apply_leave_to_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
+    else:
+        clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
+
 def leave_coverage_gap(staff_id, date):
     """If this staff member is scheduled a *working* shift that day and is the
     only one on it, return that shift code (a coverage gap); else None. Used to
@@ -1753,10 +1760,12 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
     if status == "submitted":
         notify_roles(("manager", "superadmin"),
                      f"{bname} {period} schedule submitted for review",
-                     link="review", ntype="review")
+                     link="review", ntype="review", exclude_user=user["id"])
     elif status in ("reviewed", "approved", "returned") and row.get("created_by"):
-        verb = {"reviewed": "reviewed", "approved": "approved", "returned": "returned for edits"}[status]
-        notify(row["created_by"], f"{bname} {period} schedule was {verb}", link="schedule", ntype=status)
+        # Don't ping the creator about an action they performed on their own schedule.
+        if row["created_by"] != user["id"]:
+            verb = {"reviewed": "reviewed", "approved": "approved", "returned": "returned for edits"}[status]
+            notify(row["created_by"], f"{bname} {period} schedule was {verb}", link="schedule", ntype=status)
     return row
 
 @app.delete("/api/schedules/{sid}")
@@ -1932,11 +1941,79 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_r
                                 link="schedule", ntype="leave")
     else:
         clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
-    if lv.get("created_by"):
+    # Tell the requester — unless they're the one who just decided it.
+    if lv.get("created_by") and lv["created_by"] != user["id"]:
         notify(lv["created_by"],
                f"{lv['staff_name']}'s {lv['leave_type']} leave on {lv['date']} was {status}",
                link="leaves", ntype=status)
     return row
+
+@app.put("/api/leaves/status")
+async def update_leaves_status_batch(request: Request, user=Depends(require_reviewer)):
+    """Approve/reject a whole range of leave days in one call so the requester
+    gets a SINGLE summary notification instead of one ping per day."""
+    body = await request.json()
+    status = body.get("status")
+    ids = body.get("ids")
+    if status not in ("approved", "rejected"):
+        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "ids must be a non-empty list")
+    ids = [int(i) for i in ids]
+    rows = q("""SELECT l.id, l.created_by, l.staff_id, l.leave_type,
+                       TO_CHAR(l.date,'YYYY-MM-DD') AS date,
+                       s.name AS staff_name, s.branch_id
+                FROM scheduling.leave_requests l
+                JOIN scheduling.staff s ON s.id=l.staff_id
+                WHERE l.id = ANY(%s) ORDER BY l.date""", (ids,))
+    if not rows:
+        raise HTTPException(404, "No leaves found")
+    # Branch access: a team lead/manager may only act on their own branch's staff.
+    for lv in rows:
+        if not can_access_branch(user, lv["branch_id"]):
+            raise HTTPException(403, "Forbidden")
+    # Compute coverage gaps (approve only) BEFORE applying, so the check reflects
+    # the pre-leave rota — and warn once for the whole range.
+    gaps = []
+    if status == "approved":
+        for lv in rows:
+            gc = leave_coverage_gap(lv["staff_id"], lv["date"])
+            if gc:
+                gaps.append((lv, gc))
+        if gaps and not body.get("confirm"):
+            shown = "; ".join(f"{g[0]['staff_name']} {g[0]['date']} (shift {g[1]})" for g in gaps[:5])
+            more = f" +{len(gaps)-5} more" if len(gaps) > 5 else ""
+            raise HTTPException(409, {
+                "error": f"These approvals leave shifts uncovered: {shown}{more}. Approve anyway?",
+                "confirm_required": "coverage_gap",
+            })
+    q("UPDATE scheduling.leave_requests SET status=%s WHERE id = ANY(%s)",
+      (status, ids), exec_only=True)
+    for lv in rows:
+        _leave_rota_sync(lv, status)
+    insert_audit(user, f"LEAVE_{status.upper()}_BATCH",
+                 f"leaves:{len(rows)}", f"{rows[0]['staff_name']} … {len(rows)} day(s)")
+    # One coverage-gap alert per branch, listing all affected days.
+    from collections import defaultdict
+    gap_by_branch = defaultdict(list)
+    for lv, gc in gaps:
+        gap_by_branch[lv["branch_id"]].append(f"{lv['staff_name']} {lv['date']} (shift {gc})")
+    for bid, items in gap_by_branch.items():
+        notify_branch_leads(bid, f"Coverage gap on approval: {'; '.join(items)} — please reassign or regenerate",
+                            link="schedule", ntype="leave")
+    # One summary notification per requester (skip the reviewer themselves).
+    by_creator = defaultdict(list)
+    for lv in rows:
+        if lv.get("created_by"):
+            by_creator[lv["created_by"]].append(lv)
+    for creator, items in by_creator.items():
+        if creator == user["id"]:
+            continue
+        names = ", ".join(sorted({i["staff_name"] for i in items}))
+        n = len(items)
+        notify(creator, f"{names}: {n} leave day{'s' if n != 1 else ''} {status}",
+               link="leaves", ntype=status)
+    return {"updated": len(rows), "status": status}
 
 # ── Staff self-service portal ─────────────────────────────────────────────────
 
@@ -2160,8 +2237,11 @@ async def act_on_swap(swid: int, request: Request, user=Depends(get_current_user
         if not claimed:
             raise HTTPException(409, "Swap was already completed")
         insert_audit(user, "SWAP_REJECTED", f"swap:{swid}", label)
-        notify_staff_member(sw["staff_a"], f"Shift swap declined: {label}", link="swaps", ntype="rejected")
-        notify_staff_member(sw["staff_b"], f"Shift swap declined: {label}", link="swaps", ntype="rejected")
+        # Tell both parties — but not the staff member who just declined it.
+        for target in (sw["staff_a"], sw["staff_b"]):
+            if role == "staff" and target == sid:
+                continue
+            notify_staff_member(target, f"Shift swap declined: {label}", link="swaps", ntype="rejected")
         return {"ok": True, "status": "rejected"}
 
     # accept / approve → advance exactly one stage. Each transition is an atomic

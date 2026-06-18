@@ -120,24 +120,20 @@ function renderLeavesList() {
 }
 
 async function setLeaveRangeStatus(ids, status) {
-  // Approve day-by-day so the server can flag a coverage gap on any single day.
-  // Once the reviewer confirms "approve anyway", it applies to the rest.
-  let confirmed = false, cancelled = false;
+  // One batched call → the requester gets a single summary notification instead
+  // of one ping per day. A coverage gap warns once for the whole range.
+  let cancelled = false;
   showLoader(status === 'approved' ? 'Approving…' : 'Rejecting…');
   try {
-    for (const id of ids) {
-      try {
-        await API.put(`/leaves/${id}/status`, confirmed ? { status, confirm: true } : { status });
-      } catch (e) {
-        if (status === 'approved' && e?.data?.detail?.confirm_required === 'coverage_gap') {
-          hideLoader();
-          const ok = await showConfirm('⚠ Coverage gap', e.message, 'Approve anyway', 'confirm-ok');
-          showLoader('Approving…');
-          if (!ok) { cancelled = true; break; }
-          confirmed = true;
-          await API.put(`/leaves/${id}/status`, { status, confirm: true });
-        } else { throw e; }
-      }
+    try {
+      await API.put('/leaves/status', { ids, status });
+    } catch (e) {
+      if (status === 'approved' && e?.data?.detail?.confirm_required === 'coverage_gap') {
+        hideLoader();
+        const ok = await showConfirm('⚠ Coverage gap', e.message, 'Approve anyway', 'confirm-ok');
+        if (!ok) { cancelled = true; }
+        else { showLoader('Approving…'); await API.put('/leaves/status', { ids, status, confirm: true }); }
+      } else { throw e; }
     }
     if (!cancelled) toast(`Leave ${status}`);
   } catch (e) { toast(e.message, 'err'); }
