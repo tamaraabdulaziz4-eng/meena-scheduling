@@ -1209,7 +1209,7 @@ async def register_staff(request: Request):
     phone = (body.get("phone") or "").strip() or None
     section = body.get("section") if body.get("section") in ("General", "US") else "General"
     if not name or not emp_id or not branch_id:
-        raise HTTPException(400, "Name, Employee/National ID and branch are required")
+        raise HTTPException(400, "Name, Employee ID and branch are required")
     branch_id = _int_or_400(branch_id)
     if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
         raise HTTPException(400, "Unknown branch")
@@ -1268,7 +1268,7 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
                   (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec]),
                   one=True)
     except psycopg2.errors.UniqueViolation:
-        raise HTTPException(409, "That Employee/National ID is already on a staff record")
+        raise HTTPException(409, "That Employee ID is already on a staff record")
     q("""UPDATE scheduling.staff_registrations
          SET status='approved', staff_id=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
       (staff["id"], user["id"], rid), exec_only=True)
@@ -1459,7 +1459,7 @@ async def create_staff(request: Request, user=Depends(require_admin)):
                  (body.get("email") or "").strip() or None),
                 one=True)
     except psycopg2.errors.UniqueViolation:
-        raise HTTPException(409, "That Employee/National ID is already on another staff record")
+        raise HTTPException(409, "That Employee ID is already on another staff record")
     insert_audit(user, "CREATE_STAFF", name)
     return row
 
@@ -1483,7 +1483,7 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
         return q(f"UPDATE scheduling.staff SET {','.join(sets)} WHERE id=%s RETURNING *",
                  params, one=True)
     except psycopg2.errors.UniqueViolation:
-        raise HTTPException(409, "That Employee/National ID is already on another staff record")
+        raise HTTPException(409, "That Employee ID is already on another staff record")
 
 @app.delete("/api/staff/{sid}")
 def delete_staff(sid: int, user=Depends(require_admin)):

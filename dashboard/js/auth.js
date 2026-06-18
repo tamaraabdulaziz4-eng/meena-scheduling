@@ -75,7 +75,7 @@ async function submitRegistration() {
     phone: document.getElementById('reg-phone').value.trim(),
   };
   if (!body.name || !body.employee_id || !body.branch_id) {
-    msg.style.color = ''; msg.textContent = 'Name, Employee/National ID and branch are required'; return;
+    msg.style.color = ''; msg.textContent = 'Name, Employee ID and branch are required'; return;
   }
   try {
     const r = await API.post('/register', body);
