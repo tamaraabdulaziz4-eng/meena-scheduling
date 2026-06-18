@@ -199,11 +199,40 @@ function toggleTheme() {
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
+function _isMobile() { return window.matchMedia('(max-width: 820px)').matches; }
+
+function _sidebarBackdrop() {
+  let el = document.getElementById('sidebar-backdrop');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sidebar-backdrop';
+    el.onclick = closeSidebarMobile;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
 function toggleSidebar() {
   const sb = document.getElementById('sidebar');
   const btn = document.getElementById('sidebar-toggle');
-  sb.classList.toggle('collapsed');
-  btn.innerHTML = sb.classList.contains('collapsed') ? '&#10095;' : '&#10094;';
+  if (_isMobile()) {
+    // Off-canvas drawer: slide in over the content with a tap-to-close backdrop.
+    const open = sb.classList.toggle('mobile-open');
+    _sidebarBackdrop().classList.toggle('show', open);
+    document.body.classList.toggle('drawer-open', open);
+  } else {
+    sb.classList.toggle('collapsed');
+    if (btn) btn.innerHTML = sb.classList.contains('collapsed') ? '&#10095;' : '&#10094;';
+  }
+}
+
+function closeSidebarMobile() {
+  const sb = document.getElementById('sidebar');
+  if (!sb) return;
+  sb.classList.remove('mobile-open');
+  const bd = document.getElementById('sidebar-backdrop');
+  if (bd) bd.classList.remove('show');
+  document.body.classList.remove('drawer-open');
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────

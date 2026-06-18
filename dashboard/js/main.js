@@ -140,6 +140,8 @@ async function showPage(requested) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const navEl = document.getElementById(`nav-${page}`);
   if (navEl) navEl.classList.add('active');
+  // On a phone, picking a page closes the slide-in drawer.
+  if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
 
   const content = document.getElementById('content');
   _navDepth++; _navigating = true;
@@ -174,10 +176,16 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Keyboard shortcut: Escape closes any open modal
+// Keyboard shortcut: Escape closes any open modal (and the mobile drawer)
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
     document.getElementById('shift-picker').style.display = 'none';
+    if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
   }
+});
+
+// Don't leave the mobile drawer/backdrop stuck when resizing up to desktop.
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 820 && typeof closeSidebarMobile === 'function') closeSidebarMobile();
 });
