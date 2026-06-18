@@ -162,15 +162,14 @@ async function showPage(requested) {
   if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
 
   const content = document.getElementById('content');
-  // Show a shimmer skeleton only if the page is still loading after a beat —
-  // instant feedback for slow fetches, no flash for fast ones.
-  let done = false;
-  const skelTimer = setTimeout(() => {
-    if (!done && seq === _navSeq) content.innerHTML = PAGE_SKELETON;
-  }, 120);
+  // Paint a shimmer skeleton up front. A page that fetches before drawing (e.g.
+  // Staff awaits its data) leaves it visible during the wait; a page that draws
+  // synchronously overwrites it in the same tick (no flash). Crucially this is
+  // set ONCE before the render runs — never on a timer that could clobber the
+  // page's own DOM mid-load.
+  content.innerHTML = PAGE_SKELETON;
   try { await renderRoute(page); }
   catch (e) { console.error('Page render error:', e); }
-  done = true; clearTimeout(skelTimer);
   if (seq !== _navSeq) return;                 // superseded by a newer navigation
   content.scrollTop = 0;
   const main = document.getElementById('main'); if (main) main.scrollTop = 0;
