@@ -782,7 +782,11 @@ def _resend_send(to, subject, body):
     req = urllib.request.Request(
         "https://api.resend.com/emails", data=data, method="POST",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
-                 "Content-Type": "application/json"})
+                 "Content-Type": "application/json",
+                 # Resend sits behind Cloudflare, which 403s (error 1010) the
+                 # default "Python-urllib/x.y" agent as a bot. Use a normal UA.
+                 "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)",
+                 "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             resp.read()
