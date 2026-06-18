@@ -99,15 +99,28 @@ function printSchedule() {
   const s = document.getElementById('print-sub');
   if (t) t.textContent = 'Monthly Roster';
   if (s) s.textContent = `${branch} · ${monthLabel(scheduleYear, scheduleMonth)}`;
+
+  // Signature / approval footer.
+  const sc = currentSchedule || {};
+  const cap = v => v ? String(v).charAt(0).toUpperCase() + String(v).slice(1) : '—';
+  const fp = document.getElementById('pf-prepared'); if (fp) fp.textContent = cap(sc.created_by_name);
+  const fa = document.getElementById('pf-approved'); if (fa) fa.textContent = sc.approved_by_name ? cap(sc.approved_by_name) : '—';
+  const stamp = document.getElementById('pf-status');
+  if (stamp) {
+    const approved = sc.status === 'approved';
+    stamp.textContent = approved ? '✔ APPROVED' : (sc.status || 'draft').toUpperCase();
+    stamp.className = 'pf-stamp ' + (approved ? 'approved' : 'pending');
+  }
+  const pr = document.getElementById('pf-printed');
+  if (pr) pr.textContent = 'Printed ' + new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  document.getElementById('print-footer').dataset.show = '1';
   window.print();
 }
 
 async function loadScheduleData() {
-  // Lightweight inline indicator instead of the full-screen loader, so
-  // switching months/branches feels instant and doesn't flash an overlay.
-  // (During first login the welcome splash already covers this.)
+  // Animated inline loader (no dimming overlay) while the month/branch loads.
   const wrap = document.getElementById('rota-wrap');
-  if (wrap) wrap.style.opacity = '0.5';
+  if (wrap) wrap.innerHTML = LOADING_HTML;
   try {
     // These four requests don't depend on each other, so fire them in parallel
     // instead of awaiting one after another — much faster, especially on a
@@ -135,10 +148,7 @@ async function loadScheduleData() {
     renderRotaGrid();
   } catch (err) {
     document.getElementById('rota-wrap').innerHTML =
-      `<div class="empty"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
-  } finally {
-    const wrap = document.getElementById('rota-wrap');
-    if (wrap) wrap.style.opacity = '';
+      `<div class="empty"><div class="empty-icon">⚠️</div><p>${escapeHtml(err.message)}</p></div>`;
   }
 }
 

@@ -171,6 +171,7 @@ function printCases() {
   const s = document.getElementById('print-sub');
   if (t) t.textContent = 'Daily Radiology Cases';
   if (s) s.textContent = fmtDateDisplay(casesDate);
+  const pf = document.getElementById('print-footer'); if (pf) delete pf.dataset.show;
   window.print();
 }
 

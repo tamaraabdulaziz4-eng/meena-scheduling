@@ -1816,6 +1816,16 @@ async def open_schedule(request: Request, user=Depends(require_admin)):
                     ON CONFLICT (branch_id,year,month) DO UPDATE SET updated_at=NOW()
                     RETURNING *""",
                  (branch_id, year, month, user["id"]), one=True)
+    # Enrich with who prepared / reviewed / approved it (for the printed roster).
+    names = q("""SELECT cu.username AS created_by_name, ru.username AS reviewed_by_name,
+                        au.username AS approved_by_name,
+                        TO_CHAR(s.approved_at,'YYYY-MM-DD') AS approved_at_date
+                 FROM scheduling.schedules s
+                 LEFT JOIN scheduling.users cu ON cu.id=s.created_by
+                 LEFT JOIN scheduling.users ru ON ru.id=s.reviewed_by
+                 LEFT JOIN scheduling.users au ON au.id=s.approved_by
+                 WHERE s.id=%s""", (schedule["id"],), one=True) or {}
+    schedule.update({k: v for k, v in names.items() if v is not None})
     entries = get_entries(schedule["id"])
     return {"schedule": schedule, "entries": entries}
 

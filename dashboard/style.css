@@ -375,6 +375,10 @@ body {
   from { opacity: 0; transform: translateY(18px) scale(.96); }
   to   { opacity: 1; transform: none; }
 }
+/* Tables & cards (Branches, Shift Types, Staff, etc.) get a clean rise-in too. */
+.content.page-reveal .table-wrap,
+.content.page-reveal > .card { animation: cardRise .45s cubic-bezier(.22,1,.36,1) both; }
+@keyframes cardRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
 /* ── Buttons ── */
 .btn {
@@ -1319,4 +1323,29 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
   .case-card { break-inside: avoid; border: 1px solid #ddd !important; }
   table { width: 100%; border-collapse: collapse; }
   .rota-wrap { overflow: visible !important; }
+
+  /* Fit the WHOLE month (≈31 days) on the landscape page — shrink to width. */
+  .rota-table { font-size: 7.5px !important; table-layout: fixed; width: 100% !important; }
+  .rota-table th, .rota-table td { padding: 1px !important; min-width: 0 !important; }
+  .rota-table .rota-name-col { width: 86px !important; min-width: 0 !important; font-size: 8px !important; }
+
+  /* Signature / approval footer (schedule print only) */
+  #print-footer[data-show] {
+    display: flex !important; align-items: flex-end; gap: 40px;
+    margin-top: 26px; padding-top: 16px; border-top: 1px solid #ddd;
+    break-inside: avoid;
+  }
+  .pf-sign { flex: 0 0 200px; }
+  .pf-role { font-size: 11px; color: #777; }
+  .pf-name { font-size: 15px; font-weight: 800; color: #261E4F; margin: 18px 0 4px; border-bottom: 1.5px solid #261E4F; padding-bottom: 4px; }
+  .pf-line { font-size: 11px; color: #777; }
+  .pf-meta { margin-left: auto; text-align: right; }
+  .pf-stamp {
+    display: inline-block; font-size: 14px; font-weight: 800; letter-spacing: 1px;
+    padding: 6px 14px; border-radius: 8px; transform: rotate(-4deg);
+  }
+  .pf-stamp.approved { color: #00875a; border: 2.5px solid #00875a; }
+  .pf-stamp.pending  { color: #b9760a; border: 2.5px solid #b9760a; }
+  .pf-printed { font-size: 10px; color: #999; margin-top: 8px; }
 }
+#print-footer { display: none; }

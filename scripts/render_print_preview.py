@@ -17,36 +17,42 @@ def header(d,img,x,y,w,title,sub):
     d.line([x,y+lh+12,x+w,y+lh+12],fill="#6B4EFF",width=2)
     return y+lh+24
 
-# ── Schedule roster (landscape) ──
-W,H=1100,620
+# ── Schedule roster (landscape, FULL month) ──
+W,H=1240,680
 img=Image.new("RGB",(W,H),"#fff"); d=ImageDraw.Draw(img)
-top=header(d,img,40,30,W-80,"Monthly Roster","NEST 3  ·  August 2026")
+top=header(d,img,40,28,W-80,"Monthly Roster","NEST 3  ·  August 2026")
 staff=["Sara Al-Harbi","M. Al-Otaibi","K. Al-Qahtani","A. Al-Zahrani","N. Al-Shehri","R. Al-Dosari"]
-days=list(range(1,19))
-import random; random.seed(7)
+days=list(range(1,32))   # full month
 codes=['M','M','E','N','D','O','O','AL']
-namew=150; cellw=(W-80-namew)//len(days); ch=44; gy=top+8
-# day header
-d.rectangle([40,gy,40+namew,gy+26],fill="#EDEBF9")
-d.text((48,gy+6),"Staff",font=fn(12,True),fill="#261E4F")
+namew=120; cellw=(W-80-namew)/len(days); ch=34; gy=top+6
+d.rectangle([40,gy,40+namew,gy+22],fill="#EDEBF9"); d.text((46,gy+5),"Staff",font=fn(10,True),fill="#261E4F")
 for i,day in enumerate(days):
-    x=40+namew+i*cellw
-    d.rectangle([x,gy,x+cellw,gy+26],fill="#EDEBF9")
-    d.text((x+cellw//2-4,gy+6),str(day),font=fn(11,True),fill="#261E4F")
-gy+=26
+    x=int(40+namew+i*cellw)
+    d.rectangle([x,gy,int(x+cellw),gy+22],fill="#EDEBF9",outline="#fff")
+    d.text((x+cellw/2-5,gy+6),str(day),font=fn(8,True),fill="#261E4F")
+gy+=22
 for r,nm in enumerate(staff):
     y=gy+r*ch
-    d.rectangle([40,y,40+namew,y+ch],outline="#e5e5e5")
-    d.text((48,y+ch//2-7),nm,font=fn(12),fill="#222")
+    d.rectangle([40,y,40+namew,y+ch],outline="#e5e5e5"); d.text((46,y+ch//2-6),nm,font=fn(9),fill="#222")
     for i in range(len(days)):
-        x=40+namew+i*cellw
-        code=codes[(r+i)%len(codes)]
-        d.rectangle([x,y,x+cellw,y+ch],fill=SH[code],outline="#ffffff")
-        d.text((x+cellw//2-6,y+ch//2-7),code,font=fn(11,True),fill=TX[code])
-# legend
-ly=gy+len(staff)*ch+16; lx=40
+        x=int(40+namew+i*cellw); code=codes[(r+i)%len(codes)]
+        d.rectangle([x,y,int(x+cellw),y+ch],fill=SH[code],outline="#ffffff")
+        d.text((x+cellw/2-5,y+ch//2-6),code,font=fn(8,True),fill=TX[code])
+ly=gy+len(staff)*ch+14; lx=40
 for code in ['M','E','N','D','O','AL']:
-    d.rectangle([lx,ly,lx+18,ly+18],fill=SH[code]); d.text((lx+24,ly+2),code,font=fn(11),fill="#444"); lx+=80
+    d.rectangle([lx,ly,lx+16,ly+16],fill=SH[code]); d.text((lx+22,ly+1),code,font=fn(10),fill="#444"); lx+=70
+# ── signature footer ──
+fy=ly+44; d.line([40,fy,W-40,fy],fill="#ddd")
+d.text((40,fy+12),"Prepared by",font=fn(10),fill="#777")
+d.text((40,fy+30),"Abdulaziz Alanazi",font=fn(14,True),fill="#261E4F"); d.line([40,fy+52,230,fy+52],fill="#261E4F",width=2)
+d.text((40,fy+56),"Team Lead",font=fn(10),fill="#777")
+d.text((320,fy+12),"Approved by",font=fn(10),fill="#777")
+d.text((320,fy+30),"Khalid Al-Manager",font=fn(14,True),fill="#261E4F"); d.line([320,fy+52,520,fy+52],fill="#261E4F",width=2)
+d.text((320,fy+56),"Manager",font=fn(10),fill="#777")
+# approved stamp
+d.rounded_rectangle([W-230,fy+18,W-90,fy+50],8,outline="#00875a",width=3)
+d.text((W-215,fy+24),"✔ APPROVED",font=fn(14,True),fill="#00875a")
+d.text((W-230,fy+58),"Printed 18 Jun 2026",font=fn(9),fill="#999")
 img.save("/home/user/meena-scheduling/print_schedule_preview.png"); print("saved schedule")
 
 # ── Daily cases print (portrait-ish) ──
