@@ -15,7 +15,7 @@ async function renderMySchedulePage() {
       <button onclick="changePortalMonth(1)">&#8250;</button>
     </div>
     <div id="portal-banner"></div>
-    <div id="portal-grid"><div class="empty"><div class="empty-icon">⏳</div><p>Loading…</p></div></div>
+    <div id="portal-grid">${LOADING_HTML}</div>
     <div id="portal-legend" style="margin-top:16px"></div>`;
   await loadMySchedule();
 }

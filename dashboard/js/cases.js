@@ -34,7 +34,7 @@ function renderCasesPage() {
       📅 Reporting day — a night shift filed after midnight still belongs to the day it covered.
     </div>
     <div id="cases-summary"></div>
-    <div id="cases-cards" class="cases-grid"><div class="empty"><div class="empty-icon">⏳</div><p>Loading…</p></div></div>`;
+    <div id="cases-cards" class="cases-grid">${LOADING_HTML}</div>`;
   // Live refresh while the manager is watching.
   if (_casesTimer) clearInterval(_casesTimer);
   _casesTimer = setInterval(() => { if (currentPage === 'cases') loadCases(true); else { clearInterval(_casesTimer); _casesTimer = null; } }, 60000);

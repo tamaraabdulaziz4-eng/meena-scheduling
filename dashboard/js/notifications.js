@@ -31,10 +31,9 @@ function renderNotifBadge(unread) {
 function toggleNotifPanel() {
   const panel = document.getElementById('notif-panel');
   if (!panel) return;
-  const open = panel.style.display === 'block';
-  if (open) { panel.style.display = 'none'; return; }
+  if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
   renderNotifList();
-  panel.style.display = 'block';
+  panel.classList.add('open');            // CSS animates it in/out
 }
 
 function notifTimeAgo(iso) {
@@ -78,7 +77,7 @@ async function openNotification(id, link) {
     try { await API.put(`/notifications/${id}/read`); } catch (e) {}
     renderNotifBadge(_notifications.filter(x => !x.is_read).length);
   }
-  document.getElementById('notif-panel').style.display = 'none';
+  document.getElementById('notif-panel').classList.remove('open');
   if (link && typeof showPage === 'function') showPage(link);
 }
 
@@ -93,8 +92,8 @@ async function markAllNotifsRead() {
 document.addEventListener('click', (e) => {
   const panel = document.getElementById('notif-panel');
   const bell  = document.getElementById('notif-bell');
-  if (panel && panel.style.display === 'block' &&
+  if (panel && panel.classList.contains('open') &&
       !panel.contains(e.target) && bell && !bell.contains(e.target)) {
-    panel.style.display = 'none';
+    panel.classList.remove('open');
   }
 });

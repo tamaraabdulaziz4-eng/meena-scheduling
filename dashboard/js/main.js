@@ -126,13 +126,8 @@ function resolvePage(page) {
 }
 
 async function renderRoute(page) {
-  // For pages that fetch their data before drawing, show a light loading line
-  // first (set once, then fully replaced by the page — safe, nothing clobbers).
-  const FETCH_FIRST = ['staff', 'swaps', 'branches', 'shifts', 'users'];
-  if (FETCH_FIRST.includes(page)) {
-    document.getElementById('content').innerHTML =
-      `<div class="empty"><div class="empty-icon">⏳</div><p>Loading…</p></div>`;
-  }
+  // showPage already paints the animated shimmer skeleton before we get here,
+  // so fetch-first pages keep that during their load — no extra placeholder.
   switch (page) {
     case 'home':       await renderHomePage(); break;
     case 'myschedule': await renderMySchedulePage(); break;

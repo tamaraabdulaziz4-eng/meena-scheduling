@@ -16,7 +16,8 @@ async function renderHomePage() {
 
   document.getElementById('content').innerHTML = `
     <div class="hm-greet">
-      <div>
+      <div class="meena-arcs"></div>
+      <div style="position:relative;z-index:1">
         <div class="hm-hi">${_greeting()}, <b>${escapeHtml(currentUser?.username || '')}</b></div>
         <div class="hm-date">${greg}</div>
       </div>
@@ -28,7 +29,7 @@ async function renderHomePage() {
         <div class="hm-card-meta" id="hm-cases-meta"></div>
       </div>
       <div class="home-bar"><div class="home-bar-fill" id="hm-bar" style="width:0%"></div></div>
-      <div id="hm-cases-list" class="hm-branch-list"><div class="hm-muted">Loading…</div></div>
+      <div id="hm-cases-list" class="hm-branch-list">${LOADING_HTML}</div>
     </div>`;
 
   // Action counters (compact) + per-branch cases in parallel.

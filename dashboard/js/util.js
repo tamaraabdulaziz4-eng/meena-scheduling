@@ -85,6 +85,9 @@ function hideLoader() {
 function startTopBar() {}
 function stopTopBar() {}
 
+// Animated inline loading state (no static hourglass).
+const LOADING_HTML = '<div class="loading-inline"><span class="mini-spin"></span><span>Loading…</span></div>';
+
 // ── Premium page reveal ───────────────────────────────────────────────────────
 // An elegant motion when a new page lands: the panel clears from a soft blur as
 // its showcase cards rise and fade in, lightly staggered. Restarts each
