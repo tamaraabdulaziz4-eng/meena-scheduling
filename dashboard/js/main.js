@@ -126,6 +126,13 @@ function resolvePage(page) {
 }
 
 async function renderRoute(page) {
+  // For pages that fetch their data before drawing, show a light loading line
+  // first (set once, then fully replaced by the page — safe, nothing clobbers).
+  const FETCH_FIRST = ['staff', 'swaps', 'branches', 'shifts', 'users'];
+  if (FETCH_FIRST.includes(page)) {
+    document.getElementById('content').innerHTML =
+      `<div class="empty"><div class="empty-icon">⏳</div><p>Loading…</p></div>`;
+  }
   switch (page) {
     case 'home':       await renderHomePage(); break;
     case 'myschedule': await renderMySchedulePage(); break;
@@ -162,14 +169,20 @@ async function showPage(requested) {
   if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
 
   const content = document.getElementById('content');
-  // Paint a shimmer skeleton up front. A page that fetches before drawing (e.g.
-  // Staff awaits its data) leaves it visible during the wait; a page that draws
-  // synchronously overwrites it in the same tick (no flash). Crucially this is
-  // set ONCE before the render runs — never on a timer that could clobber the
-  // page's own DOM mid-load.
-  content.innerHTML = PAGE_SKELETON;
-  try { await renderRoute(page); }
-  catch (e) { console.error('Page render error:', e); }
+  // Each page draws its own content (and its own loading placeholder where it
+  // fetches). We deliberately do NOT pre-inject a skeleton here — an earlier
+  // version did and it could overwrite a page's DOM mid-load, freezing it.
+  try {
+    await renderRoute(page);
+  } catch (e) {
+    console.error('Page render error:', e);
+    if (seq === _navSeq) {
+      content.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>
+        <p>Couldn't load this page. Please try again.</p>
+        <button class="btn btn-sm" style="margin-top:12px" onclick="showPage('${page}')">Retry</button></div>`;
+    }
+    return;
+  }
   if (seq !== _navSeq) return;                 // superseded by a newer navigation
   content.scrollTop = 0;
   const main = document.getElementById('main'); if (main) main.scrollTop = 0;
