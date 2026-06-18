@@ -11,12 +11,12 @@ PAD=16
 # ── white sidebar ──
 sbx,sby,sbw=PAD,PAD,232; sbh=H-2*PAD
 d.rounded_rectangle([sbx,sby,sbx+sbw,sby+sbh],26,fill="#ffffff",outline=BORDER,width=1)
-# full Meena × Tawuniya lockup
+# clean Meena logo (transparent)
 try:
-    lg=Image.open("/home/user/meena-scheduling/dashboard/meena_onboarding_logo.jpeg").convert("RGB")
-    lw=sbw-40; lh=int(lg.height*lw/lg.width); lg=lg.resize((lw,lh))
-    img.paste(lg,(sbx+20,sby+20))
-    logo_bottom=sby+20+lh
+    lg=Image.open("/home/user/meena-scheduling/dashboard/meena_logo.png").convert("RGBA")
+    lw=160; lh=int(lg.height*lw/lg.width); lg=lg.resize((lw,lh))
+    img.paste(lg,(sbx+(sbw-lw)//2,sby+24),lg)
+    logo_bottom=sby+24+lh
 except Exception as e:
     print("logo",e); logo_bottom=sby+80
 d.text((sbx+20,logo_bottom+8),"STAFF SCHEDULING",font=fn(8,True),fill=TEXT)

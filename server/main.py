@@ -1063,6 +1063,11 @@ def serve_css():
 def serve_logo():
     return FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
 
+@app.get("/meena_logo.png")
+def serve_logo_v2():
+    p = os.path.join(DASHBOARD, "meena_logo.png")
+    return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
+
 @app.get("/logo.png")
 def serve_logo2():
     p = os.path.join(DASHBOARD, "logo.png")
