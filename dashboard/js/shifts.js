@@ -13,11 +13,13 @@ async function loadAllShiftTypesRaw() {
   allShiftTypesRaw = await API.get('/shift-types/all');
 }
 
-function renderShiftsPage() {
-  const canEdit = ['admin', 'superadmin'].includes(currentUser?.role);
+// Shift types are global across every branch, so only a superadmin may change
+// them (the API enforces the same — require_superadmin).
+function canEditShifts() { return currentUser?.role === 'superadmin'; }
 
+function renderShiftsPage() {
   setTopbar('Shift Types', `Global shift list (all branches)`,
-    canEdit ? `<button class="btn btn-sm" onclick="openShiftModal()">+ Add Shift</button>` : ''
+    canEditShifts() ? `<button class="btn btn-sm" onclick="openShiftModal()">+ Add Shift</button>` : ''
   );
 
   const c = document.getElementById('content');
@@ -30,7 +32,7 @@ function renderShiftsPage() {
 function renderShiftTable() {
   const wrap = document.getElementById('shift-tables-wrap');
   if (!wrap) return;
-  const canEdit = ['admin', 'superadmin'].includes(currentUser?.role);
+  const canEdit = canEditShifts();
   const shifts = (allShiftTypesRaw || []).slice().sort((a, b) => (a.sort_order - b.sort_order) || a.code.localeCompare(b.code));
 
   const rowsHtml = shifts.map((st, idx) => {
@@ -66,7 +68,7 @@ function renderShiftTable() {
       &nbsp;·&nbsp; <strong style="color:var(--text)">${workCount}</strong> work shifts
       &nbsp;·&nbsp; <strong style="color:var(--text)">${total - workCount}</strong> status codes
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap" id="shifts-wrap">
       <table>
         <thead><tr>
           <th style="width:36px">#</th><th>Code</th><th>Label</th><th>Start</th><th>End</th><th>Hours</th><th>Colour</th><th>Type</th>
@@ -75,6 +77,8 @@ function renderShiftTable() {
         <tbody>${rowsHtml || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">No shifts</td></tr>'}</tbody>
       </table>
     </div>`;
+  animateIn('shifts-wrap');
+  revealTable('shifts-wrap');
 }
 
 function calcHours(start, end) {

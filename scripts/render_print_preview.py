@@ -1,4 +1,5 @@
-"""Preview of the branded PRINT output (schedule roster + daily cases)."""
+"""Preview of the branded PRINT output — now styled to match the welcome splash
+(lavender gradient banner, white logo chip, deep-violet titles)."""
 from PIL import Image, ImageDraw, ImageFont
 F="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; FB="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 def fn(s,b=False): return ImageFont.truetype(FB if b else F, s)
@@ -7,18 +8,37 @@ LOGO="/home/user/meena-scheduling/dashboard/meena_onboarding_logo.jpeg"
 SH={'M':'#2B9FFF','E':'#FFBA49','N':'#6B4EFF','D':'#00C896','O':'#EDEDED','AL':'#FD79A8'}
 TX={'M':'#fff','E':'#000','N':'#fff','D':'#fff','O':'#888','AL':'#fff'}
 
+def _hgrad(d, box, c0, c1):
+    """Horizontal lavender gradient inside box (x0,y0,x1,y1)."""
+    x0,y0,x1,y1=box; w=x1-x0
+    r0,g0,b0=c0; r1,g1,b1=c1
+    for i in range(w):
+        t=i/max(1,w-1)
+        d.line([(x0+i,y0),(x0+i,y1)],fill=(int(r0+(r1-r0)*t),int(g0+(g1-g0)*t),int(b0+(b1-b0)*t)))
+
 def header(d,img,x,y,w,title,sub):
+    """Splash-style banner: lavender gradient panel, white logo chip, violet text."""
+    bh=86
+    # gradient panel with rounded corners (draw on a mask for rounding)
+    panel=Image.new("RGB",(w,bh),"#fff"); pd=ImageDraw.Draw(panel)
+    _hgrad(pd,(0,0,w,bh),(255,255,255),(233,229,250))
+    mask=Image.new("L",(w,bh),0); ImageDraw.Draw(mask).rounded_rectangle([0,0,w-1,bh-1],20,fill=255)
+    img.paste(panel,(x,y),mask)
+    d.rounded_rectangle([x,y,x+w-1,y+bh-1],20,outline="#e3ddfa",width=1)
+    # white logo chip
+    cx,cy=x+16,y+16; cw,chh=170,bh-32
+    d.rounded_rectangle([cx,cy,cx+cw,cy+chh],14,fill="#ffffff")
     try:
-        lg=Image.open(LOGO).convert("RGB"); lw=150; lh=int(lg.height*lw/lg.width); lg=lg.resize((lw,lh))
-        img.paste(lg,(x,y))
-    except Exception as e: print(e); lw=0
-    d.text((x+lw+20,y+6),title,font=fn(22,True),fill="#261E4F")
-    d.text((x+lw+20,y+36),sub,font=fn(13),fill="#666")
-    d.line([x,y+lh+12,x+w,y+lh+12],fill="#6B4EFF",width=2)
-    return y+lh+24
+        lg=Image.open(LOGO).convert("RGB"); lw=130; lh=int(lg.height*lw/lg.width); lg=lg.resize((lw,lh))
+        img.paste(lg,(cx+(cw-lw)//2,cy+(chh-lh)//2))
+    except Exception as e: print(e)
+    tx=cx+cw+24
+    d.text((tx,y+24),title,font=fn(24,True),fill="#261E4F")
+    d.text((tx,y+56),sub,font=fn(14,True),fill="#6b5fa6")
+    return y+bh+18
 
 # ── Schedule roster (landscape, FULL month) ──
-W,H=1240,680
+W,H=1240,700
 img=Image.new("RGB",(W,H),"#fff"); d=ImageDraw.Draw(img)
 top=header(d,img,40,28,W-80,"Monthly Roster","NEST 3  ·  August 2026")
 staff=["Sara Al-Harbi","M. Al-Otaibi","K. Al-Qahtani","A. Al-Zahrani","N. Al-Shehri","R. Al-Dosari"]
@@ -41,35 +61,42 @@ for r,nm in enumerate(staff):
 ly=gy+len(staff)*ch+14; lx=40
 for code in ['M','E','N','D','O','AL']:
     d.rectangle([lx,ly,lx+16,ly+16],fill=SH[code]); d.text((lx+22,ly+1),code,font=fn(10),fill="#444"); lx+=70
-# ── signature footer ──
-fy=ly+44; d.line([40,fy,W-40,fy],fill="#ddd")
-d.text((40,fy+12),"Prepared by",font=fn(10),fill="#777")
-d.text((40,fy+30),"Abdulaziz Alanazi",font=fn(14,True),fill="#261E4F"); d.line([40,fy+52,230,fy+52],fill="#261E4F",width=2)
-d.text((40,fy+56),"Team Lead",font=fn(10),fill="#777")
-d.text((320,fy+12),"Approved by",font=fn(10),fill="#777")
-d.text((320,fy+30),"Khalid Al-Manager",font=fn(14,True),fill="#261E4F"); d.line([320,fy+52,520,fy+52],fill="#261E4F",width=2)
-d.text((320,fy+56),"Manager",font=fn(10),fill="#777")
+# ── signature footer (splash-style lavender card) ──
+fy=ly+40; fh=96
+fpanel=Image.new("RGB",(W-80,fh),"#fff"); fpd=ImageDraw.Draw(fpanel)
+_hgrad(fpd,(0,0,W-80,fh),(250,249,255),(241,237,252))
+fmask=Image.new("L",(W-80,fh),0); ImageDraw.Draw(fmask).rounded_rectangle([0,0,W-81,fh-1],18,fill=255)
+img.paste(fpanel,(40,fy),fmask)
+d.rounded_rectangle([40,fy,W-41,fy+fh-1],18,outline="#e7e1fa",width=1)
+px=64; py=fy+16
+d.text((px,py),"Prepared by",font=fn(11,True),fill="#8a7fbf")
+d.text((px,py+34),"Abdulaziz Alanazi",font=fn(15,True),fill="#261E4F"); d.line([px,py+60,px+190,py+60],fill="#8358FD",width=2)
+d.text((px,py+64),"Team Lead",font=fn(11),fill="#777")
+px2=px+300
+d.text((px2,py),"Approved by",font=fn(11,True),fill="#8a7fbf")
+d.text((px2,py+34),"Khalid Al-Manager",font=fn(15,True),fill="#261E4F"); d.line([px2,py+60,px2+200,py+60],fill="#8358FD",width=2)
+d.text((px2,py+64),"Manager",font=fn(11),fill="#777")
 # approved stamp
-d.rounded_rectangle([W-230,fy+18,W-90,fy+50],8,outline="#00875a",width=3)
-d.text((W-215,fy+24),"✔ APPROVED",font=fn(14,True),fill="#00875a")
-d.text((W-230,fy+58),"Printed 18 Jun 2026",font=fn(9),fill="#999")
+d.rounded_rectangle([W-240,py+18,W-90,py+52],8,outline="#00875a",width=3)
+d.text((W-226,py+25),"✔ APPROVED",font=fn(15,True),fill="#00875a")
+d.text((W-240,py+62),"Printed 18 Jun 2026",font=fn(9),fill="#999")
 img.save("/home/user/meena-scheduling/print_schedule_preview.png"); print("saved schedule")
 
-# ── Daily cases print (portrait-ish) ──
-W2,H2=720,560
+# ── Daily cases report (portrait-ish) ──
+W2,H2=760,560
 im2=Image.new("RGB",(W2,H2),"#fff"); d2=ImageDraw.Draw(im2)
 top2=header(d2,im2,40,30,W2-80,"Daily Radiology Cases","18 Jun 2026")
 rows=[("NEST 1","Sara",41,62,True),("NEST 2","Mohammed",53,47,True),("NEST 3","Khalid",101,79,True),("NEST 4","—",0,0,False)]
 y=top2+8
-d2.text((48,y),"Branch",font=fn(12,True),fill="#261E4F"); d2.text((300,y),"Cases",font=fn(12,True),fill="#261E4F")
-d2.text((420,y),"Patients",font=fn(12,True),fill="#261E4F"); d2.text((560,y),"Status",font=fn(12,True),fill="#261E4F")
+d2.text((48,y),"Branch",font=fn(12,True),fill="#261E4F"); d2.text((320,y),"Cases",font=fn(12,True),fill="#261E4F")
+d2.text((440,y),"Patients",font=fn(12,True),fill="#261E4F"); d2.text((600,y),"Status",font=fn(12,True),fill="#261E4F")
 y+=26
 for nm,by,cs,pt,done in rows:
     d2.line([40,y,W2-40,y],fill="#eee")
     d2.text((48,y+10),nm,font=fn(13,True),fill="#222")
-    d2.text((300,y+10),str(cs) if done else "—",font=fn(13),fill="#222")
-    d2.text((420,y+10),str(pt) if done else "—",font=fn(13),fill="#222")
-    d2.rounded_rectangle([560,y+8,660,y+30],8,fill="#d6f5ea" if done else "#fdeccf")
-    d2.text((572,y+12),"Submitted" if done else "Pending",font=fn(11,True),fill="#00875a" if done else "#b9760a")
+    d2.text((320,y+10),str(cs) if done else "—",font=fn(13),fill="#222")
+    d2.text((440,y+10),str(pt) if done else "—",font=fn(13),fill="#222")
+    d2.rounded_rectangle([600,y+8,700,y+30],8,fill="#d6f5ea" if done else "#fdeccf")
+    d2.text((612,y+12),"Submitted" if done else "Pending",font=fn(11,True),fill="#00875a" if done else "#b9760a")
     y+=46
 im2.save("/home/user/meena-scheduling/print_cases_preview.png"); print("saved cases")

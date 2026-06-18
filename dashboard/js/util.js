@@ -96,6 +96,15 @@ function animateIn(elOrId) {
   el.classList.remove('anim-in'); void el.offsetWidth; el.classList.add('anim-in');
 }
 
+// Cascade a table's rows in. Table pages render a single wrapper, so the page
+// reveal alone is nearly invisible — this gives them a clear, staggered
+// entrance. Force a reflow so the animation replays on every navigation.
+function revealTable(elOrId) {
+  const el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+  if (!el) return;
+  el.classList.remove('table-reveal'); void el.offsetWidth; el.classList.add('table-reveal');
+}
+
 // ── Premium page reveal ───────────────────────────────────────────────────────
 // An elegant motion when a new page lands: the panel clears from a soft blur as
 // its showcase cards rise and fade in, lightly staggered. Restarts each

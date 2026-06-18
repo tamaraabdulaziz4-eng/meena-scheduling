@@ -13,7 +13,7 @@ function renderBranchesPage() {
   );
   const c = document.getElementById('content');
   c.innerHTML = `
-    <div class="table-wrap">
+    <div class="table-wrap" id="branches-wrap">
       <table>
         <thead><tr>
           <th>#</th><th>Branch Name</th><th>Created</th>
@@ -22,6 +22,7 @@ function renderBranchesPage() {
         <tbody id="branches-tbody"></tbody>
       </table>
     </div>`;
+  animateIn('branches-wrap');
   renderBranchesList();
 }
 
@@ -43,6 +44,7 @@ function renderBranchesList() {
         <button class="action-btn danger" onclick="deleteBranchConfirm(${b.id},'${b.name.replace(/'/g,"\\'")}')">Delete</button>
       </td>` : ''}
     </tr>`).join('');
+  revealTable('branches-wrap');
 }
 
 let _editBranchId = null;
