@@ -23,9 +23,48 @@ async function openHolidaysModal() {
   if (ci) ci.value = (typeof leaveCutoffDay !== 'undefined' ? leaveCutoffDay : 15);
   document.getElementById('remind-hour-msg').textContent = '';
   loadCasesRemindHour();
+  loadRegistrationLink();
   document.getElementById('holidays-modal-overlay').classList.add('open');
   loadEmailConfig();
   await reloadHolidayList();
+}
+
+async function loadRegistrationLink() {
+  const status = document.getElementById('reg-status');
+  const link = document.getElementById('reg-link');
+  const btn = document.getElementById('reg-toggle-btn');
+  if (!status) return;
+  try {
+    const s = await API.get('/settings');
+    if (s.registration_open) {
+      status.innerHTML = '🟢 <b>Open</b> — anyone with the link can register.';
+      link.value = s.registration_link || '';
+      btn.textContent = 'Turn off';
+    } else {
+      status.innerHTML = '⚪ Off';
+      link.value = '';
+      btn.textContent = 'Enable';
+    }
+  } catch (e) { status.textContent = ''; }
+}
+
+async function toggleRegistration() {
+  const msg = document.getElementById('reg-link-msg');
+  const open = document.getElementById('reg-toggle-btn').textContent.includes('off');
+  try {
+    await API.put('/settings', { registration: open ? 'off' : 'on' });
+    await loadRegistrationLink();
+    msg.className = 'msg'; msg.textContent = '';
+    toast(open ? 'Registration turned off' : 'Registration link is ready');
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+}
+
+function copyRegLink() {
+  const link = document.getElementById('reg-link');
+  if (!link.value) { toast('Enable registration first', 'err'); return; }
+  navigator.clipboard?.writeText(link.value).then(
+    () => toast('Link copied'),
+    () => { link.select(); document.execCommand('copy'); toast('Link copied'); });
 }
 
 async function loadCasesRemindHour() {

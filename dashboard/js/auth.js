@@ -8,7 +8,7 @@ function togglePw(id = 'login-password') {
 
 // ── Forgot / reset password ──────────────────────────────────────────────────
 function _showAuthView(view) {
-  ['login-view', 'forgot-view', 'reset-view'].forEach(v => {
+  ['login-view', 'forgot-view', 'reset-view', 'register-view'].forEach(v => {
     const el = document.getElementById(v);
     if (el) el.style.display = (v === view) ? 'block' : 'none';
   });
@@ -38,6 +38,46 @@ function startPasswordReset(token) {
   _resetToken = token;
   _showAuthView('reset-view');
   setTimeout(() => document.getElementById('reset-password')?.focus(), 50);
+}
+
+// Staff self-registration (opened from ?register=CODE).
+let _regCode = null;
+async function startRegistration(code) {
+  _regCode = code;
+  _showAuthView('register-view');
+  const sel = document.getElementById('reg-branch');
+  const msg = document.getElementById('reg-msg');
+  try {
+    const info = await API.get(`/register/info?code=${encodeURIComponent(code)}`);
+    sel.innerHTML = '<option value="">Select branch…</option>' +
+      (info.branches || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+  } catch (e) {
+    msg.style.color = ''; msg.textContent = e.message || 'Registration is closed';
+    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn')
+      .forEach(el => el.disabled = true);
+  }
+}
+
+async function submitRegistration() {
+  const msg = document.getElementById('reg-msg');
+  const body = {
+    code: _regCode,
+    name: document.getElementById('reg-name').value.trim(),
+    branch_id: document.getElementById('reg-branch').value || null,
+    employee_id: document.getElementById('reg-empid').value.trim(),
+    email: document.getElementById('reg-email').value.trim(),
+    phone: document.getElementById('reg-phone').value.trim(),
+  };
+  if (!body.name || !body.employee_id || !body.branch_id) {
+    msg.style.color = ''; msg.textContent = 'Name, Employee/National ID and branch are required'; return;
+  }
+  try {
+    const r = await API.post('/register', body);
+    msg.style.color = 'var(--green)';
+    msg.textContent = r.message || 'Submitted — thank you!';
+    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn')
+      .forEach(el => el.disabled = true);
+  } catch (e) { msg.style.color = ''; msg.textContent = e.message || 'Submission failed'; }
 }
 
 async function submitNewPassword() {

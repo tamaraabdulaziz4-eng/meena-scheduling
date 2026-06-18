@@ -352,6 +352,13 @@ def init_schema():
                 );""")
             # Per-staff override: allowed to file the daily cases report.
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS can_report BOOLEAN NOT NULL DEFAULT false;")
+            # Self-service onboarding fields — Employee/National ID disambiguates
+            # staff who share a name. ID is unique when present (partial index).
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS employee_id TEXT;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS email TEXT;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS self_registered BOOLEAN NOT NULL DEFAULT false;")
+            cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_employee_id
+                           ON scheduling.staff(employee_id) WHERE employee_id IS NOT NULL;""")
             # Password-reset tokens (forgot-password via email). Stored hashed.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.password_resets (
@@ -1149,6 +1156,56 @@ async def reset_password(request: Request):
     insert_audit({"id": row["user_id"], "username": "self"}, "PASSWORD_RESET_DONE", f"user:{row['user_id']}")
     return {"ok": True, "message": "Your password has been reset. You can now sign in."}
 
+# ── Self-service staff onboarding ─────────────────────────────────────────────
+# An open link (carrying a shared code) lets staff submit their own details so
+# the manager doesn't keep them by hand. Employee/National ID is the unique key
+# that disambiguates people who share a name.
+
+def _registration_code():
+    """The current registration code, or None when onboarding is closed."""
+    code = get_setting("registration_code", "off")
+    return None if (not code or code == "off") else code
+
+def _check_registration_code(code):
+    cur = _registration_code()
+    if not cur or (code or "") != cur:
+        raise HTTPException(403, "Staff registration is closed. Ask your manager for the current link.")
+
+@app.get("/api/register/info")
+def register_info(request: Request):
+    """Branch list for the onboarding form (only if the code is valid)."""
+    _check_registration_code(request.query_params.get("code"))
+    branches = q("SELECT id, name FROM scheduling.branches ORDER BY name")
+    return {"ok": True, "branches": branches}
+
+@app.post("/api/register")
+async def register_staff(request: Request):
+    """Create (or update by Employee ID) a staff record from a self-submission."""
+    body = await request.json()
+    _check_registration_code(body.get("code"))
+    name = (body.get("name") or "").strip()
+    emp_id = (body.get("employee_id") or "").strip()
+    branch_id = body.get("branch_id")
+    email = (body.get("email") or "").strip() or None
+    phone = (body.get("phone") or "").strip() or None
+    if not name or not emp_id or not branch_id:
+        raise HTTPException(400, "Name, Employee/National ID and branch are required")
+    branch_id = _int_or_400(branch_id)
+    if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
+        raise HTTPException(400, "Unknown branch")
+    # Upsert on Employee ID so a re-submission updates rather than duplicates.
+    row = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, self_registered)
+               VALUES (%s,%s,%s,%s,%s,true)
+               ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
+               DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
+                             email=EXCLUDED.email, phone=EXCLUDED.phone, self_registered=true
+               RETURNING id, name""", (name, branch_id, emp_id, email, phone), one=True)
+    bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
+    notify_roles(("manager", "superadmin"),
+                 f"New staff registration: {name} ({bname}) — ID {emp_id}",
+                 link="staff", ntype="info")
+    return {"ok": True, "message": "Thanks! Your details were submitted."}
+
 @app.get("/api/auth/me")
 def me(user=Depends(get_current_user)):
     return user
@@ -1310,12 +1367,17 @@ async def create_staff(request: Request, user=Depends(require_admin)):
     if not name: raise HTTPException(400, "Name required")
     branch_id = body.get("branch_id")
     if not can_access_branch(user, branch_id): raise HTTPException(403, "Forbidden")
-    row = q("""INSERT INTO scheduling.staff (name,phone,branch_id,speciality,is_cross_branch,can_report)
-               VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
-            (name, body.get("phone"), branch_id,
-             body.get("speciality", ["General"]), body.get("is_cross_branch", False),
-             bool(body.get("can_report", False))),
-            one=True)
+    try:
+        row = q("""INSERT INTO scheduling.staff (name,phone,branch_id,speciality,is_cross_branch,can_report,employee_id,email)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (name, body.get("phone"), branch_id,
+                 body.get("speciality", ["General"]), body.get("is_cross_branch", False),
+                 bool(body.get("can_report", False)),
+                 (body.get("employee_id") or "").strip() or None,
+                 (body.get("email") or "").strip() or None),
+                one=True)
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(409, "That Employee/National ID is already on another staff record")
     insert_audit(user, "CREATE_STAFF", name)
     return row
 
@@ -1329,14 +1391,17 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
     if "branch_id" in body and body["branch_id"] and not can_access_branch(user, body["branch_id"]):
         raise HTTPException(403, "You can't move staff to a branch you don't manage")
     sets, params = [], []
-    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts","can_report"):
+    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts","can_report","employee_id","email"):
         if field in body:
             sets.append(f"{field}=%s")
             params.append(body[field] if body[field] != "" else None)
     if not sets: return existing
     params.append(sid)
-    return q(f"UPDATE scheduling.staff SET {','.join(sets)} WHERE id=%s RETURNING *",
-             params, one=True)
+    try:
+        return q(f"UPDATE scheduling.staff SET {','.join(sets)} WHERE id=%s RETURNING *",
+                 params, one=True)
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(409, "That Employee/National ID is already on another staff record")
 
 @app.delete("/api/staff/{sid}")
 def delete_staff(sid: int, user=Depends(require_admin)):
@@ -2402,8 +2467,16 @@ def delete_holiday(hid: int, user=Depends(require_superadmin)):
 
 @app.get("/api/settings")
 def read_settings(user=Depends(get_current_user)):
-    return {"leave_cutoff_day": get_leave_cutoff_day(),
-            "cases_remind_hour": get_setting("cases_remind_hour", "7")}
+    out = {"leave_cutoff_day": get_leave_cutoff_day(),
+           "cases_remind_hour": get_setting("cases_remind_hour", "7")}
+    # Only a superadmin sees the staff-registration link/code.
+    if user["role"] == "superadmin":
+        code = _registration_code()
+        app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
+        out["registration_open"] = bool(code)
+        out["registration_link"] = (f"{app_url}/?register={code}" if (code and app_url)
+                                     else (f"/?register={code}" if code else None))
+    return out
 
 @app.put("/api/settings")
 async def write_settings(request: Request, user=Depends(require_superadmin)):
@@ -2431,8 +2504,18 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
         q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('cases_remind_hour',%s)
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (val,), exec_only=True)
         insert_audit(user, "SET_CASES_REMIND_HOUR", val)
-    return {"leave_cutoff_day": get_leave_cutoff_day(),
-            "cases_remind_hour": get_setting("cases_remind_hour", "7")}
+    if "registration" in body:
+        # "on" → (re)generate a code, "off" → close onboarding.
+        action = body["registration"]
+        if action == "off":
+            val = "off"
+        else:
+            import secrets
+            val = secrets.token_urlsafe(9)
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('registration_code',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (val,), exec_only=True)
+        insert_audit(user, "SET_REGISTRATION", "off" if val == "off" else "on")
+    return read_settings(user)
 
 @app.get("/api/email-config")
 def email_config(user=Depends(require_superadmin)):

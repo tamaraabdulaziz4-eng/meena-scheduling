@@ -44,13 +44,17 @@ function renderStaffPage() {
       <div class="table-wrap" style="border-radius:10px">
         <table>
           <thead><tr>
-            <th>#</th><th>Name</th><th>Section</th>
+            <th>#</th><th>Name</th><th>ID / Email</th><th>Section</th>
             ${canEdit ? '<th>Actions</th>' : ''}
           </tr></thead>
           <tbody>${staff.map((s, i) => `
             <tr>
               <td>${i+1}</td>
-              <td><strong>${escapeHtml(s.name)}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}</td>
+              <td><strong>${escapeHtml(s.name)}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}${s.self_registered ? ' <span class="badge badge-green" style="font-size:9px">New</span>' : ''}</td>
+              <td style="font-size:12px;color:var(--muted)">
+                ${s.employee_id ? escapeHtml(s.employee_id) : '<span style="color:#c9880a">no ID</span>'}
+                ${s.email ? '<br>' + escapeHtml(s.email) : ''}
+              </td>
               <td>${(() => {
                 const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
                 const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
@@ -75,6 +79,9 @@ function openStaffModal(id) {
   document.getElementById('staff-modal-title').textContent = id ? 'Edit Staff' : 'Add Staff';
   document.getElementById('staff-edit-id').value = id || '';
   document.getElementById('staff-name').value    = s?.name || '';
+  const eidEl = document.getElementById('staff-empid'); if (eidEl) eidEl.value = s?.employee_id || '';
+  const emEl  = document.getElementById('staff-email'); if (emEl)  emEl.value  = s?.email || '';
+  const phEl  = document.getElementById('staff-phone'); if (phEl)  phEl.value  = s?.phone || '';
   document.getElementById('staff-msg').textContent = '';
 
   // Branch select — cross-branch roles (superadmin, manager) see all branches;
@@ -116,7 +123,10 @@ async function saveStaff() {
   if (!specs[0]) { msg.className = 'msg err'; msg.textContent = 'Select a section'; return; }
 
   const body = { name, branch_id: bid ? Number(bid) : null, speciality: specs,
-                 can_report: !!document.getElementById('staff-can-report')?.checked };
+                 can_report: !!document.getElementById('staff-can-report')?.checked,
+                 employee_id: document.getElementById('staff-empid')?.value.trim() || null,
+                 email: document.getElementById('staff-email')?.value.trim() || null,
+                 phone: document.getElementById('staff-phone')?.value.trim() || null };
 
   try {
     if (_editStaffId) {

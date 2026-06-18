@@ -473,5 +473,36 @@ fr2 = anon.post("/api/auth/forgot", json={"username": "nobody-here-9999"})
 check("forgot hides non-existent accounts (generic + no email)",
       fr2.status_code == 200 and len(M._email_outbox) == 0, M._email_outbox)
 
+print("\n== scenario 18: staff self-registration ==")
+anon2 = TestClient(app)
+# Closed by default → the public form is blocked.
+check("registration closed by default", anon2.get("/api/register/info?code=whatever").status_code == 403)
+# Superadmin enables it and gets a shareable link with a code.
+en = admin.put("/api/settings", json={"registration": "on"})
+check("superadmin can open registration", en.status_code == 200 and en.json().get("registration_open") is True, en.text)
+link = en.json().get("registration_link") or ""
+code = link.split("register=")[-1]
+check("registration link carries a code", bool(code), link)
+check("team lead can't see the registration code", "registration_link" not in lead.get("/api/settings").json())
+# Valid code → the form can load branches and submit.
+info = anon2.get(f"/api/register/info?code={code}")
+check("valid code unlocks the form", info.status_code == 200 and len(info.json().get("branches", [])) >= 1, info.text)
+reg = anon2.post("/api/register", json={"code": code, "name": "ZZ Self Signup",
+                 "branch_id": bid, "employee_id": f"EID{sfx}", "email": "self@example.com", "phone": "0500000000"})
+check("self-registration creates a staff record", reg.status_code == 200, reg.text)
+made = next((s for s in admin.get(f"/api/staff?branch_id={bid}").json() if s.get("employee_id") == f"EID{sfx}"), None)
+check("new staff has the submitted details", made and made["name"] == "ZZ Self Signup" and made.get("self_registered") is True, made)
+# Re-submitting the same ID updates rather than duplicating.
+anon2.post("/api/register", json={"code": code, "name": "ZZ Self Renamed", "branch_id": bid, "employee_id": f"EID{sfx}"})
+dupes = [s for s in admin.get(f"/api/staff?branch_id={bid}").json() if s.get("employee_id") == f"EID{sfx}"]
+check("same Employee ID upserts (no duplicate)", len(dupes) == 1 and dupes[0]["name"] == "ZZ Self Renamed", dupes)
+# Wrong code is rejected.
+check("wrong code rejected", anon2.post("/api/register", json={"code": "nope", "name": "x", "branch_id": bid, "employee_id": "y"}).status_code == 403)
+# Manager can't set a duplicate Employee ID on another record.
+dupset = admin.put(f"/api/staff/{B['id']}", json={"employee_id": f"EID{sfx}"})
+check("duplicate Employee ID rejected on edit", dupset.status_code == 409, dupset.status_code)
+admin.put("/api/settings", json={"registration": "off"})
+check("registration can be closed again", admin.get("/api/settings").json().get("registration_open") is False)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

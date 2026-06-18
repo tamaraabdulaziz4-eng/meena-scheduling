@@ -4,8 +4,12 @@ let currentPage = 'schedule';
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
 
+  const params = new URLSearchParams(location.search);
+  // A staff-registration link (?register=CODE) opens the public onboarding form.
+  const regCode = params.get('register');
+  if (regCode) { startRegistration(regCode); return; }
   // A password-reset link (?reset=TOKEN) jumps straight to the set-password form.
-  const resetToken = new URLSearchParams(location.search).get('reset');
+  const resetToken = params.get('reset');
   if (resetToken) { startPasswordReset(resetToken); return; }
 
   showLoader('Starting…');

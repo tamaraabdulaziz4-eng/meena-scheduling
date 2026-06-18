@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260618k">
+<link rel="stylesheet" href="/style.css?v=20260618l">
 </head>
 <body>
 
@@ -64,6 +64,34 @@
       <div class="login-error" id="forgot-msg" style="color:var(--muted)"></div>
       <button type="button" onclick="showLoginView()"
         style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;margin-top:14px;font-family:inherit">← Back to sign in</button>
+    </div>
+
+    <!-- Staff self-registration view (opened from the shared ?register= link) -->
+    <div id="register-view" style="display:none">
+      <h2>Staff registration</h2>
+      <p>Enter your details so we have them on file.</p>
+      <div class="login-field">
+        <label>Full name</label>
+        <input type="text" id="reg-name" placeholder="Your full name">
+      </div>
+      <div class="login-field">
+        <label>Branch</label>
+        <select id="reg-branch" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;background:var(--card-alt);color:var(--text);font-family:inherit"></select>
+      </div>
+      <div class="login-field">
+        <label>Employee / National ID</label>
+        <input type="text" id="reg-empid" placeholder="e.g. 1234567890" inputmode="numeric">
+      </div>
+      <div class="login-field">
+        <label>Email</label>
+        <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="login-field">
+        <label>Mobile <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input type="text" id="reg-phone" placeholder="05xxxxxxxx" inputmode="tel">
+      </div>
+      <button class="login-btn" onclick="submitRegistration()">Submit</button>
+      <div class="login-error" id="reg-msg"></div>
     </div>
 
     <!-- Set-new-password view (opened from the emailed link) -->
@@ -243,6 +271,20 @@
           <label>Branch *</label>
           <select id="staff-branch"></select>
         </div>
+        <div class="form-row">
+          <div class="form-field" style="flex:1">
+            <label>Employee / National ID</label>
+            <input type="text" id="staff-empid" placeholder="unique ID" inputmode="numeric">
+          </div>
+          <div class="form-field" style="flex:1">
+            <label>Mobile</label>
+            <input type="text" id="staff-phone" placeholder="05xxxxxxxx" inputmode="tel">
+          </div>
+        </div>
+        <div class="form-field">
+          <label>Email</label>
+          <input type="email" id="staff-email" placeholder="name@example.com">
+        </div>
         <div class="form-field">
           <label>Section *</label>
           <select id="staff-section">
@@ -391,6 +433,17 @@
             <span style="font-size:11px;color:var(--muted)">Auto-remind branches that haven't submitted (KSA time).</span>
           </div>
           <div class="msg" id="remind-hour-msg" style="margin-top:6px"></div>
+        </div>
+        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
+          <label>Staff self-registration</label>
+          <div id="reg-status" style="font-size:11px;color:var(--muted);margin-bottom:6px">Loading…</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="text" id="reg-link" readonly style="flex:1;min-width:180px;font-size:12px;color:var(--muted)" placeholder="Registration is off">
+            <button class="btn btn-ghost btn-sm" onclick="copyRegLink()">Copy</button>
+            <button class="btn btn-ghost btn-sm" id="reg-toggle-btn" onclick="toggleRegistration()">Enable</button>
+          </div>
+          <span style="font-size:11px;color:var(--muted)">Share this link so staff fill in their own name, branch, ID & email.</span>
+          <div class="msg" id="reg-link-msg" style="margin-top:6px"></div>
         </div>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
           <label>Email notifications</label>
@@ -630,24 +683,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260618k"></script>
-<script src="/js/auth.js?v=20260618k"></script>
-<script src="/js/util.js?v=20260618k"></script>
-<script src="/js/branches.js?v=20260618k"></script>
-<script src="/js/users.js?v=20260618k"></script>
-<script src="/js/staff.js?v=20260618k"></script>
-<script src="/js/leaves.js?v=20260618k"></script>
-<script src="/js/swaps.js?v=20260618k"></script>
-<script src="/js/holidays.js?v=20260618k"></script>
-<script src="/js/notifications.js?v=20260618k"></script>
-<script src="/js/portal.js?v=20260618k"></script>
-<script src="/js/cases.js?v=20260618k"></script>
-<script src="/js/home.js?v=20260618k"></script>
-<script src="/js/shifts.js?v=20260618k"></script>
-<script src="/js/schedule.js?v=20260618k"></script>
-<script src="/js/review.js?v=20260618k"></script>
-<script src="/js/export.js?v=20260618k"></script>
-<script src="/js/audit.js?v=20260618k"></script>
-<script src="/js/main.js?v=20260618k"></script>
+<script src="/js/api.js?v=20260618l"></script>
+<script src="/js/auth.js?v=20260618l"></script>
+<script src="/js/util.js?v=20260618l"></script>
+<script src="/js/branches.js?v=20260618l"></script>
+<script src="/js/users.js?v=20260618l"></script>
+<script src="/js/staff.js?v=20260618l"></script>
+<script src="/js/leaves.js?v=20260618l"></script>
+<script src="/js/swaps.js?v=20260618l"></script>
+<script src="/js/holidays.js?v=20260618l"></script>
+<script src="/js/notifications.js?v=20260618l"></script>
+<script src="/js/portal.js?v=20260618l"></script>
+<script src="/js/cases.js?v=20260618l"></script>
+<script src="/js/home.js?v=20260618l"></script>
+<script src="/js/shifts.js?v=20260618l"></script>
+<script src="/js/schedule.js?v=20260618l"></script>
+<script src="/js/review.js?v=20260618l"></script>
+<script src="/js/export.js?v=20260618l"></script>
+<script src="/js/audit.js?v=20260618l"></script>
+<script src="/js/main.js?v=20260618l"></script>
 </body>
 </html>
