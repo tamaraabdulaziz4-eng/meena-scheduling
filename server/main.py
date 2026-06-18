@@ -2398,6 +2398,60 @@ async def email_test(request: Request, user=Depends(require_superadmin)):
     insert_audit(user, "EMAIL_TEST", to)
     return {"ok": True, "sent_to": to, "from": _email_from()}
 
+# ── Home dashboard ────────────────────────────────────────────────────────────
+
+@app.get("/api/dashboard")
+def dashboard_summary(user=Depends(get_current_user)):
+    """At-a-glance counts for the home page, scoped to what the user can act on."""
+    def c(sql, params=()):
+        return (q(sql, params, one=True) or {}).get("c", 0)
+    role = user["role"]
+    is_reviewer = role in ("manager", "superadmin")
+    bid = user.get("branch_id")
+    sid = user.get("staff_id")
+
+    # Schedules awaiting review (reviewers only).
+    pending_reviews = c("SELECT COUNT(*) AS c FROM scheduling.schedules WHERE status='submitted'") if is_reviewer else 0
+
+    # Leave requests still pending — all branches for a reviewer, own branch for a lead.
+    if is_reviewer:
+        pending_leaves = c("SELECT COUNT(*) AS c FROM scheduling.leave_requests WHERE status='pending'")
+    elif role == "admin":
+        pending_leaves = c("""SELECT COUNT(*) AS c FROM scheduling.leave_requests l
+                              JOIN scheduling.staff s ON s.id=l.staff_id
+                              WHERE l.status='pending' AND s.branch_id=%s""", (bid,))
+    else:
+        pending_leaves = 0
+
+    # Swaps waiting on THIS user's action at their stage.
+    if is_reviewer:
+        pending_swaps = c("SELECT COUNT(*) AS c FROM scheduling.shift_swaps WHERE status='pending_manager'")
+    elif role == "admin":
+        pending_swaps = c("SELECT COUNT(*) AS c FROM scheduling.shift_swaps WHERE status='pending_lead' AND branch_id=%s", (bid,))
+    elif role == "staff":
+        pending_swaps = c("SELECT COUNT(*) AS c FROM scheduling.shift_swaps WHERE status='pending_peer' AND staff_b=%s", (sid,))
+    else:
+        pending_swaps = 0
+
+    # Today's daily-cases submission progress.
+    date = _operational_date_server()
+    if is_reviewer:
+        total_branches = c("SELECT COUNT(*) AS c FROM scheduling.branches")
+        submitted = c("SELECT COUNT(*) AS c FROM scheduling.daily_cases WHERE date=%s AND locked=true", (date,))
+    elif bid:
+        total_branches = 1
+        submitted = c("SELECT COUNT(*) AS c FROM scheduling.daily_cases WHERE date=%s AND locked=true AND branch_id=%s", (date, bid))
+    else:
+        total_branches, submitted = 0, 0
+
+    return {
+        "pending_reviews": pending_reviews,
+        "pending_leaves": pending_leaves,
+        "pending_swaps": pending_swaps,
+        "cases_today": {"submitted": submitted, "total": total_branches, "date": date},
+        "role": role,
+    }
+
 # ── Daily radiology cases report ──────────────────────────────────────────────
 
 _CASE_FIELDS = ("xray", "ct", "us", "mamo", "bmd", "insert_cd",

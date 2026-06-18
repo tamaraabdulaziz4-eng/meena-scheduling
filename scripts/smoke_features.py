@@ -348,6 +348,16 @@ sroff = admin.put("/api/settings", json={"cases_remind_hour": "off"})
 check("cases_remind_hour can be turned off", sroff.json().get("cases_remind_hour") == "off", sroff.text)
 admin.put("/api/settings", json={"cases_remind_hour": 7})  # restore default
 
+print("\n== scenario 16: home dashboard summary ==")
+dash = admin.get("/api/dashboard")
+check("dashboard ok for superadmin", dash.status_code == 200, dash.text)
+dj = dash.json()
+check("dashboard has the action counters", all(k in dj for k in ("pending_reviews", "pending_leaves", "pending_swaps", "cases_today")), dj)
+check("cases_today has submitted/total", "submitted" in dj["cases_today"] and "total" in dj["cases_today"], dj["cases_today"])
+dl = lead.get("/api/dashboard")
+check("dashboard ok for team lead", dl.status_code == 200, dl.text)
+check("team lead sees no schedule-review queue", dl.json().get("pending_reviews") == 0, dl.json())
+
 print("\n== scenario 13b: cases edge cases (regressions) ==")
 # Reviewer plain-Save on a locked report must NOT silently unlock it or wipe
 # who submitted it — only an actual Submit changes lock/submission state.

@@ -32,6 +32,10 @@ async function initApp() {
   // Reviewers (manager + full admin) get the Review page.
   const isReviewer = ['manager','superadmin'].includes(role);
 
+  // Home dashboard — reviewers and team leads (staff get My Schedule instead).
+  const homeNav = document.getElementById('nav-home');
+  const canSeeHome = ['admin', 'manager', 'superadmin'].includes(role);
+  if (homeNav) homeNav.style.display = canSeeHome ? 'flex' : 'none';
   // Staff self-service nav item.
   const mySchedNav = document.getElementById('nav-myschedule');
   if (mySchedNav) mySchedNav.style.display = isStaff ? 'flex' : 'none';
@@ -69,8 +73,8 @@ async function initApp() {
   if (isReviewer && typeof loadReviewBadgeCount === 'function') {
     loadReviewBadgeCount();
   }
-  // Staff land on their own schedule; a manager on Review; others on Schedule.
-  window._defaultPage = isStaff ? 'myschedule' : (isManager ? 'review' : 'schedule');
+  // Staff land on their own schedule; everyone else on the Home dashboard.
+  window._defaultPage = isStaff ? 'myschedule' : 'home';
 
   // Load global data
   showLoader('Loading data…');
@@ -93,6 +97,8 @@ async function initApp() {
 function resolvePage(page) {
   const role = currentUser?.role;
   const adminish = ['admin','superadmin'].includes(role);
+  if (page === 'home' && !['admin','manager','superadmin'].includes(role))
+    return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'schedule'   && role === 'staff')  return 'myschedule';
   if (page === 'nest-config')                     return 'schedule';
   if (['swaps','cases'].includes(page) && role === 'viewer') return 'schedule';
@@ -105,6 +111,7 @@ function resolvePage(page) {
 
 async function renderRoute(page) {
   switch (page) {
+    case 'home':       await renderHomePage(); break;
     case 'myschedule': await renderMySchedulePage(); break;
     case 'schedule':   await renderSchedulePage(); break;
     case 'review':     await renderReviewPage(); break;

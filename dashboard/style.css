@@ -218,6 +218,23 @@ body {
 .content.page-entering { opacity: 0; transform: translateY(6px); }
 /* removing .page-entering on the next frame animates it to the resting state */
 
+/* ── Home dashboard KPI cards ── */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.kpi-card {
+  text-align: left; cursor: pointer; font-family: inherit;
+  background: var(--card); border: 1.5px solid var(--border); border-radius: 16px;
+  padding: 18px; display: flex; flex-direction: column; gap: 4px;
+  transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(43,36,88,.14); border-color: var(--accent); }
+.kpi-card:active { transform: translateY(0); }
+.kpi-ico { font-size: 22px; }
+.kpi-val { font-size: 30px; font-weight: 800; color: var(--primary); line-height: 1.1; }
+.kpi-label { font-size: 13px; color: var(--text); font-weight: 600; }
+.kpi-sub { font-size: 11px; color: var(--muted); }
+.kpi-card.kpi-alert { border-color: rgba(255,159,67,.55); background: rgba(255,159,67,.06); }
+.kpi-card.kpi-alert .kpi-val { color: #c9880a; }
+
 /* ── Slim top progress bar (navigation / data-fetch feedback) ── */
 #topbar-progress {
   position: fixed; top: 0; left: 0; height: 3px; width: 0;
