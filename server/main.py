@@ -1011,6 +1011,7 @@ def startup():
     seed_defaults()
     seed_nest_config()
     seed_admin()
+    start_scheduler()
 
 # ── Static dashboard ──────────────────────────────────────────────────────────
 
@@ -2331,7 +2332,8 @@ def delete_holiday(hid: int, user=Depends(require_superadmin)):
 
 @app.get("/api/settings")
 def read_settings(user=Depends(get_current_user)):
-    return {"leave_cutoff_day": get_leave_cutoff_day()}
+    return {"leave_cutoff_day": get_leave_cutoff_day(),
+            "cases_remind_hour": get_setting("cases_remind_hour", "7")}
 
 @app.put("/api/settings")
 async def write_settings(request: Request, user=Depends(require_superadmin)):
@@ -2346,7 +2348,21 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
         q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('leave_cutoff_day',%s)
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (str(d),), exec_only=True)
         insert_audit(user, "SET_LEAVE_CUTOFF", f"day:{d}")
-    return {"leave_cutoff_day": get_leave_cutoff_day()}
+    if "cases_remind_hour" in body:
+        raw = body["cases_remind_hour"]
+        # "off" (or any non-0–23 value) disables the automatic reminder.
+        val = "off"
+        try:
+            h = int(raw)
+            if 0 <= h <= 23:
+                val = str(h)
+        except (TypeError, ValueError):
+            val = "off"
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('cases_remind_hour',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (val,), exec_only=True)
+        insert_audit(user, "SET_CASES_REMIND_HOUR", val)
+    return {"leave_cutoff_day": get_leave_cutoff_day(),
+            "cases_remind_hour": get_setting("cases_remind_hour", "7")}
 
 @app.get("/api/email-config")
 def email_config(user=Depends(require_superadmin)):
@@ -2547,6 +2563,25 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
                      link="cases", ntype="submitted", exclude_user=user["id"])
     return out
 
+def _send_cases_reminders(date):
+    """Notify the fillers of every branch with no locked report for `date`.
+    Returns the list of branch names reminded."""
+    pending = q("""SELECT b.id, b.name FROM scheduling.branches b
+                   WHERE NOT EXISTS (SELECT 1 FROM scheduling.daily_cases dc
+                                     WHERE dc.branch_id=b.id AND dc.date=%s AND dc.locked=true)
+                   ORDER BY b.name""", (date,))
+    reminded = []
+    for b in pending:
+        targets = _cases_remind_targets(b["id"], date)
+        if not targets:
+            continue
+        msg = (f"Reminder: {b['name']}'s daily cases report for {date} "
+               f"hasn't been submitted yet — please fill it in.")
+        for uid in targets:
+            notify(uid, msg, link="cases", ntype="reminder")
+        reminded.append(b["name"])
+    return reminded
+
 @app.post("/api/daily-cases/remind")
 async def remind_daily_cases(request: Request):
     """Remind branches that haven't submitted their daily report yet. Auth: a
@@ -2572,24 +2607,44 @@ async def remind_daily_cases(request: Request):
                 return {"date": date, "reminded": [], "skipped": "reminded within the last 6h"}
         except Exception:
             pass
-    pending = q("""SELECT b.id, b.name FROM scheduling.branches b
-                   WHERE NOT EXISTS (SELECT 1 FROM scheduling.daily_cases dc
-                                     WHERE dc.branch_id=b.id AND dc.date=%s AND dc.locked=true)
-                   ORDER BY b.name""", (date,))
-    reminded = []
-    for b in pending:
-        targets = _cases_remind_targets(b["id"], date)
-        if not targets:
-            continue
-        msg = (f"Reminder: {b['name']}'s daily cases report for {date} "
-               f"hasn't been submitted yet — please fill it in.")
-        for uid in targets:
-            notify(uid, msg, link="cases", ntype="reminder")
-        reminded.append(b["name"])
+    reminded = _send_cases_reminders(date)
     q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
          ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""",
       (key, now.isoformat()), exec_only=True)
     return {"date": date, "reminded": reminded}
+
+def _cases_reminder_loop():
+    """Built-in scheduler: once a day at the configured KSA hour, remind the
+    branches that still haven't submitted. The per-day claim is atomic
+    (INSERT … ON CONFLICT DO NOTHING) so with multiple workers exactly one sends.
+    Disabled when cases_remind_hour isn't a valid 0–23 hour."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            raw = get_setting("cases_remind_hour", "7")
+            hour = int(raw)
+            if 0 <= hour <= 23:
+                ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+                if ksa.hour == hour:
+                    date = _operational_date_server()
+                    claimed = q("""INSERT INTO scheduling.app_settings (key,value)
+                                   VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
+                                (f"cases_remind_auto:{date}", ksa.isoformat()), one=True)
+                    if claimed:
+                        names = _send_cases_reminders(date)
+                        print(f"[cases-reminder] reminded {len(names)} branch(es) for {date}")
+        except Exception as e:
+            print(f"[cases-reminder] {e}")
+        time.sleep(600)   # re-check every 10 minutes
+
+def start_scheduler():
+    # Skip under the test harness; otherwise one daemon thread per worker is fine
+    # (the atomic per-day claim keeps the actual send single).
+    if os.environ.get("SMTP_CAPTURE") or os.environ.get("DISABLE_SCHEDULER"):
+        return
+    import threading
+    threading.Thread(target=_cases_reminder_loop, daemon=True).start()
 
 @app.put("/api/daily-cases/reopen")
 async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):

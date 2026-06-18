@@ -341,6 +341,12 @@ check("team lead got a fill-in reminder", any("hasn't been submitted" in (n["mes
 check("reminder deduped within 6h", (admin.post(f"/api/daily-cases/remind?date={CD}", json={}).json() or {}).get("skipped"), "expected skipped")
 rfx = lead.post(f"/api/daily-cases/remind?date={CD}", json={})
 check("remind is superadmin/cron only", rfx.status_code in (401, 403), rfx.status_code)
+# auto-reminder hour setting round-trips (and "off" disables)
+sr = admin.put("/api/settings", json={"cases_remind_hour": 6})
+check("set cases_remind_hour=6", sr.status_code == 200 and str(sr.json().get("cases_remind_hour")) == "6", sr.text)
+sroff = admin.put("/api/settings", json={"cases_remind_hour": "off"})
+check("cases_remind_hour can be turned off", sroff.json().get("cases_remind_hour") == "off", sroff.text)
+admin.put("/api/settings", json={"cases_remind_hour": 7})  # restore default
 
 print("\n== scenario 13b: cases edge cases (regressions) ==")
 # Reviewer plain-Save on a locked report must NOT silently unlock it or wipe
