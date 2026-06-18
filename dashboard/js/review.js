@@ -57,16 +57,18 @@ async function changeReviewMonth(delta) {
 }
 
 async function loadReviewData() {
-  showLoader('Loading review…');
+  const list = document.getElementById('review-list');
+  if (list) list.innerHTML = LOADING_HTML;
   try {
     reviewData = await API.get(`/schedules/review-overview?year=${reviewYear}&month=${reviewMonth}`);
     renderReviewKpis();
     renderReviewList();
     updateReviewBadge();
+    animateIn('review-list');
   } catch (e) {
-    document.getElementById('review-list').innerHTML =
-      `<div class="empty"><div class="empty-icon">⚠️</div><p>${e.message}</p></div>`;
-  } finally { hideLoader(); }
+    if (list) list.innerHTML =
+      `<div class="empty"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message)}</p></div>`;
+  }
 }
 
 function renderReviewKpis() {
@@ -145,11 +147,13 @@ async function reviewAction(scheduleId, status) {
   if (status === 'returned') {
     note = prompt('Add a note for the team lead (optional):') || '';
   }
+  showLoader(status === 'approved' ? 'Approving…' : status === 'reviewed' ? 'Marking reviewed…' : 'Returning…');
   try {
     await API.put(`/schedules/${scheduleId}/status`, { status, note });
-    toast(status === 'approved' ? 'Schedule approved' : 'Returned for edits');
     await loadReviewData();
+    toast(status === 'approved' ? 'Schedule approved' : status === 'reviewed' ? 'Marked as reviewed' : 'Returned for edits');
   } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
 }
 
 function updateReviewBadge() {

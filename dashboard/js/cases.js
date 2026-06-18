@@ -41,8 +41,12 @@ function renderCasesPage() {
   loadCases();
 }
 
-function changeCasesDay(delta) {
-  const d = new Date(casesDate); d.setDate(d.getDate() + delta); casesDate = fmtDate(d); loadCases();
+async function changeCasesDay(delta) {
+  const d = new Date(casesDate); d.setDate(d.getDate() + delta); casesDate = fmtDate(d);
+  const box = document.getElementById('cases-cards');
+  if (box) box.innerHTML = LOADING_HTML;
+  await loadCases();
+  animateIn('cases-cards');
 }
 
 async function loadCases(silent) {
@@ -90,7 +94,7 @@ function caseCard(b) {
   const submitted = c && c.locked;
   const head = submitted
     ? `<span class="cc-ok">✅ ${c.submitted_by_name ? escapeHtml(c.submitted_by_name) : ''}${c.submitted_at ? ' · ' + notifTimeAgo(c.submitted_at) : ''}</span>`
-    : `<span class="cc-pending">⏳ Pending</span>`;
+    : `<span class="cc-pending"><span class="pending-dot"></span>Pending</span>`;
   const body = c ? `
     <div class="cc-big"><div><b>${c.total_cases}</b><span>cases</span></div><div><b>${c.total_pt || 0}</b><span>patients</span></div></div>
     <div class="cc-chips">${chip('X-RAY', c.xray)}${chip('CT', c.ct)}${chip('US', c.us)}${chip('MAMO', c.mamo)}${chip('BMD', c.bmd)}${chip('CD', c.insert_cd)}</div>
@@ -144,14 +148,15 @@ async function saveCase(submit) {
   const g = id => parseInt(document.getElementById('case-' + id).value || 0, 10) || 0;
   const body = { branch_id: caseModalBranch, date: casesDate, submit: !!submit };
   CASE_INPUTS.forEach(k => body[k] = g(k));
+  showLoader(submit ? 'Submitting…' : 'Saving…');
   try {
     await API.post('/daily-cases', body);
     closeCaseModal();
+    await loadCases();
     toast(submit ? 'Report submitted' : 'Saved');
-    loadCases();
   } catch (e) {
     const m = document.getElementById('case-msg'); m.className = 'msg err'; m.textContent = e.message;
-  }
+  } finally { hideLoader(); }
 }
 
 async function reopenCase() {

@@ -67,9 +67,7 @@ async function renderSchedulePage() {
 
     <div class="stats-row" id="schedule-stats"></div>
 
-    <div class="rota-wrap" id="rota-wrap">
-      <div class="empty"><div class="empty-icon">📅</div><p>Loading schedule…</p></div>
-    </div>
+    <div class="rota-wrap" id="rota-wrap">${LOADING_HTML}</div>
 
     <div class="legend" id="shift-legend" style="margin-top:20px"></div>`;
 
@@ -81,6 +79,7 @@ async function onBranchChange() {
   const sel = document.getElementById('sched-branch-select');
   currentBranchId = Number(sel.value);
   await loadScheduleData();
+  animateIn('rota-wrap');
 }
 
 async function changeMonth(delta) {
@@ -89,6 +88,7 @@ async function changeMonth(delta) {
   if (scheduleMonth < 1)  { scheduleMonth = 12; scheduleYear--; }
   document.getElementById('month-label').textContent = monthLabel(scheduleYear, scheduleMonth);
   await loadScheduleData();
+  animateIn('rota-wrap');
 }
 
 async function loadScheduleData() {
@@ -244,18 +244,22 @@ async function submitScheduleForReview(scheduleId) {
     'Submit'
   );
   if (!ok) return;
+  showLoader('Submitting…');
   try {
     await API.put(`/schedules/${scheduleId}/status`, { status: 'submitted' });
-    toast('Submitted for review');
     await loadScheduleData();
+    toast('Submitted for review');
   } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
 }
 async function withdrawSchedule(scheduleId) {
+  showLoader('Withdrawing…');
   try {
     await API.put(`/schedules/${scheduleId}/status`, { status: 'draft' });
-    toast('Withdrawn — back to draft');
     await loadScheduleData();
+    toast('Withdrawn — back to draft');
   } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
 }
 
 

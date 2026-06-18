@@ -88,6 +88,14 @@ function stopTopBar() {}
 // Animated inline loading state (no static hourglass).
 const LOADING_HTML = '<div class="loading-inline"><span class="mini-spin"></span><span>Loading…</span></div>';
 
+// Replay a soft fade+rise on any element (used when a grid/list re-renders, e.g.
+// changing month) so content never just snaps in.
+function animateIn(elOrId) {
+  const el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+  if (!el) return;
+  el.classList.remove('anim-in'); void el.offsetWidth; el.classList.add('anim-in');
+}
+
 // ── Premium page reveal ───────────────────────────────────────────────────────
 // An elegant motion when a new page lands: the panel clears from a soft blur as
 // its showcase cards rise and fade in, lightly staggered. Restarts each

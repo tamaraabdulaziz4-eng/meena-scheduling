@@ -45,10 +45,10 @@ function renderSwapsPage() {
 }
 
 async function refreshSwaps() {
-  showLoader('Loading swaps…');
-  try { await loadSwaps(); renderSwapsList(); }
-  catch (e) { toast(e.message, 'err'); }
-  finally { hideLoader(); }
+  const tb = document.getElementById('swaps-tbody');
+  if (tb) tb.innerHTML = `<tr><td colspan="5">${LOADING_HTML}</td></tr>`;
+  try { await loadSwaps(); renderSwapsList(); animateIn('swaps-tbody'); }
+  catch (e) { if (tb) tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">${escapeHtml(e.message||'Failed to load')}</td></tr>`; }
 }
 
 // The 3-step approval chain, rendered as a stepper.
@@ -131,11 +131,13 @@ async function actSwap(id, action, label) {
     const ok = await showConfirm('Reject swap', 'Decline this shift swap request?', 'Reject');
     if (!ok) return;
   }
+  showLoader('Working…');
   try {
     await API.put(`/swaps/${id}/action`, { action });
-    toast('Done');
     await refreshSwaps();
+    toast('Done');
   } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
 }
 
 // ── Request modal ─────────────────────────────────────────────────────────────

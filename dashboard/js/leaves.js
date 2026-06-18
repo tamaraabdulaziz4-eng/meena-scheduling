@@ -59,11 +59,18 @@ async function filterLeaves() {
   const year  = document.getElementById('leave-filter-year')?.value;
   const month = document.getElementById('leave-filter-month')?.value || '';
   const bid   = document.getElementById('leave-filter-branch')?.value || '';
-  startTopBar();
+  const tb = document.getElementById('leaves-tbody');
+  const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
+  const isStaff = currentUser?.role === 'staff';
+  const cols = (canEdit || isStaff) ? 10 : 9;
+  if (tb) tb.innerHTML = `<tr><td colspan="${cols}">${LOADING_HTML}</td></tr>`;
   try {
     await loadLeaves(bid || (currentUser?.branch_id || ''), year, month);
     renderLeavesList();
-  } finally { stopTopBar(); }
+    animateIn('leaves-tbody');
+  } catch (e) {
+    if (tb) tb.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;color:var(--muted);padding:20px">${escapeHtml(e.message || 'Failed to load')}</td></tr>`;
+  }
 }
 
 function renderLeavesList() {

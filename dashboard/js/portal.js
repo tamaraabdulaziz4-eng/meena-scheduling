@@ -25,7 +25,10 @@ async function changePortalMonth(delta) {
   if (portalMonth > 12) { portalMonth = 1; portalYear++; }
   if (portalMonth < 1)  { portalMonth = 12; portalYear--; }
   document.getElementById('portal-month-label').textContent = monthLabel(portalYear, portalMonth);
+  const grid = document.getElementById('portal-grid');
+  if (grid) grid.innerHTML = LOADING_HTML;
   await loadMySchedule();
+  animateIn('portal-grid');
 }
 
 async function loadMySchedule() {
