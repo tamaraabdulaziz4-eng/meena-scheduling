@@ -166,7 +166,13 @@ async function reopenCase() {
   } catch (e) { toast(e.message, 'err'); }
 }
 
-function printCases() { window.print(); }
+function printCases() {
+  const t = document.getElementById('print-title');
+  const s = document.getElementById('print-sub');
+  if (t) t.textContent = 'Daily Radiology Cases';
+  if (s) s.textContent = fmtDateDisplay(casesDate);
+  window.print();
+}
 
 async function remindPendingCases() {
   const ok = await showConfirm('Remind pending branches',

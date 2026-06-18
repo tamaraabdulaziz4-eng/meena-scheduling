@@ -1292,9 +1292,31 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
 .case-total-row { font-size: 14px; background: var(--card-alt); padding: 8px 12px; border-radius: 8px; }
 .case-total-row b { font-size: 18px; color: var(--primary); }
 
+/* Branded print header — only visible on paper. */
+#print-header { display: none; }
 @media print {
-  .sidebar, .topbar, .month-nav, .no-print, .cc-actions, .sidebar-toggle { display: none !important; }
-  .main, .content { margin: 0 !important; padding: 0 !important; }
-  #cases-print-title { display: block !important; font-size: 20px; font-weight: 800; margin-bottom: 12px; }
-  .case-card { break-inside: avoid; border-color: #ccc; }
+  @page { size: A4 landscape; margin: 12mm; }
+  /* Print colours faithfully (shift cells, badges, brand). */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  body { background: #fff !important; }
+  .sidebar, .topbar, .month-nav, .no-print, .cc-actions, .sidebar-toggle,
+  #sidebar-backdrop, #busy-overlay, #toast, .stats-row, .legend { display: none !important; }
+  .layout { display: block !important; height: auto !important; padding: 0 !important; background: #fff !important; }
+  .main { box-shadow: none !important; border-radius: 0 !important; height: auto !important; background: #fff !important; }
+  .content { margin: 0 !important; padding: 0 !important; overflow: visible !important; }
+  .content::before, .content::after { display: none !important; }
+
+  #print-header {
+    display: flex !important; align-items: center; gap: 18px;
+    padding: 0 0 14px; margin-bottom: 16px; border-bottom: 2px solid #6B4EFF;
+  }
+  #print-header img { height: 46px; }
+  #print-header .print-titles { line-height: 1.3; }
+  #print-title { font-size: 20px; font-weight: 800; color: #261E4F; }
+  #print-sub { font-size: 13px; color: #555; margin-top: 2px; }
+
+  #cases-print-title { display: none !important; }   /* superseded by #print-header */
+  .case-card { break-inside: avoid; border: 1px solid #ddd !important; }
+  table { width: 100%; border-collapse: collapse; }
+  .rota-wrap { overflow: visible !important; }
 }

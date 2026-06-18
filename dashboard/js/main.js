@@ -133,9 +133,15 @@ async function renderRoute(page) {
     case 'myschedule': await renderMySchedulePage(); break;
     case 'schedule':   await renderSchedulePage(); break;
     case 'review':     await renderReviewPage(); break;
-    case 'staff':      try { await Promise.all([loadStaff(), loadRegistrations()]); } catch(e){}  renderStaffPage(); break;
+    case 'staff':      try { await loadStaff(); } catch(e){}  renderStaffPage();
+                       // Pending registrations load in the background, then fill in.
+                       loadRegistrations().then(() => { if (currentPage === 'staff') renderPendingRegs(); }).catch(()=>{});
+                       break;
     case 'leaves':     await renderLeavesPage(); break;
-    case 'swaps':      try { await loadStaff(); } catch(e){}  renderSwapsPage(); break;
+    case 'swaps':      renderSwapsPage();
+                       // Staff list (for the request modal) loads in the background.
+                       if (!allStaff || !allStaff.length) loadStaff().catch(()=>{});
+                       break;
     case 'cases':      renderCasesPage(); break;
     case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
     case 'shifts':     try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}  renderShiftsPage(); break;

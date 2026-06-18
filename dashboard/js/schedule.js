@@ -57,7 +57,7 @@ async function renderSchedulePage() {
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
           <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
         ` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Print</button>
+        <button class="btn btn-ghost btn-sm" onclick="printSchedule()">🖨 Print</button>
       </div>
     </div>
 
@@ -89,6 +89,17 @@ async function changeMonth(delta) {
   document.getElementById('month-label').textContent = monthLabel(scheduleYear, scheduleMonth);
   await loadScheduleData();
   animateIn('rota-wrap');
+}
+
+function printSchedule() {
+  const branch = ['superadmin','manager'].includes(currentUser?.role)
+    ? (allBranches.find(b => b.id === currentBranchId)?.name || '')
+    : (currentUser?.branch_name || '');
+  const t = document.getElementById('print-title');
+  const s = document.getElementById('print-sub');
+  if (t) t.textContent = 'Monthly Roster';
+  if (s) s.textContent = `${branch} · ${monthLabel(scheduleYear, scheduleMonth)}`;
+  window.print();
 }
 
 async function loadScheduleData() {

@@ -149,8 +149,10 @@ function swapStaffOptions() {
     filtered.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${escapeHtml(s.branch_name || '?')})</option>`).join('');
 }
 
-function openSwapModal() {
+async function openSwapModal() {
   const isStaff = currentUser?.role === 'staff';
+  // Staff list may still be loading in the background — make sure it's ready.
+  if (!allStaff || !allStaff.length) { try { await loadStaff(); } catch (e) {} }
   const aStaff = document.getElementById('swap-a-staff');
   const aField = aStaff.closest('.form-field');
   // A staff member is always "Staff A" (themselves) — hide that picker.
