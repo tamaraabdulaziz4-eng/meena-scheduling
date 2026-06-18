@@ -10,3 +10,6 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 *.log
+
+# Generated UI preview images (produced by scripts/render_*.py)
+*_preview.png
