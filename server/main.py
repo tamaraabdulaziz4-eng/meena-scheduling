@@ -508,10 +508,7 @@ def seed_nest_config():
         q("""INSERT INTO scheduling.nest_sections
              (nest_key,section_name,staff,staff_db_names,allowed_shifts,coverage,exact_coverage,sort_order)
              VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-             ON CONFLICT (nest_key,section_name) DO UPDATE SET
-               staff=EXCLUDED.staff, staff_db_names=EXCLUDED.staff_db_names,
-               allowed_shifts=EXCLUDED.allowed_shifts, coverage=EXCLUDED.coverage,
-               exact_coverage=EXCLUDED.exact_coverage""",
+             ON CONFLICT (nest_key,section_name) DO NOTHING""",
           (n['nest_key'], n['section_name'], n['staff'],
            json.dumps(n['staff_db_names']), n['allowed_shifts'],
            json.dumps(n['coverage']), json.dumps(n['exact_coverage']), n['sort_order']),
@@ -993,6 +990,14 @@ def branch_to_nest(branch_name: str) -> Optional[str]:
     if "Y5" in n or "JUBAIL" in n or "AL-JUBAIL" in n: return "Y5"
     return None
 
+def _branch_id_for_nest(nest_key):
+    """Reverse of branch_to_nest: which branch owns this nest_key (or the
+    BRANCH_<id> fallback used for branches with no recognised nest)."""
+    for b in q("SELECT id, name FROM scheduling.branches"):
+        if branch_to_nest(b["name"]) == nest_key or f"BRANCH_{b['id']}" == nest_key:
+            return b["id"]
+    return None
+
 def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> list:
     # Shift types are global; sections implicitly allow all codes.
     global_codes = [r["code"] for r in q("""SELECT code FROM scheduling.shift_types
@@ -1426,9 +1431,12 @@ def delete_user(uid: int, user=Depends(require_superadmin)):
 def list_staff(request: Request, user=Depends(get_current_user)):
     branch_id = request.query_params.get("branch_id")
     # Cross-branch roles (superadmin, manager) can query any/all branches;
-    # a team lead is always pinned to their own branch.
+    # everyone else is pinned to their own branch — and if they have none
+    # (e.g. a viewer with no branch), they get nothing, not the whole list.
     if user["role"] not in ("superadmin", "manager"):
         branch_id = user.get("branch_id")
+        if not branch_id:
+            raise HTTPException(403, "No branch assigned to this account")
     # Guard against UI bugs passing "undefined"/"null" as strings.
     if isinstance(branch_id, str) and branch_id.strip().lower() in ("", "undefined", "null"):
         branch_id = None
@@ -1653,6 +1661,8 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
         branch_id = body.get("branch_id")
         if not branch_id:
             raise HTTPException(400, "branch_id required to create a section")
+        if not can_access_branch(user, branch_id):
+            raise HTTPException(403, "You can only create sections in your own branch")
         branch = q("SELECT name FROM scheduling.branches WHERE id=%s", (int(branch_id),), one=True)
         if not branch:
             raise HTTPException(404, "Branch not found")
@@ -1674,8 +1684,13 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
                         (nest_name,), one=True)
             section_id = created["id"]
 
-    sec = q("SELECT id FROM scheduling.nest_sections WHERE id=%s", (section_id,), one=True)
+    sec = q("SELECT id, nest_key FROM scheduling.nest_sections WHERE id=%s", (section_id,), one=True)
     if not sec: raise HTTPException(404, "Section not found")
+    # Branch isolation: a team lead may only touch sections of their own branch.
+    if user["role"] not in ("superadmin", "manager"):
+        owner = _branch_id_for_nest(sec["nest_key"])
+        if owner is None or not can_access_branch(user, owner):
+            raise HTTPException(403, "You can only change sections in your own branch")
     row = q("""INSERT INTO scheduling.section_month_settings
                  (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -1708,7 +1723,7 @@ def get_all_shift_types(user=Depends(get_current_user)):
                 ORDER BY sort_order, code""")
 
 @app.post("/api/shift-types")
-async def upsert_shift_type(request: Request, user=Depends(require_admin)):
+async def upsert_shift_type(request: Request, user=Depends(require_superadmin)):
     body = await request.json()
     code = body.get("code")
     existing = q("SELECT id FROM scheduling.shift_types WHERE branch_id IS NULL AND code=%s", (code,), one=True)
@@ -1730,7 +1745,7 @@ async def upsert_shift_type(request: Request, user=Depends(require_admin)):
               body.get("sort_order",0)), one=True)
 
 @app.put("/api/shift-types/{stid}")
-async def update_shift_type(stid: int, request: Request, user=Depends(require_admin)):
+async def update_shift_type(stid: int, request: Request, user=Depends(require_superadmin)):
     body = await request.json()
     sets, params = [], []
     for f in ("label","start_time","end_time","color","is_off","is_leave","is_oncall","sort_order"):
@@ -1743,7 +1758,7 @@ async def update_shift_type(stid: int, request: Request, user=Depends(require_ad
     return row
 
 @app.delete("/api/shift-types/{stid}")
-def delete_shift_type(stid: int, user=Depends(require_admin)):
+def delete_shift_type(stid: int, user=Depends(require_superadmin)):
     q("DELETE FROM scheduling.shift_types WHERE id=%s", (stid,), exec_only=True)
     return {"ok": True}
 
@@ -2019,9 +2034,16 @@ def list_leaves(request: Request, user=Depends(get_current_user)):
     if user["role"] == "staff":
         # A staff member only ever sees their own leave.
         conds.append("l.staff_id=%s"); vals.append(user.get("staff_id"))
-    else:
-        branch_id = params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
+    elif user["role"] in ("superadmin", "manager"):
+        branch_id = params.get("branch_id")
         if branch_id: conds.append("s.branch_id=%s"); vals.append(branch_id)
+    else:
+        # A branch-bound role (team lead, viewer) only ever sees its own branch —
+        # and a branchless account gets nothing rather than every branch.
+        branch_id = user.get("branch_id")
+        if not branch_id:
+            raise HTTPException(403, "No branch assigned to this account")
+        conds.append("s.branch_id=%s"); vals.append(branch_id)
     year  = params.get("year")
     month = params.get("month")
     if year:      conds.append("EXTRACT(YEAR FROM l.date)=%s");  vals.append(year)
@@ -2839,7 +2861,7 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
     if existing and existing.get("locked") and user["role"] not in ("superadmin", "manager"):
         raise HTTPException(403, "This report is submitted/locked. Ask a manager to reopen it.")
     submit = bool(body.get("submit"))
-    field_vals = [int(body.get(f) or 0) for f in _CASE_FIELDS]
+    field_vals = [max(0, int(body.get(f) or 0)) for f in _CASE_FIELDS]
     cols = ",".join(_CASE_FIELDS)
     ph   = ",".join(["%s"] * len(_CASE_FIELDS))
     upd  = ",".join(f"{f}=EXCLUDED.{f}" for f in _CASE_FIELDS)
@@ -2982,7 +3004,7 @@ async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):
 # ── Audit ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/audit")
-def get_audit(user=Depends(require_admin)):
+def get_audit(user=Depends(require_superadmin)):
     return q("""SELECT id,username,role,branch,action,target,detail,created_at
                 FROM scheduling.audit_log ORDER BY created_at DESC LIMIT 500""")
 

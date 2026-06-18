@@ -176,7 +176,11 @@ async function checkAuth() {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && document.getElementById('login-overlay')?.style.display !== 'none') {
-    doLogin();
-  }
+  if (e.key !== 'Enter') return;
+  const overlay = document.getElementById('login-overlay');
+  if (!overlay || overlay.style.display === 'none') return;
+  // Only submit the login form when the login view is the one on screen —
+  // otherwise Enter on the forgot/reset/register views would wrongly log in.
+  const loginView = document.getElementById('login-view');
+  if (loginView && loginView.style.display !== 'none') doLogin();
 });

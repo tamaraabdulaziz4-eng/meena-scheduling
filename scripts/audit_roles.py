@@ -94,5 +94,54 @@ fp = anon.post("/api/auth/forgot", json={"username": f"leadA{sfx}"})
 check("forgot for emailless user is generic ok", fp.status_code == 200 and len(M._email_outbox) == 0, M._email_outbox)
 check("reset with empty token rejected", anon.post("/api/auth/reset", json={"token":"","password":"abcdef"}).status_code == 400)
 
+print("\n== branchless account can't list everyone (leak guard) ==")
+# A viewer/manager-less account with no branch assigned must not silently see
+# all staff / all leaves. Build an admin-role user with NO branch_id.
+admin.post("/api/users", json={"username": f"nob{sfx}", "password": "pass123", "role": "admin"})
+NOBR = login(f"nob{sfx}", "pass123")
+check("branchless admin gets 403 on /staff (no global leak)", NOBR.get("/api/staff").status_code == 403)
+check("branchless admin gets 403 on /leaves (no global leak)", NOBR.get("/api/leaves").status_code == 403)
+
+print("\n== shift types are superadmin-only ==")
+st = {"code": f"Z{sfx[:2]}", "label": "Audit", "color": "#123456"}
+check("manager can't create shift type", MGR.post("/api/shift-types", json=st).status_code in (401,403))
+check("team lead can't create shift type", LEADA.post("/api/shift-types", json=st).status_code in (401,403))
+check("superadmin can create shift type", admin.post("/api/shift-types", json=st).status_code == 200)
+newst = next((s for s in admin.get("/api/shift-types").json() if s["code"] == st["code"]), None)
+if newst:
+    check("manager can't update shift type", MGR.put(f"/api/shift-types/{newst['id']}", json={"label":"x"}).status_code in (401,403))
+    check("team lead can't delete shift type", LEADA.delete(f"/api/shift-types/{newst['id']}").status_code in (401,403))
+    check("superadmin can delete shift type", admin.delete(f"/api/shift-types/{newst['id']}").status_code == 200)
+
+print("\n== section settings are branch-isolated ==")
+# Team lead A may only touch sections that belong to their own branch.
+nestB = M.branch_to_nest(next(b["name"] for b in branches if b["id"] == bidB))
+secB = M.q("SELECT id FROM scheduling.nest_sections WHERE nest_key=%s LIMIT 1", (nestB,), one=True)
+if secB:
+    r = LEADA.put(f"/api/section-month-settings/{secB['id']}",
+                  json={"year": 2026, "month": 9, "min_m": 1})
+    check("lead A can't change a branch-B section", r.status_code == 403, r.text)
+check("lead A can't create a section in branch B",
+      LEADA.put("/api/section-month-settings/0",
+                json={"branch_id": bidB, "section_name": "Bogus", "year": 2026, "month": 9}).status_code == 403)
+
+print("\n== audit log is superadmin-only ==")
+check("manager can't read audit log", MGR.get("/api/audit").status_code in (401,403))
+check("team lead can't read audit log", LEADA.get("/api/audit").status_code in (401,403))
+check("superadmin can read audit log", admin.get("/api/audit").status_code == 200)
+
+print("\n== daily cases reject negative counts ==")
+admin.post("/api/daily-cases", json={"branch_id": bidA, "date": "2026-09-05", "xray": -5, "ct": 3})
+saved = admin.get(f"/api/daily-cases?branch_id={bidA}&date=2026-09-05").json().get("case") or {}
+check("negative case count clamped to 0", saved.get("xray") == 0 and saved.get("ct") == 3, saved)
+
+print("\n== reseeding nest config never clobbers edits ==")
+sec0 = M.q("SELECT id, nest_key, section_name FROM scheduling.nest_sections LIMIT 1", one=True)
+M.q("UPDATE scheduling.nest_sections SET staff=%s WHERE id=%s",
+    (["EDITED_KEEP_ME"], sec0["id"]), exec_only=True)
+M.seed_nest_config()  # simulate a redeploy/restart
+after = M.q("SELECT staff FROM scheduling.nest_sections WHERE id=%s", (sec0["id"],), one=True)
+check("manual nest-section edit survives reseed", after["staff"] == ["EDITED_KEEP_ME"], after)
+
 print(f"\n=== AUDIT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
