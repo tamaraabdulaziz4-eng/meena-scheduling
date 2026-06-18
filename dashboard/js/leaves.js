@@ -19,7 +19,7 @@ async function renderLeavesPage() {
   const isStaff = currentUser?.role === 'staff';
   const title = isStaff ? 'My Leave' : 'Leave Management';
   const actions = [
-    isSuper ? `<button class="btn btn-ghost btn-sm" onclick="openHolidaysModal()">🗓 Holidays</button>` : '',
+    isSuper ? `<button class="btn btn-ghost btn-sm" onclick="openHolidaysModal()">⚙️ Settings</button>` : '',
     (canEdit || isStaff) ? `<button class="btn btn-sm" onclick="openLeaveModal()">${isStaff ? '🌴 Request Leave' : '+ Add Leave'}</button>` : '',
   ].filter(Boolean).join(' ');
   setTopbar(title, 'Annual leave, sick leave, time-back', actions);
