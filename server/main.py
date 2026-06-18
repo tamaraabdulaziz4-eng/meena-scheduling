@@ -1213,12 +1213,15 @@ async def register_staff(request: Request):
       (emp_id,), exec_only=True)
     q("""INSERT INTO scheduling.staff_registrations (name, branch_id, employee_id, email, phone)
          VALUES (%s,%s,%s,%s,%s)""", (name, branch_id, emp_id, email, phone), exec_only=True)
-    bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
-    notify_branch_leads(branch_id, f"New staff registration to review: {name} — ID {emp_id}",
-                        link="staff", ntype="info")
-    notify_roles(("manager", "superadmin"),
-                 f"New staff registration: {name} ({bname}) — ID {emp_id}",
-                 link="staff", ntype="info")
+    # Notify the branch team lead (who approves). Only fall back to the managers
+    # if the branch has no team lead — otherwise this stays off their inbox.
+    leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
+    msg = f"New staff registration to review: {name} — ID {emp_id}"
+    if leads:
+        for u in leads:
+            notify(u["id"], msg, link="staff", ntype="info")
+    else:
+        notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
     return {"ok": True, "message": "Thanks! Your details were submitted and are awaiting approval."}
 
 @app.get("/api/registrations")
@@ -2839,14 +2842,22 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
     insert_audit(user, "DAILY_CASES_" + ("SUBMIT" if submit else "SAVE"),
                  f"branch:{branch_id}", date)
     out = _case_row(row)
-    # On an actual submit (transition into locked), tell the managers the branch
-    # filed its report. Skip if it was already locked (a reviewer re-saving).
+    # Keep the manager's inbox quiet: don't ping per branch. Only when this submit
+    # COMPLETES the day (every branch now has a locked report) send ONE summary.
     if submit and not (existing and existing.get("locked")):
-        bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
-        notify_roles(("manager", "superadmin"),
-                     f"{bname}: daily cases report submitted for {date} — "
-                     f"{out['total_cases']} cases, {int(out.get('total_pt') or 0)} patients",
-                     link="cases", ntype="submitted", exclude_user=user["id"])
+        remaining = (q("""SELECT COUNT(*) AS c FROM scheduling.branches b
+                          WHERE NOT EXISTS (SELECT 1 FROM scheduling.daily_cases dc
+                                            WHERE dc.branch_id=b.id AND dc.date=%s AND dc.locked=true)""",
+                       (date,), one=True) or {}).get("c", 1)
+        if remaining == 0:
+            tot = q("""SELECT COUNT(*) AS branches,
+                              COALESCE(SUM(xray+ct+us+mamo+bmd+insert_cd),0) AS cases,
+                              COALESCE(SUM(total_pt),0) AS pt
+                       FROM scheduling.daily_cases WHERE date=%s AND locked=true""", (date,), one=True)
+            notify_roles(("manager", "superadmin"),
+                         f"Daily cases complete for {date}: all {tot['branches']} branches submitted — "
+                         f"{tot['cases']} cases, {tot['pt']} patients",
+                         link="cases", ntype="submitted")
     return out
 
 def _send_cases_reminders(date):

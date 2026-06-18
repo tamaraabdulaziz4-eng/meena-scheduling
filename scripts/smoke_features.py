@@ -310,9 +310,19 @@ r = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 23
 check("team lead submits cases", r.status_code == 200, r.text)
 check("total_cases auto-computed (37)", r.json().get("total_cases") == 37, r.json())
 check("locked after submit", r.json().get("locked") is True, r.json())
-nmgr = mgr.get("/api/notifications").json()
-check("manager notified the branch submitted its report",
-      any("report submitted" in (n["message"] or "").lower() for n in nmgr["notifications"]), nmgr)
+# Manager-noise rule: a single branch submitting must NOT ping the manager —
+# only a completed day (every branch in) sends one summary.
+CDc = f"{YEAR}-08-29"
+mgr_b4 = {n["id"] for n in mgr.get("/api/notifications").json()["notifications"]}
+lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDc, "xray": 4, "submit": True})
+mgr_mid = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in mgr_b4]
+check("single-branch submit does NOT ping the manager",
+      not any("daily cases" in (n["message"] or "").lower() for n in mgr_mid), mgr_mid)
+for b in branches:
+    admin.post("/api/daily-cases", json={"branch_id": b["id"], "date": CDc, "xray": 1, "submit": True})
+mgr_done = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in mgr_b4]
+comp = [n for n in mgr_done if "daily cases complete" in (n["message"] or "").lower()]
+check("manager gets ONE completion summary when all branches submit", len(comp) == 1, comp)
 r2 = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 1, "submit": False})
 check("locked report rejects edit", r2.status_code == 403, r2.status_code)
 ov = admin.get(f"/api/daily-cases/overview?date={CD}").json()
