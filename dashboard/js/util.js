@@ -80,6 +80,18 @@ function playPageReveal() {
   clearTimeout(_revealTimer);
   _revealTimer = setTimeout(() => content.classList.remove('page-reveal'), 900);
 }
+
+// A shimmer skeleton shown only while a slow page is still fetching, so a
+// navigation feels instant instead of freezing on the old page.
+const PAGE_SKELETON = `
+  <div class="skel-wrap">
+    <div class="skel skel-line lg"></div>
+    <div class="skel-grid">
+      <div class="skel skel-card"></div><div class="skel skel-card"></div>
+      <div class="skel skel-card"></div><div class="skel skel-card"></div>
+    </div>
+    <div class="skel skel-block"></div>
+  </div>`;
 // Loader variant that cycles through several messages (for long waits like Generate)
 function showLoaderCycling(messages = ['Working…'], intervalMs = 1400) {
   const el = document.getElementById('page-loader');

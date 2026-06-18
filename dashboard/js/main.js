@@ -161,10 +161,17 @@ async function showPage(requested) {
   // On a phone, picking a page closes the slide-in drawer.
   if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
 
+  const content = document.getElementById('content');
+  // Show a shimmer skeleton only if the page is still loading after a beat —
+  // instant feedback for slow fetches, no flash for fast ones.
+  let done = false;
+  const skelTimer = setTimeout(() => {
+    if (!done && seq === _navSeq) content.innerHTML = PAGE_SKELETON;
+  }, 120);
   try { await renderRoute(page); }
   catch (e) { console.error('Page render error:', e); }
+  done = true; clearTimeout(skelTimer);
   if (seq !== _navSeq) return;                 // superseded by a newer navigation
-  const content = document.getElementById('content');
   content.scrollTop = 0;
   const main = document.getElementById('main'); if (main) main.scrollTop = 0;
   // Premium entrance motion for the freshly rendered page.
