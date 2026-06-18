@@ -216,6 +216,10 @@ admin.put("/api/settings", json={"leave_cutoff_day": 15})
 cm = f"{t.year}-{t.month:02d}-{min(t.day, 28):02d}"
 stCM = staffA.post("/api/leaves", json={"date_from": cm, "date_to": cm, "leave_type": "AL"})
 check("staff blocked for current month", stCM.status_code == 400, f"{stCM.status_code} {stCM.text}")
+# A malformed date must be a clean 400 (the cutoff check used to 500 before the
+# date-format validation could run).
+stBad = staffA.post("/api/leaves", json={"date_from": "not-a-date", "date_to": "not-a-date", "leave_type": "AL"})
+check("malformed leave date → 400 (not 500)", stBad.status_code == 400, f"{stBad.status_code} {stBad.text}")
 
 print("\n== scenario 10: Phase-1 security hardening ==")
 # another branch + a staff member in it
@@ -306,6 +310,25 @@ admin.put(f"/api/staff/{A['id']}", json={"can_report": True})
 rs2 = staffA.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 2, "ct": 1, "us": 0,
               "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 2, "submit": False})
 check("can_report staff allowed", rs2.status_code == 200, rs2.text)
+
+print("\n== scenario 13b: cases edge cases (regressions) ==")
+# Reviewer plain-Save on a locked report must NOT silently unlock it or wipe
+# who submitted it — only an actual Submit changes lock/submission state.
+CD2 = f"{YEAR}-08-27"
+lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD2, "xray": 5, "ct": 0, "us": 0,
+          "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 3, "submit": True})
+before = lead.get(f"/api/daily-cases?branch_id={bid}&date={CD2}").json()["case"]
+check("locked before reviewer save", before["locked"] is True, before)
+rsave = admin.post("/api/daily-cases", json={"branch_id": bid, "date": CD2, "xray": 9, "submit": False})
+check("reviewer plain-save ok", rsave.status_code == 200, rsave.text)
+after = admin.get(f"/api/daily-cases?branch_id={bid}&date={CD2}").json()["case"]
+check("reviewer save kept it locked", after["locked"] is True, after)
+check("reviewer save kept submitter", after["submitted_by"] == before["submitted_by"], after)
+check("reviewer save kept submitted_at", after["submitted_at"] == before["submitted_at"], after)
+check("reviewer save applied the edit", after["xray"] == 9, after)
+# Non-numeric branch_id is a clean 400, not a 500.
+rbad = admin.get("/api/daily-cases?branch_id=abc&date=" + CD2)
+check("non-numeric branch_id → 400", rbad.status_code == 400, rbad.status_code)
 
 print("\n== scenario 14: email notifications (SMTP_CAPTURE) ==")
 um1 = admin.post("/api/users", json={"username": f"zzmail{sfx}", "password": "pass123",

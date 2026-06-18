@@ -55,10 +55,14 @@ async function loadCases(silent) {
   }
 }
 
-function canEditBranch(branch_id) {
+// Trust the server's per-branch can_edit (it knows can_report / night-shift
+// eligibility); fall back to a role/branch guess only if it's absent.
+function canEditBranch(b) {
+  if (b && typeof b.can_edit === 'boolean') return b.can_edit;
   const r = currentUser?.role;
   if (['superadmin', 'manager'].includes(r)) return true;
-  return branch_id === currentUser?.branch_id && ['admin', 'staff'].includes(r);
+  const bid = b && typeof b === 'object' ? b.branch_id : b;
+  return bid === currentUser?.branch_id && ['admin', 'staff'].includes(r);
 }
 
 function renderCases() {
@@ -80,7 +84,7 @@ function chip(l, v) { return `<span class="cc-chip">${l} <b>${v || 0}</b></span>
 
 function caseCard(b) {
   const c = b.case;
-  const editable = canEditBranch(b.branch_id);
+  const editable = canEditBranch(b);
   const submitted = c && c.locked;
   const head = submitted
     ? `<span class="cc-ok">✅ ${c.submitted_by_name ? escapeHtml(c.submitted_by_name) : ''}${c.submitted_at ? ' · ' + notifTimeAgo(c.submitted_at) : ''}</span>`

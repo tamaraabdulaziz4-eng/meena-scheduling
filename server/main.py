@@ -592,6 +592,14 @@ def require_editor(user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(403, "Managers cannot edit schedules directly")
     return user
 
+def _int_or_400(v, name="branch_id"):
+    """Parse a query/body value to int, raising a clean 400 instead of a 500
+    when a caller passes something non-numeric (e.g. ?branch_id=abc)."""
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        raise HTTPException(400, f"Invalid {name}")
+
 def can_access_branch(user: dict, branch_id) -> bool:
     # Managers and full admins can see every branch; team leads only their own.
     if user.get("role") in ("superadmin", "manager"):
@@ -617,7 +625,12 @@ def leave_window_open(target_date_str, cutoff_day, today=None):
     caller). Returns (ok: bool, message: str|None)."""
     from datetime import date as _date
     today = today or _date.today()
-    y, m, _d = map(int, str(target_date_str).split("-")[:3])
+    try:
+        y, m, _d = map(int, str(target_date_str).split("-")[:3])
+    except (ValueError, TypeError):
+        # Malformed date — let the caller's own date-format validation produce
+        # the proper 400 instead of blowing up here with a 500.
+        return True, None
     pm_year, pm_month = (y, m - 1) if m > 1 else (y - 1, 12)
     deadline = _date(pm_year, pm_month, min(cutoff_day, 28))
     if today <= deadline:
@@ -2228,6 +2241,7 @@ def get_daily_case(request: Request, user=Depends(get_current_user)):
     date = p.get("date")
     if not branch_id or not date:
         raise HTTPException(400, "branch_id and date required")
+    branch_id = _int_or_400(branch_id)
     if not can_access_branch(user, branch_id):
         raise HTTPException(403, "Forbidden")
     row = q("""SELECT dc.*, TO_CHAR(dc.date,'YYYY-MM-DD') AS date,
@@ -2236,7 +2250,7 @@ def get_daily_case(request: Request, user=Depends(get_current_user)):
                FROM scheduling.daily_cases dc
                LEFT JOIN scheduling.users u ON u.id=dc.submitted_by
                WHERE dc.branch_id=%s AND dc.date=%s""", (branch_id, date), one=True)
-    return {"case": _case_row(row), "can_edit": _can_submit_cases(user, int(branch_id), date)}
+    return {"case": _case_row(row), "can_edit": _can_submit_cases(user, branch_id, date)}
 
 @app.get("/api/daily-cases/overview")
 def daily_cases_overview(request: Request, user=Depends(get_current_user)):
@@ -2259,7 +2273,8 @@ def daily_cases_overview(request: Request, user=Depends(get_current_user)):
                         "total_cases": 0, "total_pt": 0, "bmd_not_done": 0, "mamo_not_done": 0}
     for b in branches:
         c = by_branch.get(b["id"])
-        out.append({"branch_id": b["id"], "branch_name": b["name"], "case": c})
+        out.append({"branch_id": b["id"], "branch_name": b["name"], "case": c,
+                    "can_edit": _can_submit_cases(user, b["id"], date)})
         if c and c.get("locked"):
             summary["submitted"] += 1
         if c:
@@ -2276,7 +2291,8 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
     date = body.get("date")
     if not branch_id or not date:
         raise HTTPException(400, "branch_id and date required")
-    if not _can_submit_cases(user, int(branch_id), date):
+    branch_id = _int_or_400(branch_id)
+    if not _can_submit_cases(user, branch_id, date):
         raise HTTPException(403, "You can't file the cases report for this branch/day")
     existing = q("SELECT locked FROM scheduling.daily_cases WHERE branch_id=%s AND date=%s",
                  (branch_id, date), one=True)
@@ -2290,14 +2306,22 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
     sa   = "NOW()" if submit else "NULL"   # submitted_at literal (not user input)
     # Set locked/submitted in BOTH the insert and the conflict-update so a brand
     # new row gets locked on submit (the DO UPDATE only fires on a conflict).
+    # A plain Save (submit=false) must NOT touch the lock/submission state —
+    # otherwise a reviewer editing an already-submitted report would silently
+    # unlock it and wipe who submitted it. Only an actual Submit changes them.
     row = q(f"""INSERT INTO scheduling.daily_cases
                 (branch_id,date,{cols},locked,submitted_by,submitted_at)
                 VALUES (%s,%s,{ph},%s,%s,{sa})
                 ON CONFLICT (branch_id,date) DO UPDATE SET
-                  {upd}, locked=EXCLUDED.locked, submitted_by=EXCLUDED.submitted_by,
-                  submitted_at=EXCLUDED.submitted_at, updated_at=NOW()
+                  {upd},
+                  locked       = CASE WHEN %s THEN true ELSE scheduling.daily_cases.locked END,
+                  submitted_by = CASE WHEN %s THEN %s  ELSE scheduling.daily_cases.submitted_by END,
+                  submitted_at = CASE WHEN %s THEN NOW() ELSE scheduling.daily_cases.submitted_at END,
+                  updated_at=NOW()
                 RETURNING *, TO_CHAR(date,'YYYY-MM-DD') AS date""",
-            [branch_id, date, *field_vals, submit, (user["id"] if submit else None)],
+            [branch_id, date, *field_vals,
+             submit, (user["id"] if submit else None),
+             submit, submit, user["id"], submit],
             one=True)
     insert_audit(user, "DAILY_CASES_" + ("SUBMIT" if submit else "SAVE"),
                  f"branch:{branch_id}", date)
@@ -2309,6 +2333,7 @@ async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):
     branch_id, date = body.get("branch_id"), body.get("date")
     if not branch_id or not date:
         raise HTTPException(400, "branch_id and date required")
+    branch_id = _int_or_400(branch_id)
     q("UPDATE scheduling.daily_cases SET locked=false WHERE branch_id=%s AND date=%s",
       (branch_id, date), exec_only=True)
     insert_audit(user, "DAILY_CASES_REOPEN", f"branch:{branch_id}", date)
