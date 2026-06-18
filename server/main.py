@@ -790,6 +790,46 @@ def _resend_send(to, subject, body):
         # Surface Resend's error body (bad From domain, etc.) so it's debuggable.
         raise RuntimeError(f"Resend {e.code}: {e.read().decode('utf-8', 'replace')}") from None
 
+def _smtp_send(to, subject, body):
+    import smtplib
+    from email.message import EmailMessage
+    from email.utils import formataddr
+    msg = EmailMessage()
+    from_addr = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
+    # Send under the person's name so it reads as a personal follow-up.
+    msg["From"] = from_addr if "<" in from_addr else formataddr((_sig_name(), from_addr))
+    reply_to = _sig_email()
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(_email_text(body))
+    msg.add_alternative(_email_html(body), subtype="html")
+    host = os.environ["SMTP_HOST"]
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER")
+    pwd  = os.environ.get("SMTP_PASS")
+    if os.environ.get("SMTP_SSL", "0") == "1":
+        srv = smtplib.SMTP_SSL(host, port, timeout=15)
+    else:
+        srv = smtplib.SMTP(host, port, timeout=15); srv.starttls()
+    if user:
+        srv.login(user, pwd or "")
+    srv.send_message(msg); srv.quit()
+
+def _deliver_email(to, subject, body):
+    """Actually send (raises on failure). Resend preferred, SMTP fallback."""
+    if os.environ.get("SMTP_CAPTURE"):
+        _email_outbox.append({"to": to, "subject": subject, "body": body,
+                              "html": _email_html(body)})
+        return
+    if os.environ.get("RESEND_API_KEY"):
+        _resend_send(to, subject, body)
+    elif os.environ.get("SMTP_HOST"):
+        _smtp_send(to, subject, body)
+    else:
+        raise RuntimeError("No email provider configured (set RESEND_API_KEY or SMTP_HOST)")
+
 def send_email(to, subject, body):
     if not to:
         return
@@ -797,39 +837,11 @@ def send_email(to, subject, body):
         _email_outbox.append({"to": to, "subject": subject, "body": body,
                               "html": _email_html(body)})
         return
-    use_resend = bool(os.environ.get("RESEND_API_KEY"))
-    if not use_resend and not os.environ.get("SMTP_HOST"):
+    if not (os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
         return  # email not configured → in-app only
     def _worker():
         try:
-            if use_resend:
-                _resend_send(to, subject, body)
-                return
-            import smtplib
-            from email.message import EmailMessage
-            from email.utils import formataddr
-            msg = EmailMessage()
-            from_addr = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
-            # Send under the person's name so it reads as a personal follow-up.
-            msg["From"] = from_addr if "<" in from_addr else formataddr((_sig_name(), from_addr))
-            reply_to = _sig_email()
-            if reply_to:
-                msg["Reply-To"] = reply_to
-            msg["To"] = to
-            msg["Subject"] = subject
-            msg.set_content(_email_text(body))
-            msg.add_alternative(_email_html(body), subtype="html")
-            host = os.environ["SMTP_HOST"]
-            port = int(os.environ.get("SMTP_PORT", "587"))
-            user = os.environ.get("SMTP_USER")
-            pwd  = os.environ.get("SMTP_PASS")
-            if os.environ.get("SMTP_SSL", "0") == "1":
-                srv = smtplib.SMTP_SSL(host, port, timeout=15)
-            else:
-                srv = smtplib.SMTP(host, port, timeout=15); srv.starttls()
-            if user:
-                srv.login(user, pwd or "")
-            srv.send_message(msg); srv.quit()
+            _deliver_email(to, subject, body)
         except Exception as e:
             print(f"[email] failed to {to}: {e}")
     import threading
@@ -2251,6 +2263,40 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (str(d),), exec_only=True)
         insert_audit(user, "SET_LEAVE_CUTOFF", f"day:{d}")
     return {"leave_cutoff_day": get_leave_cutoff_day()}
+
+@app.get("/api/email-config")
+def email_config(user=Depends(require_superadmin)):
+    """Diagnostics for the email setup (no secrets leaked) so a misconfiguration
+    is visible from the UI."""
+    provider = ("resend" if os.environ.get("RESEND_API_KEY")
+                else "smtp" if os.environ.get("SMTP_HOST") else "none")
+    return {
+        "provider": provider,
+        "resend_api_key_set": bool(os.environ.get("RESEND_API_KEY")),
+        "from": _email_from(),
+        "reply_to": _sig_email(),
+        "app_url_set": bool(os.environ.get("APP_URL", "").strip()),
+    }
+
+@app.post("/api/email-test")
+async def email_test(request: Request, user=Depends(require_superadmin)):
+    """Send a test email synchronously and return the real provider error (e.g.
+    an unverified From domain) instead of swallowing it in a background thread."""
+    body = await request.json()
+    to = (body.get("to") or user.get("email") or _sig_email() or "").strip()
+    if not to:
+        raise HTTPException(400, "No recipient — pass {\"to\": \"you@example.com\"}")
+    if not (os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")
+            or os.environ.get("SMTP_CAPTURE")):
+        raise HTTPException(400, "No email provider configured. Set RESEND_API_KEY in your environment.")
+    try:
+        _deliver_email(to, "Meena Scheduling — test email",
+                       "This is a test message confirming email delivery is working.")
+    except Exception as e:
+        # 502 + the provider's own message → shows up directly in the UI.
+        raise HTTPException(502, f"Send failed: {e}")
+    insert_audit(user, "EMAIL_TEST", to)
+    return {"ok": True, "sent_to": to, "from": _email_from()}
 
 # ── Daily radiology cases report ──────────────────────────────────────────────
 

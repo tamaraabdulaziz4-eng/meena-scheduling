@@ -375,5 +375,15 @@ check("resend sets reply_to", pl.get("reply_to") == M._sig_email(), pl.get("repl
 check("resend subject passthrough", pl["subject"] == "Meena Scheduling", pl["subject"])
 _os.environ.pop("RESEND_FROM", None)
 
+# email-config diagnostics + a synchronous test send (captured, not real).
+ec = admin.get("/api/email-config")
+check("email-config readable by superadmin", ec.status_code == 200 and "from" in ec.json(), ec.text)
+M._email_outbox.clear()
+et = admin.post("/api/email-test", json={"to": "boss@example.com"})
+check("email-test sends + returns recipient", et.status_code == 200 and et.json().get("sent_to") == "boss@example.com", et.text)
+check("email-test actually delivered (captured)", any(e["to"] == "boss@example.com" for e in M._email_outbox), M._email_outbox)
+etf = lead.post("/api/email-test", json={"to": "x@example.com"})
+check("email-test is superadmin-only", etf.status_code in (401, 403), etf.status_code)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

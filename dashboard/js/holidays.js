@@ -22,7 +22,38 @@ async function openHolidaysModal() {
   const ci = document.getElementById('leave-cutoff-input');
   if (ci) ci.value = (typeof leaveCutoffDay !== 'undefined' ? leaveCutoffDay : 15);
   document.getElementById('holidays-modal-overlay').classList.add('open');
+  loadEmailConfig();
   await reloadHolidayList();
+}
+
+async function loadEmailConfig() {
+  const info = document.getElementById('email-config-info');
+  if (!info) return;
+  try {
+    const c = await API.get('/email-config');
+    if (c.provider === 'none') {
+      info.innerHTML = `⚠️ <b>No provider configured.</b> Set <code>RESEND_API_KEY</code> in your environment.`;
+    } else {
+      const warn = c.app_url_set ? '' : ' · ⚠️ APP_URL not set (logo/button hidden)';
+      info.innerHTML = `Provider: <b>${c.provider}</b> · From: <b>${escapeHtml(c.from)}</b>${warn}`;
+    }
+    const t = document.getElementById('email-test-to');
+    if (t && !t.value && currentUser?.email) t.value = currentUser.email;
+  } catch (e) { info.textContent = ''; }
+}
+
+async function sendTestEmail() {
+  const msg = document.getElementById('email-test-msg');
+  const to  = document.getElementById('email-test-to').value.trim();
+  msg.className = 'msg'; msg.textContent = 'Sending…';
+  try {
+    const r = await API.post('/email-test', to ? { to } : {});
+    msg.className = 'msg'; msg.style.color = 'var(--green)';
+    msg.textContent = `✅ Sent to ${r.sent_to} (from ${r.from}). Check the inbox/spam.`;
+  } catch (e) {
+    msg.className = 'msg err'; msg.style.color = '';
+    msg.textContent = e.message;   // shows the real Resend error (e.g. domain not verified)
+  }
 }
 
 async function saveLeaveCutoff() {
