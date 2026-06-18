@@ -942,19 +942,27 @@ body.dark .logo-box { background: rgba(255,255,255,.92); }
 
 @media (max-width: 820px) {
   .layout { padding: 0; gap: 0; }
-  .main { border-radius: 0; height: 100vh; }
+  .main { border-radius: 0; height: 100vh; height: 100dvh; }
   .topbar { border-radius: 0; padding-left: 58px; }   /* room for the hamburger */
   .content { padding: 16px 14px; }
 
-  /* Off-canvas drawer */
+  /* Off-canvas drawer. 100dvh (not 100vh) so the bottom — Sign Out — isn't
+     hidden behind the mobile browser's address bar. */
   .sidebar {
-    position: fixed; top: 0; left: 0; bottom: 0; height: 100vh;
+    position: fixed; top: 0; left: 0;
+    height: 100vh; height: 100dvh;
     width: 256px; max-width: 84vw; border-radius: 0;
     z-index: 1500; transform: translateX(-100%);
     transition: transform .25s ease;
+    display: flex; flex-direction: column;
   }
+  /* The nav list scrolls inside the drawer; Sign Out stays pinned at the bottom. */
+  .sidebar-nav { min-height: 0; -webkit-overflow-scrolling: touch; }
+  .sidebar-bottom { flex-shrink: 0; }
   .sidebar.mobile-open { transform: translateX(0); box-shadow: 0 0 50px rgba(0,0,0,.4); }
   .sidebar.collapsed { width: 256px; padding: inherit; }  /* ignore desktop collapse on mobile */
+  /* Lock the page behind the open drawer so touches scroll the drawer, not it. */
+  body.drawer-open { overflow: hidden; }
 
   /* Toggle becomes a fixed hamburger in the top-left corner */
   .sidebar-toggle {
