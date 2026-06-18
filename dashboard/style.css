@@ -263,6 +263,26 @@ body {
 .home-bar-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #8B76FF, #6B4EFF); transition: width .6s cubic-bezier(.22,.61,.36,1); }
 .home-bar-fill.done { background: linear-gradient(90deg, #00C896, #00A87C); }
 
+/* ── Staff onboarding (self-registration) ── */
+.onb-logo { text-align: center; margin: 2px 0 14px; }
+.onb-logo img { height: 46px; max-width: 84%; object-fit: contain; }
+.onb-pills { display: flex; gap: 8px; }
+.onb-pill {
+  flex: 1; padding: 11px 10px; border-radius: 12px; cursor: pointer;
+  border: 1.5px solid var(--border); background: var(--card-alt); color: var(--text);
+  font-family: inherit; font-size: 13px; font-weight: 600; transition: all .15s ease;
+}
+.onb-pill:hover { border-color: var(--accent); }
+.onb-pill.active {
+  border-color: var(--accent); color: #fff;
+  background: linear-gradient(135deg, #8B76FF, #6B4EFF);
+  box-shadow: 0 8px 20px rgba(107,78,255,.32);
+}
+#register-view select, #reg-branch {
+  width: 100%; padding: 11px 12px; border: 1.5px solid var(--border);
+  border-radius: 10px; background: var(--card-alt); color: var(--text); font-family: inherit; font-size: 14px;
+}
+
 /* ── Shimmer skeleton (shown while a slow page loads) ── */
 .skel-wrap { padding: 4px; }
 .skel { background: linear-gradient(90deg, var(--card) 25%, var(--card-alt) 50%, var(--card) 75%); background-size: 200% 100%; animation: shimmer 1.25s ease-in-out infinite; border-radius: 12px; }

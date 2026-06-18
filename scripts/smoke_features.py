@@ -497,14 +497,14 @@ check("team lead can't see the registration code", "registration_link" not in le
 # Valid code → the form can load branches and submit.
 info = anon2.get(f"/api/register/info?code={code}")
 check("valid code unlocks the form", info.status_code == 200 and len(info.json().get("branches", [])) >= 1, info.text)
-reg = anon2.post("/api/register", json={"code": code, "name": "ZZ Self Signup",
+reg = anon2.post("/api/register", json={"code": code, "name": "ZZ Self Signup", "section": "US",
                  "branch_id": bid, "employee_id": f"EID{sfx}", "email": "self@example.com", "phone": "0500000000"})
 check("self-registration accepted (pending)", reg.status_code == 200, reg.text)
 # It does NOT create a staff record yet — it waits for the team lead.
 made_now = next((s for s in admin.get(f"/api/staff?branch_id={bid}").json() if s.get("employee_id") == f"EID{sfx}"), None)
 check("registration is pending, no staff record yet", made_now is None, made_now)
 # Re-submit same ID → still one pending entry (replaces).
-anon2.post("/api/register", json={"code": code, "name": "ZZ Self Renamed", "branch_id": bid, "employee_id": f"EID{sfx}"})
+anon2.post("/api/register", json={"code": code, "name": "ZZ Self Renamed", "section": "US", "branch_id": bid, "employee_id": f"EID{sfx}"})
 # The branch team lead sees it in their queue.
 regs = lead.get("/api/registrations").json()
 mine = [r for r in regs if r.get("employee_id") == f"EID{sfx}"]
@@ -514,6 +514,7 @@ ap = lead.post(f"/api/registrations/{mine[0]['id']}/approve", json={})
 check("team lead approves the registration", ap.status_code == 200, ap.text)
 made = next((s for s in admin.get(f"/api/staff?branch_id={bid}").json() if s.get("employee_id") == f"EID{sfx}"), None)
 check("approval creates the staff record", made and made["name"] == "ZZ Self Renamed" and made.get("self_registered") is True, made)
+check("registered section carried onto the staff record", made and "US" in [str(x).upper() for x in (made.get("speciality") or [])], made.get("speciality"))
 check("approved registration leaves the queue", not any(r.get("employee_id") == f"EID{sfx}" for r in lead.get("/api/registrations").json()))
 # Wrong code is rejected.
 check("wrong code rejected", anon2.post("/api/register", json={"code": "nope", "name": "x", "branch_id": bid, "employee_id": "y"}).status_code == 403)

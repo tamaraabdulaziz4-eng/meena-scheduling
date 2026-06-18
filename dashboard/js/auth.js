@@ -8,7 +8,7 @@ function togglePw(id = 'login-password') {
 
 // ── Forgot / reset password ──────────────────────────────────────────────────
 function _showAuthView(view) {
-  ['login-view', 'forgot-view', 'reset-view', 'register-view'].forEach(v => {
+  ['login-view', 'forgot-view', 'reset-view', 'register-view', 'register-done'].forEach(v => {
     const el = document.getElementById(v);
     if (el) el.style.display = (v === view) ? 'block' : 'none';
   });
@@ -42,8 +42,13 @@ function startPasswordReset(token) {
 
 // Staff self-registration (opened from ?register=CODE).
 let _regCode = null;
+let _regSection = 'General';
+function pickSection(btn) {
+  _regSection = btn.dataset.val;
+  document.querySelectorAll('#reg-section .onb-pill').forEach(b => b.classList.toggle('active', b === btn));
+}
 async function startRegistration(code) {
-  _regCode = code;
+  _regCode = code; _regSection = 'General';
   _showAuthView('register-view');
   const sel = document.getElementById('reg-branch');
   const msg = document.getElementById('reg-msg');
@@ -53,7 +58,7 @@ async function startRegistration(code) {
       (info.branches || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
   } catch (e) {
     msg.style.color = ''; msg.textContent = e.message || 'Registration is closed';
-    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn')
+    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn, #register-view .onb-pill')
       .forEach(el => el.disabled = true);
   }
 }
@@ -64,6 +69,7 @@ async function submitRegistration() {
     code: _regCode,
     name: document.getElementById('reg-name').value.trim(),
     branch_id: document.getElementById('reg-branch').value || null,
+    section: _regSection,
     employee_id: document.getElementById('reg-empid').value.trim(),
     email: document.getElementById('reg-email').value.trim(),
     phone: document.getElementById('reg-phone').value.trim(),
@@ -73,10 +79,10 @@ async function submitRegistration() {
   }
   try {
     const r = await API.post('/register', body);
-    msg.style.color = 'var(--green)';
-    msg.textContent = r.message || 'Submitted — thank you!';
-    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn')
-      .forEach(el => el.disabled = true);
+    // Premium success screen with the animated check.
+    document.getElementById('register-done-msg').textContent =
+      r.message || 'Your details were submitted and are awaiting approval.';
+    _showAuthView('register-done');
   } catch (e) { msg.style.color = ''; msg.textContent = e.message || 'Submission failed'; }
 }
 

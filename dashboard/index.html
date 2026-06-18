@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo_transparent.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260618t">
+<link rel="stylesheet" href="/style.css?v=20260618u">
 </head>
 <body>
 
@@ -68,15 +68,23 @@
 
     <!-- Staff self-registration view (opened from the shared ?register= link) -->
     <div id="register-view" style="display:none">
-      <h2>Staff registration</h2>
-      <p>Enter your details so we have them on file.</p>
+      <div class="onb-logo"><img src="/meena_onboarding_logo.jpeg" alt="Meena"></div>
+      <h2>Staff Onboarding</h2>
+      <p>Welcome! Fill in your details to join the team.</p>
       <div class="login-field">
         <label>Full name</label>
         <input type="text" id="reg-name" placeholder="Your full name">
       </div>
       <div class="login-field">
         <label>Branch</label>
-        <select id="reg-branch" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;background:var(--card-alt);color:var(--text);font-family:inherit"></select>
+        <select id="reg-branch"></select>
+      </div>
+      <div class="login-field">
+        <label>Section</label>
+        <div class="onb-pills" id="reg-section">
+          <button type="button" class="onb-pill active" data-val="General" onclick="pickSection(this)">General</button>
+          <button type="button" class="onb-pill" data-val="US" onclick="pickSection(this)">Ultrasound (US)</button>
+        </div>
       </div>
       <div class="login-field">
         <label>Employee / National ID</label>
@@ -92,6 +100,17 @@
       </div>
       <button class="login-btn" onclick="submitRegistration()">Submit</button>
       <div class="login-error" id="reg-msg"></div>
+    </div>
+
+    <!-- Onboarding success -->
+    <div id="register-done" style="display:none;text-align:center">
+      <div class="onb-logo"><img src="/meena_onboarding_logo.jpeg" alt="Meena"></div>
+      <svg class="success-check" viewBox="0 0 52 52" style="width:72px;height:72px;margin:8px auto 0">
+        <circle class="success-circle" cx="26" cy="26" r="24" fill="none"/>
+        <path class="success-path" fill="none" d="M14 27 l8 8 l16 -16"/>
+      </svg>
+      <h2 style="margin-top:14px">All done 🎉</h2>
+      <p id="register-done-msg">Your details were submitted and are awaiting your team lead's approval.</p>
     </div>
 
     <!-- Set-new-password view (opened from the emailed link) -->
@@ -683,24 +702,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260618t"></script>
-<script src="/js/auth.js?v=20260618t"></script>
-<script src="/js/util.js?v=20260618t"></script>
-<script src="/js/branches.js?v=20260618t"></script>
-<script src="/js/users.js?v=20260618t"></script>
-<script src="/js/staff.js?v=20260618t"></script>
-<script src="/js/leaves.js?v=20260618t"></script>
-<script src="/js/swaps.js?v=20260618t"></script>
-<script src="/js/holidays.js?v=20260618t"></script>
-<script src="/js/notifications.js?v=20260618t"></script>
-<script src="/js/portal.js?v=20260618t"></script>
-<script src="/js/cases.js?v=20260618t"></script>
-<script src="/js/home.js?v=20260618t"></script>
-<script src="/js/shifts.js?v=20260618t"></script>
-<script src="/js/schedule.js?v=20260618t"></script>
-<script src="/js/review.js?v=20260618t"></script>
-<script src="/js/export.js?v=20260618t"></script>
-<script src="/js/audit.js?v=20260618t"></script>
-<script src="/js/main.js?v=20260618t"></script>
+<script src="/js/api.js?v=20260618u"></script>
+<script src="/js/auth.js?v=20260618u"></script>
+<script src="/js/util.js?v=20260618u"></script>
+<script src="/js/branches.js?v=20260618u"></script>
+<script src="/js/users.js?v=20260618u"></script>
+<script src="/js/staff.js?v=20260618u"></script>
+<script src="/js/leaves.js?v=20260618u"></script>
+<script src="/js/swaps.js?v=20260618u"></script>
+<script src="/js/holidays.js?v=20260618u"></script>
+<script src="/js/notifications.js?v=20260618u"></script>
+<script src="/js/portal.js?v=20260618u"></script>
+<script src="/js/cases.js?v=20260618u"></script>
+<script src="/js/home.js?v=20260618u"></script>
+<script src="/js/shifts.js?v=20260618u"></script>
+<script src="/js/schedule.js?v=20260618u"></script>
+<script src="/js/review.js?v=20260618u"></script>
+<script src="/js/export.js?v=20260618u"></script>
+<script src="/js/audit.js?v=20260618u"></script>
+<script src="/js/main.js?v=20260618u"></script>
 </body>
 </html>

@@ -372,6 +372,7 @@ def init_schema():
                     reviewed_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'General';")
             # Password-reset tokens (forgot-password via email). Stored hashed.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.password_resets (
@@ -1072,6 +1073,11 @@ def serve_email_logo():
     p = os.path.join(DASHBOARD, "meena_email_logo.jpeg")
     return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
 
+@app.get("/meena_onboarding_logo.jpeg")
+def serve_onboarding_logo():
+    p = os.path.join(DASHBOARD, "meena_onboarding_logo.jpeg")
+    return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1201,6 +1207,7 @@ async def register_staff(request: Request):
     branch_id = body.get("branch_id")
     email = (body.get("email") or "").strip() or None
     phone = (body.get("phone") or "").strip() or None
+    section = body.get("section") if body.get("section") in ("General", "US") else "General"
     if not name or not emp_id or not branch_id:
         raise HTTPException(400, "Name, Employee/National ID and branch are required")
     branch_id = _int_or_400(branch_id)
@@ -1211,8 +1218,8 @@ async def register_staff(request: Request):
     q("""DELETE FROM scheduling.staff_registrations
          WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
       (emp_id,), exec_only=True)
-    q("""INSERT INTO scheduling.staff_registrations (name, branch_id, employee_id, email, phone)
-         VALUES (%s,%s,%s,%s,%s)""", (name, branch_id, emp_id, email, phone), exec_only=True)
+    q("""INSERT INTO scheduling.staff_registrations (name, branch_id, employee_id, email, phone, section)
+         VALUES (%s,%s,%s,%s,%s,%s)""", (name, branch_id, emp_id, email, phone, section), exec_only=True)
     # Notify the branch team lead (who approves). Only fall back to the managers
     # if the branch has no team lead — otherwise this stays off their inbox.
     leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
@@ -1249,14 +1256,16 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
         raise HTTPException(400, f"Already {reg['status']}")
     if not can_access_branch(user, reg["branch_id"]):
         raise HTTPException(403, "You can only approve registrations for your own branch")
+    sec = reg.get("section") if reg.get("section") in ("General", "US") else "General"
     try:
-        staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, self_registered)
-                     VALUES (%s,%s,%s,%s,%s,true)
+        staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality, self_registered)
+                     VALUES (%s,%s,%s,%s,%s,%s,true)
                      ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
                      DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
-                                   email=EXCLUDED.email, phone=EXCLUDED.phone, self_registered=true
+                                   email=EXCLUDED.email, phone=EXCLUDED.phone,
+                                   speciality=EXCLUDED.speciality, self_registered=true
                      RETURNING id, name""",
-                  (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"]),
+                  (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec]),
                   one=True)
     except psycopg2.errors.UniqueViolation:
         raise HTTPException(409, "That Employee/National ID is already on a staff record")
