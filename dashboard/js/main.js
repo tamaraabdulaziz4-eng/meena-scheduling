@@ -153,17 +153,14 @@ async function showPage(requested) {
   // On a phone, picking a page closes the slide-in drawer.
   if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
 
-  startTopBar();
-  try {
-    try { await renderRoute(page); }
-    catch (e) { console.error('Page render error:', e); }
-    if (seq !== _navSeq) return;               // superseded by a newer navigation
-    const content = document.getElementById('content');
-    content.scrollTop = 0;
-    const main = document.getElementById('main'); if (main) main.scrollTop = 0;
-  } finally {
-    stopTopBar();
-  }
+  try { await renderRoute(page); }
+  catch (e) { console.error('Page render error:', e); }
+  if (seq !== _navSeq) return;                 // superseded by a newer navigation
+  const content = document.getElementById('content');
+  content.scrollTop = 0;
+  const main = document.getElementById('main'); if (main) main.scrollTop = 0;
+  // Premium entrance motion for the freshly rendered page.
+  playPageReveal();
 }
 
 // Close shift picker when clicking outside

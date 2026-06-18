@@ -46,17 +46,14 @@ function toast(msg, type = 'ok') {
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
-// Ordinary loads use only the slim top progress bar (no full-screen takeover),
-// so the heavy "loader screen" never flashes — let alone twice. The full-screen
-// #page-loader is reserved for the Generate cycling loader (showLoaderCycling).
+// No progress bar / full-screen takeover for ordinary loads — feedback comes
+// from the premium page-reveal motion when content lands (playPageReveal). The
+// full-screen #page-loader is reserved for the Generate cycling loader.
 let _loaderMsgTimer, _loaderHideTimer;
-function showLoader(label = 'Loading…') {
-  startTopBar();
-}
+function showLoader(label = 'Loading…') { /* intentionally silent */ }
 function hideLoader() {
   clearInterval(_loaderMsgTimer);
-  stopTopBar();
-  // If a heavy op (Generate) put up the full-screen loader, dismiss it too.
+  // If a heavy op (Generate) put up the full-screen loader, dismiss it.
   const el = document.getElementById('page-loader');
   if (el && el.classList.contains('show')) {
     el.classList.add('fading');
@@ -64,40 +61,24 @@ function hideLoader() {
     _loaderHideTimer = setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
   }
 }
+// Kept as no-ops so existing call sites stay valid (the bar was removed).
+function startTopBar() {}
+function stopTopBar() {}
 
-// ── Slim top progress bar ─────────────────────────────────────────────────────
-// Lightweight navigation feedback (à la GitHub/YouTube) so switching pages feels
-// responsive without a full-screen takeover.
-let _topBarEl, _topBarTimer, _topBarDepth = 0;
-function _ensureTopBar() {
-  if (_topBarEl) return _topBarEl;
-  _topBarEl = document.createElement('div');
-  _topBarEl.id = 'topbar-progress';
-  document.body.appendChild(_topBarEl);
-  return _topBarEl;
-}
-function startTopBar() {
-  // Stay quiet behind the login welcome splash (it already covers the screen).
-  const splash = document.getElementById('welcome-splash');
-  if (splash && splash.style.display !== 'none' && !splash.classList.contains('done')) return;
-  const el = _ensureTopBar();
-  _topBarDepth++;
-  if (_topBarDepth > 1) return;        // already running — don't restart the bar
-  clearTimeout(_topBarTimer);
-  el.classList.remove('done');
-  el.classList.add('show');
-  // ease toward ~75% so it always feels like it's making progress
-  el.style.width = '8%';
-  requestAnimationFrame(() => { el.style.width = '75%'; });
-}
-function stopTopBar() {
-  if (!_topBarEl) return;
-  _topBarDepth = Math.max(0, _topBarDepth - 1);
-  if (_topBarDepth > 0) return;        // still other work in flight
-  const el = _topBarEl;
-  el.style.width = '100%';
-  el.classList.add('done');
-  _topBarTimer = setTimeout(() => { el.classList.remove('show', 'done'); el.style.width = '0%'; }, 240);
+// ── Premium page reveal ───────────────────────────────────────────────────────
+// An elegant motion when a new page lands: the panel clears from a soft blur as
+// its showcase cards rise and fade in, lightly staggered. Restarts each
+// navigation; the class is dropped once done so in-page refreshes (e.g. the
+// live cases page) don't re-trigger it.
+let _revealTimer;
+function playPageReveal() {
+  const content = document.getElementById('content');
+  if (!content) return;
+  content.classList.remove('page-reveal');
+  void content.offsetWidth;            // force reflow so the animation replays
+  content.classList.add('page-reveal');
+  clearTimeout(_revealTimer);
+  _revealTimer = setTimeout(() => content.classList.remove('page-reveal'), 900);
 }
 // Loader variant that cycles through several messages (for long waits like Generate)
 function showLoaderCycling(messages = ['Working…'], intervalMs = 1400) {
