@@ -46,19 +46,39 @@ function toast(msg, type = 'ok') {
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
-// No progress bar / full-screen takeover for ordinary loads — feedback comes
-// from the premium page-reveal motion when content lands (playPageReveal). The
-// full-screen #page-loader is reserved for the Generate cycling loader.
-let _loaderMsgTimer, _loaderHideTimer;
-function showLoader(label = 'Loading…') { /* intentionally silent */ }
+// Navigation has its own feedback (skeleton + page reveal) and never calls these.
+// showLoader/hideLoader are for explicit ACTIONS (save, delete, approve…): a
+// small, tasteful centred spinner — not the progress bar, not the full splash.
+let _loaderMsgTimer, _loaderHideTimer, _busyDepth = 0;
+function _busyEl() {
+  let el = document.getElementById('busy-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'busy-overlay';
+    el.innerHTML = '<div class="busy-card"><div class="busy-spin"></div><div class="busy-label"></div></div>';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function showLoader(label = 'Working…') {
+  const el = _busyEl();
+  el.querySelector('.busy-label').textContent = label;
+  _busyDepth++;
+  el.classList.add('show');
+}
 function hideLoader() {
   clearInterval(_loaderMsgTimer);
-  // If a heavy op (Generate) put up the full-screen loader, dismiss it.
-  const el = document.getElementById('page-loader');
-  if (el && el.classList.contains('show')) {
-    el.classList.add('fading');
+  _busyDepth = Math.max(0, _busyDepth - 1);
+  if (_busyDepth === 0) {
+    const el = document.getElementById('busy-overlay');
+    if (el) el.classList.remove('show');
+  }
+  // If a heavy op (Generate) put up the full-screen loader, dismiss it too.
+  const pl = document.getElementById('page-loader');
+  if (pl && pl.classList.contains('show')) {
+    pl.classList.add('fading');
     clearTimeout(_loaderHideTimer);
-    _loaderHideTimer = setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
+    _loaderHideTimer = setTimeout(() => { pl.classList.remove('show', 'fading'); }, 300);
   }
 }
 // Kept as no-ops so existing call sites stay valid (the bar was removed).

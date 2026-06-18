@@ -14,10 +14,11 @@ async function loadRegistrations() {
   return pendingRegs;
 }
 
-async function renderStaffPage() {
-  // Managers manage staff too (backend require_admin allows admin/superadmin/manager).
+function renderStaffPage() {
+  // Renders from the already-loaded allStaff / pendingRegs (no fetch) so
+  // re-rendering after an edit/delete is instant. Initial data load happens in
+  // the router (loadStaff + loadRegistrations).
   const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
-  if (canEdit) await loadRegistrations();
   setTopbar('Staff', 'Manage radiology staff',
     canEdit ? `<button class="btn btn-sm" onclick="openStaffModal()">+ Add Staff</button>` : ''
   );
@@ -113,6 +114,7 @@ function renderPendingRegs() {
 }
 
 async function approveReg(id) {
+  showLoader('Approving…');
   try {
     await API.post(`/registrations/${id}/approve`, {});
     pendingRegs = pendingRegs.filter(r => r.id !== id);
@@ -120,17 +122,20 @@ async function approveReg(id) {
     renderStaffPage();
     toast('Registration approved — staff added');
   } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
 }
 
 async function rejectReg(id) {
   const ok = await showConfirm('Reject registration', 'Reject this self-registration?');
   if (!ok) return;
+  showLoader('Rejecting…');
   try {
     await API.post(`/registrations/${id}/reject`, {});
     pendingRegs = pendingRegs.filter(r => r.id !== id);
     renderPendingRegs();
     toast('Registration rejected');
   } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
 }
 
 let _editStaffId = null;
@@ -189,6 +194,7 @@ async function saveStaff() {
                  email: document.getElementById('staff-email')?.value.trim() || null,
                  phone: document.getElementById('staff-phone')?.value.trim() || null };
 
+  showLoader(_editStaffId ? 'Saving…' : 'Adding…');
   try {
     if (_editStaffId) {
       const s = await API.put(`/staff/${_editStaffId}`, body);
@@ -203,15 +209,17 @@ async function saveStaff() {
     showSuccess(_editStaffId ? 'Staff updated' : 'Staff added');
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
-  }
+  } finally { hideLoader(); }
 }
 async function deleteStaffConfirm(id, name) {
   const ok = await showConfirm('Delete Staff', `Remove "${name}" from the system?`);
   if (!ok) return;
+  showLoader('Removing…');
   try {
     await API.delete(`/staff/${id}`);
     allStaff = allStaff.filter(s => s.id !== id);
     renderStaffPage();
     toast('Staff removed');
   } catch (err) { toast(err.message, 'err'); }
+  finally { hideLoader(); }
 }

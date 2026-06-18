@@ -252,6 +252,27 @@ body {
   border-radius: 10px; background: var(--card-alt); color: var(--text); font-family: inherit; font-size: 14px;
 }
 
+/* ── Action spinner (save / delete / approve…) ── */
+#busy-overlay {
+  position: fixed; inset: 0; z-index: 4500; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(43,36,88,.18); backdrop-filter: blur(1.5px);
+}
+#busy-overlay.show { display: flex; animation: busyIn .14s ease; }
+@keyframes busyIn { from { opacity: 0; } to { opacity: 1; } }
+.busy-card {
+  background: var(--card-alt); border: 1px solid var(--border); border-radius: 16px;
+  padding: 22px 28px; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  box-shadow: 0 18px 44px rgba(43,36,88,.28);
+}
+.busy-spin {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  animation: busySpin .75s linear infinite;
+}
+@keyframes busySpin { to { transform: rotate(360deg); } }
+.busy-label { font-size: 13px; font-weight: 600; color: var(--text); }
+
 /* ── Shimmer skeleton (shown while a slow page loads) ── */
 .skel-wrap { padding: 4px; }
 .skel { background: linear-gradient(90deg, var(--card) 25%, var(--card-alt) 50%, var(--card) 75%); background-size: 200% 100%; animation: shimmer 1.25s ease-in-out infinite; border-radius: 12px; }

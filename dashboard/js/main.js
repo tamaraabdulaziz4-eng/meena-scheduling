@@ -138,7 +138,7 @@ async function renderRoute(page) {
     case 'myschedule': await renderMySchedulePage(); break;
     case 'schedule':   await renderSchedulePage(); break;
     case 'review':     await renderReviewPage(); break;
-    case 'staff':      try { await loadStaff(); } catch(e){}  await renderStaffPage(); break;
+    case 'staff':      try { await Promise.all([loadStaff(), loadRegistrations()]); } catch(e){}  renderStaffPage(); break;
     case 'leaves':     await renderLeavesPage(); break;
     case 'swaps':      try { await loadStaff(); } catch(e){}  renderSwapsPage(); break;
     case 'cases':      renderCasesPage(); break;
