@@ -50,6 +50,7 @@ function notifTimeAgo(iso) {
 const NOTIF_ICON = {
   review: '📤', submitted: '📤', approved: '✅', reviewed: '👀',
   returned: '↩️', rejected: '⛔', leave: '🌴', swap: '🔄', info: '🔔',
+  reminder: '⏰',
 };
 
 function renderNotifList() {

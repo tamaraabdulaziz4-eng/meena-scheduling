@@ -2417,6 +2417,34 @@ def _case_row(row):
     row["total_cases"] = sum(int(row.get(f) or 0) for f in ("xray","ct","us","mamo","bmd","insert_cd"))
     return row
 
+def _operational_date_server():
+    """The reporting day, KSA time (UTC+3, no DST). A night shift filed after
+    midnight still belongs to the day it covered, so before 08:00 it's yesterday."""
+    from datetime import datetime, timezone, timedelta
+    ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+    if ksa.hour < 8:
+        ksa -= timedelta(days=1)
+    return ksa.strftime("%Y-%m-%d")
+
+def _cases_remind_targets(branch_id, date):
+    """User accounts that should fill a branch's daily report: its team lead(s),
+    can_report staff, and anyone scheduled Night that day."""
+    ids = set()
+    for r in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)):
+        ids.add(r["id"])
+    for r in q("""SELECT u.id FROM scheduling.users u
+                  JOIN scheduling.staff s ON s.id=u.staff_id
+                  WHERE u.role='staff' AND s.branch_id=%s AND COALESCE(s.can_report,false)=true""",
+               (branch_id,)):
+        ids.add(r["id"])
+    for r in q("""SELECT u.id FROM scheduling.users u
+                  JOIN scheduling.schedule_entries e ON e.staff_id=u.staff_id
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                  WHERE u.role='staff' AND sc.branch_id=%s AND e.date=%s AND e.shift_code='N'""",
+               (branch_id, date)):
+        ids.add(r["id"])
+    return ids
+
 @app.get("/api/daily-cases")
 def get_daily_case(request: Request, user=Depends(get_current_user)):
     p = request.query_params
@@ -2508,7 +2536,60 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
             one=True)
     insert_audit(user, "DAILY_CASES_" + ("SUBMIT" if submit else "SAVE"),
                  f"branch:{branch_id}", date)
-    return _case_row(row)
+    out = _case_row(row)
+    # On an actual submit (transition into locked), tell the managers the branch
+    # filed its report. Skip if it was already locked (a reviewer re-saving).
+    if submit and not (existing and existing.get("locked")):
+        bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
+        notify_roles(("manager", "superadmin"),
+                     f"{bname}: daily cases report submitted for {date} — "
+                     f"{out['total_cases']} cases, {int(out.get('total_pt') or 0)} patients",
+                     link="cases", ntype="submitted", exclude_user=user["id"])
+    return out
+
+@app.post("/api/daily-cases/remind")
+async def remind_daily_cases(request: Request):
+    """Remind branches that haven't submitted their daily report yet. Auth: a
+    logged-in superadmin, OR an external scheduler passing the X-Cron-Token
+    header matching env CRON_SECRET. Deduped to once per 6h per day (?force=1
+    overrides)."""
+    secret = os.environ.get("CRON_SECRET")
+    token  = request.headers.get("X-Cron-Token")
+    if not (secret and token and token == secret):
+        user = get_current_user(request)
+        if user["role"] != "superadmin":
+            raise HTTPException(403, "Forbidden")
+    p = request.query_params
+    date = p.get("date") or _operational_date_server()
+    force = p.get("force") == "1"
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    key = f"cases_remind:{date}"
+    last = get_setting(key)
+    if last and not force:
+        try:
+            if (now - datetime.fromisoformat(last)).total_seconds() < 6 * 3600:
+                return {"date": date, "reminded": [], "skipped": "reminded within the last 6h"}
+        except Exception:
+            pass
+    pending = q("""SELECT b.id, b.name FROM scheduling.branches b
+                   WHERE NOT EXISTS (SELECT 1 FROM scheduling.daily_cases dc
+                                     WHERE dc.branch_id=b.id AND dc.date=%s AND dc.locked=true)
+                   ORDER BY b.name""", (date,))
+    reminded = []
+    for b in pending:
+        targets = _cases_remind_targets(b["id"], date)
+        if not targets:
+            continue
+        msg = (f"Reminder: {b['name']}'s daily cases report for {date} "
+               f"hasn't been submitted yet — please fill it in.")
+        for uid in targets:
+            notify(uid, msg, link="cases", ntype="reminder")
+        reminded.append(b["name"])
+    q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""",
+      (key, now.isoformat()), exec_only=True)
+    return {"date": date, "reminded": reminded}
 
 @app.put("/api/daily-cases/reopen")
 async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):

@@ -18,8 +18,10 @@ let _casesTimer = null;
 function renderCasesPage() {
   // Fresh "reporting day" default each time the page opens (handles past-midnight entry).
   casesDate = operationalDate();
+  const isReviewer = ['superadmin', 'manager'].includes(currentUser?.role);
   setTopbar('Daily Cases', 'Radiology cases per branch',
-    `<button class="btn btn-ghost btn-sm" onclick="printCases()">🖨 Print / PDF</button>`);
+    `${isReviewer ? `<button class="btn btn-ghost btn-sm" onclick="remindPendingCases()">⏰ Remind pending</button>` : ''}
+     <button class="btn btn-ghost btn-sm" onclick="printCases()">🖨 Print / PDF</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
     <div id="cases-print-title" style="display:none"></div>
@@ -160,3 +162,15 @@ async function reopenCase() {
 }
 
 function printCases() { window.print(); }
+
+async function remindPendingCases() {
+  const ok = await showConfirm('Remind pending branches',
+    `Notify the team leads / night staff of every branch that hasn't submitted ${fmtDateDisplay(casesDate)} yet?`, 'Send reminders');
+  if (!ok) return;
+  try {
+    const r = await API.post(`/daily-cases/remind?date=${casesDate}`, {});
+    if (r.skipped) { toast('Already reminded recently — try again later'); return; }
+    const n = (r.reminded || []).length;
+    toast(n ? `Reminder sent to ${n} branch${n !== 1 ? 'es' : ''}` : 'All branches have already submitted 🎉');
+  } catch (e) { toast(e.message, 'err'); }
+}

@@ -310,6 +310,9 @@ r = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 23
 check("team lead submits cases", r.status_code == 200, r.text)
 check("total_cases auto-computed (37)", r.json().get("total_cases") == 37, r.json())
 check("locked after submit", r.json().get("locked") is True, r.json())
+nmgr = mgr.get("/api/notifications").json()
+check("manager notified the branch submitted its report",
+      any("report submitted" in (n["message"] or "").lower() for n in nmgr["notifications"]), nmgr)
 r2 = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 1, "submit": False})
 check("locked report rejects edit", r2.status_code == 403, r2.status_code)
 ov = admin.get(f"/api/daily-cases/overview?date={CD}").json()
@@ -326,6 +329,18 @@ admin.put(f"/api/staff/{A['id']}", json={"can_report": True})
 rs2 = staffA.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 2, "ct": 1, "us": 0,
               "mamo": 0, "bmd": 0, "insert_cd": 0, "total_pt": 2, "submit": False})
 check("can_report staff allowed", rs2.status_code == 200, rs2.text)
+
+print("\n== scenario 13c: daily-cases reminders ==")
+# CD (2026-08-28) for NEST 3 was reopened + saved as draft above → still pending.
+lead_b4 = {n["id"] for n in lead.get("/api/notifications").json()["notifications"]}
+rem = admin.post(f"/api/daily-cases/remind?date={CD}", json={})
+check("remind endpoint ok", rem.status_code == 200, rem.text)
+check("NEST 3 reminded (no locked report)", nest3["name"] in (rem.json().get("reminded") or []), rem.json())
+lead_after = [n for n in lead.get("/api/notifications").json()["notifications"] if n["id"] not in lead_b4]
+check("team lead got a fill-in reminder", any("hasn't been submitted" in (n["message"] or "").lower() for n in lead_after), lead_after)
+check("reminder deduped within 6h", (admin.post(f"/api/daily-cases/remind?date={CD}", json={}).json() or {}).get("skipped"), "expected skipped")
+rfx = lead.post(f"/api/daily-cases/remind?date={CD}", json={})
+check("remind is superadmin/cron only", rfx.status_code in (401, 403), rfx.status_code)
 
 print("\n== scenario 13b: cases edge cases (regressions) ==")
 # Reviewer plain-Save on a locked report must NOT silently unlock it or wipe
