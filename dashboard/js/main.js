@@ -87,88 +87,76 @@ async function initApp() {
   await showPage(window._defaultPage || 'schedule');
 }
 
-async function showPage(page) {
+// Resolve role-based redirects up front so a blocked route animates ONCE to its
+// real destination instead of fading twice (old code fell into the switch, then
+// recursively called showPage → double transition).
+function resolvePage(page) {
+  const role = currentUser?.role;
+  const adminish = ['admin','superadmin'].includes(role);
+  if (page === 'schedule'   && role === 'staff')  return 'myschedule';
+  if (page === 'nest-config')                     return 'schedule';
+  if (['swaps','cases'].includes(page) && role === 'viewer') return 'schedule';
+  if (page === 'branches' && !adminish)           return 'schedule';
+  if (page === 'shifts'   && !adminish)           return 'schedule';
+  if (page === 'audit'    && !adminish)           return 'schedule';
+  if (page === 'users'    && role !== 'superadmin') return 'schedule';
+  return page;
+}
+
+async function renderRoute(page) {
+  switch (page) {
+    case 'myschedule': await renderMySchedulePage(); break;
+    case 'schedule':   await renderSchedulePage(); break;
+    case 'review':     await renderReviewPage(); break;
+    case 'staff':      try { await loadStaff(); } catch(e){}  renderStaffPage(); break;
+    case 'leaves':     await renderLeavesPage(); break;
+    case 'swaps':      try { await loadStaff(); } catch(e){}  renderSwapsPage(); break;
+    case 'cases':      renderCasesPage(); break;
+    case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
+    case 'shifts':     try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}  renderShiftsPage(); break;
+    case 'users':      try { await loadUsers(); } catch(e){}  renderUsersPage(); break;
+    case 'audit':      await renderAuditPage(); break;
+    default:
+      document.getElementById('content').innerHTML = `<div class="empty"><p>Page not found</p></div>`;
+  }
+}
+
+// Monotonic token: if the user navigates again mid-transition, the older render
+// bails (and the newer one finalises #content), so they never fight.
+let _navSeq = 0, _navDepth = 0;
+async function showPage(requested) {
+  const page = resolvePage(requested);
+  const seq = ++_navSeq;
   currentPage = page;
 
-  // Update nav active state
+  // Nav active state (highlight the resolved destination).
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const navEl = document.getElementById(`nav-${page}`);
   if (navEl) navEl.classList.add('active');
 
   const content = document.getElementById('content');
-  // Smooth fade: dim the old content, render the new page, then fade it back in
-  // so pages don't snap into view abruptly.
-  content.style.transition = 'opacity .22s ease';
-  content.style.opacity = '0';
-  await new Promise(r => setTimeout(r, 140));
+  _navDepth++; _navigating = true;
+  startTopBar();
+  try {
+    // Quick fade-out (fast & light — no full-screen takeover).
+    content.classList.add('page-leaving');
+    await new Promise(r => setTimeout(r, 90));
+    if (seq !== _navSeq) return;               // superseded by a newer click
 
-  switch (page) {
-    case 'myschedule':
-      await renderMySchedulePage();
-      break;
+    try { await renderRoute(page); }
+    catch (e) { console.error('Page render error:', e); }
+    if (seq !== _navSeq) return;               // superseded while loading data
 
-    case 'schedule':
-      if (currentUser?.role === 'staff') { showPage('myschedule'); return; }
-      await renderSchedulePage();
-      break;
-
-    case 'review':
-      await renderReviewPage();
-      break;
-
-    case 'staff':
-      try { await loadStaff(); } catch(e){}
-      renderStaffPage();
-      break;
-
-    case 'leaves':
-      renderLeavesPage();
-      break;
-
-    case 'swaps':
-      if (currentUser?.role === 'viewer') { showPage('schedule'); return; }
-      try { await loadStaff(); } catch(e){}
-      renderSwapsPage();
-      break;
-
-    case 'cases':
-      if (currentUser?.role === 'viewer') { showPage('schedule'); return; }
-      renderCasesPage();
-      break;
-
-    case 'branches':
-      if (!['admin','superadmin'].includes(currentUser?.role)) { showPage('schedule'); return; }
-      try { await loadBranches(); } catch(e){}
-      renderBranchesPage();
-      break;
-
-    case 'shifts':
-      if (!['admin','superadmin'].includes(currentUser?.role)) { showPage('schedule'); return; }
-      try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}
-      renderShiftsPage();
-      break;
-
-    case 'users':
-      if (currentUser?.role !== 'superadmin') { showPage('schedule'); return; }
-      try { await loadUsers(); } catch(e){}
-      renderUsersPage();
-      break;
-
-    case 'audit':
-      if (!['admin','superadmin'].includes(currentUser?.role)) { showPage('schedule'); return; }
-      await renderAuditPage();
-      break;
-
-    case 'nest-config':
-      // Deprecated page; keep route for old bookmarks but redirect.
-      showPage('schedule');
-      break;
-
-    default:
-      content.innerHTML = `<div class="empty"><p>Page not found</p></div>`;
+    // Land at the top of the new page, then fade/slide it in.
+    content.scrollTop = 0;
+    const main = document.getElementById('main'); if (main) main.scrollTop = 0;
+    content.classList.remove('page-leaving');
+    content.classList.add('page-entering');
+    requestAnimationFrame(() => requestAnimationFrame(() => content.classList.remove('page-entering')));
+  } finally {
+    stopTopBar();                              // balances this call's startTopBar
+    if (--_navDepth === 0) _navigating = false;
   }
-  // Fade the freshly rendered page back in smoothly.
-  requestAnimationFrame(() => { content.style.opacity = '1'; });
 }
 
 // Close shift picker when clicking outside

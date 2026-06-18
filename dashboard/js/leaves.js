@@ -10,7 +10,7 @@ async function loadLeaves(branchId, year, month) {
   return allLeaves;
 }
 
-function renderLeavesPage() {
+async function renderLeavesPage() {
   // Managers are reviewers too — they add/approve/delete leave (matches the
   // backend's require_admin / require_reviewer). Only 'admin','superadmin' here
   // would hide approval from a manager-role account.
@@ -52,18 +52,18 @@ function renderLeavesPage() {
     if (y === now.getFullYear()) o.selected = true;
     ys.appendChild(o);
   }
-  filterLeaves();
+  await filterLeaves();
 }
 
 async function filterLeaves() {
   const year  = document.getElementById('leave-filter-year')?.value;
   const month = document.getElementById('leave-filter-month')?.value || '';
   const bid   = document.getElementById('leave-filter-branch')?.value || '';
-  showLoader('Loading leaves…');
+  startTopBar();
   try {
     await loadLeaves(bid || (currentUser?.branch_id || ''), year, month);
     renderLeavesList();
-  } finally { hideLoader(); }
+  } finally { stopTopBar(); }
 }
 
 function renderLeavesList() {

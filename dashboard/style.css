@@ -212,6 +212,24 @@ body {
 /* keep real content above the orbs */
 .content > * { position: relative; z-index: 1; }
 
+/* ── Page transition: fast, light fade + micro-slide (no full-screen flash) ── */
+.content { transition: opacity .13s ease, transform .13s ease; }
+.content.page-leaving  { opacity: 0; transform: translateY(6px); }
+.content.page-entering { opacity: 0; transform: translateY(6px); }
+/* removing .page-entering on the next frame animates it to the resting state */
+
+/* ── Slim top progress bar (navigation / data-fetch feedback) ── */
+#topbar-progress {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0;
+  z-index: 5000; pointer-events: none; opacity: 0;
+  background: linear-gradient(90deg, #6B4EFF, #8B76FF 60%, #00C896);
+  box-shadow: 0 0 10px rgba(107,78,255,.6);
+  border-radius: 0 3px 3px 0;
+  transition: width .25s ease, opacity .2s ease;
+}
+#topbar-progress.show { opacity: 1; }
+#topbar-progress.done { transition: width .15s ease, opacity .24s ease .12s; }
+
 /* ── Buttons ── */
 .btn {
   display: inline-flex; align-items: center; gap: 6px;

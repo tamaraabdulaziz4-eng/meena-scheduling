@@ -46,11 +46,17 @@ function toast(msg, type = 'ok') {
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
-let _loaderMsgTimer;
+let _loaderMsgTimer, _loaderHideTimer;
+// While a page transition is running we suppress the full-screen splash and let
+// the slim top progress bar carry the feedback — stops the two from fighting
+// (the old "content dims → full overlay pops → dims again" jump).
+let _navigating = false;
 function showLoader(label = 'Loading…') {
   // Don't stack the page loader on top of the welcome splash.
   const splash = document.getElementById('welcome-splash');
   if (splash && splash.style.display !== 'none' && !splash.classList.contains('done')) return;
+  if (_navigating) { startTopBar(); return; }   // routed to the top bar instead
+  clearTimeout(_loaderHideTimer);               // cancel any pending hide (race fix)
   const el = document.getElementById('page-loader');
   document.getElementById('loader-label').textContent = label;
   el.classList.remove('fading');
@@ -58,11 +64,49 @@ function showLoader(label = 'Loading…') {
 }
 function hideLoader() {
   clearInterval(_loaderMsgTimer);
+  if (_navigating) { stopTopBar(); return; }
   const el = document.getElementById('page-loader');
   if (!el) return;
-  // Fade out smoothly, then hide.
+  // Fade out smoothly, then hide. Keep the timer cancellable so a quick
+  // show-right-after-hide doesn't get wiped by this stale callback.
   el.classList.add('fading');
-  setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
+  clearTimeout(_loaderHideTimer);
+  _loaderHideTimer = setTimeout(() => { el.classList.remove('show', 'fading'); }, 300);
+}
+
+// ── Slim top progress bar ─────────────────────────────────────────────────────
+// Lightweight navigation feedback (à la GitHub/YouTube) so switching pages feels
+// responsive without a full-screen takeover.
+let _topBarEl, _topBarTimer, _topBarDepth = 0;
+function _ensureTopBar() {
+  if (_topBarEl) return _topBarEl;
+  _topBarEl = document.createElement('div');
+  _topBarEl.id = 'topbar-progress';
+  document.body.appendChild(_topBarEl);
+  return _topBarEl;
+}
+function startTopBar() {
+  // Stay quiet behind the login welcome splash (it already covers the screen).
+  const splash = document.getElementById('welcome-splash');
+  if (splash && splash.style.display !== 'none' && !splash.classList.contains('done')) return;
+  const el = _ensureTopBar();
+  _topBarDepth++;
+  if (_topBarDepth > 1) return;        // already running — don't restart the bar
+  clearTimeout(_topBarTimer);
+  el.classList.remove('done');
+  el.classList.add('show');
+  // ease toward ~75% so it always feels like it's making progress
+  el.style.width = '8%';
+  requestAnimationFrame(() => { el.style.width = '75%'; });
+}
+function stopTopBar() {
+  if (!_topBarEl) return;
+  _topBarDepth = Math.max(0, _topBarDepth - 1);
+  if (_topBarDepth > 0) return;        // still other work in flight
+  const el = _topBarEl;
+  el.style.width = '100%';
+  el.classList.add('done');
+  _topBarTimer = setTimeout(() => { el.classList.remove('show', 'done'); el.style.width = '0%'; }, 240);
 }
 // Loader variant that cycles through several messages (for long waits like Generate)
 function showLoaderCycling(messages = ['Working…'], intervalMs = 1400) {
