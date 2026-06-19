@@ -60,18 +60,38 @@ function startPasswordReset(token) {
   setTimeout(() => document.getElementById('reset-password')?.focus(), 50);
 }
 
-// Staff self-registration (opened from ?register=CODE).
+// Self-registration (opened from ?register=CODE&as=ROLE).
 let _regCode = null;
+let _regRole = 'staff';
 let _regSection = 'General';
+const _REG_HEAD = {
+  staff:   ['Staff Onboarding',     'Welcome! Fill in your details to join the team.'],
+  admin:   ['Team Lead Registration', 'Register as a team lead for your branch.'],
+  manager: ['Manager Registration',   'Register as a department manager.'],
+};
 function pickSection(btn) {
   _regSection = btn.dataset.val;
   document.querySelectorAll('#reg-section .onb-pill').forEach(b => b.classList.toggle('active', b === btn));
 }
-async function startRegistration(code) {
+async function startRegistration(code, role) {
   _regCode = code; _regSection = 'General';
+  _regRole = ['staff', 'admin', 'manager'].includes(role) ? role : 'staff';
   _showAuthView('register-view');
+  // Tailor the form to the role: a manager spans all branches (no branch/section/
+  // employee id); a team lead picks a branch but no section/employee id.
+  const head = _REG_HEAD[_regRole];
+  const h = document.querySelector('#register-view h2'); if (h) h.textContent = head[0];
+  const p = document.querySelector('#register-view > p'); if (p) p.textContent = head[1];
+  const showBranch  = _regRole !== 'manager';
+  const showStaffly = _regRole === 'staff';   // section + employee id are staff-only
+  const fld = id => document.getElementById(id)?.closest('.login-field');
+  if (fld('reg-branch')) fld('reg-branch').style.display = showBranch ? '' : 'none';
+  if (fld('reg-empid'))  fld('reg-empid').style.display  = showStaffly ? '' : 'none';
+  const secField = document.getElementById('reg-section')?.closest('.login-field');
+  if (secField) secField.style.display = showStaffly ? '' : 'none';
   const sel = document.getElementById('reg-branch');
   const msg = document.getElementById('reg-msg');
+  if (!showBranch) { try { sel.innerHTML = ''; } catch (e) {} return; }
   try {
     const info = await API.get(`/register/info?code=${encodeURIComponent(code)}`);
     sel.innerHTML = '<option value="">Select branch…</option>' +
@@ -89,6 +109,7 @@ async function submitRegistration() {
   const pw2 = document.getElementById('reg-password2').value;
   const body = {
     code: _regCode,
+    role: _regRole,
     name: document.getElementById('reg-name').value.trim(),
     branch_id: document.getElementById('reg-branch').value || null,
     section: _regSection,
@@ -98,8 +119,12 @@ async function submitRegistration() {
     username: document.getElementById('reg-username').value.trim(),
     password: pw,
   };
-  if (!body.name || !body.employee_id || !body.branch_id) {
-    msg.style.color = ''; msg.textContent = 'Name, Employee ID and branch are required'; return;
+  if (!body.name) { msg.style.color = ''; msg.textContent = 'Your name is required'; return; }
+  if (_regRole !== 'manager' && !body.branch_id) {
+    msg.style.color = ''; msg.textContent = 'Please choose your branch'; return;
+  }
+  if (_regRole === 'staff' && !body.employee_id) {
+    msg.style.color = ''; msg.textContent = 'Employee ID is required'; return;
   }
   if (!body.username || body.username.length < 3) {
     msg.style.color = ''; msg.textContent = 'Choose a username (at least 3 characters)'; return;

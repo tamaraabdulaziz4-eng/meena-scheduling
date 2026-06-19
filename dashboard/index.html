@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260619o">
+<link rel="stylesheet" href="/style.css?v=20260619p">
 </head>
 <body>
 
@@ -525,14 +525,29 @@
           <div class="msg" id="remind-hour-msg" style="margin-top:6px"></div>
         </div>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
-          <label>Staff self-registration</label>
-          <div id="reg-status" style="font-size:11px;color:var(--muted);margin-bottom:6px">Loading…</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input type="text" id="reg-link" readonly style="flex:1;min-width:180px;font-size:12px;color:var(--muted)" placeholder="Registration is off">
-            <button class="btn btn-ghost btn-sm" onclick="copyRegLink()">Copy</button>
+          <label>Self-registration links</label>
+          <div id="reg-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">Loading…</div>
+          <div id="reg-links">
+            <div class="reg-link-row" data-role="staff">
+              <span class="reg-link-label">👤 Staff</span>
+              <input type="text" class="reg-link-input" id="reg-link-staff" readonly placeholder="Registration is off">
+              <button class="btn btn-ghost btn-sm" onclick="copyRegLink('staff')">Copy</button>
+            </div>
+            <div class="reg-link-row" data-role="admin">
+              <span class="reg-link-label">🧑‍💼 Team Lead</span>
+              <input type="text" class="reg-link-input" id="reg-link-admin" readonly placeholder="Registration is off">
+              <button class="btn btn-ghost btn-sm" onclick="copyRegLink('admin')">Copy</button>
+            </div>
+            <div class="reg-link-row" data-role="manager">
+              <span class="reg-link-label">👔 Manager</span>
+              <input type="text" class="reg-link-input" id="reg-link-manager" readonly placeholder="Registration is off">
+              <button class="btn btn-ghost btn-sm" onclick="copyRegLink('manager')">Copy</button>
+            </div>
+          </div>
+          <div style="margin-top:8px">
             <button class="btn btn-ghost btn-sm" id="reg-toggle-btn" onclick="toggleRegistration()">Enable</button>
           </div>
-          <span style="font-size:11px;color:var(--muted)">Share this link so staff fill in their own name, branch, ID & email.</span>
+          <span style="font-size:11px;color:var(--muted);display:block;margin-top:6px">Send each link to the right people. Staff sign-ups go to the branch team lead; team-lead & manager sign-ups need your (superadmin) approval.</span>
           <div class="msg" id="reg-link-msg" style="margin-top:6px"></div>
         </div>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
@@ -801,24 +816,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260619o"></script>
-<script src="/js/auth.js?v=20260619o"></script>
-<script src="/js/util.js?v=20260619o"></script>
-<script src="/js/branches.js?v=20260619o"></script>
-<script src="/js/users.js?v=20260619o"></script>
-<script src="/js/staff.js?v=20260619o"></script>
-<script src="/js/leaves.js?v=20260619o"></script>
-<script src="/js/swaps.js?v=20260619o"></script>
-<script src="/js/holidays.js?v=20260619o"></script>
-<script src="/js/notifications.js?v=20260619o"></script>
-<script src="/js/portal.js?v=20260619o"></script>
-<script src="/js/cases.js?v=20260619o"></script>
-<script src="/js/home.js?v=20260619o"></script>
-<script src="/js/shifts.js?v=20260619o"></script>
-<script src="/js/schedule.js?v=20260619o"></script>
-<script src="/js/review.js?v=20260619o"></script>
-<script src="/js/export.js?v=20260619o"></script>
-<script src="/js/audit.js?v=20260619o"></script>
-<script src="/js/main.js?v=20260619o"></script>
+<script src="/js/api.js?v=20260619p"></script>
+<script src="/js/auth.js?v=20260619p"></script>
+<script src="/js/util.js?v=20260619p"></script>
+<script src="/js/branches.js?v=20260619p"></script>
+<script src="/js/users.js?v=20260619p"></script>
+<script src="/js/staff.js?v=20260619p"></script>
+<script src="/js/leaves.js?v=20260619p"></script>
+<script src="/js/swaps.js?v=20260619p"></script>
+<script src="/js/holidays.js?v=20260619p"></script>
+<script src="/js/notifications.js?v=20260619p"></script>
+<script src="/js/portal.js?v=20260619p"></script>
+<script src="/js/cases.js?v=20260619p"></script>
+<script src="/js/home.js?v=20260619p"></script>
+<script src="/js/shifts.js?v=20260619p"></script>
+<script src="/js/schedule.js?v=20260619p"></script>
+<script src="/js/review.js?v=20260619p"></script>
+<script src="/js/export.js?v=20260619p"></script>
+<script src="/js/audit.js?v=20260619p"></script>
+<script src="/js/main.js?v=20260619p"></script>
 </body>
 </html>

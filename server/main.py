@@ -377,6 +377,9 @@ def init_schema():
             # so an approved account can sign in — not just exist as a staff row.
             cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS username TEXT;")
             cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS password TEXT;")
+            # Role-scoped invite links: a registration can target staff (default),
+            # team-lead (admin) or manager. Higher roles need superadmin approval.
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS requested_role TEXT DEFAULT 'staff';")
             # Password-reset tokens (forgot-password via email). Stored hashed.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.password_resets (
@@ -1300,115 +1303,159 @@ async def register_staff(request: Request):
     section = body.get("section") if body.get("section") in ("General", "US") else "General"
     username = (body.get("username") or "").strip().lower()
     password = body.get("password") or ""
-    if not name or not emp_id or not branch_id:
-        raise HTTPException(400, "Name, Employee ID and branch are required")
+    # Which role is being requested (bound to the invite link). The role itself
+    # grants nothing — an admin/manager sign-up only becomes that role once a
+    # SUPERADMIN approves it (see approve_registration), so a tampered link can't
+    # escalate privilege.
+    role = body.get("role") if body.get("role") in ("staff", "admin", "manager") else "staff"
+    if not name:
+        raise HTTPException(400, "Your name is required")
     if not username or not password:
         raise HTTPException(400, "Choose a username and password to create your account")
     if len(username) < 3:
         raise HTTPException(400, "Username must be at least 3 characters")
     if len(password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
-    branch_id = _int_or_400(branch_id)
-    if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
-        raise HTTPException(400, "Unknown branch")
+    # Branch is required for staff + team-lead; a manager spans all branches.
+    if role in ("staff", "admin"):
+        if not branch_id:
+            raise HTTPException(400, "Please choose your branch")
+        branch_id = _int_or_400(branch_id)
+        if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
+            raise HTTPException(400, "Unknown branch")
+    else:
+        branch_id = None
+    # Employee ID is required for staff (it's their rota identity); optional otherwise.
+    if role == "staff" and not emp_id:
+        raise HTTPException(400, "Employee ID is required")
     # Early, friendly check — the real guard is the UNIQUE index at approval.
     if q("SELECT 1 FROM scheduling.users WHERE username=%s", (username,), one=True):
         raise HTTPException(409, "That username is taken — please choose another")
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    # Queue it for the branch team lead — a re-submission for the same Employee ID
-    # replaces the earlier pending one rather than piling up.
-    q("""DELETE FROM scheduling.staff_registrations
-         WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
-      (emp_id,), exec_only=True)
+    # A re-submission for the same Employee ID replaces the earlier pending one.
+    if emp_id:
+        q("""DELETE FROM scheduling.staff_registrations
+             WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
+          (emp_id,), exec_only=True)
     q("""INSERT INTO scheduling.staff_registrations
-           (name, branch_id, employee_id, email, phone, section, username, password)
-         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-      (name, branch_id, emp_id, email, phone, section, username, pw_hash), exec_only=True)
-    # Notify the branch team lead (who approves). Only fall back to the managers
-    # if the branch has no team lead — otherwise this stays off their inbox.
-    leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
-    msg = f"New staff registration to review: {name} — ID {emp_id}"
-    if leads:
-        for u in leads:
-            notify(u["id"], msg, link="staff", ntype="info")
+           (name, branch_id, employee_id, email, phone, section, username, password, requested_role)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+      (name, branch_id, emp_id or None, email, phone, section, username, pw_hash, role), exec_only=True)
+    # Route the approval request to whoever can approve THIS role.
+    if role == "staff":
+        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
+        msg = f"New staff registration to review: {name}" + (f" — ID {emp_id}" if emp_id else "")
+        if leads:
+            for u in leads:
+                notify(u["id"], msg, link="staff", ntype="info")
+        else:
+            notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
+        who = "your team lead"
     else:
-        notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
-    return {"ok": True, "message": "Thanks! Your account was created and is awaiting your team lead's approval. "
+        label = "team-lead" if role == "admin" else "manager"
+        notify_roles(("superadmin",), f"New {label} registration to review: {name}", link="staff", ntype="info")
+        who = "an administrator"
+    return {"ok": True, "message": f"Thanks! Your account was created and is awaiting {who}'s approval. "
                                    "Once approved you can sign in with your username and password."}
 
 @app.get("/api/registrations")
 def list_registrations(request: Request, user=Depends(require_admin)):
-    """Pending self-registrations: a team lead sees their own branch, a
-    manager/superadmin sees all."""
-    if user["role"] in ("manager", "superadmin"):
+    """Pending self-registrations, scoped to what the caller can approve:
+    superadmin sees all (incl. team-lead/manager sign-ups); a manager sees staff
+    sign-ups across branches; a team lead sees staff sign-ups for their branch."""
+    if user["role"] == "superadmin":
         rows = q("""SELECT r.*, b.name AS branch_name FROM scheduling.staff_registrations r
                     LEFT JOIN scheduling.branches b ON b.id=r.branch_id
                     WHERE r.status='pending' ORDER BY r.created_at""")
+    elif user["role"] == "manager":
+        rows = q("""SELECT r.*, b.name AS branch_name FROM scheduling.staff_registrations r
+                    LEFT JOIN scheduling.branches b ON b.id=r.branch_id
+                    WHERE r.status='pending' AND COALESCE(r.requested_role,'staff')='staff'
+                    ORDER BY r.created_at""")
     else:
         rows = q("""SELECT r.*, b.name AS branch_name FROM scheduling.staff_registrations r
                     LEFT JOIN scheduling.branches b ON b.id=r.branch_id
-                    WHERE r.status='pending' AND r.branch_id=%s ORDER BY r.created_at""",
+                    WHERE r.status='pending' AND COALESCE(r.requested_role,'staff')='staff'
+                      AND r.branch_id=%s ORDER BY r.created_at""",
                  (user.get("branch_id"),))
     return rows
 
 @app.post("/api/registrations/{rid}/approve")
 async def approve_registration(rid: int, request: Request, user=Depends(require_admin)):
-    """Approve a registration → create (or upsert by Employee ID) the staff record."""
+    """Approve a registration → create the account with its requested role.
+    Staff sign-ups also create a rota staff record; team-lead/manager sign-ups
+    create only the login and require SUPERADMIN approval (no privilege escalation)."""
     reg = q("SELECT * FROM scheduling.staff_registrations WHERE id=%s", (rid,), one=True)
     if not reg:
         raise HTTPException(404, "Registration not found")
     if reg["status"] != "pending":
         raise HTTPException(400, f"Already {reg['status']}")
-    if not can_access_branch(user, reg["branch_id"]):
-        raise HTTPException(403, "You can only approve registrations for your own branch")
-    sec = reg.get("section") if reg.get("section") in ("General", "US") else "General"
-    try:
-        staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality, self_registered)
-                     VALUES (%s,%s,%s,%s,%s,%s,true)
-                     ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
-                     DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
-                                   email=EXCLUDED.email, phone=EXCLUDED.phone,
-                                   speciality=EXCLUDED.speciality, self_registered=true
-                     RETURNING id, name""",
-                  (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec]),
-                  one=True)
-    except psycopg2.errors.UniqueViolation:
-        raise HTTPException(409, "That Employee ID is already on a staff record")
-    # Create the login account the registrant chose, linked to this staff record,
-    # so they can actually sign in (not just appear on the rota). If this branch
-    # already has a staff account for them, just relink/refresh it.
+    req_role = reg.get("requested_role") if reg.get("requested_role") in ("staff", "admin", "manager") else "staff"
+    # Approval authority by requested role.
+    if req_role == "staff":
+        if not can_access_branch(user, reg["branch_id"]):
+            raise HTTPException(403, "You can only approve registrations for your own branch")
+    elif user["role"] != "superadmin":
+        raise HTTPException(403, "Only a superadmin can approve a team-lead or manager account")
+
+    staff = None
     account_created = False
-    if reg.get("username") and reg.get("password"):
-        # If the chosen username is already owned by a DIFFERENT account, refuse
-        # — never hijack/overwrite someone else's login (the early sign-up check
-        # is racy, so this is the authoritative guard).
-        uname_owner = q("SELECT id, staff_id FROM scheduling.users WHERE username=%s",
-                        (reg["username"],), one=True)
-        if uname_owner and uname_owner.get("staff_id") != staff["id"]:
-            raise HTTPException(409, "That username is already taken by another account")
-        # Re-approval of the same person: refresh the login already linked to THIS
-        # staff record; otherwise create a fresh one.
-        existing = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (staff["id"],), one=True)
+
+    if req_role == "staff":
+        sec = reg.get("section") if reg.get("section") in ("General", "US") else "General"
         try:
-            if existing:
-                q("""UPDATE scheduling.users
-                     SET username=%s, password=%s, role='staff', branch_id=%s, staff_id=%s, email=%s
-                     WHERE id=%s""",
-                  (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"], existing["id"]),
-                  exec_only=True)
-            else:
-                q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
-                     VALUES (%s,%s,'staff',%s,%s,%s)""",
-                  (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"]),
-                  exec_only=True)
+            staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality, self_registered)
+                         VALUES (%s,%s,%s,%s,%s,%s,true)
+                         ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
+                         DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
+                                       email=EXCLUDED.email, phone=EXCLUDED.phone,
+                                       speciality=EXCLUDED.speciality, self_registered=true
+                         RETURNING id, name""",
+                      (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec]),
+                      one=True)
+        except psycopg2.errors.UniqueViolation:
+            raise HTTPException(409, "That Employee ID is already on a staff record")
+        # Create / refresh the staff login linked to this record.
+        if reg.get("username") and reg.get("password"):
+            owner = q("SELECT id, staff_id FROM scheduling.users WHERE username=%s", (reg["username"],), one=True)
+            if owner and owner.get("staff_id") != staff["id"]:
+                raise HTTPException(409, "That username is already taken by another account")
+            existing = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (staff["id"],), one=True)
+            try:
+                if existing:
+                    q("""UPDATE scheduling.users SET username=%s, password=%s, role='staff',
+                         branch_id=%s, staff_id=%s, email=%s WHERE id=%s""",
+                      (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"], existing["id"]),
+                      exec_only=True)
+                else:
+                    q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
+                         VALUES (%s,%s,'staff',%s,%s,%s)""",
+                      (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"]),
+                      exec_only=True)
+                account_created = True
+            except psycopg2.errors.UniqueViolation:
+                raise HTTPException(409, "That username is already taken by another account")
+        staff_id_for_reg = staff["id"]
+    else:
+        # Team lead (branch-locked) or manager (all branches) — login only.
+        if not (reg.get("username") and reg.get("password")):
+            raise HTTPException(400, "This registration has no login to create")
+        if q("SELECT 1 FROM scheduling.users WHERE username=%s", (reg["username"],), one=True):
+            raise HTTPException(409, "That username is already taken by another account")
+        branch_for = reg["branch_id"] if req_role == "admin" else None
+        try:
+            q("""INSERT INTO scheduling.users (username,password,role,branch_id,email)
+                 VALUES (%s,%s,%s,%s,%s)""",
+              (reg["username"], reg["password"], req_role, branch_for, reg["email"]), exec_only=True)
             account_created = True
         except psycopg2.errors.UniqueViolation:
             raise HTTPException(409, "That username is already taken by another account")
+        staff_id_for_reg = None
+
     q("""UPDATE scheduling.staff_registrations
          SET status='approved', staff_id=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
-      (staff["id"], user["id"], rid), exec_only=True)
-    insert_audit(user, "REGISTRATION_APPROVE", reg["name"], f"emp:{reg['employee_id']}")
-    # Let them know their account is live and they can sign in.
+      (staff_id_for_reg, user["id"], rid), exec_only=True)
+    insert_audit(user, "REGISTRATION_APPROVE", reg["name"], f"role:{req_role}")
     if account_created and reg.get("email"):
         try:
             _deliver_email(reg["email"], "Your Meena Scheduling account is ready",
@@ -1416,7 +1463,7 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
                            f"You can now sign in with your username \"{reg['username']}\".\n\n— Meena Scheduling")
         except Exception:
             pass
-    return {"ok": True, "staff": staff, "account_created": account_created}
+    return {"ok": True, "staff": staff, "role": req_role, "account_created": account_created}
 
 @app.post("/api/registrations/{rid}/reject")
 async def reject_registration(rid: int, request: Request, user=Depends(require_admin)):
@@ -2750,13 +2797,23 @@ def delete_holiday(hid: int, user=Depends(require_superadmin)):
 def read_settings(user=Depends(get_current_user)):
     out = {"leave_cutoff_day": get_leave_cutoff_day(),
            "cases_remind_hour": get_setting("cases_remind_hour", "7")}
-    # Only a superadmin sees the staff-registration link/code.
+    # Only a superadmin sees the registration links/code.
     if user["role"] == "superadmin":
         code = _registration_code()
         app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
         out["registration_open"] = bool(code)
-        out["registration_link"] = (f"{app_url}/?register={code}" if (code and app_url)
-                                     else (f"/?register={code}" if code else None))
+        base = (app_url if app_url else "")
+        def _link(role):
+            if not code:
+                return None
+            suffix = "" if role == "staff" else f"&as={role}"
+            return f"{base}/?register={code}{suffix}"
+        out["registration_link"] = _link("staff")          # back-compat
+        out["registration_links"] = {
+            "staff":   _link("staff"),
+            "admin":   _link("admin"),
+            "manager": _link("manager"),
+        } if code else None
     return out
 
 @app.put("/api/settings")

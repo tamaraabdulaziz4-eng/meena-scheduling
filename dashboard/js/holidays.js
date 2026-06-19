@@ -31,18 +31,19 @@ async function openHolidaysModal() {
 
 async function loadRegistrationLink() {
   const status = document.getElementById('reg-status');
-  const link = document.getElementById('reg-link');
   const btn = document.getElementById('reg-toggle-btn');
   if (!status) return;
+  const set = (role, val) => { const el = document.getElementById('reg-link-' + role); if (el) el.value = val || ''; };
   try {
     const s = await API.get('/settings');
     if (s.registration_open) {
-      status.innerHTML = '🟢 <b>Open</b> — anyone with the link can register.';
-      link.value = s.registration_link || '';
+      status.innerHTML = '🟢 <b>Open</b> — anyone with a link can register (the right link picks their role).';
+      const links = s.registration_links || {};
+      set('staff', links.staff); set('admin', links.admin); set('manager', links.manager);
       btn.textContent = 'Turn off';
     } else {
-      status.innerHTML = '⚪ Off';
-      link.value = '';
+      status.innerHTML = '⚪ Off — turn on to generate the links.';
+      set('staff', ''); set('admin', ''); set('manager', '');
       btn.textContent = 'Enable';
     }
   } catch (e) { status.textContent = ''; }
@@ -59,12 +60,13 @@ async function toggleRegistration() {
   } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
 
-function copyRegLink() {
-  const link = document.getElementById('reg-link');
-  if (!link.value) { toast('Enable registration first', 'err'); return; }
+function copyRegLink(role = 'staff') {
+  const link = document.getElementById('reg-link-' + role);
+  if (!link || !link.value) { toast('Enable registration first', 'err'); return; }
+  const label = { staff: 'Staff', admin: 'Team Lead', manager: 'Manager' }[role] || '';
   navigator.clipboard?.writeText(link.value).then(
-    () => toast('Link copied'),
-    () => { link.select(); document.execCommand('copy'); toast('Link copied'); });
+    () => toast(`${label} link copied`),
+    () => { link.select(); document.execCommand('copy'); toast(`${label} link copied`); });
 }
 
 async function loadCasesRemindHour() {

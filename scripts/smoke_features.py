@@ -553,6 +553,34 @@ check("the other account was not hijacked", stranger.status_code == 200 and stra
 # Manager can't set a duplicate Employee ID on another record.
 dupset = admin.put(f"/api/staff/{B['id']}", json={"employee_id": f"EID{sfx}"})
 check("duplicate Employee ID rejected on edit", dupset.status_code == 409, dupset.status_code)
+# Role-scoped invite links: team-lead & manager sign-ups need SUPERADMIN approval.
+anon4 = TestClient(app)
+ra = anon4.post("/api/register", json={"code": code, "role": "admin", "name": "Lead Signup",
+                "branch_id": bid, "username": f"leadsu{sfx}", "password": "leadpass1", "email": "lead@x.com"})
+check("team-lead sign-up accepted (pending)", ra.status_code == 200, ra.text)
+rm_ = anon4.post("/api/register", json={"code": code, "role": "manager", "name": "Mgr Signup",
+                "username": f"mgrsu{sfx}", "password": "mgrpass1"})
+check("manager sign-up accepted (no branch needed)", rm_.status_code == 200, rm_.text)
+leadq = lead.get("/api/registrations").json()
+check("team lead can't see team-lead/manager sign-ups",
+      not any(r.get("requested_role") in ("admin", "manager") for r in leadq))
+allq = admin.get("/api/registrations").json()
+leadReg = next((r for r in allq if r.get("username") == f"leadsu{sfx}"), None)
+mgrReg  = next((r for r in allq if r.get("username") == f"mgrsu{sfx}"), None)
+check("superadmin sees the team-lead sign-up", leadReg is not None and leadReg.get("requested_role") == "admin", allq)
+check("manager can't approve a team-lead sign-up (superadmin only)",
+      mgr.post(f"/api/registrations/{leadReg['id']}/approve", json={}).status_code == 403)
+check("superadmin approves the team-lead sign-up",
+      admin.post(f"/api/registrations/{leadReg['id']}/approve", json={}).status_code == 200)
+check("superadmin approves the manager sign-up",
+      admin.post(f"/api/registrations/{mgrReg['id']}/approve", json={}).status_code == 200)
+la = TestClient(app).post("/api/auth/login", json={"username": f"leadsu{sfx}", "password": "leadpass1"})
+check("approved team lead signs in as branch-locked admin",
+      la.status_code == 200 and la.json().get("role") == "admin" and la.json().get("branch_id") == bid, la.text)
+lm = TestClient(app).post("/api/auth/login", json={"username": f"mgrsu{sfx}", "password": "mgrpass1"})
+check("approved manager signs in as all-branch manager",
+      lm.status_code == 200 and lm.json().get("role") == "manager" and not lm.json().get("branch_id"), lm.text)
+
 admin.put("/api/settings", json={"registration": "off"})
 check("registration can be closed again", admin.get("/api/settings").json().get("registration_open") is False)
 

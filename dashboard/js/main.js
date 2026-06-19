@@ -5,9 +5,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
 
   const params = new URLSearchParams(location.search);
-  // A staff-registration link (?register=CODE) opens the public onboarding form.
+  // A registration link (?register=CODE&as=staff|admin|manager) opens onboarding.
   const regCode = params.get('register');
-  if (regCode) { startRegistration(regCode); return; }
+  if (regCode) { startRegistration(regCode, params.get('as') || 'staff'); return; }
   // A password-reset link (?reset=TOKEN) jumps straight to the set-password form.
   const resetToken = params.get('reset');
   if (resetToken) { startPasswordReset(resetToken); return; }
