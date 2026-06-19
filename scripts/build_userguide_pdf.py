@@ -45,20 +45,21 @@ class Deck(FPDF):
         self.image(img,x,y,w)
         self.set_draw_color(225,219,245); self.set_line_width(0.3)
         self.rect(x,y,w,h)
-    def cover(self):
+    def cover(self, title="Meena Scheduling", subtitle="User Guide",
+              paragraph=("The radiology department's rota, leave, shift swaps and daily case "
+                         "reports — in one place. This guide walks through every screen and where to click."),
+              hero="home.png"):
         self.add_page()
         self.set_fill_color(*LAV); self.rect(0,0,W,H,style="F")
         self.image(LOGO,20,18,40)
         self.set_xy(20,54); self.set_font("DJ","B",29); self.set_text_color(*DEEP)
-        self.cell(0,15,"Meena Scheduling")
+        self.cell(0,15,title)
         self.set_xy(20,72); self.set_font("DJ","B",16); self.set_text_color(*VIOLET)
-        self.cell(0,9,"User Guide")
+        self.cell(0,9,subtitle)
         self.set_xy(20,90); self.set_font("DJ","",12); self.set_text_color(*MUTED)
-        self.multi_cell(108,6.5,"The radiology department's rota, leave, shift swaps and daily "
-                        "case reports — in one place. This guide walks through every screen and "
-                        "where to click.")
+        self.multi_cell(108,6.5,paragraph,align="L")
         # screenshot on the right
-        self.fit(os.path.join(SC,"home.png"),140,30,98,84)
+        self.fit(os.path.join(SC,hero),140,30,98,84)
         # swoosh
         self.set_draw_color(*VIOLET); self.set_line_width(1.2)
         pts=[(20,128),(70,134),(120,122),(170,134),(232,124)]
@@ -66,6 +67,27 @@ class Deck(FPDF):
             self.line(pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1])
         self.set_xy(0,132); self.set_font("DJ","",9); self.set_text_color(*MUTED)
         self.cell(0,6,"Meena Health  ·  Radiology Department",align="C")
+    def cards_slide(self, eyebrow, title, items):
+        """A title + a 2-column grid of benefit/role cards (no screenshot)."""
+        self.add_page()
+        self.set_fill_color(*LAV); self.rect(0,0,W,H,style="F")
+        self.image(LOGO,W-44,10,30)
+        self.set_xy(18,18); self.set_font("DJ","B",11); self.set_text_color(*VIOLET); self.cell(0,6,eyebrow)
+        self.set_xy(18,26); self.set_font("DJ","B",24); self.set_text_color(*DEEP); self.cell(0,12,title)
+        n=len(items); cols=2; gap=8
+        cw=(W-36-gap)/cols
+        rows=(n+cols-1)//cols
+        top=46; avail=H-top-12; chh=(avail-(rows-1)*6)/rows
+        for i,(head,txt) in enumerate(items):
+            r,c=divmod(i,cols)
+            x=18+c*(cw+gap); y=top+r*(chh+6)
+            self.rrect(x,y,cw,chh,5,WHITE)
+            self.set_fill_color(*VIOLET); self.ellipse(x+8,y+chh/2-2.5,5,5,style="F")
+            self.set_xy(x+18,y+5); self.set_font("DJ","B",13); self.set_text_color(*DEEP)
+            self.cell(cw-24,6,head)
+            self.set_xy(x+18,y+12); self.set_font("DJ","",10.5); self.set_text_color(*TEXT)
+            self.multi_cell(cw-24,5.2,txt,align="L")
+
     def slide(self,img,eyebrow,title,desc,img_left=True):
         self.add_page()
         self.set_fill_color(*WHITE); self.rect(0,0,W,H,style="F")

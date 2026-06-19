@@ -33,6 +33,11 @@ def seed():
                  VALUES (%s,%s,%s,'{General}',true) RETURNING id""",
               (nm, b, f"10{4000+i}"), one=True)
         sids.append(r["id"])
+    # a staff login (linked to the first staff) so we can shoot the staff portal
+    pw = M.bcrypt.hashpw(b"staff123", M.bcrypt.gensalt()).decode()
+    q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
+         VALUES ('sara.h',%s,'staff',%s,%s,'sara@example.com')
+         ON CONFLICT (username) DO NOTHING""", (pw, b, sids[0]), exec_only=True)
     # schedule (approved) + entries for the current month
     sch = q("""INSERT INTO scheduling.schedules (branch_id,year,month,status,is_locked,created_by,approved_by,reviewed_by)
                VALUES (%s,%s,%s,'approved',true,%s,%s,%s)
@@ -141,6 +146,7 @@ def capture(code, bid):
                   before=f"() => {{ const s=document.getElementById('sched-branch-select'); if(s){{ s.value='{bid}'; onBranchChange(); }} }}")
         page_shot("leaves", "leave.png", 1800)
         page_shot("swaps", "swaps.png", 1800)
+        page_shot("review", "review.png", 1800)
         page_shot("cases", "cases.png", 2200)
         # Real report: build it into #report-root and show it on screen
         try:
@@ -162,6 +168,21 @@ def capture(code, bid):
             pg.evaluate("window.openChangePassword && openChangePassword()")
             pg.wait_for_timeout(700); snap("changepw.png")
         except Exception as e: print("changepw", e)
+
+        # ── Staff portal: sign in as a staff member ──
+        try:
+            ctx2 = br.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=2)
+            p2 = ctx2.new_page()
+            p2.goto(BASE + "/", wait_until="networkidle")
+            p2.fill("#login-username", "sara.h"); p2.fill("#login-password", "staff123")
+            p2.evaluate("doLogin()"); p2.wait_for_timeout(4500)
+            try: p2.wait_for_selector("#sidebar-user", timeout=8000)
+            except Exception: pass
+            p2.wait_for_timeout(1200)
+            p2.screenshot(path=os.path.join(OUT, "myschedule.png")); shots += 1; print("shot myschedule.png")
+            p2.evaluate("window.showPage && showPage('leaves')"); p2.wait_for_timeout(1800)
+            p2.screenshot(path=os.path.join(OUT, "staff_leave.png")); shots += 1; print("shot staff_leave.png")
+        except Exception as e: print("staff portal", e)
         br.close()
     print("captured", shots, "screens")
 
