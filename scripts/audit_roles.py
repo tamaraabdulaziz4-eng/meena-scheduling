@@ -145,6 +145,18 @@ M.seed_nest_config()  # simulate a redeploy/restart
 after = M.q("SELECT staff FROM scheduling.nest_sections WHERE id=%s", (sec0["id"],), one=True)
 check("manual nest-section edit survives reseed", after["staff"] == ["EDITED_KEEP_ME"], after)
 
+print("\n== branch-scoped config reads can't leak across branches ==")
+check("lead A can't read branch-B section settings",
+      LEADA.get(f"/api/section-month-settings?branch_id={bidB}&year=2026&month=9").status_code == 403)
+check("lead A can read own-branch section settings",
+      LEADA.get(f"/api/section-month-settings?branch_id={bidA}&year=2026&month=9").status_code == 200)
+check("viewer can't read section settings at all",
+      VIEW.get(f"/api/section-month-settings?branch_id={bidA}&year=2026&month=9").status_code in (401, 403))
+check("lead A can't read branch-B allowed-shifts",
+      LEADA.get(f"/api/generate/allowed-shifts?branch_id={bidB}").status_code == 403)
+check("manager can't read raw nest-config roster", MGR.get("/api/nest-config/NEST1").status_code in (401, 403))
+check("superadmin can read nest-config roster", admin.get("/api/nest-config/NEST1").status_code == 200)
+
 print("\n== auth lifecycle: logout + session invalidation ==")
 sess = login(f"viewer{sfx}", "pass123")
 check("me works while signed in", sess.get("/api/auth/me").status_code == 200)

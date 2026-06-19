@@ -223,17 +223,20 @@ async function exportPDF() {
   const style = document.createElement('style');
   style.textContent = `
     @media print {
-      #sidebar, .sidebar-toggle, #topbar-actions, .schedule-toolbar .btn,
-      .legend, .stats-row, #shift-picker, #toast, #page-loader,
-      #confirm-overlay, .modal-overlay, #schedule-status-bar button { display: none !important; }
-      body { background: white !important; color: black !important; font-size: 10px !important; }
-      .rota-wrap { max-height: none !important; overflow: visible !important; border: none !important; }
-      .rota-table { font-size: 9px !important; }
-      .rota-table th, .rota-table td { border: 1px solid #ccc !important; padding: 2px !important; }
-      .rota-name-col { min-width: 100px !important; }
-      .shift-chip { font-size: 8px !important; }
-      .main { overflow: visible !important; }
-      .layout { display: block !important; height: auto !important; }
+      body:not(.mode-report) #sidebar, body:not(.mode-report) .sidebar-toggle,
+      body:not(.mode-report) #topbar-actions, body:not(.mode-report) .schedule-toolbar .btn,
+      body:not(.mode-report) .legend, body:not(.mode-report) .stats-row,
+      body:not(.mode-report) #shift-picker, body:not(.mode-report) #toast, body:not(.mode-report) #page-loader,
+      body:not(.mode-report) #confirm-overlay, body:not(.mode-report) .modal-overlay,
+      body:not(.mode-report) #schedule-status-bar button { display: none !important; }
+      body:not(.mode-report) { background: white !important; color: black !important; font-size: 10px !important; }
+      body:not(.mode-report) .rota-wrap { max-height: none !important; overflow: visible !important; border: none !important; }
+      body:not(.mode-report) .rota-table { font-size: 9px !important; }
+      body:not(.mode-report) .rota-table th, body:not(.mode-report) .rota-table td { border: 1px solid #ccc !important; padding: 2px !important; }
+      body:not(.mode-report) .rota-name-col { min-width: 100px !important; }
+      body:not(.mode-report) .shift-chip { font-size: 8px !important; }
+      body:not(.mode-report) .main { overflow: visible !important; }
+      body:not(.mode-report) .layout { display: block !important; height: auto !important; }
     }
   `;
   document.head.appendChild(style);

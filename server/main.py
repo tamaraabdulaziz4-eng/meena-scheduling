@@ -1649,13 +1649,15 @@ async def upsert_staff_month_settings(staff_id: int, request: Request, user=Depe
 # ── Section Month Settings ────────────────────────────────────────────────────
 
 @app.get("/api/section-month-settings")
-def get_section_month_settings(request: Request, user=Depends(get_current_user)):
+def get_section_month_settings(request: Request, user=Depends(require_admin)):
     """Get per-month M/N limits for all sections in a nest (branch), for a given year/month."""
     branch_id = request.query_params.get("branch_id")
     year      = request.query_params.get("year")
     month     = request.query_params.get("month")
     if not branch_id or not year or not month:
         raise HTTPException(400, "branch_id, year, month required")
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "You can only view settings for your own branch")
     branch = q("SELECT name FROM scheduling.branches WHERE id=%s", (int(branch_id),), one=True)
     if not branch: raise HTTPException(404, "Branch not found")
     nest_name = branch_to_nest(branch["name"]) or f"BRANCH_{int(branch_id)}"
@@ -3116,7 +3118,7 @@ def list_nest_configs(user=Depends(require_superadmin)):
     return {"nests": grouped}
 
 @app.get("/api/nest-config/{nest_key}")
-def get_nest_config(nest_key: str, user=Depends(get_current_user)):
+def get_nest_config(nest_key: str, user=Depends(require_superadmin)):
     return {"sections": get_nest_sections(nest_key.upper())}
 
 @app.put("/api/nest-config/{nest_key}/{section_name}")
@@ -3161,9 +3163,11 @@ def delete_nest_section(nsid: int, user=Depends(require_superadmin)):
 # ── Generate ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/generate/allowed-shifts")
-def allowed_shifts(request: Request, user=Depends(get_current_user)):
+def allowed_shifts(request: Request, user=Depends(require_admin)):
     branch_id = request.query_params.get("branch_id")
     if not branch_id: raise HTTPException(400, "branch_id required")
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "You can only view your own branch")
     branch = q("SELECT id,name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True)
     nest_name = branch_to_nest(branch["name"]) if branch else None
     if not nest_name: return {"sections": {}, "staff_allowed": {}}
