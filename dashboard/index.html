@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260619m">
+<link rel="stylesheet" href="/style.css?v=20260619n">
 </head>
 <body>
 
@@ -262,6 +262,10 @@
     </nav>
 
     <div class="sidebar-bottom">
+      <button class="nav-item" onclick="openChangePassword()" style="color:var(--muted)">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+        Change password
+      </button>
       <button class="nav-item" onclick="toggleTheme()" style="color:var(--muted)">
         <span class="nav-icon" id="theme-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
         <span id="theme-label">Dark Mode</span>
@@ -641,6 +645,34 @@
 </div>
 
 <!-- ── Branch Modal ── -->
+<div class="modal-overlay" id="pw-modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Change password</h3>
+      <button class="modal-close" onclick="closeChangePassword()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Current password</label>
+        <input type="password" id="pw-current" autocomplete="current-password">
+      </div>
+      <div class="form-field">
+        <label>New password</label>
+        <input type="password" id="pw-new" placeholder="at least 6 characters" autocomplete="new-password">
+      </div>
+      <div class="form-field">
+        <label>Confirm new password</label>
+        <input type="password" id="pw-new2" autocomplete="new-password">
+      </div>
+      <div class="msg" id="pw-msg"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeChangePassword()">Cancel</button>
+      <button class="btn btn-sm" id="pw-save-btn" onclick="saveChangePassword()">Update password</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="branch-modal-overlay">
   <div class="modal">
     <div class="modal-header">
@@ -769,24 +801,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260619m"></script>
-<script src="/js/auth.js?v=20260619m"></script>
-<script src="/js/util.js?v=20260619m"></script>
-<script src="/js/branches.js?v=20260619m"></script>
-<script src="/js/users.js?v=20260619m"></script>
-<script src="/js/staff.js?v=20260619m"></script>
-<script src="/js/leaves.js?v=20260619m"></script>
-<script src="/js/swaps.js?v=20260619m"></script>
-<script src="/js/holidays.js?v=20260619m"></script>
-<script src="/js/notifications.js?v=20260619m"></script>
-<script src="/js/portal.js?v=20260619m"></script>
-<script src="/js/cases.js?v=20260619m"></script>
-<script src="/js/home.js?v=20260619m"></script>
-<script src="/js/shifts.js?v=20260619m"></script>
-<script src="/js/schedule.js?v=20260619m"></script>
-<script src="/js/review.js?v=20260619m"></script>
-<script src="/js/export.js?v=20260619m"></script>
-<script src="/js/audit.js?v=20260619m"></script>
-<script src="/js/main.js?v=20260619m"></script>
+<script src="/js/api.js?v=20260619n"></script>
+<script src="/js/auth.js?v=20260619n"></script>
+<script src="/js/util.js?v=20260619n"></script>
+<script src="/js/branches.js?v=20260619n"></script>
+<script src="/js/users.js?v=20260619n"></script>
+<script src="/js/staff.js?v=20260619n"></script>
+<script src="/js/leaves.js?v=20260619n"></script>
+<script src="/js/swaps.js?v=20260619n"></script>
+<script src="/js/holidays.js?v=20260619n"></script>
+<script src="/js/notifications.js?v=20260619n"></script>
+<script src="/js/portal.js?v=20260619n"></script>
+<script src="/js/cases.js?v=20260619n"></script>
+<script src="/js/home.js?v=20260619n"></script>
+<script src="/js/shifts.js?v=20260619n"></script>
+<script src="/js/schedule.js?v=20260619n"></script>
+<script src="/js/review.js?v=20260619n"></script>
+<script src="/js/export.js?v=20260619n"></script>
+<script src="/js/audit.js?v=20260619n"></script>
+<script src="/js/main.js?v=20260619n"></script>
 </body>
 </html>

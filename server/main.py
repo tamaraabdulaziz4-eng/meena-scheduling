@@ -1125,6 +1125,33 @@ async def login(request: Request, response: Response):
                         max_age=JWT_DAYS * 86400)
     return payload
 
+@app.post("/api/auth/change-password")
+async def change_password(request: Request, response: Response, user=Depends(get_current_user)):
+    """Let a signed-in user change their own password (any role). Verifies the
+    current password, bumps the session epoch (killing OTHER sessions) and
+    re-issues this session's cookie so the current tab stays signed in."""
+    body = await request.json()
+    current = body.get("current_password") or ""
+    new = body.get("new_password") or ""
+    if len(new) < 6:
+        raise HTTPException(400, "New password must be at least 6 characters")
+    row = q("SELECT password FROM scheduling.users WHERE id=%s", (user["id"],), one=True)
+    if not row or not bcrypt.checkpw(current.encode(), row["password"].encode()):
+        raise HTTPException(403, "Current password is incorrect")
+    hashed = bcrypt.hashpw(new.encode(), bcrypt.gensalt()).decode()
+    updated = q("""UPDATE scheduling.users
+                   SET password=%s, token_epoch=COALESCE(token_epoch,0)+1
+                   WHERE id=%s RETURNING token_epoch""", (hashed, user["id"]), one=True)
+    # Re-issue this session's token with the new epoch so the current tab isn't
+    # logged out by its own change (other devices/sessions will be).
+    payload = {k: user.get(k) for k in ("id", "username", "role", "branch_id", "branch_name", "staff_id")}
+    payload["epoch"] = int(updated["token_epoch"])
+    response.set_cookie("token", sign_token(payload), httponly=True, samesite="lax",
+                        secure=os.environ.get("COOKIE_SECURE", "1") != "0",
+                        max_age=JWT_DAYS * 86400)
+    insert_audit(user, "CHANGE_PASSWORD", user.get("username"))
+    return {"ok": True}
+
 @app.post("/api/auth/logout")
 def logout(response: Response):
     # Clear with the SAME attributes the cookie was set with (path/samesite/

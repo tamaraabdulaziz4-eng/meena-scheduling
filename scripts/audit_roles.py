@@ -173,6 +173,18 @@ check("new password signs in fine", login(f"viewer{sfx}", "newpass123").get("/ap
 check("sign-up gate rejects a bad invite code",
       TestClient(app).get("/api/register/info?code=totally-wrong").status_code == 403)
 
+print("\n== change own password (any signed-in role) ==")
+check("wrong current password rejected",
+      STAFF.post("/api/auth/change-password", json={"current_password": "WRONG", "new_password": "newstaff1"}).status_code == 403)
+check("short new password rejected",
+      STAFF.post("/api/auth/change-password", json={"current_password": "pass123", "new_password": "abc"}).status_code == 400)
+ch = STAFF.post("/api/auth/change-password", json={"current_password": "pass123", "new_password": "newstaff1"})
+check("change password succeeds", ch.status_code == 200, ch.text)
+check("current session stays valid (cookie re-issued)", STAFF.get("/api/auth/me").status_code == 200)
+check("new password works on a fresh login", login(f"stf{sfx}", "newstaff1").get("/api/auth/me").status_code == 200)
+check("old password no longer works",
+      TestClient(app).post("/api/auth/login", json={"username": f"stf{sfx}", "password": "pass123"}).status_code == 401)
+
 print("\n== danger zone: clear test data (superadmin only, runs LAST) ==")
 check("non-superadmin can't reset data", MGR.post("/api/admin/reset-data", json={"confirm": "RESET"}).status_code in (401, 403))
 check("reset needs the confirm token", admin.post("/api/admin/reset-data", json={}).status_code == 400)

@@ -174,6 +174,36 @@ async function doLogout() {
   _goToLogin();
 }
 
+// ── Change own password (any signed-in role) ──────────────────────────────────
+function openChangePassword() {
+  ['pw-current', 'pw-new', 'pw-new2'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+  const m = document.getElementById('pw-msg'); if (m) m.textContent = '';
+  document.getElementById('pw-modal-overlay').classList.add('open');
+  if (typeof closeSidebarMobile === 'function') closeSidebarMobile();
+  setTimeout(() => document.getElementById('pw-current')?.focus(), 60);
+}
+function closeChangePassword() {
+  document.getElementById('pw-modal-overlay').classList.remove('open');
+}
+async function saveChangePassword() {
+  const cur = document.getElementById('pw-current').value;
+  const nw  = document.getElementById('pw-new').value;
+  const nw2 = document.getElementById('pw-new2').value;
+  const msg = document.getElementById('pw-msg');
+  msg.className = 'msg';
+  if (!cur || !nw) { msg.classList.add('err'); msg.textContent = 'Fill in all fields'; return; }
+  if (nw.length < 6) { msg.classList.add('err'); msg.textContent = 'New password must be at least 6 characters'; return; }
+  if (nw !== nw2) { msg.classList.add('err'); msg.textContent = 'New passwords do not match'; return; }
+  const btn = document.getElementById('pw-save-btn'); btn.disabled = true;
+  try {
+    await API.post('/auth/change-password', { current_password: cur, new_password: nw });
+    closeChangePassword();
+    toast('Password updated');
+  } catch (e) {
+    msg.classList.add('err'); msg.textContent = e.message || 'Could not change password';
+  } finally { btn.disabled = false; }
+}
+
 // Called by the API layer when a request comes back 401 mid-session. Fire once,
 // flag it, and return to a clean login with a "session expired" notice.
 let _sessionExpiredHandled = false;
