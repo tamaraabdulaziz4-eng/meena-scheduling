@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260619h">
+<link rel="stylesheet" href="/style.css?v=20260619i">
 </head>
 <body>
 
@@ -48,8 +48,27 @@
       </div>
       <button class="login-btn" onclick="doLogin()">Sign In</button>
       <div class="login-error" id="login-error"></div>
-      <button type="button" onclick="showForgotView()"
-        style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;margin-top:14px;font-family:inherit">Forgot password?</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:10px">
+        <button type="button" onclick="showForgotView()"
+          style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;font-family:inherit">Forgot password?</button>
+        <button type="button" onclick="showSignupView()"
+          style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;font-family:inherit;font-weight:700">New staff? Sign up →</button>
+      </div>
+    </div>
+
+    <!-- Sign-up: enter the invite code, then onboard -->
+    <div id="signup-view" style="display:none">
+      <div class="onb-logo"><img src="/meena_onboarding_logo.jpeg" alt="Meena"></div>
+      <h2>Create your account</h2>
+      <p>Enter the invite code your manager shared to get started.</p>
+      <div class="login-field">
+        <label>Invite code</label>
+        <input type="text" id="signup-code" placeholder="e.g. 4821" autocomplete="one-time-code">
+      </div>
+      <button class="login-btn" onclick="submitInviteCode()">Continue</button>
+      <div class="login-error" id="signup-msg"></div>
+      <button type="button" onclick="showLoginView()"
+        style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;margin-top:14px;font-family:inherit">← Back to sign in</button>
     </div>
 
     <!-- Forgot-password view -->
@@ -746,24 +765,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260619h"></script>
-<script src="/js/auth.js?v=20260619h"></script>
-<script src="/js/util.js?v=20260619h"></script>
-<script src="/js/branches.js?v=20260619h"></script>
-<script src="/js/users.js?v=20260619h"></script>
-<script src="/js/staff.js?v=20260619h"></script>
-<script src="/js/leaves.js?v=20260619h"></script>
-<script src="/js/swaps.js?v=20260619h"></script>
-<script src="/js/holidays.js?v=20260619h"></script>
-<script src="/js/notifications.js?v=20260619h"></script>
-<script src="/js/portal.js?v=20260619h"></script>
-<script src="/js/cases.js?v=20260619h"></script>
-<script src="/js/home.js?v=20260619h"></script>
-<script src="/js/shifts.js?v=20260619h"></script>
-<script src="/js/schedule.js?v=20260619h"></script>
-<script src="/js/review.js?v=20260619h"></script>
-<script src="/js/export.js?v=20260619h"></script>
-<script src="/js/audit.js?v=20260619h"></script>
-<script src="/js/main.js?v=20260619h"></script>
+<script src="/js/api.js?v=20260619i"></script>
+<script src="/js/auth.js?v=20260619i"></script>
+<script src="/js/util.js?v=20260619i"></script>
+<script src="/js/branches.js?v=20260619i"></script>
+<script src="/js/users.js?v=20260619i"></script>
+<script src="/js/staff.js?v=20260619i"></script>
+<script src="/js/leaves.js?v=20260619i"></script>
+<script src="/js/swaps.js?v=20260619i"></script>
+<script src="/js/holidays.js?v=20260619i"></script>
+<script src="/js/notifications.js?v=20260619i"></script>
+<script src="/js/portal.js?v=20260619i"></script>
+<script src="/js/cases.js?v=20260619i"></script>
+<script src="/js/home.js?v=20260619i"></script>
+<script src="/js/shifts.js?v=20260619i"></script>
+<script src="/js/schedule.js?v=20260619i"></script>
+<script src="/js/review.js?v=20260619i"></script>
+<script src="/js/export.js?v=20260619i"></script>
+<script src="/js/audit.js?v=20260619i"></script>
+<script src="/js/main.js?v=20260619i"></script>
 </body>
 </html>

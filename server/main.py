@@ -1127,7 +1127,11 @@ async def login(request: Request, response: Response):
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
-    response.delete_cookie("token")
+    # Clear with the SAME attributes the cookie was set with (path/samesite/
+    # secure) so the browser reliably drops it — a mismatch can leave the cookie
+    # in place and make logout look like it did nothing.
+    response.delete_cookie("token", path="/", samesite="lax",
+                           secure=os.environ.get("COOKIE_SECURE", "1") != "0")
     return {"ok": True}
 
 def _hash_reset_token(tok: str) -> str:

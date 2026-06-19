@@ -8,13 +8,33 @@ function togglePw(id = 'login-password') {
 
 // ── Forgot / reset password ──────────────────────────────────────────────────
 function _showAuthView(view) {
-  ['login-view', 'forgot-view', 'reset-view', 'register-view', 'register-done'].forEach(v => {
+  ['login-view', 'forgot-view', 'reset-view', 'signup-view', 'register-view', 'register-done'].forEach(v => {
     const el = document.getElementById(v);
     if (el) el.style.display = (v === view) ? 'block' : 'none';
   });
   document.getElementById('login-overlay').style.display = 'flex';
 }
 function showLoginView()  { _showAuthView('login-view'); }
+
+// "New staff? Sign up" — collect the invite code the manager shared, validate
+// it, then drop into the onboarding form. Keeps the code gate intact.
+function showSignupView() {
+  const m = document.getElementById('signup-msg'); if (m) m.textContent = '';
+  const c = document.getElementById('signup-code'); if (c) c.value = '';
+  _showAuthView('signup-view');
+  setTimeout(() => document.getElementById('signup-code')?.focus(), 50);
+}
+async function submitInviteCode() {
+  const code = document.getElementById('signup-code').value.trim();
+  const msg  = document.getElementById('signup-msg');
+  if (!code) { msg.style.color = ''; msg.textContent = 'Enter the invite code your manager gave you'; return; }
+  try {
+    await API.get(`/register/info?code=${encodeURIComponent(code)}`);
+    startRegistration(code);                  // valid → load the onboarding form
+  } catch (e) {
+    msg.style.color = ''; msg.textContent = e.message || 'That invite code is not valid';
+  }
+}
 function showForgotView() {
   const m = document.getElementById('forgot-msg'); if (m) m.textContent = '';
   _showAuthView('forgot-view');
@@ -154,6 +174,19 @@ async function doLogout() {
   _goToLogin();
 }
 
+// Called by the API layer when a request comes back 401 mid-session. Fire once,
+// flag it, and return to a clean login with a "session expired" notice.
+let _sessionExpiredHandled = false;
+function handleSessionExpired() {
+  if (_sessionExpiredHandled) return;
+  _sessionExpiredHandled = true;
+  currentUser = null;
+  try { sessionStorage.setItem('sessionExpired', '1'); } catch (e) {}
+  // Stop background polling/idle timers from firing again during the redirect.
+  if (_idleTimer) { clearInterval(_idleTimer); _idleTimer = null; }
+  API.post('/auth/logout').catch(() => {}).finally(_goToLogin);
+}
+
 // ── Idle auto-logout ──────────────────────────────────────────────────────────
 // Sign the user out after a stretch of no activity (mouse/touch/key/scroll), so
 // an unattended screen doesn't stay logged in. Client-side: clears the cookie
@@ -192,8 +225,12 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const overlay = document.getElementById('login-overlay');
   if (!overlay || overlay.style.display === 'none') return;
-  // Only submit the login form when the login view is the one on screen —
-  // otherwise Enter on the forgot/reset/register views would wrongly log in.
-  const loginView = document.getElementById('login-view');
-  if (loginView && loginView.style.display !== 'none') doLogin();
+  // Fire the primary action of whichever auth view is on screen — so Enter
+  // never triggers the wrong form (e.g. logging in from the reset view).
+  const vis = id => { const el = document.getElementById(id); return el && el.style.display !== 'none'; };
+  if (vis('login-view'))        doLogin();
+  else if (vis('forgot-view'))  sendResetLink();
+  else if (vis('reset-view'))   submitNewPassword();
+  else if (vis('signup-view'))  submitInviteCode();
+  // register-view has many fields + its own button; leave Enter to the field.
 });

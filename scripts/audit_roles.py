@@ -145,5 +145,21 @@ M.seed_nest_config()  # simulate a redeploy/restart
 after = M.q("SELECT staff FROM scheduling.nest_sections WHERE id=%s", (sec0["id"],), one=True)
 check("manual nest-section edit survives reseed", after["staff"] == ["EDITED_KEEP_ME"], after)
 
+print("\n== auth lifecycle: logout + session invalidation ==")
+sess = login(f"viewer{sfx}", "pass123")
+check("me works while signed in", sess.get("/api/auth/me").status_code == 200)
+sess.post("/api/auth/logout")
+check("logout drops the session cookie", sess.get("/api/auth/me").status_code == 401)
+# Changing a user's password bumps their token epoch → existing sessions die
+# (this is exactly the 401 the frontend now catches to bounce to login).
+sess2 = login(f"viewer{sfx}", "pass123")
+uid = sess2.get("/api/auth/me").json()["id"]
+admin.put(f"/api/users/{uid}", json={"password": "newpass123"})
+check("old session dies after a password change", sess2.get("/api/auth/me").status_code == 401)
+check("new password signs in fine", login(f"viewer{sfx}", "newpass123").get("/api/auth/me").status_code == 200)
+# The public sign-up gate: /register/info rejects a bad/absent invite code.
+check("sign-up gate rejects a bad invite code",
+      TestClient(app).get("/api/register/info?code=totally-wrong").status_code == 403)
+
 print(f"\n=== AUDIT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

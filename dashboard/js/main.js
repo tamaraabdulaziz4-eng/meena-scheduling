@@ -18,11 +18,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (!authed) {
     showLoginView();
-    // Tell the user if they landed here because of an idle timeout.
+    // Tell the user why they landed here — idle timeout or an expired session.
+    const e = document.getElementById('login-error');
     if (sessionStorage.getItem('idleLogout')) {
       sessionStorage.removeItem('idleLogout');
-      const e = document.getElementById('login-error');
       if (e) e.textContent = 'You were signed out due to inactivity.';
+    } else if (sessionStorage.getItem('sessionExpired')) {
+      sessionStorage.removeItem('sessionExpired');
+      if (e) e.textContent = 'Your session expired — please sign in again.';
     }
     return;
   }
