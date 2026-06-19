@@ -161,5 +161,18 @@ check("new password signs in fine", login(f"viewer{sfx}", "newpass123").get("/ap
 check("sign-up gate rejects a bad invite code",
       TestClient(app).get("/api/register/info?code=totally-wrong").status_code == 403)
 
+print("\n== danger zone: clear test data (superadmin only, runs LAST) ==")
+check("non-superadmin can't reset data", MGR.post("/api/admin/reset-data", json={"confirm": "RESET"}).status_code in (401, 403))
+check("reset needs the confirm token", admin.post("/api/admin/reset-data", json={}).status_code == 400)
+b_before  = len(admin.get("/api/branches").json())
+st_before = len(admin.get("/api/shift-types").json())
+rr = admin.post("/api/admin/reset-data", json={"confirm": "RESET"})
+check("superadmin reset succeeds", rr.status_code == 200, rr.text)
+check("staff cleared", len(admin.get("/api/staff").json()) == 0)
+check("branches kept", len(admin.get("/api/branches").json()) == b_before and b_before > 0)
+check("shift types kept", len(admin.get("/api/shift-types").json()) == st_before and st_before > 0)
+check("superadmin still signed in", admin.get("/api/auth/me").status_code == 200)
+check("only superadmin logins remain", all(u["role"] == "superadmin" for u in admin.get("/api/users").json()))
+
 print(f"\n=== AUDIT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

@@ -18,7 +18,16 @@ function renderUsersPage() {
         <thead><tr><th>#</th><th>Username</th><th>Role</th><th>Branch</th><th>Created</th><th>Actions</th></tr></thead>
         <tbody id="users-tbody"></tbody>
       </table>
-    </div>`;
+    </div>
+    ${currentUser?.role === 'superadmin' ? `
+    <div class="danger-zone">
+      <div class="dz-head">⚠️ Danger zone</div>
+      <p class="dz-text">Clear all test data for a clean production start. This removes staff,
+        schedules, leave, swaps, daily cases, sign-ups, notifications and every non-superadmin
+        login. It <b>keeps</b> branches, shift types, nest sections, holidays, settings and your
+        admin account. This cannot be undone.</p>
+      <button class="btn btn-sm btn-danger" onclick="clearTestData()">Clear all test data</button>
+    </div>` : ''}`;
   renderUsersList();
 }
 
@@ -51,6 +60,29 @@ function renderUsersList() {
           : '<span style="font-size:11px;color:var(--muted)">(you)</span>'}
       </td>
     </tr>`).join('');
+}
+
+// Wipe test/operational data for a clean production start (superadmin only).
+// Two confirmations + an exact "RESET" token so it can't fire by accident.
+async function clearTestData() {
+  const ok1 = await showConfirm('Clear all test data',
+    'This deletes staff, schedules, leave, swaps, daily cases, sign-ups, notifications and all non-superadmin logins. Branches, shift types, nest sections, holidays, settings and your admin account are kept. This cannot be undone.',
+    'Continue');
+  if (!ok1) return;
+  const ok2 = await showConfirm('Are you absolutely sure?',
+    'Last chance — everything above will be permanently erased so you can set up fresh.',
+    'Yes, clear it');
+  if (!ok2) return;
+  showLoader('Clearing data…');
+  try {
+    const r = await API.post('/admin/reset-data', { confirm: 'RESET' });
+    const total = Object.values(r.deleted || {}).reduce((a, b) => a + (b || 0), 0);
+    toast(`Cleared ${total} record${total !== 1 ? 's' : ''} — ready for a fresh setup`);
+    await loadUsers();
+    renderUsersPage();
+  } catch (e) {
+    toast(e.message || 'Reset failed', 'err');
+  } finally { hideLoader(); }
 }
 
 let _editUserId = null;

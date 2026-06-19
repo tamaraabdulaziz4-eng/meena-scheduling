@@ -3062,6 +3062,35 @@ def get_audit(user=Depends(require_superadmin)):
     return q("""SELECT id,username,role,branch,action,target,detail,created_at
                 FROM scheduling.audit_log ORDER BY created_at DESC LIMIT 500""")
 
+# ── Danger zone: clear test/operational data for a clean production start ──────
+# Wipes the records you build day-to-day (staff, schedules, leave, swaps, cases,
+# sign-ups, notifications) and every NON-superadmin login, while KEEPING the
+# structure you set up — branches, shift types, nest sections, holidays, org
+# settings — and all superadmin accounts. Superadmin-only, and the request must
+# carry the exact "RESET" confirmation token.
+_RESET_TABLES = [
+    "schedule_entries", "schedules", "leave_requests", "shift_swaps",
+    "daily_cases", "staff_registrations", "notifications", "password_resets",
+    "staff_month_settings", "section_month_settings", "audit_log", "staff",
+]
+
+@app.post("/api/admin/reset-data")
+async def reset_data(request: Request, user=Depends(require_superadmin)):
+    body = await request.json()
+    if body.get("confirm") != "RESET":
+        raise HTTPException(400, "Confirmation token required")
+    deleted = {}
+    for t in _RESET_TABLES:
+        row = q(f"WITH d AS (DELETE FROM scheduling.{t} RETURNING 1) SELECT COUNT(*) AS c FROM d", one=True)
+        deleted[t] = (row or {}).get("c", 0)
+    # Remove every non-superadmin login (test accounts); keep the owners.
+    row = q("WITH d AS (DELETE FROM scheduling.users WHERE role <> 'superadmin' RETURNING 1) "
+            "SELECT COUNT(*) AS c FROM d", one=True)
+    deleted["users (non-superadmin)"] = (row or {}).get("c", 0)
+    # Leave a single trace of the reset itself (audit_log was just cleared).
+    insert_audit(user, "RESET_DATA", "operational data", json.dumps(deleted))
+    return {"ok": True, "deleted": deleted}
+
 def insert_audit(user, action, target=None, detail=None):
     try:
         q("""INSERT INTO scheduling.audit_log

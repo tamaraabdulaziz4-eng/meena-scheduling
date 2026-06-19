@@ -470,6 +470,15 @@ body {
 .btn.btn-outline:hover { background: rgba(107,78,255,0.08); }
 .btn.btn-danger { background: #FF6B6B; }
 .btn.btn-danger:hover { background: #e05555; }
+/* Danger zone (superadmin data reset) */
+.danger-zone {
+  margin-top: 24px; padding: 20px 22px; border-radius: 18px;
+  border: 1px solid rgba(255,107,107,.4);
+  background: linear-gradient(135deg, rgba(255,107,107,.06), rgba(255,107,107,.02));
+}
+.dz-head { font-size: 14px; font-weight: 800; color: #e05555; margin-bottom: 6px; }
+.dz-text { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 14px; max-width: 640px; }
+.dz-text b { color: var(--text); }
 .btn.btn-sm { padding: 5px 12px; font-size: 11.5px; }
 .btn.btn-ghost {
   background: var(--card); color: var(--text);
