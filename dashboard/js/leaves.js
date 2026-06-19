@@ -88,7 +88,13 @@ function renderLeavesList() {
   // Group consecutive days for same staff+type+status into ranges
   const groups = groupLeaveRanges(allLeaves);
 
-  const statusBadge = { approved:'badge-green', pending:'badge-orange', rejected:'badge-gray' };
+  // Two-stage chain so everyone (incl. the staff member) sees where it stands.
+  const LEAVE_STATUS = {
+    pending:       ['Awaiting team lead', 'badge-orange'],
+    lead_approved: ['Awaiting manager',   'badge-yellow'],
+    approved:      ['Approved',           'badge-green'],
+    rejected:      ['Rejected',           'badge-gray'],
+  };
   tb.innerHTML = groups.map((g, i) => {
     const badge = { AL:'badge-purple', SL:'badge-orange', TB:'badge-yellow', OT:'badge-green' }[g.leave_type] || 'badge-gray';
     const fromStr = fmtDateDisplay(g.date_from);
@@ -99,8 +105,11 @@ function renderLeavesList() {
     let actions = '';
     if (canEdit) {
       actions = '<td style="white-space:nowrap">';
-      if (isReviewer && st === 'pending') {
-        actions += `<button class="action-btn" onclick="setLeaveRangeStatus(${idsArg},'approved')">Approve</button>
+      // Stage 1 ('pending') → team lead OR manager can act; stage 2
+      // ('lead_approved') → manager/superadmin only.
+      const canAct = (st === 'pending' && canEdit) || (st === 'lead_approved' && isReviewer);
+      if (canAct) {
+        actions += `<button class="action-btn" onclick="setLeaveRangeStatus(${idsArg},'approved')">${(st === 'pending' && !isReviewer) ? 'Approve → manager' : 'Approve'}</button>
                     <button class="action-btn danger" onclick="setLeaveRangeStatus(${idsArg},'rejected')">Reject</button> `;
       }
       actions += `<button class="action-btn danger" onclick="deleteLeaveRange(${idsArg})">Delete</button></td>`;
@@ -120,7 +129,7 @@ function renderLeavesList() {
       <td>${toStr}</td>
       <td style="text-align:center;font-weight:600">${days}</td>
       <td><span class="badge ${badge}">${g.leave_type}</span> <span style="font-size:11px;color:var(--muted)">${LEAVE_LABELS[g.leave_type]||''}</span></td>
-      <td><span class="badge ${statusBadge[st]||'badge-gray'}">${st}</span></td>
+      <td><span class="badge ${(LEAVE_STATUS[st]||['',''])[1]||'badge-gray'}">${(LEAVE_STATUS[st]||[st])[0]}</span></td>
       <td style="font-size:12px;color:var(--muted)">${g.note || '—'}</td>
       ${actions}
     </tr>`;

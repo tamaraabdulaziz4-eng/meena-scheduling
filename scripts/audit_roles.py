@@ -64,15 +64,21 @@ print("\n== team lead is branch-locked ==")
 check("lead A sees only own-branch staff", all(s["branch_id"] == bidA for s in LEADA.get("/api/staff").json()))
 check("lead A can't add staff to branch B", LEADA.post("/api/staff", json={"name":"x","branch_id":bidB}).status_code == 403)
 check("lead A can't file branch B cases", LEADA.post("/api/daily-cases", json={"branch_id":bidB,"date":"2026-09-01","submit":True}).status_code == 403)
-check("lead can't approve leave (reviewer only)", LEADA.put(f"/api/leaves/{lr.json()['leaves'][0]['id']}/status", json={"status":"approved"}).status_code in (401,403))
 check("lead can't review schedules", LEADA.get("/api/dashboard").json().get("pending_reviews") == 0)
+
+print("\n== two-stage leave chain: team lead -> manager ==")
+lid = lr.json()["leaves"][0]["id"]
+check("lead B can't touch branch-A leave", LEADB.put(f"/api/leaves/{lid}/status", json={"status":"approved"}).status_code == 403)
+s1 = LEADA.put(f"/api/leaves/{lid}/status", json={"status": "approved"})
+check("lead clears stage 1 -> awaiting manager", s1.status_code == 200 and s1.json().get("status") == "lead_approved", s1.text)
+check("lead can't give FINAL approval (manager only)", LEADA.put(f"/api/leaves/{lid}/status", json={"status": "approved"}).status_code == 403)
+check("lead's branch leave count counts only stage 1", LEADA.get("/api/dashboard").json().get("pending_leaves") == 0)
 
 print("\n== manager (reviewer) ==")
 check("manager can't submit schedules", True)  # enforced in status endpoint; checked in smoke
-check("manager sees all-branch leave queue", MGR.get("/api/dashboard").status_code == 200)
-# manager approves the staff leave
-lid = lr.json()["leaves"][0]["id"]
-check("manager approves staff leave", MGR.put(f"/api/leaves/{lid}/status", json={"status":"approved"}).status_code == 200)
+check("manager sees leave awaiting final approval", MGR.get("/api/dashboard").json().get("pending_leaves") >= 1)
+fin = MGR.put(f"/api/leaves/{lid}/status", json={"status": "approved"})
+check("manager gives final approval", fin.status_code == 200 and fin.json().get("status") == "approved", fin.text)
 
 print("\n== registration flow across branches ==")
 admin.put("/api/settings", json={"registration": "on"})

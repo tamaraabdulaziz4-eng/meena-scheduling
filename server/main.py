@@ -620,9 +620,11 @@ def require_reviewer(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 def require_editor(user: dict = Depends(get_current_user)) -> dict:
-    # Schedule editing (cells, generate): team leads and full admins, NOT managers.
+    # Heavy schedule ops — GENERATE, lock/unlock, delete — are team leads + full
+    # admins only (not managers). Note: managers CAN still fix individual cells
+    # (those routes use require_admin) — they're reviewers who may correct a rota.
     if user.get("role") not in ("admin", "superadmin"):
-        raise HTTPException(403, "Managers cannot edit schedules directly")
+        raise HTTPException(403, "Only a team lead or full admin can do this")
     return user
 
 def _int_or_400(v, name="branch_id"):
@@ -958,11 +960,54 @@ def clear_leave_from_schedule(staff_id, date, code):
       (sched["id"], staff_id, date, code), exec_only=True)
 
 def _leave_rota_sync(lv, status):
-    """Reflect a leave decision on the rota: approved → mark it, else clear it."""
+    """Reflect a leave decision on the rota: approved → mark it, else clear it.
+    The interim 'lead_approved' stage is NOT on the rota yet."""
     if status == "approved":
         apply_leave_to_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
-    else:
+    elif status == "rejected":
         clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
+
+# Two-stage leave approval: a staff request waits for the branch team lead
+# (stage 1 → 'lead_approved'), then the manager gives final approval (stage 2 →
+# 'approved') which is what lands it on the rota. A lead's own entry skips stage
+# 1; a manager's entry is final immediately. Either stage can reject.
+LEAVE_AWAIT_LEAD    = "pending"
+LEAVE_AWAIT_MANAGER = "lead_approved"
+
+def _leave_decide(user, current, requested):
+    """Next status for an approve/reject action, given the actor's role and the
+    current stage. Raises if the actor can't act at this stage."""
+    if requested not in ("approved", "rejected"):
+        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    if current not in (LEAVE_AWAIT_LEAD, LEAVE_AWAIT_MANAGER):
+        raise HTTPException(400, f"Leave is already {current}")
+    if requested == "rejected":
+        return "rejected"
+    if user["role"] in ("manager", "superadmin"):
+        return "approved"                       # final approval at either stage
+    if user["role"] == "admin":                 # team lead
+        if current == LEAVE_AWAIT_LEAD:
+            return LEAVE_AWAIT_MANAGER           # stage 1 done → manager's turn
+        raise HTTPException(403, "Only a manager can give final approval")
+    raise HTTPException(403, "Forbidden")
+
+def _notify_leave_progress(lv, new_status, actor):
+    """Keep the requester, the staff member, and the next approver in the loop."""
+    if new_status == LEAVE_AWAIT_MANAGER:
+        notify_roles(("manager", "superadmin"),
+                     f"{lv['staff_name']}'s {lv['leave_type']} leave ({lv['date']}) cleared by the team lead — awaiting your final approval",
+                     link="leaves", ntype="leave")
+        notify_staff_member(lv["staff_id"],
+                            f"Your {lv['leave_type']} leave on {lv['date']} passed your team lead — awaiting manager approval",
+                            link="leaves", ntype="leave")
+    elif new_status in ("approved", "rejected"):
+        if lv.get("created_by") and lv["created_by"] != actor["id"]:
+            notify(lv["created_by"],
+                   f"{lv['staff_name']}'s {lv['leave_type']} leave on {lv['date']} was {new_status}",
+                   link="leaves", ntype=new_status)
+        notify_staff_member(lv["staff_id"],
+                            f"Your {lv['leave_type']} leave on {lv['date']} was {new_status}",
+                            link="leaves", ntype=new_status)
 
 def leave_coverage_gap(staff_id, date):
     """If this staff member is scheduled a *working* shift that day and is the
@@ -2178,10 +2223,16 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
             if not ok:
                 raise HTTPException(400, why)
 
-    # Approval workflow: a manager/full-admin records leave as already approved;
-    # a team lead's entry is a *request* that a reviewer must approve before the
-    # generator will honour it. (Generation only counts approved leave.)
-    new_status = "approved" if user["role"] in ("superadmin", "manager") else "pending"
+    # Two-stage approval: a manager/full-admin records leave as already approved;
+    # a team lead's own entry has cleared stage 1 (awaiting the manager); a staff
+    # request starts at stage 1 (awaiting the branch team lead). Only 'approved'
+    # leave lands on the rota and is honoured by the generator.
+    if user["role"] in ("superadmin", "manager"):
+        new_status = "approved"
+    elif user["role"] == "admin":
+        new_status = LEAVE_AWAIT_MANAGER
+    else:
+        new_status = LEAVE_AWAIT_LEAD
 
     # Expand date range
     from datetime import date as _date, timedelta as _td
@@ -2212,9 +2263,20 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
                     apply_leave_to_schedule(staff_id, d, leave_type)
         except Exception: pass
 
-    if new_status == "pending" and leaves:
+    if leaves and new_status == LEAVE_AWAIT_LEAD:
+        # Stage 1: the branch team lead approves first (managers as fallback if
+        # the branch has no lead).
+        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s",
+                  (staff["branch_id"],))
+        msg = f"{staff['name']}: {len(leaves)} day(s) {leave_type} leave awaiting your approval"
+        if leads:
+            for u in leads:
+                notify(u["id"], msg, link="leaves", ntype="leave")
+        else:
+            notify_roles(("manager", "superadmin"), msg, link="leaves", ntype="leave")
+    elif leaves and new_status == LEAVE_AWAIT_MANAGER:
         notify_roles(("manager", "superadmin"),
-                     f"{staff['name']}: {len(leaves)} day(s) {leave_type} leave awaiting approval",
+                     f"{staff['name']}: {len(leaves)} day(s) {leave_type} leave awaiting your final approval",
                      link="leaves", ntype="leave")
     return {"inserted": len(leaves), "leaves": leaves, "status": new_status}
 
@@ -2248,23 +2310,25 @@ def delete_leave(lid: int, user=Depends(get_current_user)):
     return {"ok": True}
 
 @app.put("/api/leaves/{lid}/status")
-async def update_leave_status(lid: int, request: Request, user=Depends(require_reviewer)):
-    """A reviewer (manager / full admin) approves or rejects a pending leave."""
+async def update_leave_status(lid: int, request: Request, user=Depends(require_admin)):
+    """Two-stage approval: a team lead clears stage 1 ('lead_approved'), a manager
+    gives final approval ('approved', which lands it on the rota). Either rejects."""
     body = await request.json()
-    status = body.get("status")
-    if status not in ("approved", "rejected"):
-        raise HTTPException(400, "status must be 'approved' or 'rejected'")
-    lv = q("""SELECT l.created_by, l.staff_id, l.leave_type, TO_CHAR(l.date,'YYYY-MM-DD') AS date,
+    requested = body.get("status")
+    lv = q("""SELECT l.created_by, l.staff_id, l.leave_type, l.status,
+                     TO_CHAR(l.date,'YYYY-MM-DD') AS date,
                      s.name AS staff_name, s.branch_id
               FROM scheduling.leave_requests l
               JOIN scheduling.staff s ON s.id=l.staff_id WHERE l.id=%s""", (lid,), one=True)
     if not lv:
         raise HTTPException(404, "Leave not found")
-    # Coverage guard: if approving overwrites a working shift the person was the
-    # only one covering that day, warn the approver first (unless they confirm),
-    # then record it and alert the branch lead so the gap gets filled.
+    if not can_access_branch(user, lv["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    new_status = _leave_decide(user, lv["status"], requested)
+    # Coverage guard only at FINAL approval: if it leaves a shift uncovered, warn
+    # the approver first (unless they confirm), then alert the branch lead.
     gap_code = None
-    if status == "approved":
+    if new_status == "approved":
         gap_code = leave_coverage_gap(lv["staff_id"], lv["date"])
         if gap_code and not body.get("confirm"):
             raise HTTPException(409, {
@@ -2274,38 +2338,33 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_r
             })
     row = q("""UPDATE scheduling.leave_requests SET status=%s WHERE id=%s
                RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,leave_type,status,note""",
-            (status, lid), one=True)
-    insert_audit(user, f"LEAVE_{status.upper()}", f"leave:{lid}", f"{lv['staff_name']} {lv['date']}")
-    # Reflect the decision on the rota: approved → mark the leave, rejected → clear it.
-    if status == "approved":
+            (new_status, lid), one=True)
+    insert_audit(user, f"LEAVE_{new_status.upper()}", f"leave:{lid}", f"{lv['staff_name']} {lv['date']}")
+    if new_status == "approved":
         apply_leave_to_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
         if gap_code:
             notify_branch_leads(lv["branch_id"],
                                 f"Coverage gap: {lv['staff_name']} on leave {lv['date']} leaves shift "
                                 f"{gap_code} uncovered — please reassign or regenerate",
                                 link="schedule", ntype="leave")
-    else:
+    elif new_status == "rejected":
         clear_leave_from_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
-    # Tell the requester — unless they're the one who just decided it.
-    if lv.get("created_by") and lv["created_by"] != user["id"]:
-        notify(lv["created_by"],
-               f"{lv['staff_name']}'s {lv['leave_type']} leave on {lv['date']} was {status}",
-               link="leaves", ntype=status)
+    _notify_leave_progress(lv, new_status, user)
     return row
 
 @app.put("/api/leaves/status")
-async def update_leaves_status_batch(request: Request, user=Depends(require_reviewer)):
-    """Approve/reject a whole range of leave days in one call so the requester
-    gets a SINGLE summary notification instead of one ping per day."""
+async def update_leaves_status_batch(request: Request, user=Depends(require_admin)):
+    """Approve/reject a whole range of leave days in one call (two-stage: team
+    lead → manager). One summary notification instead of a ping per day."""
     body = await request.json()
-    status = body.get("status")
+    requested = body.get("status")
     ids = body.get("ids")
-    if status not in ("approved", "rejected"):
+    if requested not in ("approved", "rejected"):
         raise HTTPException(400, "status must be 'approved' or 'rejected'")
     if not isinstance(ids, list) or not ids:
         raise HTTPException(400, "ids must be a non-empty list")
     ids = [int(i) for i in ids]
-    rows = q("""SELECT l.id, l.created_by, l.staff_id, l.leave_type,
+    rows = q("""SELECT l.id, l.created_by, l.staff_id, l.leave_type, l.status,
                        TO_CHAR(l.date,'YYYY-MM-DD') AS date,
                        s.name AS staff_name, s.branch_id
                 FROM scheduling.leave_requests l
@@ -2317,10 +2376,12 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_revi
     for lv in rows:
         if not can_access_branch(user, lv["branch_id"]):
             raise HTTPException(403, "Forbidden")
-    # Compute coverage gaps (approve only) BEFORE applying, so the check reflects
-    # the pre-leave rota — and warn once for the whole range.
+    # The grouped range shares one stage; decide the target from it (per-actor).
+    current = rows[0]["status"]
+    new_status = _leave_decide(user, current, requested)
+    # Coverage gaps only matter at FINAL approval; check BEFORE applying.
     gaps = []
-    if status == "approved":
+    if new_status == "approved":
         for lv in rows:
             gc = leave_coverage_gap(lv["staff_id"], lv["date"])
             if gc:
@@ -2333,12 +2394,11 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_revi
                 "confirm_required": "coverage_gap",
             })
     q("UPDATE scheduling.leave_requests SET status=%s WHERE id = ANY(%s)",
-      (status, ids), exec_only=True)
+      (new_status, ids), exec_only=True)
     for lv in rows:
-        _leave_rota_sync(lv, status)
-    insert_audit(user, f"LEAVE_{status.upper()}_BATCH",
+        _leave_rota_sync(lv, new_status)
+    insert_audit(user, f"LEAVE_{new_status.upper()}_BATCH",
                  f"leaves:{len(rows)}", f"{rows[0]['staff_name']} … {len(rows)} day(s)")
-    # One coverage-gap alert per branch, listing all affected days.
     from collections import defaultdict
     gap_by_branch = defaultdict(list)
     for lv, gc in gaps:
@@ -2346,19 +2406,31 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_revi
     for bid, items in gap_by_branch.items():
         notify_branch_leads(bid, f"Coverage gap on approval: {'; '.join(items)} — please reassign or regenerate",
                             link="schedule", ntype="leave")
-    # One summary notification per requester (skip the reviewer themselves).
-    by_creator = defaultdict(list)
-    for lv in rows:
-        if lv.get("created_by"):
-            by_creator[lv["created_by"]].append(lv)
-    for creator, items in by_creator.items():
-        if creator == user["id"]:
-            continue
-        names = ", ".join(sorted({i["staff_name"] for i in items}))
-        n = len(items)
-        notify(creator, f"{names}: {n} leave day{'s' if n != 1 else ''} {status}",
-               link="leaves", ntype=status)
-    return {"updated": len(rows), "status": status}
+    if new_status == LEAVE_AWAIT_MANAGER:
+        # Stage 1 cleared in bulk → ping the managers once, and each staff member.
+        names = ", ".join(sorted({lv["staff_name"] for lv in rows}))
+        notify_roles(("manager", "superadmin"),
+                     f"{names}: {len(rows)} leave day(s) cleared by the team lead — awaiting your final approval",
+                     link="leaves", ntype="leave")
+        for sid in {lv["staff_id"] for lv in rows}:
+            notify_staff_member(sid, "Your leave passed the team lead — awaiting manager approval",
+                                link="leaves", ntype="leave")
+    else:
+        # Final approved/rejected → one summary per requester + each staff member.
+        by_creator = defaultdict(list)
+        for lv in rows:
+            if lv.get("created_by"):
+                by_creator[lv["created_by"]].append(lv)
+        for creator, items in by_creator.items():
+            if creator == user["id"]:
+                continue
+            names = ", ".join(sorted({i["staff_name"] for i in items}))
+            n = len(items)
+            notify(creator, f"{names}: {n} leave day{'s' if n != 1 else ''} {new_status}",
+                   link="leaves", ntype=new_status)
+        for sid in {lv["staff_id"] for lv in rows}:
+            notify_staff_member(sid, f"Your leave was {new_status}", link="leaves", ntype=new_status)
+    return {"updated": len(rows), "status": new_status}
 
 # ── Staff self-service portal ─────────────────────────────────────────────────
 
@@ -2775,9 +2847,11 @@ def dashboard_summary(user=Depends(get_current_user)):
     # Schedules awaiting review (reviewers only).
     pending_reviews = c("SELECT COUNT(*) AS c FROM scheduling.schedules WHERE status='submitted'") if is_reviewer else 0
 
-    # Leave requests still pending — all branches for a reviewer, own branch for a lead.
+    # Leave awaiting THIS user's action: a manager sees everything not yet final
+    # (stage 1 with no lead + stage 2); a team lead sees their branch's stage-1
+    # queue ('pending') — what they can actually approve now.
     if is_reviewer:
-        pending_leaves = c("SELECT COUNT(*) AS c FROM scheduling.leave_requests WHERE status='pending'")
+        pending_leaves = c("SELECT COUNT(*) AS c FROM scheduling.leave_requests WHERE status IN ('pending','lead_approved')")
     elif role == "admin":
         pending_leaves = c("""SELECT COUNT(*) AS c FROM scheduling.leave_requests l
                               JOIN scheduling.staff s ON s.id=l.staff_id

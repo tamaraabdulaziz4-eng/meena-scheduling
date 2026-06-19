@@ -67,9 +67,9 @@ print("\n== scenario 1: leave request -> approve -> lands on rota + notification
 lr = staffA.post("/api/leaves", json={"date_from": f"{YEAR}-08-10", "date_to": f"{YEAR}-08-10", "leave_type": "AL"})
 check("staff can request leave", lr.status_code == 200, lr.text)
 check("staff leave is pending", lr.json().get("status") == "pending", lr.json())
-# manager notified
-notes = admin.get("/api/notifications").json()
-check("manager notified of leave request", any("leave" in (n["message"] or "").lower() for n in notes["notifications"]), notes)
+# stage 1 of the chain notifies the branch team lead (not the manager yet)
+notes = lead.get("/api/notifications").json()
+check("team lead notified of leave request (stage 1)", any("leave" in (n["message"] or "").lower() for n in notes["notifications"]), notes)
 # find the leave id and approve
 leaves = admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
 lv = next((l for l in leaves if l["staff_id"] == A["id"] and l["date"] == f"{YEAR}-08-10"), None)
@@ -432,9 +432,10 @@ lead_before = {n["id"] for n in lead.get("/api/notifications").json()["notificat
 lead.post("/api/leaves", json={"staff_id": B["id"], "date_from": f"{YEAR}-08-15",
           "date_to": f"{YEAR}-08-17", "leave_type": "AL"})   # created_by = team lead
 lvls = admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+# A team-lead's own entry has already cleared stage 1 → 'lead_approved'.
 bids3 = [l["id"] for l in lvls if l["staff_id"] == B["id"]
-         and l["date"] in (f"{YEAR}-08-15", f"{YEAR}-08-16", f"{YEAR}-08-17") and l["status"] == "pending"]
-check("3-day pending leave created", len(bids3) == 3, bids3)
+         and l["date"] in (f"{YEAR}-08-15", f"{YEAR}-08-16", f"{YEAR}-08-17") and l["status"] == "lead_approved"]
+check("3-day lead-approved leave created", len(bids3) == 3, bids3)
 rb = admin.put("/api/leaves/status", json={"ids": bids3, "status": "approved", "confirm": True})
 check("batch approve ok", rb.status_code == 200 and rb.json().get("updated") == 3, rb.text)
 lead_new = [n for n in lead.get("/api/notifications").json()["notifications"] if n["id"] not in lead_before]
