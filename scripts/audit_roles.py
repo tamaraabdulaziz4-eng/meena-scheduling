@@ -78,8 +78,10 @@ print("\n== registration flow across branches ==")
 admin.put("/api/settings", json={"registration": "on"})
 code = (admin.get("/api/settings").json().get("registration_link") or "").split("register=")[-1]
 anon = TestClient(app)
-anon.post("/api/register", json={"code": code, "name": "Reg ForA", "branch_id": bidA, "employee_id": f"RA{sfx}"})
-anon.post("/api/register", json={"code": code, "name": "Reg ForB", "branch_id": bidB, "employee_id": f"RB{sfx}"})
+anon.post("/api/register", json={"code": code, "name": "Reg ForA", "branch_id": bidA, "employee_id": f"RA{sfx}",
+          "username": f"rega{sfx}", "password": "regpass1"})
+anon.post("/api/register", json={"code": code, "name": "Reg ForB", "branch_id": bidB, "employee_id": f"RB{sfx}",
+          "username": f"regb{sfx}", "password": "regpass1"})
 qa = LEADA.get("/api/registrations").json()
 check("lead A sees only branch-A registration", any(r["employee_id"]==f"RA{sfx}" for r in qa) and not any(r["employee_id"]==f"RB{sfx}" for r in qa), qa)
 regB = next(r for r in MGR.get("/api/registrations").json() if r["employee_id"] == f"RB{sfx}")

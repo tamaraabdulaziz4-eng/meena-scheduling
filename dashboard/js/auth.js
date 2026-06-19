@@ -65,6 +65,8 @@ async function startRegistration(code) {
 
 async function submitRegistration() {
   const msg = document.getElementById('reg-msg');
+  const pw  = document.getElementById('reg-password').value;
+  const pw2 = document.getElementById('reg-password2').value;
   const body = {
     code: _regCode,
     name: document.getElementById('reg-name').value.trim(),
@@ -73,9 +75,20 @@ async function submitRegistration() {
     employee_id: document.getElementById('reg-empid').value.trim(),
     email: document.getElementById('reg-email').value.trim(),
     phone: document.getElementById('reg-phone').value.trim(),
+    username: document.getElementById('reg-username').value.trim(),
+    password: pw,
   };
   if (!body.name || !body.employee_id || !body.branch_id) {
     msg.style.color = ''; msg.textContent = 'Name, Employee ID and branch are required'; return;
+  }
+  if (!body.username || body.username.length < 3) {
+    msg.style.color = ''; msg.textContent = 'Choose a username (at least 3 characters)'; return;
+  }
+  if (!pw || pw.length < 6) {
+    msg.style.color = ''; msg.textContent = 'Password must be at least 6 characters'; return;
+  }
+  if (pw !== pw2) {
+    msg.style.color = ''; msg.textContent = 'Passwords do not match'; return;
   }
   try {
     const r = await API.post('/register', body);

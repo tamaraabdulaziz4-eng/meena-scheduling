@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260619f">
+<link rel="stylesheet" href="/style.css?v=20260619g">
 </head>
 <body>
 
@@ -98,7 +98,24 @@
         <label>Mobile <span style="color:var(--muted);font-weight:400">(optional)</span></label>
         <input type="text" id="reg-phone" placeholder="05xxxxxxxx" inputmode="tel">
       </div>
-      <button class="login-btn" onclick="submitRegistration()">Submit</button>
+      <div class="onb-divider"><span>Create your login</span></div>
+      <div class="login-field">
+        <label>Username</label>
+        <input type="text" id="reg-username" placeholder="choose a username" autocomplete="username">
+      </div>
+      <div class="login-field">
+        <label>Password</label>
+        <div style="position:relative">
+          <input type="password" id="reg-password" placeholder="at least 6 characters" autocomplete="new-password" style="width:100%;padding-right:36px">
+          <button type="button" onclick="togglePw('reg-password')"
+            style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#888;padding:0">👁</button>
+        </div>
+      </div>
+      <div class="login-field">
+        <label>Confirm password</label>
+        <input type="password" id="reg-password2" placeholder="re-enter password" autocomplete="new-password">
+      </div>
+      <button class="login-btn" onclick="submitRegistration()">Create account</button>
       <div class="login-error" id="reg-msg"></div>
     </div>
 
@@ -729,24 +746,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260619f"></script>
-<script src="/js/auth.js?v=20260619f"></script>
-<script src="/js/util.js?v=20260619f"></script>
-<script src="/js/branches.js?v=20260619f"></script>
-<script src="/js/users.js?v=20260619f"></script>
-<script src="/js/staff.js?v=20260619f"></script>
-<script src="/js/leaves.js?v=20260619f"></script>
-<script src="/js/swaps.js?v=20260619f"></script>
-<script src="/js/holidays.js?v=20260619f"></script>
-<script src="/js/notifications.js?v=20260619f"></script>
-<script src="/js/portal.js?v=20260619f"></script>
-<script src="/js/cases.js?v=20260619f"></script>
-<script src="/js/home.js?v=20260619f"></script>
-<script src="/js/shifts.js?v=20260619f"></script>
-<script src="/js/schedule.js?v=20260619f"></script>
-<script src="/js/review.js?v=20260619f"></script>
-<script src="/js/export.js?v=20260619f"></script>
-<script src="/js/audit.js?v=20260619f"></script>
-<script src="/js/main.js?v=20260619f"></script>
+<script src="/js/api.js?v=20260619g"></script>
+<script src="/js/auth.js?v=20260619g"></script>
+<script src="/js/util.js?v=20260619g"></script>
+<script src="/js/branches.js?v=20260619g"></script>
+<script src="/js/users.js?v=20260619g"></script>
+<script src="/js/staff.js?v=20260619g"></script>
+<script src="/js/leaves.js?v=20260619g"></script>
+<script src="/js/swaps.js?v=20260619g"></script>
+<script src="/js/holidays.js?v=20260619g"></script>
+<script src="/js/notifications.js?v=20260619g"></script>
+<script src="/js/portal.js?v=20260619g"></script>
+<script src="/js/cases.js?v=20260619g"></script>
+<script src="/js/home.js?v=20260619g"></script>
+<script src="/js/shifts.js?v=20260619g"></script>
+<script src="/js/schedule.js?v=20260619g"></script>
+<script src="/js/review.js?v=20260619g"></script>
+<script src="/js/export.js?v=20260619g"></script>
+<script src="/js/audit.js?v=20260619g"></script>
+<script src="/js/main.js?v=20260619g"></script>
 </body>
 </html>

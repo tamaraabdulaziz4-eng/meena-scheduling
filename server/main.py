@@ -373,6 +373,10 @@ def init_schema():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
             cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'General';")
+            # Self-registrants choose their own login now (username + password),
+            # so an approved account can sign in — not just exist as a staff row.
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS username TEXT;")
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS password TEXT;")
             # Password-reset tokens (forgot-password via email). Stored hashed.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.password_resets (
@@ -1218,18 +1222,32 @@ async def register_staff(request: Request):
     email = (body.get("email") or "").strip() or None
     phone = (body.get("phone") or "").strip() or None
     section = body.get("section") if body.get("section") in ("General", "US") else "General"
+    username = (body.get("username") or "").strip().lower()
+    password = body.get("password") or ""
     if not name or not emp_id or not branch_id:
         raise HTTPException(400, "Name, Employee ID and branch are required")
+    if not username or not password:
+        raise HTTPException(400, "Choose a username and password to create your account")
+    if len(username) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters")
+    if len(password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
     branch_id = _int_or_400(branch_id)
     if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
         raise HTTPException(400, "Unknown branch")
+    # Early, friendly check — the real guard is the UNIQUE index at approval.
+    if q("SELECT 1 FROM scheduling.users WHERE username=%s", (username,), one=True):
+        raise HTTPException(409, "That username is taken — please choose another")
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     # Queue it for the branch team lead — a re-submission for the same Employee ID
     # replaces the earlier pending one rather than piling up.
     q("""DELETE FROM scheduling.staff_registrations
          WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
       (emp_id,), exec_only=True)
-    q("""INSERT INTO scheduling.staff_registrations (name, branch_id, employee_id, email, phone, section)
-         VALUES (%s,%s,%s,%s,%s,%s)""", (name, branch_id, emp_id, email, phone, section), exec_only=True)
+    q("""INSERT INTO scheduling.staff_registrations
+           (name, branch_id, employee_id, email, phone, section, username, password)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+      (name, branch_id, emp_id, email, phone, section, username, pw_hash), exec_only=True)
     # Notify the branch team lead (who approves). Only fall back to the managers
     # if the branch has no team lead — otherwise this stays off their inbox.
     leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
@@ -1239,7 +1257,8 @@ async def register_staff(request: Request):
             notify(u["id"], msg, link="staff", ntype="info")
     else:
         notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
-    return {"ok": True, "message": "Thanks! Your details were submitted and are awaiting approval."}
+    return {"ok": True, "message": "Thanks! Your account was created and is awaiting your team lead's approval. "
+                                   "Once approved you can sign in with your username and password."}
 
 @app.get("/api/registrations")
 def list_registrations(request: Request, user=Depends(require_admin)):
@@ -1279,11 +1298,42 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
                   one=True)
     except psycopg2.errors.UniqueViolation:
         raise HTTPException(409, "That Employee ID is already on a staff record")
+    # Create the login account the registrant chose, linked to this staff record,
+    # so they can actually sign in (not just appear on the rota). If this branch
+    # already has a staff account for them, just relink/refresh it.
+    account_created = False
+    if reg.get("username") and reg.get("password"):
+        existing = q("SELECT id FROM scheduling.users WHERE staff_id=%s OR username=%s",
+                     (staff["id"], reg["username"]), one=True)
+        if existing:
+            q("""UPDATE scheduling.users
+                 SET password=%s, role='staff', branch_id=%s, staff_id=%s, email=%s
+                 WHERE id=%s""",
+              (reg["password"], reg["branch_id"], staff["id"], reg["email"], existing["id"]),
+              exec_only=True)
+            account_created = True
+        else:
+            try:
+                q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
+                     VALUES (%s,%s,'staff',%s,%s,%s)""",
+                  (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"]),
+                  exec_only=True)
+                account_created = True
+            except psycopg2.errors.UniqueViolation:
+                raise HTTPException(409, "That username is already taken by another account")
     q("""UPDATE scheduling.staff_registrations
          SET status='approved', staff_id=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
       (staff["id"], user["id"], rid), exec_only=True)
     insert_audit(user, "REGISTRATION_APPROVE", reg["name"], f"emp:{reg['employee_id']}")
-    return {"ok": True, "staff": staff}
+    # Let them know their account is live and they can sign in.
+    if account_created and reg.get("email"):
+        try:
+            _deliver_email(reg["email"], "Your Meena Scheduling account is ready",
+                           f"Hi {reg['name']},\n\nYour account has been approved. "
+                           f"You can now sign in with your username \"{reg['username']}\".\n\n— Meena Scheduling")
+        except Exception:
+            pass
+    return {"ok": True, "staff": staff, "account_created": account_created}
 
 @app.post("/api/registrations/{rid}/reject")
 async def reject_registration(rid: int, request: Request, user=Depends(require_admin)):

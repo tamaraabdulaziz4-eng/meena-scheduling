@@ -22,9 +22,21 @@ function renderCasesPage() {
   setTopbar('Daily Cases', 'Radiology cases per branch',
     `${isReviewer ? `<button class="btn btn-ghost btn-sm" onclick="remindPendingCases()">⏰ Remind pending</button>` : ''}
      <button class="btn btn-ghost btn-sm" onclick="printCases()">🖨 Print / PDF</button>`);
+  const weekday = new Date().toLocaleDateString('en-GB', { weekday: 'long' });
   const c = document.getElementById('content');
   c.innerHTML = `
     <div id="cases-print-title" style="display:none"></div>
+    <div class="phero no-print">
+      <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
+      <div class="phero-inner">
+        <div class="phero-logo"><img src="/meena_logo.png" alt="Meena"></div>
+        <div class="phero-text">
+          <div class="phero-hi">${weekday} · Radiology cases per branch</div>
+          <div class="phero-title">Daily Cases</div>
+          <div class="phero-sub" id="cases-hero-sub">Loading today's report…</div>
+        </div>
+      </div>
+    </div>
     <div class="month-nav" style="margin-bottom:4px">
       <button onclick="changeCasesDay(-1)">&#8249;</button>
       <span class="month-label" id="cases-date-label"></span>
@@ -75,6 +87,9 @@ function renderCases() {
   const s = casesData.summary || {};
   document.getElementById('cases-print-title').textContent =
     `Daily Radiology Cases — ${fmtDateDisplay(casesDate)}`;
+  const heroSub = document.getElementById('cases-hero-sub');
+  if (heroSub) heroSub.innerHTML =
+    `${fmtDateDisplay(casesDate)} · <b>${s.submitted || 0}/${s.branches || 0}</b> branches submitted · ${s.total_cases || 0} cases`;
   document.getElementById('cases-summary').innerHTML = `
     <div class="cases-summary">
       <div class="cs-pill"><b>${s.total_cases || 0}</b> total cases</div>

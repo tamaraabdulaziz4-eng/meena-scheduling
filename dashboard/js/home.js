@@ -15,12 +15,15 @@ async function renderHomePage() {
   const date = (typeof operationalDate === 'function') ? operationalDate() : fmtDate(today);
 
   document.getElementById('content').innerHTML = `
-    <div class="hm-hero">
-      <div class="hm-orb o1"></div><div class="hm-orb o2"></div>
-      <div class="hm-hero-inner">
-        <div class="hm-hi">${_greeting()},</div>
-        <div class="hm-name">${escapeHtml(currentUser?.username || '')}</div>
-        <div class="hm-date">${greg}</div>
+    <div class="phero">
+      <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
+      <div class="phero-inner">
+        <div class="phero-logo"><img src="/meena_logo.png" alt="Meena"></div>
+        <div class="phero-text">
+          <div class="phero-hi">${_greeting()},</div>
+          <div class="phero-title">${escapeHtml(currentUser?.username || '')}</div>
+          <div class="phero-sub">${greg}</div>
+        </div>
       </div>
     </div>
     <div id="hm-actions" class="hm-actions"></div>
