@@ -336,6 +336,34 @@ function pageHero(eyebrow, title, sub = '') {
     </div>`;
 }
 
+// ── Branded PDF report canvas ─────────────────────────────────────────────────
+// Builds the polished "dashboard report" look (logo chip + title) shared by the
+// Daily Cases and Schedule PDF exports. openReport() drops the built markup into
+// #report-root, flips the body into report-print mode, prints, then restores.
+function reportHeader(title, sub) {
+  return `
+    <div class="rep-head">
+      <div class="rep-logo"><img src="/meena_logo.png" alt="Meena"></div>
+      <div class="rep-head-text">
+        <div class="rep-title">${escapeHtml(title)}</div>
+        <div class="rep-sub">${escapeHtml(sub || '')}</div>
+      </div>
+    </div>`;
+}
+function openReport(innerHtml, landscape = false) {
+  const root = document.getElementById('report-root');
+  if (!root) return;
+  root.innerHTML = innerHtml;
+  document.body.classList.add('mode-report');
+  document.body.classList.toggle('mode-report-ls', !!landscape);
+  const restore = () => {
+    document.body.classList.remove('mode-report', 'mode-report-ls');
+    window.removeEventListener('afterprint', restore);
+  };
+  window.addEventListener('afterprint', restore);
+  setTimeout(() => window.print(), 80);   // let layout settle first
+}
+
 // ── Populate select ───────────────────────────────────────────────────────────
 function populateSelect(selectId, items, valueKey, labelKey, placeholder = '') {
   const el = document.getElementById(selectId);

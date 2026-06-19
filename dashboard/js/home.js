@@ -26,6 +26,7 @@ async function renderHomePage() {
         </div>
       </div>
     </div>
+    <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div class="hm-card">
       <div class="hm-card-head">
@@ -41,8 +42,29 @@ async function renderHomePage() {
     API.get('/dashboard').catch(() => null),
     API.get(`/daily-cases/overview?date=${date}`).catch(() => null),
   ]);
+  renderHomeKpis(dash, ov);
   renderHomeActions(dash);
   renderHomeCases(ov);
+}
+
+function renderHomeKpis(d, ov) {
+  const box = document.getElementById('hm-kpis');
+  if (!box) return;
+  const s = (ov && ov.summary) || {};
+  const branches = (ov && ov.branches) || [];
+  const submitted = branches.filter(b => b.case && b.case.locked).length;
+  const pending = d ? ((d.pending_reviews || 0) + (d.pending_leaves || 0) + (d.pending_swaps || 0) + (d.pending_registrations || 0)) : 0;
+  const kpi = (cls, label, value, sub) => `
+    <div class="rep-kpi">
+      <div class="rep-kpi-top"><span class="rep-dot ${cls}"></span><span class="rep-kpi-label">${label}</span></div>
+      <div class="rep-kpi-num">${value}</div>
+      <div class="rep-kpi-sub">${escapeHtml(sub)}</div>
+    </div>`;
+  box.innerHTML =
+    kpi('v', "Today's Cases", s.total_cases || 0, 'All branches') +
+    kpi('v', 'Patients', s.total_pt || 0, 'Registered today') +
+    kpi('v', 'Submitted', `${submitted}/${branches.length || 0}`, 'Branches reported') +
+    kpi(pending ? 'r' : 'v', 'Pending', pending, 'Awaiting you');
 }
 
 function renderHomeActions(d) {

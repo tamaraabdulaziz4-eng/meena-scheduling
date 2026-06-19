@@ -18,7 +18,7 @@ async function renderReviewPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Approve or return schedules across all branches', 'Schedule Review')}
-    <div class="review-kpis" id="review-kpis"></div>
+    <div class="rep-kpis screen-kpis" id="review-kpis"></div>
     <div class="review-filters">
       <div class="month-nav" style="margin:0">
         <button onclick="changeReviewMonth(-1)">&#8249;</button>
@@ -71,14 +71,16 @@ async function loadReviewData() {
 function renderReviewKpis() {
   const s = reviewData.summary || {};
   const kpis = [
-    { v: s.pending || 0,       l: 'Pending review', c: 'o' },
-    { v: s.not_submitted || 0, l: 'Not submitted',  c: 'r' },
-    { v: s.approved || 0,      l: 'Approved',        c: 'g' },
-    { v: s.total || 0,         l: 'Total branches',  c: 'b' },
+    { v: s.pending || 0,       l: 'Pending review', sub: 'Awaiting your action', c: (s.pending ? 'r' : 'v') },
+    { v: s.not_submitted || 0, l: 'Not submitted',  sub: 'No rota yet',          c: (s.not_submitted ? 'r' : 'v') },
+    { v: s.approved || 0,      l: 'Approved',        sub: 'Signed off',           c: 'v' },
+    { v: s.total || 0,         l: 'Total branches',  sub: monthLabel(reviewYear, reviewMonth), c: 'v' },
   ];
   document.getElementById('review-kpis').innerHTML = kpis.map(k => `
-    <div class="review-kpi ${k.c}">
-      <div class="v">${k.v}</div><div class="l">${k.l}</div>
+    <div class="rep-kpi">
+      <div class="rep-kpi-top"><span class="rep-dot ${k.c}"></span><span class="rep-kpi-label">${k.l}</span></div>
+      <div class="rep-kpi-num">${k.v}</div>
+      <div class="rep-kpi-sub">${escapeHtml(k.sub)}</div>
     </div>`).join('');
 }
 

@@ -93,29 +93,55 @@ async function changeMonth(delta) {
 }
 
 function printSchedule() {
-  const branch = ['superadmin','manager'].includes(currentUser?.role)
+  const wrap = document.getElementById('rota-wrap');
+  if (!wrap || !wrap.querySelector('table')) { toast('Nothing to export yet'); return; }
+  openReport(buildScheduleReport(), true);   // landscape
+}
+
+function buildScheduleReport() {
+  const branch = ['superadmin', 'manager'].includes(currentUser?.role)
     ? (allBranches.find(b => b.id === currentBranchId)?.name || '')
     : (currentUser?.branch_name || '');
-  const t = document.getElementById('print-title');
-  const s = document.getElementById('print-sub');
-  if (t) t.textContent = 'Monthly Roster';
-  if (s) s.textContent = `${branch} · ${monthLabel(scheduleYear, scheduleMonth)}`;
-
-  // Signature / approval footer.
   const sc = currentSchedule || {};
   const cap = v => v ? String(v).charAt(0).toUpperCase() + String(v).slice(1) : '—';
-  const fp = document.getElementById('pf-prepared'); if (fp) fp.textContent = cap(sc.created_by_name);
-  const fa = document.getElementById('pf-approved'); if (fa) fa.textContent = sc.approved_by_name ? cap(sc.approved_by_name) : '—';
-  const stamp = document.getElementById('pf-status');
-  if (stamp) {
-    const approved = sc.status === 'approved';
-    stamp.textContent = approved ? '✔ APPROVED' : (sc.status || 'draft').toUpperCase();
-    stamp.className = 'pf-stamp ' + (approved ? 'approved' : 'pending');
-  }
-  const pr = document.getElementById('pf-printed');
-  if (pr) pr.textContent = 'Printed ' + new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
-  document.getElementById('print-footer').dataset.show = '1';
-  window.print();
+  const wrap = document.getElementById('rota-wrap');
+  const rotaHtml = wrap ? wrap.innerHTML : '';
+  const legend = document.querySelector('.legend');
+  const legendHtml = legend ? legend.outerHTML : '';
+  const staffCount = wrap ? wrap.querySelectorAll('.rota-table tbody tr').length : 0;
+  const days = new Date(scheduleYear, scheduleMonth, 0).getDate();
+  const approved = sc.status === 'approved';
+  const printed = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  const kpi = (cls, label, value, sub) => `
+    <div class="rep-kpi">
+      <div class="rep-kpi-top"><span class="rep-dot ${cls}"></span><span class="rep-kpi-label">${label}</span></div>
+      <div class="rep-kpi-num">${value}</div>
+      <div class="rep-kpi-sub">${escapeHtml(sub || '')}</div>
+    </div>`;
+
+  return `
+    ${reportHeader('Monthly Roster', `${branch} · ${monthLabel(scheduleYear, scheduleMonth)}`)}
+    <div class="rep-kpis">
+      ${kpi('v', 'Branch', escapeHtml(branch || '—'), 'This roster')}
+      ${kpi('v', 'Staff', staffCount, 'On the rota')}
+      ${kpi('v', 'Days', days, monthLabel(scheduleYear, scheduleMonth))}
+      ${kpi(approved ? 'v' : 'r', 'Status', approved ? 'Approved' : (sc.status || 'Draft'), `Printed ${printed}`)}
+    </div>
+    <div class="rep-card rep-rota">${rotaHtml}${legendHtml}</div>
+    <div class="rep-sign-row">
+      <div class="rep-sign">
+        <div class="rep-sign-role">Prepared by</div>
+        <div class="rep-sign-name">${escapeHtml(cap(sc.created_by_name))}</div>
+        <div class="rep-sign-line">Team Lead</div>
+      </div>
+      <div class="rep-sign">
+        <div class="rep-sign-role">Approved by</div>
+        <div class="rep-sign-name">${sc.approved_by_name ? escapeHtml(cap(sc.approved_by_name)) : '—'}</div>
+        <div class="rep-sign-line">Manager</div>
+      </div>
+      <div class="rep-sign-stamp ${approved ? 'approved' : 'pending'}">${approved ? '✔ APPROVED' : (sc.status || 'DRAFT').toUpperCase()}</div>
+    </div>`;
 }
 
 async function loadScheduleData() {

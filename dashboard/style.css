@@ -1388,10 +1388,92 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
 .case-total-row { font-size: 14px; background: var(--card-alt); padding: 8px 12px; border-radius: 8px; }
 .case-total-row b { font-size: 18px; color: var(--primary); }
 
+/* ── Branded PDF report canvas (Daily Cases / Schedule export) ── */
+#report-root { display: none; }
+#report-root {
+  background: radial-gradient(ellipse at 30% 0%, #ffffff 0%, #f4f1fc 45%, #ece7fb 100%);
+  padding: 28px 30px 20px; color: #2b2450; font-family: 'Poppins', sans-serif;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.rep-head { display: flex; align-items: center; gap: 22px; margin-bottom: 22px; }
+.rep-logo { background: #fff; padding: 16px 22px; border-radius: 22px; box-shadow: 0 16px 36px rgba(107,78,255,.18); }
+.rep-logo img { height: 40px; display: block; }
+.rep-title { font-size: 30px; font-weight: 800; color: #261E4F; letter-spacing: -.5px; line-height: 1.05; }
+.rep-sub { font-size: 14px; color: #6b5fa6; font-weight: 600; margin-top: 4px; }
+.rep-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+.screen-kpis { margin-bottom: 18px; }
+@media (max-width: 720px) { .screen-kpis { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 430px) { .screen-kpis { grid-template-columns: 1fr; } }
+.rep-kpi { background: #fff; border: 1px solid #ece7fb; border-radius: 20px; padding: 16px 18px; box-shadow: 0 12px 28px rgba(107,78,255,.08); }
+.rep-kpi-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.rep-dot { width: 26px; height: 26px; border-radius: 9px; display: inline-block; flex: none; }
+.rep-dot.v { background: linear-gradient(135deg, #8358FD, #6B4EFF); }
+.rep-dot.r { background: linear-gradient(135deg, #FF7B9C, #FF5277); }
+.rep-kpi-label { font-size: 12.5px; font-weight: 700; color: #6b6386; }
+.rep-kpi-num { font-size: 32px; font-weight: 800; color: #261E4F; line-height: 1; }
+.rep-kpi-sub { font-size: 11px; color: #9a93b5; margin-top: 6px; }
+.rep-card { background: #fff; border: 1px solid #ece7fb; border-radius: 24px; padding: 20px 24px; box-shadow: 0 16px 36px rgba(107,78,255,.08); margin-bottom: 18px; break-inside: avoid; }
+.rep-card-title { font-size: 20px; font-weight: 800; color: #261E4F; }
+.rep-card-sub { font-size: 13px; color: #8a83a8; margin: 2px 0 14px; }
+.rep-table { width: 100%; border-collapse: separate; border-spacing: 0 6px; }
+.rep-table thead th { background: #6B4EFF; color: #fff; font-size: 12px; font-weight: 700; padding: 9px 12px; text-align: center; }
+.rep-table thead th:first-child { border-radius: 10px 0 0 10px; text-align: left; }
+.rep-table thead th:last-child { border-radius: 0 10px 10px 0; }
+.rep-table tbody td { padding: 11px 12px; text-align: center; font-size: 13px; color: #4b4470; background: #faf9ff; }
+.rep-table tbody tr:nth-child(even) td { background: #f3f0fc; }
+.rep-table tbody td:first-child { border-radius: 10px 0 0 10px; }
+.rep-table tbody td:last-child { border-radius: 0 10px 10px 0; }
+.rep-bname { text-align: left !important; font-weight: 700; color: #261E4F; }
+.rep-total { color: #6B4EFF; font-weight: 800; }
+.rep-miss { color: #FF5277; font-weight: 700; }
+.rep-grand { margin-top: 8px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(135deg, #efeafe, #e7e0fb); border-radius: 14px; padding: 14px 18px; }
+.rep-grand span { font-size: 14px; font-weight: 700; color: #3b3360; }
+.rep-grand-v { color: #6B4EFF !important; font-weight: 800 !important; }
+.rep-bottom { display: grid; grid-template-columns: 1.2fr 1fr; gap: 18px; }
+.rep-bottom .rep-card { margin-bottom: 0; }
+.rep-bars { display: flex; flex-direction: column; gap: 13px; }
+.rep-bar-row { display: grid; grid-template-columns: 56px 1fr auto; align-items: center; gap: 12px; }
+.rep-bar-label { font-size: 12px; font-weight: 700; color: #4b4470; }
+.rep-bar-track { height: 9px; border-radius: 6px; background: #ece7fb; overflow: hidden; }
+.rep-bar-fill { display: block; height: 100%; border-radius: 6px; background: linear-gradient(90deg, #8B76FF, #6B4EFF); }
+.rep-bar-val { font-size: 11.5px; color: #6b6386; font-weight: 600; white-space: nowrap; }
+.rep-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 11px; }
+.rep-notes li { position: relative; padding-left: 18px; font-size: 12.5px; color: #5b5478; line-height: 1.45; }
+.rep-notes li::before { content: ''; position: absolute; left: 0; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: #6B4EFF; }
+.rep-foot { text-align: center; font-size: 11px; color: #a39ec0; margin-top: 16px; }
+/* Schedule roster report extras */
+.rep-rota .rota-wrap { overflow: visible; box-shadow: none; border: none; background: transparent; padding: 0; }
+.rep-sign-row { display: flex; align-items: flex-end; gap: 40px; margin-top: 6px;
+  background: linear-gradient(135deg, #faf9ff, #f1edfc); border: 1px solid #e7e1fa; border-radius: 18px; padding: 18px 24px; }
+.rep-sign { flex: 0 0 220px; }
+.rep-sign-role { font-size: 11px; color: #8a7fbf; font-weight: 600; }
+.rep-sign-name { font-size: 15px; font-weight: 800; color: #261E4F; margin: 18px 0 4px; border-bottom: 1.5px solid #8358FD; padding-bottom: 4px; }
+.rep-sign-line { font-size: 11px; color: #777; }
+.rep-sign-stamp { margin-left: auto; font-size: 14px; font-weight: 800; letter-spacing: 1px; padding: 8px 16px; border-radius: 8px; transform: rotate(-4deg); }
+.rep-sign-stamp.approved { color: #00875a; border: 2.5px solid #00875a; }
+.rep-sign-stamp.pending { color: #b9760a; border: 2.5px solid #b9760a; }
+
 /* Branded print header — only visible on paper. */
 #print-header { display: none; }
 @media print {
   @page { size: A4 landscape; margin: 12mm; }
+  /* Report export: edge-to-edge, hide the live app + rota header. Portrait for
+     the stats report, landscape for the full-month roster. */
+  @page rep  { size: A4 portrait;  margin: 0; }
+  @page repL { size: A4 landscape; margin: 0; }
+  body.mode-report { page: rep; }
+  body.mode-report.mode-report-ls { page: repL; }
+  body.mode-report .layout,
+  body.mode-report #print-header,
+  body.mode-report #print-footer,
+  body.mode-report #page-loader { display: none !important; }
+  body.mode-report #report-root { display: block !important; min-height: 100vh; }
+  /* Roster inside the report card: keep the coloured cells, fit the full month. */
+  body.mode-report .rep-rota .rota-table { font-size: 7.5px !important; table-layout: fixed; width: 100% !important; }
+  body.mode-report .rep-rota .rota-table th,
+  body.mode-report .rep-rota .rota-table td { padding: 1px !important; min-width: 0 !important; }
+  body.mode-report .rep-rota .rota-name-col { width: 90px !important; min-width: 0 !important; font-size: 8px !important; }
+  body.mode-report .rep-rota .legend { display: flex !important; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
   /* Print colours faithfully (shift cells, badges, brand). */
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   body { background: #fff !important; }

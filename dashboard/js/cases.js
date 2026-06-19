@@ -181,13 +181,109 @@ async function reopenCase() {
   } catch (e) { toast(e.message, 'err'); }
 }
 
+// Build the branded "Radiology Daily Statistics" report and export it to PDF
+// (matches the dashboard report design: KPI cards, branch breakdown table,
+// grand-total pill, modality-mix bars and key notes).
+const _REP_MODS = [['xray', 'X-RAY'], ['ct', 'CT'], ['us', 'US'], ['mamo', 'MAMO'], ['bmd', 'BMD']];
+
 function printCases() {
-  const t = document.getElementById('print-title');
-  const s = document.getElementById('print-sub');
-  if (t) t.textContent = 'Daily Radiology Cases';
-  if (s) s.textContent = fmtDateDisplay(casesDate);
-  const pf = document.getElementById('print-footer'); if (pf) delete pf.dataset.show;
-  window.print();
+  if (!casesData || !(casesData.branches || []).length) { toast('Nothing to export yet'); return; }
+  openReport(buildCasesReport());
+}
+
+function buildCasesReport() {
+  const branches = casesData.branches || [];
+  const filed = branches.filter(b => b.case);                    // branches with a report
+  const modTotals = {}; _REP_MODS.forEach(([k]) => modTotals[k] = 0);
+  let totalCases = 0, totalPt = 0, notDone = 0, notDoneNote = '';
+  let top = null, missingBranch = '';
+  filed.forEach(b => {
+    const c = b.case;
+    _REP_MODS.forEach(([k]) => modTotals[k] += (c[k] || 0));
+    totalCases += (c.total_cases || 0);
+    totalPt += (c.total_pt || 0);
+    const nd = (c.bmd_not_done || 0) + (c.mamo_not_done || 0);
+    notDone += nd;
+    if (nd && !notDoneNote) notDoneNote = `${c.mamo_not_done ? 'MAMO' : 'BMD'} not done in ${b.branch_name}`;
+    if (c.total_cases && !c.total_pt && !missingBranch) missingBranch = b.branch_name;
+    if (!top || (c.total_cases || 0) > (top.case.total_cases || 0)) top = b;
+  });
+  const modSum = _REP_MODS.reduce((a, [k]) => a + modTotals[k], 0) || 1;
+  const mix = _REP_MODS.map(([k, l]) => ({ l, n: modTotals[k], pct: modTotals[k] / modSum * 100 }))
+    .sort((a, b) => b.n - a.n);
+
+  const kpi = (cls, label, value, sub) => `
+    <div class="rep-kpi">
+      <div class="rep-kpi-top"><span class="rep-dot ${cls}"></span><span class="rep-kpi-label">${label}</span></div>
+      <div class="rep-kpi-num">${value}</div>
+      <div class="rep-kpi-sub">${escapeHtml(sub || '')}</div>
+    </div>`;
+
+  const rowsHtml = branches.map(b => {
+    const c = b.case;
+    const cell = v => `<td>${c ? (v || 0) : '—'}</td>`;
+    const ptCell = c
+      ? (c.total_cases && !c.total_pt ? `<td class="rep-miss">Missing</td>` : `<td>${c.total_pt || 0}</td>`)
+      : `<td>—</td>`;
+    return `<tr>
+      <td class="rep-bname">${escapeHtml(b.branch_name)}</td>
+      ${_REP_MODS.map(([k]) => cell(c && c[k])).join('')}
+      <td class="rep-total">${c ? (c.total_cases || 0) : '—'}</td>
+      ${ptCell}
+    </tr>`;
+  }).join('');
+
+  const notes = [];
+  if (mix[0] && mix[0].n) notes.push(`${mix[0].l} is the highest modality with ${mix[0].n} cases.`);
+  const top3 = filed.slice().sort((a, b) => (b.case.total_cases || 0) - (a.case.total_cases || 0))
+    .slice(0, 3).map(b => b.branch_name);
+  if (top3.length) notes.push(`${top3.join(', ')} carried most of the workload.`);
+  if (missingBranch) notes.push(`${missingBranch} patient count is blank in the source file.`);
+  if (notDone) notes.push(`${notDone} case${notDone !== 1 ? 's' : ''} not done${notDoneNote ? ' (' + notDoneNote + ')' : ''}.`);
+  if (!notes.length) notes.push('All submitted branches reported a complete set of cases.');
+
+  const monthYear = new Date(casesDate).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+  return `
+    ${reportHeader('Radiology Daily Statistics', `${fmtDateDisplay(casesDate)} — Meena Staff Scheduling`)}
+    <div class="rep-kpis">
+      ${kpi('v', 'Total Cases', totalCases, 'All branches')}
+      ${kpi('v', 'Registered Patients', totalPt, missingBranch ? `${missingBranch} patient count blank` : 'Across all branches')}
+      ${kpi('r', 'Not Done', notDone, notDoneNote || 'Nothing outstanding')}
+      ${kpi('v', 'Top Branch', top ? escapeHtml(top.branch_name) : '—', top ? `${top.case.total_cases || 0} cases` : '')}
+    </div>
+    <div class="rep-card">
+      <div class="rep-card-title">Branch Breakdown</div>
+      <div class="rep-card-sub">Cases by modality and patient count</div>
+      <table class="rep-table">
+        <thead><tr>
+          <th>Branch</th>${_REP_MODS.map(([, l]) => `<th>${l}</th>`).join('')}<th>Total</th><th>Patients</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div class="rep-grand">
+        <span>Grand Total</span>
+        <span class="rep-grand-v">${totalCases} cases — ${totalPt} registered patients</span>
+      </div>
+    </div>
+    <div class="rep-bottom">
+      <div class="rep-card">
+        <div class="rep-card-title">Modality Mix</div>
+        <div class="rep-bars">
+          ${mix.map(m => `
+            <div class="rep-bar-row">
+              <span class="rep-bar-label">${m.l}</span>
+              <span class="rep-bar-track"><span class="rep-bar-fill" style="width:${Math.round(m.pct)}%"></span></span>
+              <span class="rep-bar-val">${m.n} cases — ${m.pct.toFixed(1)}%</span>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div class="rep-card">
+        <div class="rep-card-title">Key Notes</div>
+        <ul class="rep-notes">${notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>
+      </div>
+    </div>
+    <div class="rep-foot">Generated from Radiology Cases — ${monthYear} data</div>`;
 }
 
 async function remindPendingCases() {
