@@ -17,10 +17,7 @@ async function renderReviewPage() {
   setTopbar('Review', '', '');
   const c = document.getElementById('content');
   c.innerHTML = `
-    <div class="review-head">
-      <h1 style="font-size:23px;font-weight:800;letter-spacing:-.4px;color:var(--primary)">Schedule Review</h1>
-      <p style="font-size:14px;color:var(--muted);margin-top:2px">Approve or return schedules across all branches</p>
-    </div>
+    ${pageHero('Approve or return schedules across all branches', 'Schedule Review')}
     <div class="review-kpis" id="review-kpis"></div>
     <div class="review-filters">
       <div class="month-nav" style="margin:0">

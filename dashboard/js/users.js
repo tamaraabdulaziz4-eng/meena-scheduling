@@ -12,7 +12,8 @@ function renderUsersPage() {
   );
   const c = document.getElementById('content');
   c.innerHTML = `
-    <div class="table-wrap">
+    ${pageHero('Accounts, roles & access', 'Users')}
+    <div class="table-wrap" id="users-wrap">
       <table>
         <thead><tr><th>#</th><th>Username</th><th>Role</th><th>Branch</th><th>Created</th><th>Actions</th></tr></thead>
         <tbody id="users-tbody"></tbody>

@@ -24,6 +24,7 @@ function renderShiftsPage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero('Global shift list — all branches', 'Shift Types')}
     <div id="shift-tables-wrap"></div>`;
 
   renderShiftTable();

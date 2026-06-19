@@ -25,6 +25,7 @@ async function renderLeavesPage() {
   setTopbar(title, 'Annual leave, sick leave, time-back', actions);
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero('Annual leave · sick leave · time-back', title)}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <select id="leave-filter-year" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"></select>
       <select id="leave-filter-month" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none">

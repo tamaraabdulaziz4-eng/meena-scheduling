@@ -6,6 +6,7 @@ async function renderAuditPage() {
     const logs = await API.get('/audit');
     const c = document.getElementById('content');
     c.innerHTML = `
+      ${pageHero('System activity history', 'Audit Log', `<b>${logs.length}</b> recent event${logs.length !== 1 ? 's' : ''}`)}
       <div class="table-wrap">
         <table>
           <thead><tr><th>Time</th><th>User</th><th>Role</th><th>Branch</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>

@@ -13,6 +13,7 @@ function renderBranchesPage() {
   );
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero('Hospital branches & nests', 'Branches', `<b>${allBranches.length}</b> branch${allBranches.length !== 1 ? 'es' : ''}`)}
     <div class="table-wrap" id="branches-wrap">
       <table>
         <thead><tr>

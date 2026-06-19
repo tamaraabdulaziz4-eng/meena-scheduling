@@ -318,6 +318,24 @@ function setTopbar(title, meta = '', actionsHtml = '') {
   document.getElementById('topbar-actions').innerHTML = actionsHtml;
 }
 
+// Splash-style page hero (lavender gradient, floating orbs, white logo chip,
+// gradient headline). Prepended to a page's content so every screen shares the
+// welcome-splash identity. `eyebrow`/`title` are escaped; `sub` may carry HTML.
+function pageHero(eyebrow, title, sub = '') {
+  return `
+    <div class="phero no-print">
+      <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
+      <div class="phero-inner">
+        <div class="phero-logo"><img src="/meena_logo.png" alt="Meena"></div>
+        <div class="phero-text">
+          <div class="phero-hi">${escapeHtml(eyebrow || '')}</div>
+          <div class="phero-title">${escapeHtml(title || '')}</div>
+          ${sub ? `<div class="phero-sub" id="phero-sub">${sub}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
 // ── Populate select ───────────────────────────────────────────────────────────
 function populateSelect(selectId, items, valueKey, labelKey, placeholder = '') {
   const el = document.getElementById(selectId);

@@ -22,6 +22,7 @@ function renderSwapsPage() {
   const crossBranch = ['superadmin','manager'].includes(currentUser?.role);
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero('Request & approve shift exchanges', 'Shift Swaps')}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <select id="swap-filter-status" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none">
         <option value="">All statuses</option>

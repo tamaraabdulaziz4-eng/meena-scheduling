@@ -33,6 +33,7 @@ function renderStaffPage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero('Radiology team directory', 'Staff', `<b>${allStaff.length}</b> member${allStaff.length !== 1 ? 's' : ''}`)}
     <div id="staff-pending"></div>
     <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
 

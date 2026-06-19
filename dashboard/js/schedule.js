@@ -36,6 +36,7 @@ async function renderSchedulePage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero('Monthly staff rota', 'Schedule')}
     <div class="schedule-toolbar">
       ${['superadmin','manager'].includes(currentUser.role) ? `
         <select id="sched-branch-select" onchange="onBranchChange()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;background:var(--card-alt);color:var(--text);font-family:inherit;outline:none;cursor:pointer">

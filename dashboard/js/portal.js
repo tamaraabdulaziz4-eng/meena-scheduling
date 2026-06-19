@@ -9,6 +9,7 @@ async function renderMySchedulePage() {
   setTopbar('My Schedule', '', `<button class="btn btn-sm" onclick="openLeaveModal()">🌴 Request Leave</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
+    ${pageHero(`Welcome, ${currentUser?.username || ''}`, 'My Schedule', 'Your shifts, leave and swaps')}
     <div class="month-nav" style="margin-bottom:14px">
       <button onclick="changePortalMonth(-1)">&#8249;</button>
       <span class="month-label" id="portal-month-label">${monthLabel(portalYear, portalMonth)}</span>
