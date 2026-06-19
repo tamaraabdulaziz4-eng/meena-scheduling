@@ -538,6 +538,17 @@ check("their account is a branch-scoped staff role", li.json().get("role") == "s
 # Wrong code is rejected.
 check("wrong code rejected", anon2.post("/api/register", json={"code": "nope", "name": "x", "branch_id": bid,
       "employee_id": "y", "username": f"x{sfx}", "password": "xxxxxx1"}).status_code == 403)
+# Username-collision guard: a pending sign-up must NOT hijack an account that
+# claimed the username between submission and approval.
+anon3 = TestClient(app)
+anon3.post("/api/register", json={"code": code, "name": "Race User", "branch_id": bid,
+           "employee_id": f"RACE{sfx}", "username": f"race{sfx}", "password": "racepass1"})
+admin.post("/api/users", json={"username": f"race{sfx}", "password": "strangerpw1", "role": "viewer"})
+raceReg = next((r for r in lead.get("/api/registrations").json() if r.get("employee_id") == f"RACE{sfx}"), None)
+hj = lead.post(f"/api/registrations/{raceReg['id']}/approve", json={}) if raceReg else None
+check("approval refuses to hijack a taken username", hj is not None and hj.status_code == 409, getattr(hj, "text", None))
+stranger = TestClient(app).post("/api/auth/login", json={"username": f"race{sfx}", "password": "strangerpw1"})
+check("the other account was not hijacked", stranger.status_code == 200 and stranger.json().get("role") == "viewer", stranger.text)
 # Manager can't set a duplicate Employee ID on another record.
 dupset = admin.put(f"/api/staff/{B['id']}", json={"employee_id": f"EID{sfx}"})
 check("duplicate Employee ID rejected on edit", dupset.status_code == 409, dupset.status_code)

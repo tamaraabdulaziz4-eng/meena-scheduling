@@ -1307,24 +1307,31 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
     # already has a staff account for them, just relink/refresh it.
     account_created = False
     if reg.get("username") and reg.get("password"):
-        existing = q("SELECT id FROM scheduling.users WHERE staff_id=%s OR username=%s",
-                     (staff["id"], reg["username"]), one=True)
-        if existing:
-            q("""UPDATE scheduling.users
-                 SET password=%s, role='staff', branch_id=%s, staff_id=%s, email=%s
-                 WHERE id=%s""",
-              (reg["password"], reg["branch_id"], staff["id"], reg["email"], existing["id"]),
-              exec_only=True)
-            account_created = True
-        else:
-            try:
+        # If the chosen username is already owned by a DIFFERENT account, refuse
+        # — never hijack/overwrite someone else's login (the early sign-up check
+        # is racy, so this is the authoritative guard).
+        uname_owner = q("SELECT id, staff_id FROM scheduling.users WHERE username=%s",
+                        (reg["username"],), one=True)
+        if uname_owner and uname_owner.get("staff_id") != staff["id"]:
+            raise HTTPException(409, "That username is already taken by another account")
+        # Re-approval of the same person: refresh the login already linked to THIS
+        # staff record; otherwise create a fresh one.
+        existing = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (staff["id"],), one=True)
+        try:
+            if existing:
+                q("""UPDATE scheduling.users
+                     SET username=%s, password=%s, role='staff', branch_id=%s, staff_id=%s, email=%s
+                     WHERE id=%s""",
+                  (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"], existing["id"]),
+                  exec_only=True)
+            else:
                 q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
                      VALUES (%s,%s,'staff',%s,%s,%s)""",
                   (reg["username"], reg["password"], reg["branch_id"], staff["id"], reg["email"]),
                   exec_only=True)
-                account_created = True
-            except psycopg2.errors.UniqueViolation:
-                raise HTTPException(409, "That username is already taken by another account")
+            account_created = True
+        except psycopg2.errors.UniqueViolation:
+            raise HTTPException(409, "That username is already taken by another account")
     q("""UPDATE scheduling.staff_registrations
          SET status='approved', staff_id=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
       (staff["id"], user["id"], rid), exec_only=True)

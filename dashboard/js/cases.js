@@ -7,9 +7,12 @@
 // (and the night-staff eligibility check matches that day's schedule).
 const CASES_ROLLOVER_HOUR = 8;
 function operationalDate() {
-  const d = new Date();
-  if (d.getHours() < CASES_ROLLOVER_HOUR) d.setDate(d.getDate() - 1);
-  return fmtDate(d);
+  // Compute the reporting day in KSA (Asia/Riyadh) so it matches the server no
+  // matter the viewer's local timezone — otherwise a non-KSA user near 08:00
+  // would file on the wrong day.
+  const ksa = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' }));
+  if (ksa.getHours() < CASES_ROLLOVER_HOUR) ksa.setDate(ksa.getDate() - 1);
+  return fmtDate(ksa);
 }
 let casesDate = operationalDate();
 let casesData = null;
@@ -130,15 +133,21 @@ let caseModalBranch = null;
 
 async function openCaseModal(branch_id) {
   caseModalBranch = branch_id;
-  let c = {};
-  try { c = (await API.get(`/daily-cases?branch_id=${branch_id}&date=${casesDate}`)).case || {}; } catch (e) {}
+  let c = {}, canEdit = true;
+  try {
+    const r = await API.get(`/daily-cases?branch_id=${branch_id}&date=${casesDate}`);
+    c = r.case || {};
+    if (typeof r.can_edit === 'boolean') canEdit = r.can_edit;
+  } catch (e) {}
   const f = id => document.getElementById(id);
   CASE_INPUTS.forEach(k => { f('case-' + k).value = (c[k] != null ? c[k] : ''); });
   const bname = (casesData?.branches || []).find(x => x.branch_id === branch_id)?.branch_name || '';
   f('case-modal-title').textContent = `${bname} — ${fmtDateDisplay(casesDate)}`;
   f('case-msg').textContent = '';
   const isReviewer = ['superadmin', 'manager'].includes(currentUser?.role);
-  const readOnly = !!c.locked && !isReviewer;
+  // Read-only when the report is locked (non-reviewers) OR the server says this
+  // user can't edit this branch today (e.g. not on Night / no report rights).
+  const readOnly = (!!c.locked && !isReviewer) || (!isReviewer && !canEdit);
   document.querySelectorAll('#case-modal-overlay input').forEach(i => i.disabled = readOnly);
   f('case-save-btn').style.display = readOnly ? 'none' : '';
   f('case-submit-btn').style.display = readOnly ? 'none' : '';
