@@ -135,15 +135,17 @@ async function initApp() {
 // recursively called showPage → double transition).
 function resolvePage(page) {
   const role = currentUser?.role;
-  const adminish = ['admin','superadmin'].includes(role);
   if (page === 'home' && !['admin','manager','superadmin'].includes(role))
     return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'schedule'   && role === 'staff')  return 'myschedule';
   if (page === 'nest-config')                     return 'schedule';
   if (['swaps','cases'].includes(page) && role === 'viewer') return 'schedule';
-  if (page === 'branches' && !adminish)           return 'schedule';
-  if (page === 'shifts'   && !adminish)           return 'schedule';
-  if (page === 'audit'    && !adminish)           return 'schedule';
+  // Branches, shift types, and the audit log are full-admin (superadmin) tools —
+  // the backend rejects everyone else, so the route guard must match (a team lead
+  // reaching them via a stale link would otherwise see a page that then 403s).
+  if (page === 'branches' && role !== 'superadmin') return 'schedule';
+  if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
+  if (page === 'audit'    && role !== 'superadmin') return 'schedule';
   if (page === 'users'    && role !== 'superadmin') return 'schedule';
   return page;
 }

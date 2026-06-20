@@ -6,7 +6,7 @@ Run:
     python -m uvicorn server.main:app --port 3002 --reload
 """
 
-import os, json, math, calendar as _cal
+import os, sys, json, math, calendar as _cal
 
 # Load .env from project root
 _env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -2403,7 +2403,7 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
         end = _date(*map(int, date_to.split('-')))
     except (ValueError, TypeError):
         raise HTTPException(400, "Dates must be valid YYYY-MM-DD")
-    dates, leaves = [], []
+    dates, leaves, failed = [], [], []
     while cur <= end and len(dates) < 365:
         dates.append(str(cur)); cur += _td(days=1)
 
@@ -2426,7 +2426,17 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
                 # Approved leave (reviewer entry or sick leave) goes straight on the rota.
                 if new_status == "approved":
                     apply_leave_to_schedule(staff_id, d, leave_type)
-        except Exception: pass
+            else:
+                failed.append(d)
+        except Exception as e:
+            # Don't silently drop a day — record it so the caller can surface
+            # "saved 3 of 5" instead of pretending everything went through.
+            print(f"[leave] save failed for staff {staff_id} on {d}: {e}", file=sys.stderr)
+            failed.append(d)
+
+    # If the whole request failed, that's an error, not a silent no-op.
+    if dates and not leaves:
+        raise HTTPException(400, "Couldn't save the leave — please try again.")
 
     if leaves and leave_type == "SL":
         # Sick leave: tell the branch lead + managers and point them at cover.
@@ -2450,7 +2460,8 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
         notify_roles(("manager", "superadmin"),
                      f"{staff['name']}: {len(leaves)} day(s) {leave_type} leave awaiting your final approval",
                      link="leaves", ntype="leave")
-    return {"inserted": len(leaves), "leaves": leaves, "status": new_status}
+    return {"inserted": len(leaves), "requested": len(dates), "failed": len(failed),
+            "failed_dates": failed, "leaves": leaves, "status": new_status}
 
 @app.delete("/api/leaves/{lid}")
 def delete_leave(lid: int, user=Depends(get_current_user)):

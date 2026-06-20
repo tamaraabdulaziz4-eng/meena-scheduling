@@ -67,6 +67,9 @@ print("\n== scenario 1: leave request -> approve -> lands on rota + notification
 lr = staffA.post("/api/leaves", json={"date_from": f"{YEAR}-08-10", "date_to": f"{YEAR}-08-10", "leave_type": "AL"})
 check("staff can request leave", lr.status_code == 200, lr.text)
 check("staff leave is pending", lr.json().get("status") == "pending", lr.json())
+# Response reports save outcome accurately (so the UI can show partial saves).
+check("leave response reports requested/failed counts",
+      lr.json().get("requested") == 1 and lr.json().get("failed") == 0, lr.json())
 # stage 1 of the chain notifies the branch team lead (not the manager yet)
 notes = lead.get("/api/notifications").json()
 check("team lead notified of leave request (stage 1)", any("leave" in (n["message"] or "").lower() for n in notes["notifications"]), notes)

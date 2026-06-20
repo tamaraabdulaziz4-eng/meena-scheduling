@@ -292,9 +292,16 @@ async function saveLeave() {
     closeLeaveModal();
     renderLeavesList();
     const dayWord = `${result.inserted} day${result.inserted !== 1 ? 's' : ''}`;
-    toast(result.status === 'pending'
-      ? `${dayWord} of ${leave_type} requested — awaiting manager approval`
-      : `${dayWord} of ${leave_type} added`);
+    // Say exactly where the request stands (the two-stage chain) instead of always
+    // claiming "manager". And flag a partial save if some days didn't go through.
+    const stageMsg = {
+      pending:       `${dayWord} of ${leave_type} requested — awaiting team lead approval`,
+      lead_approved: `${dayWord} of ${leave_type} requested — awaiting manager approval`,
+      approved:      `${dayWord} of ${leave_type} added to the rota`,
+    }[result.status] || `${dayWord} of ${leave_type} saved`;
+    const failed = Number(result.failed || 0);
+    toast(failed ? `${stageMsg} — but ${failed} day${failed !== 1 ? 's' : ''} couldn't be saved` : stageMsg,
+          failed ? 'err' : undefined);
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = err.message;
   } finally {
