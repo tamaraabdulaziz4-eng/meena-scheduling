@@ -58,6 +58,7 @@ function openBranchModal(id, name) {
   document.getElementById('branch-name').value = name || '';
   document.getElementById('branch-city').value = b?.city || '';
   document.getElementById('branch-shares').checked = !!b?.shares_staff;
+  document.getElementById('branch-need').value = b?.cover_need_per_day || 0;
   document.getElementById('branch-msg').textContent = '';
   document.getElementById('branch-modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('branch-name').focus(), 50);
@@ -69,17 +70,18 @@ async function saveBranch() {
   const name = document.getElementById('branch-name').value.trim();
   const city = document.getElementById('branch-city').value.trim();
   const shares_staff = document.getElementById('branch-shares').checked;
+  const cover_need_per_day = Math.max(0, parseInt(document.getElementById('branch-need').value) || 0);
   const msg  = document.getElementById('branch-msg');
   if (!name) { msg.className = 'msg err'; msg.textContent = 'Name required'; return; }
   try {
     if (_editBranchId) {
-      const b = await API.put(`/branches/${_editBranchId}`, { name, city, shares_staff });
+      const b = await API.put(`/branches/${_editBranchId}`, { name, city, shares_staff, cover_need_per_day });
       const idx = allBranches.findIndex(x => x.id === _editBranchId);
       if (idx >= 0) allBranches[idx] = b;
     } else {
       const b = await API.post('/branches', { name });
-      if (city || shares_staff) {
-        const upd = await API.put(`/branches/${b.id}`, { name, city, shares_staff });
+      if (city || shares_staff || cover_need_per_day) {
+        const upd = await API.put(`/branches/${b.id}`, { name, city, shares_staff, cover_need_per_day });
         allBranches.push(upd);
       } else {
         allBranches.push(b);
