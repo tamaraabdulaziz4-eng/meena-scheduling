@@ -4023,6 +4023,9 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             msgs.append(f"Some days have fewer available staff than required coverage (min M+N).")
         # 4-on/2-off feasibility heuristic: each staff works at most k/(k+2) of days long-run.
         # Staff needed per day ≈ ceil(need / (k/(k+2))) = ceil(need * (k+2)/k)
+        min_o_blk = int(sec_cfg.get("min_o_block", 2) or 2)
+        # How many staff are actually free to work most of the month?
+        avail_staff = sum(1 for sk in staff_keys if len(al_schedule.get(sk, [])) < n_days / 2)
         if k > 0:
             need_per_day = min_m + min_n
             min_staff_for_coverage = int(_m2.ceil(need_per_day * (k + 2) / k))
@@ -4030,6 +4033,15 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                 msgs.append(
                     f"Not enough staff for daily coverage under the {k}-on/2-off rule: need ~{min_staff_for_coverage} active staff, have {len(staff_keys)}."
                 )
+        # The classic "few people on 24h" case: a tiny available team can cover
+        # M+N every day only if off-days may be single (Min Off Block = 1). With
+        # 2-day off blocks required it's mathematically impossible.
+        if avail_staff <= 3 and (min_m + min_n) >= 2 and min_o_blk >= 2:
+            msgs.append(
+                f"Only {avail_staff} staff are free this month but the section needs "
+                f"{min_m}×M + {min_n}×N every day. Set this section's Min Off Block to 1 "
+                f"(allow single off-days) so the {avail_staff} can rotate Morning→Night→Off and cover 24h."
+            )
 
         return {
             "section": section_name,

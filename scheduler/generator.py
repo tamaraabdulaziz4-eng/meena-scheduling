@@ -331,15 +331,23 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # So we only apply the hard half-month lock to sections big enough to carry
     # it; smaller sections still get every other rest rule, just without the
     # forced M-half/N-half structure.
-    section_sizes = {}
+    #
+    # Crucially we count AVAILABLE staff, not the roster: a 4-person section with
+    # one member on leave all month is really a 3-person section, and forcing the
+    # split on the remaining three would make 24h coverage impossible. A member is
+    # "available" if they're free to work most of the month (on leave < half of
+    # it). This is exactly the "4th person is on holiday, 3 must cover 24h" case.
+    avail_in_section = {}
     for _p, _sn, _sec in all_staff:
-        section_sizes[_sn] = section_sizes.get(_sn, 0) + 1
+        _al_days = len(al_schedule.get(_p, []))
+        if _al_days < n_days / 2:
+            avail_in_section[_sn] = avail_in_section.get(_sn, 0) + 1
     HALF_LOCK_MIN = 4
 
     half = (n_days + 1) // 2
     first_half_is_m = {}
     for p, sec_name, sec in all_staff:
-        if section_sizes.get(sec_name, 0) < HALF_LOCK_MIN:
+        if avail_in_section.get(sec_name, 0) < HALF_LOCK_MIN:
             continue
         first_half_is_m[p] = model.new_bool_var(f"first_half_m_{p}")
         for d in range(n_days):
