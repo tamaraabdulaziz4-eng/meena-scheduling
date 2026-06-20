@@ -4033,14 +4033,20 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                 msgs.append(
                     f"Not enough staff for daily coverage under the {k}-on/2-off rule: need ~{min_staff_for_coverage} active staff, have {len(staff_keys)}."
                 )
-        # The classic "few people on 24h" case: a tiny available team can cover
-        # M+N every day only if off-days may be single (Min Off Block = 1). With
-        # 2-day off blocks required it's mathematically impossible.
+        # The classic "few people, heavy daily coverage" case: a tiny available
+        # team can hit the daily requirement only if off-days may be single
+        # (Min Off Block = 1). With 2-day off blocks required it's impossible.
+        # Phrase it per the section's ACTUAL need — General runs nights (24h),
+        # Ultrasound is often daytime only (min_n = 0).
         if avail_staff <= 3 and (min_m + min_n) >= 2 and min_o_blk >= 2:
+            need_txt = (f"{min_m}×M + {min_n}×N (24h)" if min_n >= 1
+                        else f"{min_m}×M every day")
+            rotate_txt = ("rotate Morning→Night→Off and cover 24h" if min_n >= 1
+                          else "rotate through the mornings without idle 2-day gaps")
             msgs.append(
                 f"Only {avail_staff} staff are free this month but the section needs "
-                f"{min_m}×M + {min_n}×N every day. Set this section's Min Off Block to 1 "
-                f"(allow single off-days) so the {avail_staff} can rotate Morning→Night→Off and cover 24h."
+                f"{need_txt}. Set this section's Min Off Block to 1 (allow single "
+                f"off-days) so the {avail_staff} can {rotate_txt}."
             )
 
         return {
