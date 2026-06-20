@@ -47,16 +47,16 @@ def manager():
     d = Deck()
     d.cover("Manager Guide", "Meena Scheduling",
             "You are the department reviewer — final approvals on schedules and leave, oversight "
-            "of every branch, and the daily case reports.", "home.png")
-    d.slide(img("home.png"), "OVERVIEW", "Your dashboard",
+            "of every branch, and the daily case reports.", "mgr_home.png")
+    d.slide(img("mgr_home.png"), "OVERVIEW", "Your dashboard",
             "KPI cards and action chips show what needs you — reviews, leave, swaps and registrations.", True)
-    d.slide(img("review.png"), "REVIEW", "Approve schedules",
+    d.slide(img("mgr_review.png"), "REVIEW", "Approve schedules",
             "Open Review, check a branch's submitted rota, then Approve (locks it as official) or Return it for changes.", False)
-    d.slide(img("leave.png"), "TIME OFF", "Final leave approval",
+    d.slide(img("mgr_leave.png"), "TIME OFF", "Final leave approval",
             "Requests cleared by the team lead arrive as 'Awaiting manager' — your Approve lands them on the rota.", True)
-    d.slide(img("swaps.png"), "EXCHANGES", "Final swap approval",
+    d.slide(img("mgr_swaps.png"), "EXCHANGES", "Final swap approval",
             "Approve the 'Awaiting manager' swaps; they apply to the rota automatically.", False)
-    d.slide(img("cases.png"), "REPORTING", "Daily cases",
+    d.slide(img("mgr_cases.png"), "REPORTING", "Daily cases",
             "See every branch's numbers, remind branches that haven't submitted, and reopen a locked report if needed.", True)
     d.slide(img("report.png"), "EXPORT", "Daily report PDF",
             "Print / PDF turns the day into a branded statistics report for management and archiving.", False)
@@ -74,16 +74,16 @@ def teamlead():
     d = Deck()
     d.cover("Team Lead Guide", "Meena Scheduling",
             "You run scheduling for your branch — build the rota, give the first approval on "
-            "leave, and submit for the manager. You only see your own branch.", "schedule.png")
-    d.slide(img("schedule.png"), "ROTA", "Build & generate",
+            "leave, and submit for the manager. You only see your own branch.", "tl_schedule.png")
+    d.slide(img("tl_schedule.png"), "ROTA", "Build & generate",
             "Pick the month and click Generate to auto-build your branch's rota; adjust any cell, then Submit for approval.", True)
-    d.slide(img("leave.png"), "TIME OFF", "First leave approval",
+    d.slide(img("tl_leave.png"), "TIME OFF", "First leave approval",
             "Your staff's requests come to you first — Approve to pass them to the manager, or Reject.", False)
-    d.slide(img("swaps.png"), "EXCHANGES", "Approve branch swaps",
+    d.slide(img("tl_swaps.png"), "EXCHANGES", "Approve branch swaps",
             "After two colleagues agree a swap, approve it; it then goes to the manager for the final step.", True)
-    d.slide(img("cases.png"), "REPORTING", "Daily cases",
+    d.slide(img("tl_cases.png"), "REPORTING", "Daily cases",
             "Fill your branch's report for the day; Save keeps a draft, Submit locks it.", False)
-    d.slide(img("home.png"), "OVERVIEW", "Branch at a glance",
+    d.slide(img("tl_home.png"), "OVERVIEW", "Branch at a glance",
             "Your home shows pending leave, swaps and staff sign-ups for your branch.", True)
     d.cards_slide("WHY IT HELPS", "Benefits", [
         ("One-click rota", "Generate builds a fair rota in seconds."),
@@ -106,11 +106,11 @@ def staff():
             "My Schedule shows your shifts, leave and swaps for the month, with the shift legend.", False)
     d.slide(img("staff_leave.png"), "TIME OFF", "Request leave & track it",
             "Request leave, then watch the status: Awaiting team lead, then Awaiting manager, then Approved.", True)
-    d.slide(img("swaps.png"), "SWAPS", "Swap a shift",
+    d.slide(img("staff_swaps.png"), "SWAPS", "Swap a shift",
             "Request a swap with a colleague; once you, your team lead and the manager approve, it's applied to the rota.", False)
-    d.slide(img("cases.png"), "CASES", "Daily cases",
+    d.slide(img("staff_cases.png"), "CASES", "Daily cases",
             "If you're eligible (reporting rights or on the Night shift), fill your branch's case report.", True)
-    d.slide(img("changepw.png"), "ACCOUNT", "Change your password",
+    d.slide(img("staff_changepw.png"), "ACCOUNT", "Change your password",
             "Update your password anytime from the sidebar — no admin or email needed.", False)
     d.output(os.path.join(ROOT, "docs", "Meena_Staff_Guide.pdf")); print("Meena_Staff_Guide.pdf")
 

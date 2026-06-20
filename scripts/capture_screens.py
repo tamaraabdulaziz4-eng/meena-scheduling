@@ -12,7 +12,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 
 os.environ["DATABASE_URL"] = "postgresql://pgtest@/meena_guide?host=/var/run/postgresql"
 os.environ["COOKIE_SECURE"] = "0"
-os.environ["APP_URL"] = BASE
+os.environ["APP_URL"] = "https://schedule.meena.health"   # clean link text in Settings
 os.environ["SMTP_CAPTURE"] = "1"
 os.environ["DISABLE_SCHEDULER"] = "1"
 
@@ -38,6 +38,15 @@ def seed():
     q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
          VALUES ('sara.h',%s,'staff',%s,%s,'sara@example.com')
          ON CONFLICT (username) DO NOTHING""", (pw, b, sids[0]), exec_only=True)
+    # manager (all branches) + team-lead (branch-locked) logins for role-accurate shots
+    mpw = M.bcrypt.hashpw(b"manager123", M.bcrypt.gensalt()).decode()
+    q("""INSERT INTO scheduling.users (username,password,role,email)
+         VALUES ('khalid.m',%s,'manager','khalid@example.com')
+         ON CONFLICT (username) DO NOTHING""", (mpw,), exec_only=True)
+    tpw = M.bcrypt.hashpw(b"lead123", M.bcrypt.gensalt()).decode()
+    q("""INSERT INTO scheduling.users (username,password,role,branch_id,email)
+         VALUES ('noura.l',%s,'admin',%s,'noura@example.com')
+         ON CONFLICT (username) DO NOTHING""", (tpw, b), exec_only=True)
     # schedule (approved) + entries for the current month
     sch = q("""INSERT INTO scheduling.schedules (branch_id,year,month,status,is_locked,created_by,approved_by,reviewed_by)
                VALUES (%s,%s,%s,'approved',true,%s,%s,%s)
@@ -96,41 +105,29 @@ def wait_up():
 
 def capture(code, bid):
     from playwright.sync_api import sync_playwright
-    shots = 0
+    shots = [0]
     with sync_playwright() as p:
         br = p.chromium.launch(executable_path=CHROME, headless=True,
                                args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"])
-        ctx = br.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=2)
-        pg = ctx.new_page()
 
-        def snap(name, el=None):
-            nonlocal shots
+        def snap(pg, name, el=None):
             try:
                 (pg.locator(el) if el else pg).screenshot(path=os.path.join(OUT, name))
-                shots += 1; print("shot", name)
+                shots[0] += 1; print("shot", name)
             except Exception as e:
                 print("FAIL", name, e)
 
-        # 1) Login (no auth)
-        pg.goto(BASE + "/", wait_until="networkidle"); pg.wait_for_timeout(900)
-        snap("login.png")
-        # 2) Sign-up onboarding (code link)
-        pg.goto(f"{BASE}/?register={code}", wait_until="networkidle"); pg.wait_for_timeout(1200)
-        try:
-            pg.fill("#reg-name", "Sara Al-Harbi"); pg.fill("#reg-empid", "1043887")
-            pg.fill("#reg-email", "sara@example.com"); pg.fill("#reg-username", "sara.h")
-            pg.fill("#reg-password", "secret12"); pg.fill("#reg-password2", "secret12")
-        except Exception as e: print("signup fill", e)
-        pg.wait_for_timeout(300); snap("signup.png")
-        # Sign in as admin (superadmin sees everything)
-        pg.goto(BASE + "/", wait_until="networkidle")
-        pg.fill("#login-username", "admin"); pg.fill("#login-password", "admin123")
-        pg.evaluate("doLogin()")
-        pg.wait_for_timeout(4500)  # welcome splash + first render
-        try: pg.wait_for_selector("#sidebar-user", timeout=8000)
-        except Exception: pass
+        def login_session(username, password):
+            ctx = br.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=2)
+            pg = ctx.new_page()
+            pg.goto(BASE + "/", wait_until="networkidle")
+            pg.fill("#login-username", username); pg.fill("#login-password", password)
+            pg.evaluate("doLogin()"); pg.wait_for_timeout(4500)
+            try: pg.wait_for_selector("#sidebar-user", timeout=8000)
+            except Exception: pass
+            return ctx, pg
 
-        def page_shot(route, name, wait=1500, before=None):
+        def shoot(pg, route, name, wait=1800, before=None, el=None):
             pg.evaluate(f"window.showPage && showPage('{route}')")
             pg.wait_for_timeout(wait)
             try: pg.wait_for_load_state("networkidle")
@@ -139,52 +136,79 @@ def capture(code, bid):
                 pg.evaluate(before); pg.wait_for_timeout(1800)
                 try: pg.wait_for_load_state("networkidle")
                 except Exception: pass
-            snap(name)
+            snap(pg, name, el)
 
-        page_shot("home", "home.png", 2000)
-        page_shot("schedule", "schedule.png", 2400,
-                  before=f"() => {{ const s=document.getElementById('sched-branch-select'); if(s){{ s.value='{bid}'; onBranchChange(); }} }}")
-        page_shot("leaves", "leave.png", 1800)
-        page_shot("swaps", "swaps.png", 1800)
-        page_shot("review", "review.png", 1800)
-        page_shot("cases", "cases.png", 2200)
-        # Real report: build it into #report-root and show it on screen
+        # ── Pre-auth: login + sign-up (full form) ──
+        ctx0 = br.new_context(viewport={"width": 1280, "height": 820}, device_scale_factor=2)
+        pg0 = ctx0.new_page()
+        pg0.goto(BASE + "/", wait_until="networkidle"); pg0.wait_for_timeout(900)
+        snap(pg0, "login.png")
+        pg0.set_viewport_size({"width": 1280, "height": 1180})
+        pg0.goto(f"{BASE}/?register={code}", wait_until="networkidle"); pg0.wait_for_timeout(1400)
         try:
+            pg0.fill("#reg-name", "Sara Al-Harbi")
+            pg0.select_option("#reg-branch", index=1)
+            pg0.fill("#reg-empid", "1043887"); pg0.fill("#reg-email", "sara@example.com")
+            pg0.fill("#reg-username", "sara.h"); pg0.fill("#reg-password", "secret12")
+            pg0.fill("#reg-password2", "secret12")
+        except Exception as e: print("signup fill", e)
+        pg0.wait_for_timeout(400); snap(pg0, "signup.png"); ctx0.close()
+
+        BR_BEFORE = f"() => {{ const s=document.getElementById('sched-branch-select'); if(s){{ s.value='{bid}'; onBranchChange(); }} }}"
+
+        # ── Super admin (Overview deck + neutral report/links) ──
+        ctx, pg = login_session("admin", "admin123")
+        shoot(pg, "home", "home.png", 2000)
+        shoot(pg, "schedule", "schedule.png", 2400, before=BR_BEFORE)
+        shoot(pg, "leaves", "leave.png")
+        shoot(pg, "swaps", "swaps.png")
+        shoot(pg, "review", "review.png")
+        shoot(pg, "cases", "cases.png", 2200)
+        try:  # real branded report (sidebar-less element → role-neutral)
             pg.evaluate("showPage('cases')"); pg.wait_for_timeout(2000)
             pg.evaluate("""() => { const r=document.getElementById('report-root');
                 r.innerHTML = buildCasesReport(); r.style.display='block'; r.style.maxWidth='820px'; }""")
-            pg.wait_for_timeout(800)
-            snap("report.png", "#report-root")
-            pg.evaluate("() => { const r=document.getElementById('report-root'); r.style.display='none'; }")
+            pg.wait_for_timeout(800); snap(pg, "report.png", "#report-root")
+            pg.evaluate("() => { document.getElementById('report-root').style.display='none'; }")
         except Exception as e: print("report", e)
-        # Registration links (settings modal)
         try:
-            pg.evaluate("window.openHolidaysModal && openHolidaysModal()")
-            pg.wait_for_timeout(1500); snap("links.png")
-            pg.evaluate("document.getElementById('holidays-modal-overlay')?.classList.remove('open')")
+            pg.evaluate("openHolidaysModal()"); pg.wait_for_timeout(1500); snap(pg, "links.png")
         except Exception as e: print("links", e)
-        # Change password modal
         try:
-            pg.evaluate("window.openChangePassword && openChangePassword()")
-            pg.wait_for_timeout(700); snap("changepw.png")
+            pg.evaluate("openChangePassword()"); pg.wait_for_timeout(700); snap(pg, "changepw.png")
         except Exception as e: print("changepw", e)
+        ctx.close()
 
-        # ── Staff portal: sign in as a staff member ──
+        # ── Manager session (no admin tools / no Branches-Shifts-Users-Audit) ──
+        ctx, pg = login_session("khalid.m", "manager123")
+        shoot(pg, "home", "mgr_home.png", 2000)
+        shoot(pg, "review", "mgr_review.png")
+        shoot(pg, "leaves", "mgr_leave.png")
+        shoot(pg, "swaps", "mgr_swaps.png")
+        shoot(pg, "cases", "mgr_cases.png", 2200)
+        ctx.close()
+
+        # ── Team-lead session (branch-locked, no Review/admin tools) ──
+        ctx, pg = login_session("noura.l", "lead123")
+        shoot(pg, "home", "tl_home.png", 2000)
+        shoot(pg, "schedule", "tl_schedule.png", 2400)
+        shoot(pg, "leaves", "tl_leave.png")
+        shoot(pg, "swaps", "tl_swaps.png")
+        shoot(pg, "cases", "tl_cases.png", 2200)
+        ctx.close()
+
+        # ── Staff portal session ──
+        ctx, pg = login_session("sara.h", "staff123")
+        pg.wait_for_timeout(1200); snap(pg, "myschedule.png")
+        shoot(pg, "leaves", "staff_leave.png")
+        shoot(pg, "swaps", "staff_swaps.png")
+        shoot(pg, "cases", "staff_cases.png", 2200)
         try:
-            ctx2 = br.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=2)
-            p2 = ctx2.new_page()
-            p2.goto(BASE + "/", wait_until="networkidle")
-            p2.fill("#login-username", "sara.h"); p2.fill("#login-password", "staff123")
-            p2.evaluate("doLogin()"); p2.wait_for_timeout(4500)
-            try: p2.wait_for_selector("#sidebar-user", timeout=8000)
-            except Exception: pass
-            p2.wait_for_timeout(1200)
-            p2.screenshot(path=os.path.join(OUT, "myschedule.png")); shots += 1; print("shot myschedule.png")
-            p2.evaluate("window.showPage && showPage('leaves')"); p2.wait_for_timeout(1800)
-            p2.screenshot(path=os.path.join(OUT, "staff_leave.png")); shots += 1; print("shot staff_leave.png")
-        except Exception as e: print("staff portal", e)
+            pg.evaluate("openChangePassword()"); pg.wait_for_timeout(700); snap(pg, "staff_changepw.png")
+        except Exception as e: print("staff changepw", e)
+        ctx.close()
         br.close()
-    print("captured", shots, "screens")
+    print("captured", shots[0], "screens")
 
 
 if __name__ == "__main__":
