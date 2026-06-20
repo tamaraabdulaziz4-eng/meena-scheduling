@@ -190,6 +190,23 @@ g1 = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": 
 check("generate warns on pending leaves (409)", g1.status_code == 409, f"{g1.status_code} {g1.text}")
 check("warning flags pending_leaves", (g1.json().get("detail") or {}).get("confirm_required") == "pending_leaves", g1.text)
 
+print("\n== scenario 8b: generate a single section, leaving the other alone ==")
+# Requesting only "General" must route the solver to General alone — the US
+# section is never attempted (so its rota is left untouched). Feasibility of the
+# tiny seed section isn't the point here; the per-section routing is.
+gsec = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH,
+                                         "confirm": True, "section": "General"})
+body = gsec.json()
+secs = (body.get("sections")
+        or (body.get("detail") or {}).get("sections")
+        or {}) if isinstance(body, dict) else {}
+check("per-section generate routes to General only",
+      gsec.status_code in (200, 422) and set(k.upper() for k in secs) <= {"GENERAL"},
+      f"{gsec.status_code} {list(secs)}")
+gbad = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH,
+                                         "confirm": True, "section": "Nope"})
+check("unknown section is rejected (400)", gbad.status_code == 400, f"{gbad.status_code} {gbad.text}")
+
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)

@@ -3644,6 +3644,19 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     branch_id = body.get("branch_id")
     year      = body.get("year")
     month     = body.get("month")
+    # Optional: generate just ONE section (e.g. "General" or "US") and leave the
+    # other section's rota untouched. Empty/absent = generate every section.
+    only_section = (body.get("section") or "").strip()
+
+    def _section_requested(name):
+        if not only_section:
+            return True
+        a, b = only_section.upper(), str(name).upper()
+        if a == b:
+            return True
+        # Treat US / Ultrasound as the same section.
+        us = {"US", "ULTRASOUND"}
+        return a in us and b in us
 
     if not can_access_branch(user, branch_id):
         raise HTTPException(403, "Forbidden")
@@ -4029,6 +4042,11 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             "messages": msgs,
         }
 
+    # If a specific section was asked for, make sure it actually exists for this
+    # branch — otherwise we'd silently generate nothing and look like a failure.
+    if only_section and not any(_section_requested(s) for s in nest_cfg_for_solver["sections"]):
+        raise HTTPException(400, f"Section '{only_section}' not found for this branch")
+
     flat_entries = []
     summary      = []
     total_work   = 0
@@ -4036,6 +4054,10 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
 
     # Generate per section independently so one failing section doesn't block others.
     for sec_name, sec_cfg in nest_cfg_for_solver["sections"].items():
+        # When a single section was requested, skip the others entirely — their
+        # existing rota is left exactly as-is (we never touch their staff below).
+        if not _section_requested(sec_name):
+            continue
         staff_keys = list(sec_cfg.get("staff") or [])
         if not staff_keys:
             section_results[sec_name] = {"status": "SKIPPED", "error": "No staff in section"}
