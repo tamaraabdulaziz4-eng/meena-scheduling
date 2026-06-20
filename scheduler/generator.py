@@ -384,6 +384,14 @@ def generate_schedule(nest_name: str, year: int, month: int,
                     b_m = get_bool(p, 0, mc)
                     model.add(b_m == 0)
 
+        # Rule (mirror of HC4d across the boundary): last day was a Morning →
+        # can't start a Night for two days (no "morning end of last month, night
+        # first of this one"). Block N on day 1 and day 2.
+        if last_code == "M" and "N" in allowed:
+            model.add(get_bool(p, 0, "N") == 0)
+            if n_days >= 2:
+                model.add(get_bool(p, 1, "N") == 0)
+
         # Rule: last was N or D → if day 1 is O, day 2 must also be O
         if last_code in ("N", "D") and n_days >= 2:
             b_o1 = get_bool(p, 0, "O")
@@ -532,23 +540,22 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 b_o_d2 = get_bool(p, d + 2, "O")
                 model.add(b_n_today - b_n_tomorrow - b_o_d2 <= 0)
 
-    # ── Soft Constraint 4c: 1 O day after end of M block ─────────────────────
+    # ── Hard Constraint 4d: 2 days off before flipping M → N ─────────────────
+    # Switching shift type must always include at least two rest days. The N→M
+    # direction is already covered (HC4 forbids N→morning, HC4b forces 2 O days
+    # after a night block). This is the mirror for M→N: after working a Morning
+    # you can't start a Night until two days have passed — so no "morning today,
+    # night tomorrow" (or with just a single day off between).
+    # Encoding: M today ⇒ no N tomorrow and no N the day after.
     for p, sec_name, sec in all_staff:
         allowed = set(sec["allowed_shifts"])
         if "M" not in allowed or "N" not in allowed:
             continue
-        p_al = set(al_schedule.get(p, []))
         for d in range(n_days - 1):
-            day_d1 = d + 2  # 1-indexed
-            if day_d1 in p_al:
-                continue  # AL day counts as rest — skip
-            b_m_today    = get_bool(p, d,     "M")
-            b_m_tomorrow = get_bool(p, d + 1, "M")
-            b_n_tomorrow = get_bool(p, d + 1, "N")
-            b_o_d1       = get_bool(p, d + 1, "O")
-            viol = model.new_bool_var(f"mrest_{p}_{d}")
-            model.add(b_m_today - b_m_tomorrow - b_n_tomorrow - b_o_d1 <= viol)
-            rest_violation_terms.append(viol)
+            b_m = get_bool(p, d, "M")
+            model.add(b_m + get_bool(p, d + 1, "N") <= 1)
+            if d + 2 < n_days:
+                model.add(b_m + get_bool(p, d + 2, "N") <= 1)
 
     # ── Hard Constraint 5: Max consecutive working shifts (per-staff) ───────────
     WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
