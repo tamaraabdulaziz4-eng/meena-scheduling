@@ -139,9 +139,12 @@ check("team lead can't read audit log", LEADA.get("/api/audit").status_code in (
 check("superadmin can read audit log", admin.get("/api/audit").status_code == 200)
 
 print("\n== daily cases reject negative counts ==")
-admin.post("/api/daily-cases", json={"branch_id": bidA, "date": "2026-09-05", "xray": -5, "ct": 3})
-saved = admin.get(f"/api/daily-cases?branch_id={bidA}&date=2026-09-05").json().get("case") or {}
-check("negative case count clamped to 0", saved.get("xray") == 0 and saved.get("ct") == 3, saved)
+# Negatives are now rejected outright (a clear 400) rather than silently clamped,
+# so an obvious typo can't slip through as data.
+rneg = admin.post("/api/daily-cases", json={"branch_id": bidA, "date": "2026-09-05", "xray": -5, "ct": 3})
+check("negative case count rejected (400)", rneg.status_code == 400, rneg.status_code)
+saved = admin.get(f"/api/daily-cases?branch_id={bidA}&date=2026-09-05").json().get("case")
+check("rejected negative report was not saved", not saved, saved)
 
 print("\n== reseeding nest config never clobbers edits ==")
 sec0 = M.q("SELECT id, nest_key, section_name FROM scheduling.nest_sections LIMIT 1", one=True)
