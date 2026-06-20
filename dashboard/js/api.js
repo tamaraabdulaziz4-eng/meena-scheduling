@@ -9,13 +9,35 @@ class APIError extends Error {
 }
 
 const API = {
+  // Requests that legitimately take a while (the solver runs up to ~60s) get a
+  // longer ceiling; everything else fails fast so a cold/hung backend shows a
+  // clear error instead of an endless spinner.
+  _timeoutFor(path) {
+    if (/\/(generate|autofill-cross-cover)/.test(path)) return 180000;  // 3 min
+    return 45000;                                                        // 45 s
+  },
   async request(method, path, body) {
     const opts = { method, credentials: 'include', headers: {} };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
-    const res = await fetch('/api' + path, opts);
+    // Abort the request if the server takes too long, so a slow/stuck backend
+    // surfaces as a retry-able error rather than hanging the UI forever.
+    const ctrl = new AbortController();
+    opts.signal = ctrl.signal;
+    const timer = setTimeout(() => ctrl.abort(), API._timeoutFor(path));
+    let res;
+    try {
+      res = await fetch('/api' + path, opts);
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') {
+        throw new APIError('The server took too long to respond. Please try again.', 0, {});
+      }
+      throw new APIError('Network error — check your connection and try again.', 0, {});
+    }
+    clearTimeout(timer);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       // A 401 on any non-auth call after we were signed in means the session
