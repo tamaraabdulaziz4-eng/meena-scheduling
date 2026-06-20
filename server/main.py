@@ -3946,8 +3946,17 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         # Target (from hours) is what we aim for, but never above the ceiling.
         eff_target = min(target_shifts, ceiling)
 
+        # Leave-adjust the per-staff MIN floor. A configured min (e.g. 17) is a
+        # FULL-month figure; if it isn't scaled down for leave, max(min, target)
+        # drags a person who took leave back UP to the physical maximum — e.g.
+        # 10 AL days but still forced to ~15 shifts instead of ~12. Scale the
+        # floor by availability so leave actually lightens the month.
+        floor = int(db_min_shifts or 0)
+        if leave_days > 0 and n_days_in_month > 0:
+            floor = round(floor * available / n_days_in_month)
+
         # If an explicit DB min is set, honour it but keep it within the ceiling.
-        eff_min = min(max(int(db_min_shifts or 0), eff_target), ceiling)
+        eff_min = min(max(floor, eff_target), ceiling)
         eff_min = max(0, eff_min)
 
         # Give the solver a small upward tolerance (+1) so it can balance fairness
