@@ -1,6 +1,24 @@
 // ── App entry point ───────────────────────────────────────────────────────────
 let currentPage = 'schedule';
 
+// Ping a tiny endpoint on a timer so the serverless database never goes cold —
+// that idle cold-start was the main reason the first load after a break stalled.
+// Only runs while the tab is visible, and fires immediately on load.
+let _keepaliveTimer = null;
+function startKeepalive() {
+  if (_keepaliveTimer) return;
+  const ping = () => {
+    if (document.visibilityState === 'visible') {
+      fetch('/api/health', { credentials: 'include' }).catch(() => {});
+    }
+  };
+  ping();
+  _keepaliveTimer = setInterval(ping, 4 * 60 * 1000);   // every 4 minutes
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') ping();  // warm up on refocus
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
 
@@ -11,6 +29,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // A password-reset link (?reset=TOKEN) jumps straight to the set-password form.
   const resetToken = params.get('reset');
   if (resetToken) { startPasswordReset(resetToken); return; }
+
+  startKeepalive();   // keep the (serverless) DB warm so loads don't stall
 
   showLoader('Starting…');
   const authed = await checkAuth();
