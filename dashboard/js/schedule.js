@@ -14,9 +14,21 @@ let pickerCell = null;
 
 
 async function renderSchedulePage() {
-  // Choose branch: a pending branch (e.g. opened from Review) wins; otherwise
-  // a team lead sees their own branch, cross-branch roles default to the first.
-  if (window._pendingScheduleBranch) {
+  // A deep-link / refresh can carry the exact branch+month in the hash
+  // (#/schedule?branch=3&month=2026-06).
+  const _hp = (typeof hashParams === 'function') ? hashParams() : {};
+  if (/^\d{4}-\d{2}$/.test(_hp.month || '')) {
+    scheduleYear = +_hp.month.slice(0, 4);
+    scheduleMonth = +_hp.month.slice(5, 7);
+  }
+  const _hpBranch = Number(_hp.branch);
+
+  // Choose branch: a deep-linked branch wins, then a pending branch (opened from
+  // Review), then the last-viewed branch; a team lead always sees their own.
+  if (_hpBranch && allBranches.some(b => b.id === _hpBranch)
+      && ['superadmin', 'manager'].includes(currentUser.role)) {
+    currentBranchId = _hpBranch;
+  } else if (window._pendingScheduleBranch) {
     currentBranchId = window._pendingScheduleBranch;
     window._pendingScheduleBranch = null;
   } else if (['superadmin', 'manager'].includes(currentUser.role)) {
@@ -87,10 +99,26 @@ async function renderSchedulePage() {
   await loadScheduleData();
 }
 
+// Reflect the current branch+month in the URL so a refresh or shared link lands
+// on exactly this rota. Only updates the hash while we're on the schedule page,
+// and never triggers a navigation (the page part is unchanged).
+function syncScheduleHash() {
+  if (typeof currentPage !== 'undefined' && currentPage !== 'schedule') return;
+  if (!currentBranchId) return;
+  const mm = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}`;
+  const target = `#/schedule?branch=${currentBranchId}&month=${mm}`;
+  if (location.hash !== target) {
+    // replaceState: update the URL without a hashchange echo and without piling
+    // a history entry on every month step.
+    try { history.replaceState(null, '', target); } catch (e) { location.hash = target; }
+  }
+}
+
 async function onBranchChange() {
   const sel = document.getElementById('sched-branch-select');
   currentBranchId = Number(sel.value);
   try { localStorage.setItem('lastBranchId', String(currentBranchId)); } catch (e) {}
+  syncScheduleHash();
   await loadScheduleData();
   animateIn('rota-wrap');
 }
@@ -223,6 +251,7 @@ async function loadScheduleData() {
     // A newer load started while we were awaiting — drop this stale result.
     if (token !== _scheduleLoadToken) return;
 
+    syncScheduleHash();   // keep the URL (branch+month) shareable/refresh-safe
     sectionMonthSettings = secSettings || {};
     scheduleStaff   = staffData.filter(s => s.active);
     currentSchedule = schedData.schedule;

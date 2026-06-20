@@ -17,8 +17,70 @@ async function renderMySchedulePage() {
     </div>
     <div id="portal-banner"></div>
     <div id="portal-grid">${LOADING_HTML}</div>
-    <div id="portal-legend" style="margin-top:16px"></div>`;
+    <div id="portal-legend" style="margin-top:16px"></div>
+    <div id="portal-requests" style="margin-top:20px"></div>`;
   await loadMySchedule();
+  loadMyRequests();   // "everything that's mine" — open requests + their stage
+}
+
+// A consolidated "My requests" card so a staff member tracks every open request
+// (leave, swap, time-back) and its stage — incl. the reason if it was rejected —
+// without hunting across pages.
+async function loadMyRequests() {
+  const box = document.getElementById('portal-requests');
+  if (!box) return;
+  let leaves = [], swaps = [], tbs = [];
+  try {
+    [leaves, swaps, tbs] = await Promise.all([
+      API.get('/leaves').catch(() => []),
+      API.get('/swaps').catch(() => []),
+      API.get('/timeback').catch(() => []),
+    ]);
+  } catch (e) { return; }
+
+  const LBL = {
+    pending: ['Awaiting team lead', 'badge-orange'], lead_approved: ['Awaiting manager', 'badge-yellow'],
+    pending_lead: ['Awaiting team lead', 'badge-orange'], pending_manager: ['Awaiting manager', 'badge-yellow'],
+    approved: ['Approved', 'badge-green'], rejected: ['Rejected', 'badge-gray'],
+  };
+  const swapLbl = Object.assign({}, LBL, { pending: ['Awaiting peer', 'badge-orange'] });
+  const rows = [];
+
+  // Leaves — grouped into ranges; show anything not yet fully approved (or rejected).
+  const groups = (typeof groupLeaveRanges === 'function') ? groupLeaveRanges(leaves || []) : (leaves || []);
+  groups.forEach(g => {
+    if (g.status === 'approved') return;
+    const span = g.date_to && g.date_to !== g.date_from ? `${fmtDateDisplay(g.date_from)} → ${fmtDateDisplay(g.date_to)}` : fmtDateDisplay(g.date_from || g.date);
+    rows.push({ kind: g.leave_type || 'Leave', what: span, status: g.status, lbl: LBL[g.status], note: g.status === 'rejected' ? g.note : '' });
+  });
+  // Swaps I'm part of that aren't finished.
+  (swaps || []).forEach(s => {
+    if (['approved', 'cancelled'].includes(s.status)) return;
+    const who = s.staff_b_name ? ` with ${s.staff_b_name}` : '';
+    rows.push({ kind: 'Swap', what: `${fmtDateDisplay(s.date_a)}${who}`, status: s.status, lbl: swapLbl[s.status] || ['Pending', 'badge-orange'], note: s.status === 'rejected' ? (s.reject_note || s.note) : '' });
+  });
+  // Time-back claims still in flight.
+  (tbs || []).forEach(t => {
+    if (t.status === 'approved') return;
+    rows.push({ kind: 'Time-back', what: `${t.days} day${t.days > 1 ? 's' : ''} · ${fmtDateDisplay(t.date)}`, status: t.status, lbl: LBL[t.status], note: t.status === 'rejected' ? t.note : '' });
+  });
+
+  if (!rows.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="hm-card">
+      <div class="hm-card-head"><div class="hm-card-title">My open requests</div>
+        <div class="hm-card-meta">${rows.length} open</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        ${rows.map(r => {
+          const [txt, cls] = r.lbl || ['Pending', 'badge-gray'];
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px">
+            <div><div style="font-weight:600;font-size:13px">${escapeHtml(r.kind)} · ${escapeHtml(r.what)}</div>
+              ${r.note ? `<div style="font-size:11px;color:#E63946">Reason: ${escapeHtml(r.note)}</div>` : ''}</div>
+            <span class="badge ${cls}">${escapeHtml(txt)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
 }
 
 async function changePortalMonth(delta) {

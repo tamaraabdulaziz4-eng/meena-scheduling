@@ -79,6 +79,15 @@ lv = next((l for l in leaves if l["staff_id"] == A["id"] and l["date"] == f"{YEA
 check("leave visible to manager", lv is not None, leaves)
 ap = admin.put(f"/api/leaves/{lv['id']}/status", json={"status": "approved"})
 check("manager approves leave", ap.status_code == 200, ap.text)
+# Bulk approval path (used by "Approve all pending"): a multi-day range in one call.
+staffA.post("/api/leaves", json={"date_from": f"{YEAR}-08-18", "date_to": f"{YEAR}-08-20", "leave_type": "AL"})
+pend = [l for l in admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+        if l["staff_id"] == A["id"] and l["status"] == "pending"]
+bap = admin.put("/api/leaves/status", json={"ids": [l["id"] for l in pend], "status": "approved", "confirm": True})
+check("batch approve a multi-day range", bap.status_code == 200, bap.text)
+after = [l for l in admin.get(f"/api/leaves?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+         if l["staff_id"] == A["id"] and f"{YEAR}-08-18" <= l["date"] <= f"{YEAR}-08-20"]
+check("batched range all approved", after and all(l["status"] == "approved" for l in after), after)
 # the AL should now be on the schedule
 ents = admin.get(f"/api/schedules/{sid}/entries").json()
 al = next((e for e in ents if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-10"), None)

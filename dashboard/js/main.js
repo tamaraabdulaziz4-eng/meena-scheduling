@@ -191,6 +191,10 @@ function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
 }
+// Query params carried in the hash, e.g. #/schedule?branch=3&month=2026-06
+function hashParams() {
+  return Object.fromEntries(new URLSearchParams(location.hash.split('?')[1] || ''));
+}
 window.addEventListener('hashchange', () => {
   const p = pageFromHash();
   // Only act on a real change (e.g. the back button) — showPage sets the hash
