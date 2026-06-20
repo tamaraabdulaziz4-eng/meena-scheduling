@@ -37,6 +37,10 @@ WEEKENDS = {4, 5}   # 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu... wait — Fri=4, Sat=5
 # The weekly day off is Friday only — Saturday is a normal working day.
 WEEKEND_DAYS_OF_WEEK = {4}      # Friday only
 
+# Aim to give each staff member this many Fridays off per month (soft target —
+# honoured only when coverage allows; the solver still balances Fridays evenly).
+TARGET_WEEKEND_OFF = 2
+
 # ── Nest definitions ──────────────────────────────────────────────────────────
 NESTS = {
     "NEST1": {
