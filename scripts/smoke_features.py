@@ -238,6 +238,51 @@ ents_gone = admin.get(f"/api/schedules/{sid}/entries").json()
 check("cover entry removed from host rota",
       not any(e["staff_id"] == visitor["id"] and e["date"] == cov_date for e in ents_gone), "still there")
 
+print("\n== scenario 8d: auto-fill from surplus staff at same-city sharing branches ==")
+# Target branch in city "ZZCity"; a donor branch in the same city that shares its
+# staff and is OVERSTAFFED on Aug 4 (3 work M, min default 2 -> surplus 1).
+tgt = admin.post("/api/branches", json={"name": "ZZ Y3 Target"}).json()
+admin.put(f"/api/branches/{tgt['id']}", json={"name": "ZZ Y3 Target", "city": "ZZCity", "shares_staff": False})
+don = admin.post("/api/branches", json={"name": "ZZ Donor"}).json()
+admin.put(f"/api/branches/{don['id']}", json={"name": "ZZ Donor", "city": "ZZCity", "shares_staff": True})
+far = admin.post("/api/branches", json={"name": "ZZ Donor FarCity"}).json()
+admin.put(f"/api/branches/{far['id']}", json={"name": "ZZ Donor FarCity", "city": "OtherCity", "shares_staff": True})
+d1 = admin.post("/api/staff", json={"name": "ZZ D1", "branch_id": don["id"]}).json()
+d2 = admin.post("/api/staff", json={"name": "ZZ D2", "branch_id": don["id"]}).json()
+d3 = admin.post("/api/staff", json={"name": "ZZ D3", "branch_id": don["id"]}).json()
+farstaff = admin.post("/api/staff", json={"name": "ZZ Far", "branch_id": far["id"]}).json()
+tsched = admin.post("/api/schedules/open", json={"branch_id": tgt["id"], "year": YEAR, "month": MONTH}).json()["schedule"]["id"]
+dsched = admin.post("/api/schedules/open", json={"branch_id": don["id"], "year": YEAR, "month": MONTH}).json()["schedule"]["id"]
+fsched = admin.post("/api/schedules/open", json={"branch_id": far["id"], "year": YEAR, "month": MONTH}).json()["schedule"]["id"]
+A4 = f"{YEAR}-08-04"   # Tuesday — surplus day (3 working)
+A5 = f"{YEAR}-08-05"   # Wednesday — exactly at min (2 working), no surplus
+for st in (d1, d2, d3):
+    admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": st["id"], "date": A4, "shift_code": "M"})
+admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d1["id"], "date": A5, "shift_code": "M"})
+admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d2["id"], "date": A5, "shift_code": "M"})
+admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d3["id"], "date": A5, "shift_code": "O"})
+# Far-city donor also has surplus on Aug 4 — but must NOT be used (different city).
+admin.put(f"/api/schedules/{fsched}/entries", json={"staff_id": farstaff["id"], "date": A4, "shift_code": "M"})
+
+af = admin.post(f"/api/schedules/{tsched}/autofill-cross-cover",
+                json={"shift_code": "M", "per_day": 1, "section": "General", "skip_fridays": True})
+check("autofill runs", af.status_code == 200, af.text)
+afj = af.json() if af.status_code == 200 else {}
+tents = admin.get(f"/api/schedules/{tsched}/entries").json()
+a4_cover = [e for e in tents if e["date"] == A4 and e["cross_branch_id"] == don["id"]]
+check("surplus day filled by relocating one donor staffer", len(a4_cover) == 1, [e['date'] for e in tents][:5])
+dents = admin.get(f"/api/schedules/{dsched}/entries").json()
+a4_donor_work = [e for e in dents if e["date"] == A4 and e["shift_code"] == "M" and not e["cross_branch_id"]]
+check("donor stays at its minimum after lending (3->2)", len(a4_donor_work) == 2, len(a4_donor_work))
+check("no-surplus day is left untouched", not any(e["date"] == A5 and e["cross_branch_id"] == don["id"] for e in tents), "A5 touched")
+check("far-city donor never used", not any(e["staff_id"] == farstaff["id"] for e in tents), "far used")
+check("relocated staffer not double-booked (donor cell freed)",
+      not any(e["staff_id"] in (d1["id"],d2["id"],d3["id"]) and e["date"]==A4 and e["shift_code"]=="M" and not e["cross_branch_id"]
+              for e in dents) or len(a4_donor_work)==2, "double")
+# A non-sharing same-city branch must contribute nobody.
+check("autofill reported donors are sharing same-city only",
+      set(afj.get("donors", [])) == {"ZZ Donor"}, afj.get("donors"))
+
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)
@@ -366,7 +411,9 @@ lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDc, "xray": 4, "s
 mgr_mid = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in mgr_b4]
 check("single-branch submit does NOT ping the manager",
       not any("daily cases" in (n["message"] or "").lower() for n in mgr_mid), mgr_mid)
-for b in branches:
+# Re-fetch: extra branches may have been created by earlier scenarios, and the
+# "day complete" check on the server counts every branch.
+for b in admin.get("/api/branches").json():
     admin.post("/api/daily-cases", json={"branch_id": b["id"], "date": CDc, "xray": 1, "submit": True})
 mgr_done = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in mgr_b4]
 comp = [n for n in mgr_done if "daily cases complete" in (n["message"] or "").lower()]

@@ -272,6 +272,10 @@ def init_schema():
             """)
             # Safe now that staff_month_settings exists (was previously run too early).
             cur.execute("ALTER TABLE scheduling.staff_month_settings ADD COLUMN IF NOT EXISTS max_consecutive INTEGER NOT NULL DEFAULT 4;")
+            # Cross-branch staff sharing: a branch can lend its surplus staff, and
+            # we only pair branches in the same city.
+            cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS city TEXT;")
+            cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS shares_staff BOOLEAN NOT NULL DEFAULT false;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -1526,7 +1530,7 @@ def me(user=Depends(get_current_user)):
 
 @app.get("/api/branches")
 def list_branches(user=Depends(get_current_user)):
-    return q("SELECT id,name,created_at FROM scheduling.branches ORDER BY name")
+    return q("SELECT id,name,city,shares_staff,created_at FROM scheduling.branches ORDER BY name")
 
 @app.post("/api/branches")
 async def create_branch(request: Request, user=Depends(require_superadmin)):
@@ -1544,9 +1548,16 @@ async def create_branch(request: Request, user=Depends(require_superadmin)):
 @app.put("/api/branches/{bid}")
 async def update_branch(bid: int, request: Request, user=Depends(require_superadmin)):
     body = await request.json()
-    row = q("UPDATE scheduling.branches SET name=%s WHERE id=%s RETURNING id,name",
-            ((body.get("name") or "").strip(), bid), one=True)
-    if not row: raise HTTPException(404, "Not found")
+    cur = q("SELECT name,city,shares_staff FROM scheduling.branches WHERE id=%s", (bid,), one=True)
+    if not cur: raise HTTPException(404, "Not found")
+    name = (body.get("name") or cur["name"]).strip()
+    city = body.get("city") if "city" in body else cur["city"]
+    if isinstance(city, str): city = city.strip() or None
+    shares = bool(body["shares_staff"]) if "shares_staff" in body else cur["shares_staff"]
+    row = q("""UPDATE scheduling.branches SET name=%s, city=%s, shares_staff=%s
+               WHERE id=%s RETURNING id,name,city,shares_staff""",
+            (name, city, shares, bid), one=True)
+    insert_audit(user, "UPDATE_BRANCH", name, f"city={city or '-'} shares={shares}")
     return row
 
 @app.delete("/api/branches/{bid}")
@@ -2724,6 +2735,144 @@ def remove_cross_branch_cover(sid: int, staff_id: int, date: str, user=Depends(r
       (sid, staff_id, date), exec_only=True)
     insert_audit(user, "CROSS_BRANCH_COVER_REMOVE", str(staff_id), f"branch {sched['branch_id']} on {date}")
     return {"ok": True}
+
+_OFF_CODES = {"O", "AL", "SL", "TB"}   # not a worked shift
+
+def _is_work_code(c):
+    return bool(c) and c not in _OFF_CODES and c != "OC"
+
+@app.post("/api/schedules/{sid}/autofill-cross-cover")
+async def autofill_cross_cover(sid: int, request: Request, user=Depends(require_reviewer)):
+    """Fill a branch's rota by RELOCATING surplus ("overlap") staff from same-city
+    sharing branches. We only move someone who is already WORKING that day at a
+    branch that has more staff than its minimum coverage — so we never touch a
+    rest day and never drop a donor branch below its minimum. The relocated shift
+    moves to this branch (the person's total shift count is unchanged)."""
+    body = await request.json()
+    sched = assert_can_edit_schedule(user, sid)   # reviewer may edit even if locked
+    y, m = sched["year"], sched["month"]
+    target = q("SELECT id,name,city FROM scheduling.branches WHERE id=%s", (sched["branch_id"],), one=True)
+    shift_code = (body.get("shift_code") or "Y3").strip()
+    per_day  = max(1, int(body.get("per_day") or 1))
+    skip_fri = body.get("skip_fridays", True)
+    want_section = body.get("section") or None
+    do_lock = bool(body.get("lock", False))
+
+    codes = {r["code"] for r in q("SELECT code FROM scheduling.shift_types")}; codes.add("O")
+    if shift_code not in codes:
+        raise HTTPException(400, f"Unknown shift code: {shift_code}")
+
+    # Donor branches: opted into sharing, same city (when the target has one), not self.
+    donors = q("""SELECT id,name FROM scheduling.branches
+                  WHERE shares_staff=true AND id<>%s
+                    AND (%s::text IS NULL OR city IS NOT DISTINCT FROM %s)""",
+               (target["id"], target.get("city"), target.get("city")))
+    if not donors:
+        return {"filled": 0, "assigned": [], "shortfalls": [],
+                "detail": "No same-city branches are sharing staff."}
+    donor_ids = [d["id"] for d in donors]
+
+    dstaff = q("""SELECT id,name,branch_id,speciality FROM scheduling.staff
+                  WHERE active=true AND branch_id = ANY(%s)""", (donor_ids,))
+    sec_of = {s["id"]: _section_of(s["speciality"]) for s in dstaff}
+    name_of = {s["id"]: s["name"] for s in dstaff}
+
+    # Donor entries this month — used to find each person's shift per day and to
+    # count how many are working each section/day (to detect surplus).
+    dent = q("""SELECT e.id, e.staff_id, sc.branch_id,
+                       TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code, e.cross_branch_id
+                FROM scheduling.schedule_entries e
+                JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                WHERE sc.branch_id = ANY(%s) AND sc.year=%s AND sc.month=%s""", (donor_ids, y, m))
+    shift_at = {}            # (staff_id, date) -> entry row
+    working_by = {}          # (branch_id, section, date) -> count of own workers
+    already_lent = set()     # (staff_id, date) already covering elsewhere
+    for e in dent:
+        shift_at[(e["staff_id"], e["date"])] = e
+        if e["cross_branch_id"]:
+            already_lent.add((e["staff_id"], e["date"]))
+        elif _is_work_code(e["shift_code"]):
+            sec = sec_of.get(e["staff_id"], "General")
+            working_by[(e["branch_id"], sec, e["date"])] = \
+                working_by.get((e["branch_id"], sec, e["date"]), 0) + 1
+
+    # Minimum coverage (min_m+min_n) per donor branch + section.
+    minreq = {}
+    for d in donors:
+        nest = branch_to_nest(d["name"])
+        if not nest:
+            continue
+        for r in q("""SELECT ns.section_name,
+                             COALESCE(sms.min_m,1)+COALESCE(sms.min_n,1) AS req
+                      FROM scheduling.nest_sections ns
+                      LEFT JOIN scheduling.section_month_settings sms
+                             ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
+                      WHERE ns.nest_key=%s""", (y, m, nest)):
+            minreq[(d["id"], _section_of([r["section_name"]]))] = int(r["req"])
+
+    # How many workers the target already has each day (own staff + prior covers).
+    y3_count = {}
+    for e in q("SELECT TO_CHAR(date,'YYYY-MM-DD') AS date, shift_code FROM scheduling.schedule_entries WHERE schedule_id=%s", (sid,)):
+        if _is_work_code(e["shift_code"]):
+            y3_count[e["date"]] = y3_count.get(e["date"], 0) + 1
+
+    borrow_load = {}   # staff_id -> times borrowed this run (spread it around)
+    n_days = _cal.monthrange(y, m)[1]
+    assigned, shortfalls = [], []
+
+    for day in range(1, n_days + 1):
+        if skip_fri and _cal.weekday(y, m, day) == 4:    # Friday: branch closed
+            continue
+        date = f"{y}-{m:02d}-{day:02d}"
+        need = per_day - y3_count.get(date, 0)
+        if need <= 0:
+            continue
+        # Surplus workers available to lend on this day.
+        pool = []
+        for s in dstaff:
+            sd, bid_s = s["id"], s["branch_id"]
+            sec = sec_of[sd]
+            if want_section and sec != want_section:
+                continue
+            if (sd, date) in already_lent:
+                continue
+            ent = shift_at.get((sd, date))
+            if not ent or not _is_work_code(ent["shift_code"]):   # resting / unscheduled
+                continue
+            surplus = working_by.get((bid_s, sec, date), 0) - minreq.get((bid_s, sec), 2)
+            if surplus <= 0:                                       # no overlap to spare
+                continue
+            pool.append((borrow_load.get(sd, 0), -surplus, s["name"], sd, bid_s, sec, ent))
+        pool.sort()
+        for _, _, _, sd, bid_s, sec, ent in pool:
+            if need <= 0:
+                break
+            if working_by.get((bid_s, sec, date), 0) - minreq.get((bid_s, sec), 2) <= 0:
+                continue   # branch's surplus got used up earlier this day
+            # Relocate: free the donor cell, place the cover shift on the target.
+            q("DELETE FROM scheduling.schedule_entries WHERE id=%s", (ent["id"],), exec_only=True)
+            q("""INSERT INTO scheduling.schedule_entries
+                 (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
+                 VALUES (%s,%s,%s,%s,%s,false,%s)
+                 ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
+                 shift_code=EXCLUDED.shift_code, cross_branch_id=EXCLUDED.cross_branch_id,
+                 note=EXCLUDED.note""",
+              (sid, sd, date, shift_code, bid_s, f"cover (was {ent['shift_code']} @ home)"),
+              exec_only=True)
+            working_by[(bid_s, sec, date)] = working_by.get((bid_s, sec, date), 0) - 1
+            already_lent.add((sd, date))
+            borrow_load[sd] = borrow_load.get(sd, 0) + 1
+            assigned.append({"staff": name_of.get(sd, sd), "date": date})
+            need -= 1
+        if need > 0:
+            shortfalls.append({"date": date, "missing": need})
+
+    if do_lock and assigned:
+        q("UPDATE scheduling.schedules SET is_locked=true WHERE id=%s", (sid,), exec_only=True)
+    insert_audit(user, "AUTOFILL_CROSS_COVER", target["name"],
+                 f"{len(assigned)} placed, {len(shortfalls)} short days")
+    return {"filled": len(assigned), "assigned": assigned, "shortfalls": shortfalls,
+            "donors": [d["name"] for d in donors]}
 
 # ── Time-back / compensation claims ───────────────────────────────────────────
 _TB_REASONS = ("covered", "offday", "extra", "oncall")
