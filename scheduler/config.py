@@ -34,8 +34,8 @@ REST_SHIFTS = {"O", "AL", "SL", "TB"}
 # Islamic weekend
 WEEKENDS = {4, 5}   # 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu... wait — Fri=4, Sat=5
 # Actually: weekday() in Python: Mon=0 ... Sun=6
-# We define weekend as Friday=4 and Saturday=5
-WEEKEND_DAYS_OF_WEEK = {4, 5}   # Friday, Saturday
+# The weekly day off is Friday only — Saturday is a normal working day.
+WEEKEND_DAYS_OF_WEEK = {4}      # Friday only
 
 # ── Nest definitions ──────────────────────────────────────────────────────────
 NESTS = {
