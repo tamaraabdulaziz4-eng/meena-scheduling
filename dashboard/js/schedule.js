@@ -19,6 +19,12 @@ async function renderSchedulePage() {
   if (window._pendingScheduleBranch) {
     currentBranchId = window._pendingScheduleBranch;
     window._pendingScheduleBranch = null;
+  } else if (['superadmin', 'manager'].includes(currentUser.role)) {
+    // Cross-branch roles: return to the branch they were last looking at instead
+    // of snapping back to the first one every visit.
+    const saved = Number(localStorage.getItem('lastBranchId'));
+    currentBranchId = (saved && allBranches.some(b => b.id === saved))
+      ? saved : (currentUser.branch_id || allBranches[0]?.id);
   } else {
     currentBranchId = currentUser.branch_id || (allBranches[0]?.id);
   }
@@ -84,6 +90,7 @@ async function renderSchedulePage() {
 async function onBranchChange() {
   const sel = document.getElementById('sched-branch-select');
   currentBranchId = Number(sel.value);
+  try { localStorage.setItem('lastBranchId', String(currentBranchId)); } catch (e) {}
   await loadScheduleData();
   animateIn('rota-wrap');
 }
@@ -337,6 +344,7 @@ function renderTeamLeadBanner() {
           <div class="ttl">${returned ? 'Returned for edits' : 'Draft — not submitted yet'}</div>
           <div class="sub">${returned && note ? 'Manager note: ' + escapeHtml(note) : 'Finish the rota, then send it to your manager for review.'}</div>
         </div>
+        <button class="btn btn-ghost btn-sm" onclick="checkScheduleNow()" title="Check for coverage gaps, overwork, and blanks">🔍 Check</button>
         <button class="btn btn-ghost btn-sm" onclick="submitScheduleForReview(${sid})"
           style="background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-weight:700">
           📤 Submit for review
@@ -376,6 +384,69 @@ function renderTeamLeadBanner() {
   wrap.innerHTML = html;
 }
 
+// Scan the current rota for problems a team lead should see BEFORE submitting:
+// coverage gaps, over-worked staff, and unfilled days. Pure read of loaded state.
+function checkScheduleIssues() {
+  const issues = [];
+  const nDays = daysInMonth(scheduleYear, scheduleMonth);
+  const isWork = c => c && !['O','AL','SL','TB','OC'].includes(c);
+  const general = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
+  const us = scheduleStaff.filter(s => s.speciality?.includes('Ultrasound') && !s.speciality?.includes('General'));
+  const sections = (us.length && general.length)
+    ? [['General', general], ['US', us]]
+    : [[us.length ? 'US' : 'General', scheduleStaff]];
+
+  // 1) Coverage gaps per section/day.
+  for (const [key, arr] of sections) {
+    if (!arr.length) continue;
+    const req = sectionReqByName(key);
+    const minM = Math.max(0, parseInt(req?.min_m ?? 1) || 0);
+    const minN = Math.max(0, parseInt(req?.min_n ?? 1) || 0);
+    const shortM = [], shortN = [];
+    for (let d = 1; d <= nDays; d++) {
+      const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      let m = 0, n = 0;
+      arr.forEach(s => { const c = entryMap[`${s.id}_${dateStr}`]?.shift_code; if (c==='M') m++; else if (c==='N') n++; });
+      if (minM && m < minM) shortM.push(d);
+      if (minN && n < minN) shortN.push(d);
+    }
+    const secName = key === 'US' ? 'Ultrasound' : 'General';
+    if (shortM.length) issues.push(`${secName}: morning (M) short on day${shortM.length>1?'s':''} ${shortM.join(', ')}`);
+    if (shortN.length) issues.push(`${secName}: night (N) short on day${shortN.length>1?'s':''} ${shortN.join(', ')}`);
+  }
+
+  // 2) Over-worked staff (above their monthly max).
+  scheduleStaff.forEach(s => {
+    let worked = 0, blanks = 0;
+    for (let d = 1; d <= nDays; d++) {
+      const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const e = entryMap[`${s.id}_${dateStr}`];
+      if (!e) blanks++; else if (isWork(e.shift_code)) worked++;
+    }
+    const max = staffMonthSettings[s.id]?.max_shifts;
+    if (max && worked > max) issues.push(`${s.name}: ${worked} shifts — over the ${max} monthly max`);
+    s._blanks = blanks;
+  });
+
+  // 3) Unfilled (blank) cells — an incomplete rota.
+  const totalBlanks = scheduleStaff.reduce((a, s) => a + (s._blanks || 0), 0);
+  if (totalBlanks) issues.push(`${totalBlanks} cell${totalBlanks>1?'s are':' is'} still blank (unscheduled)`);
+
+  return issues;
+}
+
+function checkScheduleNow() {
+  const issues = checkScheduleIssues();
+  if (!issues.length) { toast('✓ No issues found — looks ready to submit'); return; }
+  const list = issues.map(i => `<li style="margin:4px 0">${escapeHtml(i)}</li>`).join('');
+  showModal('sched-check-modal', `
+    <div style="font-size:16px;font-weight:800;margin-bottom:6px">🔍 Schedule check — ${issues.length} issue${issues.length>1?'s':''}</div>
+    <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--text);max-height:300px;overflow:auto">${list}</ul>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-sm" onclick="closeModal('sched-check-modal')">Close</button>
+    </div>`);
+}
+
 async function submitScheduleForReview(scheduleId) {
   // Don't submit an empty rota — count assigned work shifts first.
   const hasShifts = currentEntries?.some(e => !['O','AL','SL','TB'].includes(e.shift_code));
@@ -383,11 +454,13 @@ async function submitScheduleForReview(scheduleId) {
     toast('Add shifts before submitting for review', 'err');
     return;
   }
-  const ok = await showConfirm(
-    'Submit for review',
-    'Send this schedule to your manager? It will be locked until reviewed.',
-    'Submit'
-  );
+  // Pre-send check: surface coverage gaps / overwork / blanks so they're a
+  // conscious choice, not a surprise the manager bounces back.
+  const issues = checkScheduleIssues();
+  const confirmBody = issues.length
+    ? `${issues.length} issue${issues.length>1?'s were':' was'} found (use the 🔍 Check button to see details). Submit to your manager anyway? It will be locked until reviewed.`
+    : 'Send this schedule to your manager? It will be locked until reviewed.';
+  const ok = await showConfirm('Submit for review', confirmBody, issues.length ? 'Submit anyway' : 'Submit');
   if (!ok) return;
   showLoader('Submitting…');
   try {

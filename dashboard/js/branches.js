@@ -95,7 +95,9 @@ async function saveBranch() {
   }
 }
 async function deleteBranchConfirm(id, name) {
-  const ok = await showConfirm('Delete Branch', `Delete "${name}"? This cannot be undone.`);
+  const ok = await showTypedConfirm('Delete Branch',
+    `Deleting "${name}" also removes its schedules, staff links, and case reports. This cannot be undone.`,
+    name);
   if (!ok) return;
   try {
     await API.delete(`/branches/${id}`);

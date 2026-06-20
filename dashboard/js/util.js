@@ -200,6 +200,36 @@ function showConfirm(title, body, okLabel = 'Delete', okClass = 'confirm-ok') {
   return new Promise(r => { _confirmResolve = r; });
 }
 
+// Destructive confirm that makes you TYPE an exact word (e.g. the branch name)
+// before the action unlocks — guards irreversible, cascading deletes.
+function showTypedConfirm(title, body, requiredText, okLabel = 'Delete') {
+  const bodyEl = document.getElementById('confirm-body');
+  const okBtn  = document.getElementById('confirm-ok');
+  document.getElementById('confirm-title').textContent = title;
+  bodyEl.innerHTML = `<div style="margin-bottom:10px">${escapeHtml(body)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Type <b>${escapeHtml(requiredText)}</b> to confirm:</div>
+    <input id="confirm-typed-input" type="text" autocomplete="off"
+      style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px" placeholder="${escapeHtml(requiredText)}">`;
+  okBtn.textContent = okLabel;
+  okBtn.disabled = true;
+  okBtn.style.opacity = '0.5';
+  const input = document.getElementById('confirm-typed-input');
+  input.addEventListener('input', () => {
+    const ok = input.value.trim() === requiredText;
+    okBtn.disabled = !ok;
+    okBtn.style.opacity = ok ? '1' : '0.5';
+  });
+  document.getElementById('confirm-overlay').classList.add('open');
+  setTimeout(() => input.focus(), 60);
+  return new Promise(r => {
+    _confirmResolve = (val) => {
+      // Restore the shared dialog so the next plain confirm isn't left disabled.
+      okBtn.disabled = false; okBtn.style.opacity = '1';
+      r(val);
+    };
+  });
+}
+
 // ── Theme ────────────────────────────────────────────────────────────────────
 function initTheme() {
   if (localStorage.getItem('theme') === 'dark') applyDark();
