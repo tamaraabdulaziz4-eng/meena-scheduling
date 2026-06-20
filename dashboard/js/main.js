@@ -125,9 +125,10 @@ async function initApp() {
   } catch (e) { console.error('Data load error:', e); }
   hideLoader();
 
-  // Await the first page render (schedule) so the welcome splash — which is
-  // shown by doLogin — stays up until the rota is actually on screen.
-  await showPage(window._defaultPage || 'schedule');
+  // Await the first page render so the welcome splash — shown by doLogin — stays
+  // up until the page is on screen. Honour a deep-link hash (e.g. after a
+  // refresh or a shared link) when it points to a page this user may see.
+  await showPage(pageFromHash() || window._defaultPage || 'schedule');
 }
 
 // Resolve role-based redirects up front so a blocked route animates ONCE to its
@@ -182,10 +183,28 @@ async function renderRoute(page) {
 // the old content stays put until the new one is ready, with only the slim top
 // bar for feedback. Instant and flash-free.
 let _navSeq = 0;
+// Page-level hash routing: keep the URL (#/page) in sync so the browser back
+// button, a refresh, and shared links all land on the right screen.
+const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
+  'leaves','swaps','cases','branches','shifts','users','audit']);
+function pageFromHash() {
+  const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
+  return VALID_PAGES.has(h) ? h : null;
+}
+window.addEventListener('hashchange', () => {
+  const p = pageFromHash();
+  // Only act on a real change (e.g. the back button) — showPage sets the hash
+  // itself, and that echo is ignored because it already matches currentPage.
+  if (p && p !== currentPage) showPage(p);
+});
+
 async function showPage(requested) {
   const page = resolvePage(requested);
   const seq = ++_navSeq;
   currentPage = page;
+  // Reflect the resolved page in the URL hash (the hashchange echo is a no-op
+  // since it now matches currentPage).
+  if (pageFromHash() !== page) { try { location.hash = '#/' + page; } catch (e) {} }
 
   // Nav active state (highlight the resolved destination).
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
