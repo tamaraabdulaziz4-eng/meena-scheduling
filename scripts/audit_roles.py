@@ -219,11 +219,24 @@ check("non-superadmin can't reset data", MGR.post("/api/admin/reset-data", json=
 check("reset needs the confirm token", admin.post("/api/admin/reset-data", json={}).status_code == 400)
 b_before  = len(admin.get("/api/branches").json())
 st_before = len(admin.get("/api/shift-types").json())
+# Tuned per-section limits are CONFIG, not test data — they must survive a reset.
+secX = M.q("SELECT id, nest_key FROM scheduling.nest_sections LIMIT 1", one=True)
+bidX = M._branch_id_for_nest(secX["nest_key"]) if secX else None
+if secX and bidX:
+    admin.put(f"/api/section-month-settings/{secX['id']}",
+              json={"branch_id": bidX, "year": 2031, "month": 3,
+                    "min_m": 1, "max_m": 2, "min_n": 1, "max_n": 2,
+                    "max_consecutive": 3, "min_o_block": 2, "max_o_block": 3})
 rr = admin.post("/api/admin/reset-data", json={"confirm": "RESET"})
 check("superadmin reset succeeds", rr.status_code == 200, rr.text)
 check("staff cleared", len(admin.get("/api/staff").json()) == 0)
 check("branches kept", len(admin.get("/api/branches").json()) == b_before and b_before > 0)
 check("shift types kept", len(admin.get("/api/shift-types").json()) == st_before and st_before > 0)
+if secX and bidX:
+    kept = admin.get(f"/api/section-month-settings?branch_id={bidX}&year=2031&month=3").json()
+    keptsec = kept.get(str(secX["id"])) or kept.get(secX["id"]) or {}
+    check("tuned section limits survive reset (config, not test data)",
+          keptsec.get("max_consecutive") == 3 and keptsec.get("max_o_block") == 3, kept)
 check("superadmin still signed in", admin.get("/api/auth/me").status_code == 200)
 check("only superadmin logins remain", all(u["role"] == "superadmin" for u in admin.get("/api/users").json()))
 

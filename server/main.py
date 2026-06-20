@@ -281,6 +281,9 @@ def init_schema():
             # If the column already existed from a previous deploy, ensure new
             # rows default to 2 (no isolated Off days).
             cur.execute("ALTER TABLE scheduling.section_month_settings ALTER COLUMN min_o_block SET DEFAULT 2;")
+            # Max consecutive Off (Off) days per section per month. 0 disables
+            # (unlimited). Set e.g. 3 to forbid runs of 4+ rest days in a row.
+            cur.execute("ALTER TABLE scheduling.section_month_settings ADD COLUMN IF NOT EXISTS max_o_block INTEGER NOT NULL DEFAULT 0;")
             # Note: older DBs may have extra columns; migrations are additive.
 
             # ── Feature tables: notifications, leave workflow, swaps, holidays ──
@@ -1100,7 +1103,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
                    COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
                    COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n,
                    COALESCE(sms.max_consecutive,4) AS max_consecutive,
-                   COALESCE(sms.min_o_block,2) AS min_o_block
+                   COALESCE(sms.min_o_block,2) AS min_o_block,
+                   COALESCE(sms.max_o_block,0) AS max_o_block
             FROM scheduling.nest_sections ns
             LEFT JOIN scheduling.section_month_settings sms
               ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
@@ -1111,7 +1115,8 @@ def get_nest_sections(nest_key: str, year: int = None, month: int = None) -> lis
                            allowed_shifts,coverage,exact_coverage,sort_order,updated_at,
                            1 AS min_m, 2 AS max_m, 1 AS min_n, 2 AS max_n,
                            4 AS max_consecutive,
-                           2 AS min_o_block
+                           2 AS min_o_block,
+                           0 AS max_o_block
                     FROM scheduling.nest_sections WHERE nest_key=%s
                     ORDER BY sort_order,section_name""", (nest_key,))
     for r in rows:
@@ -1827,7 +1832,8 @@ def get_section_month_settings(request: Request, user=Depends(require_admin)):
                COALESCE(sms.min_m,1) AS min_m, COALESCE(sms.max_m,2) AS max_m,
                COALESCE(sms.min_n,1) AS min_n, COALESCE(sms.max_n,2) AS max_n,
                COALESCE(sms.max_consecutive,4) AS max_consecutive,
-               COALESCE(sms.min_o_block,2) AS min_o_block
+               COALESCE(sms.min_o_block,2) AS min_o_block,
+               COALESCE(sms.max_o_block,0) AS max_o_block
         FROM scheduling.nest_sections ns
         LEFT JOIN scheduling.section_month_settings sms
           ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
@@ -1842,7 +1848,7 @@ def get_section_month_settings(request: Request, user=Depends(require_admin)):
             "section_name": "General",
             "min_m": 1, "max_m": 2,
             "min_n": 1, "max_n": 2,
-            "max_consecutive": 4, "min_o_block": 2,
+            "max_consecutive": 4, "min_o_block": 2, "max_o_block": 0,
             "virtual": True,
         }}
     return {r["section_id"]: {
@@ -1851,6 +1857,7 @@ def get_section_month_settings(request: Request, user=Depends(require_admin)):
         "min_n": r["min_n"], "max_n": r["max_n"],
         "max_consecutive": r["max_consecutive"],
         "min_o_block": r["min_o_block"],
+        "max_o_block": r["max_o_block"],
     } for r in rows}
 
 @app.put("/api/section-month-settings/{section_id}")
@@ -1864,12 +1871,17 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
     max_n = int(body.get("max_n", 2))
     max_consecutive = int(body.get("max_consecutive", 4))
     min_o_block = int(body.get("min_o_block", 2))
+    max_o_block = int(body.get("max_o_block", 0))
     if min_m > max_m: raise HTTPException(400, "min_m cannot exceed max_m")
     if min_n > max_n: raise HTTPException(400, "min_n cannot exceed max_n")
     if max_consecutive < 1 or max_consecutive > 14:
         raise HTTPException(400, "max_consecutive must be between 1 and 14")
     if min_o_block < 1 or min_o_block > 14:
         raise HTTPException(400, "min_o_block must be between 1 and 14")
+    if max_o_block < 0 or max_o_block > 31:
+        raise HTTPException(400, "max_o_block must be between 0 (off) and 31")
+    if max_o_block and max_o_block < min_o_block:
+        raise HTTPException(400, "max_o_block cannot be less than min_o_block")
 
     # section_id 0 is the virtual "General" we surface for branches that have no
     # nest_sections rows yet. On first save, create a real section so the values
@@ -1909,13 +1921,13 @@ async def upsert_section_month_settings(section_id: int, request: Request, user=
         if owner is None or not can_access_branch(user, owner):
             raise HTTPException(403, "You can only change sections in your own branch")
     row = q("""INSERT INTO scheduling.section_month_settings
-                 (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block, max_o_block)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (section_id, year, month) DO UPDATE
-               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, max_consecutive=%s, min_o_block=%s, updated_at=NOW()
+               SET min_m=%s, max_m=%s, min_n=%s, max_n=%s, max_consecutive=%s, min_o_block=%s, max_o_block=%s, updated_at=NOW()
                RETURNING *""",
-            (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block,
-             min_m, max_m, min_n, max_n, max_consecutive, min_o_block), one=True)
+            (section_id, year, month, min_m, max_m, min_n, max_n, max_consecutive, min_o_block, max_o_block,
+             min_m, max_m, min_n, max_n, max_consecutive, min_o_block, max_o_block), one=True)
     return row
 
 # ── Shift Types ───────────────────────────────────────────────────────────────
@@ -3498,10 +3510,15 @@ def get_audit(user=Depends(require_superadmin)):
 # structure you set up — branches, shift types, nest sections, holidays, org
 # settings — and all superadmin accounts. Superadmin-only, and the request must
 # carry the exact "RESET" confirmation token.
+# Operational/test data wiped by the superadmin "Clear test data" action.
+# NOTE: section_month_settings / staff_month_settings are CONFIGURATION (the
+# tuned per-month limits like max-consecutive, min/max off, M/N coverage), not
+# test data — wiping them silently reset everyone's carefully-set constraints.
+# They're tied to nest_sections (which we keep), so they're preserved here.
 _RESET_TABLES = [
     "schedule_entries", "schedules", "leave_requests", "shift_swaps",
     "daily_cases", "staff_registrations", "notifications", "password_resets",
-    "staff_month_settings", "section_month_settings", "audit_log", "staff",
+    "audit_log", "staff",
 ]
 
 @app.post("/api/admin/reset-data")
@@ -3795,6 +3812,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         max_n = int(sec.get("max_n", 2) or 2)
         sec_max_consecutive = int(sec.get("max_consecutive", branch_max_consecutive) or branch_max_consecutive)
         sec_min_o_block = int(sec.get("min_o_block", 2) or 2)
+        sec_max_o_block = int(sec.get("max_o_block", 0) or 0)
         if min_m > max_m:
             min_m = max_m
         if min_n > max_n:
@@ -3814,9 +3832,10 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             "min_n":          min_n,
             "max_n":          max_n,
             "min_o_block":    sec_min_o_block,
+            "max_o_block":    sec_max_o_block,
         }
         section_limits_for_solver[sec["section_name"]] = {"max_consecutive": sec_max_consecutive}
-        print(f"[Generate] section={sec['section_name']} min_m={min_m} max_m={max_m} min_n={min_n} max_n={max_n} max_consecutive={sec_max_consecutive}")
+        print(f"[Generate] section={sec['section_name']} min_m={min_m} max_m={max_m} min_n={min_n} max_n={max_n} max_consecutive={sec_max_consecutive} min_o_block={sec_min_o_block} max_o_block={sec_max_o_block}")
 
     # Prev tail
     prev_tail_by_solver = {}

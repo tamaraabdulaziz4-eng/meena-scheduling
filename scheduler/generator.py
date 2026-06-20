@@ -324,9 +324,23 @@ def generate_schedule(nest_name: str, year: int, month: int,
     # For each person, choose whether they do M in the first half and N in the
     # second half, or vice-versa. Within a half-month, they can only work that
     # half’s shift type (or be Off/AL).
+    #
+    # This rigid split needs enough people to keep BOTH M and N covered in EACH
+    # half. Small sections (e.g. a 2–3 person Ultrasound team) can't sustain it,
+    # which makes the whole section INFEASIBLE and silently keeps its old rota.
+    # So we only apply the hard half-month lock to sections big enough to carry
+    # it; smaller sections still get every other rest rule, just without the
+    # forced M-half/N-half structure.
+    section_sizes = {}
+    for _p, _sn, _sec in all_staff:
+        section_sizes[_sn] = section_sizes.get(_sn, 0) + 1
+    HALF_LOCK_MIN = 4
+
     half = (n_days + 1) // 2
     first_half_is_m = {}
     for p, sec_name, sec in all_staff:
+        if section_sizes.get(sec_name, 0) < HALF_LOCK_MIN:
+            continue
         first_half_is_m[p] = model.new_bool_var(f"first_half_m_{p}")
         for d in range(n_days):
             if p in al_schedule and (d + 1) in al_schedule[p]:
@@ -640,6 +654,20 @@ def generate_schedule(nest_name: str, year: int, month: int,
                     terms.append(o_bool[s + r].negated())
                 # Forbid that exact pattern.
                 model.add_bool_or([t.negated() for t in terms])
+
+    # ── Hard Constraint 5e: Maximum Off (O) block length ─────────────────────
+    # If enabled per section (`max_o_block` = U >= 1), no run of scheduled Off
+    # days may exceed U in a row. We forbid every window of U+1 consecutive days
+    # from being all-O. AL days carry O=0 here, so a leave block naturally splits
+    # an O-run (the cap is about *scheduled* rest, not approved leave).
+    for p, sec_name, sec in all_staff:
+        U = int((sec.get("max_o_block", 0) or 0))
+        if U < 1:
+            continue
+        o_bool = [get_bool(p, d, "O") for d in range(n_days)]
+        win = U + 1
+        for s in range(0, n_days - win + 1):
+            model.add(sum(o_bool[s:s + win]) <= U)
 
     # ── Hard Constraint 5b: Per-staff min/max shifts per month ───────────────
     for p, sec_name, sec in all_staff:
