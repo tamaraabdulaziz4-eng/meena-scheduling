@@ -3763,7 +3763,27 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
     if existing and existing.get("locked") and user["role"] not in ("superadmin", "manager"):
         raise HTTPException(403, "This report is submitted/locked. Ask a manager to reopen it.")
     submit = bool(body.get("submit"))
-    field_vals = [max(0, int(body.get(f) or 0)) for f in _CASE_FIELDS]
+    # Validate every count is a whole, non-negative number — don't 500 on a typo
+    # and don't silently clamp a negative (which would hide the mistake).
+    field_vals = []
+    for f in _CASE_FIELDS:
+        raw = body.get(f, 0)
+        if raw in (None, ""):
+            raw = 0
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"'{f}' must be a whole number")
+        if v < 0:
+            raise HTTPException(400, f"'{f}' can't be negative")
+        field_vals.append(v)
+    vals_by_field = dict(zip(_CASE_FIELDS, field_vals))
+    total_cases = sum(vals_by_field[f] for f in ("xray", "ct", "us", "mamo", "bmd", "insert_cd"))
+    # Soft sanity warning (doesn't block the save): procedures logged but the
+    # patient count left at zero is almost always a missed field.
+    warning = None
+    if total_cases > 0 and vals_by_field["total_pt"] == 0:
+        warning = "You logged cases but the total patients is 0 — please double-check."
     cols = ",".join(_CASE_FIELDS)
     ph   = ",".join(["%s"] * len(_CASE_FIELDS))
     upd  = ",".join(f"{f}=EXCLUDED.{f}" for f in _CASE_FIELDS)
@@ -3806,6 +3826,8 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
                          f"Daily cases complete for {date}: all {tot['branches']} branches submitted — "
                          f"{tot['cases']} cases, {tot['pt']} patients",
                          link="cases", ntype="submitted")
+    if warning:
+        out["warning"] = warning
     return out
 
 def _send_cases_reminders(date):

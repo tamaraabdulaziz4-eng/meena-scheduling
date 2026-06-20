@@ -462,6 +462,14 @@ r = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 23
 check("team lead submits cases", r.status_code == 200, r.text)
 check("total_cases auto-computed (37)", r.json().get("total_cases") == 37, r.json())
 check("locked after submit", r.json().get("locked") is True, r.json())
+# Input validation: negatives and non-numeric are rejected (not 500, not clamped).
+CDv = f"{YEAR}-08-27"
+neg = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDv, "xray": -3})
+check("negative count rejected (400)", neg.status_code == 400, neg.status_code)
+nan = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDv, "ct": "abc"})
+check("non-numeric count rejected (400)", nan.status_code == 400, nan.status_code)
+warn = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDv, "xray": 5, "total_pt": 0})
+check("warns when cases logged but patients=0", bool(warn.json().get("warning")), warn.json())
 # Manager-noise rule: a single branch submitting must NOT ping the manager —
 # only a completed day (every branch in) sends one summary.
 CDc = f"{YEAR}-08-29"

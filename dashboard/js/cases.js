@@ -170,14 +170,20 @@ async function saveCase(submit) {
     if (!ok) return;
   }
   const g = id => parseInt(document.getElementById('case-' + id).value || 0, 10) || 0;
+  // Guard against negatives client-side too (the backend also rejects them).
+  const neg = CASE_INPUTS.find(k => g(k) < 0);
+  if (neg) {
+    const m = document.getElementById('case-msg'); m.className = 'msg err';
+    m.textContent = 'Counts can\'t be negative.'; return;
+  }
   const body = { branch_id: caseModalBranch, date: casesDate, submit: !!submit };
   CASE_INPUTS.forEach(k => body[k] = g(k));
   showLoader(submit ? 'Submitting…' : 'Saving…');
   try {
-    await API.post('/daily-cases', body);
+    const res = await API.post('/daily-cases', body);
     closeCaseModal();
     await loadCases();
-    toast(submit ? 'Report submitted' : 'Saved');
+    toast(res?.warning || (submit ? 'Report submitted' : 'Saved'), res?.warning ? 'err' : undefined);
   } catch (e) {
     const m = document.getElementById('case-msg'); m.className = 'msg err'; m.textContent = e.message;
   } finally { hideLoader(); }
