@@ -56,6 +56,7 @@ async function renderSchedulePage() {
         ` : ''}
         ${['superadmin','manager'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm" onclick="openCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
+          <button class="btn btn-ghost btn-sm" onclick="openAutofillModal()" id="btn-autofill" title="Auto-fill this branch from surplus staff at same-city sharing branches">🏗 Fill from other branches</button>
         ` : ''}
         ${['admin','superadmin','manager'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
@@ -1318,6 +1319,74 @@ async function removeCover(staffId, date) {
     renderRotaGrid();
     toast('Cover removed');
   } catch (e) { toast(e.message, 'err'); }
+}
+
+// ── Auto-fill from surplus staff at same-city sharing branches (manager only) ──
+function openAutofillModal() {
+  if (!currentSchedule?.id) { toast('Open a branch schedule first', 'err'); return; }
+  const shiftOpts = (allShiftTypes || [])
+    .filter(s => !s.is_off && !s.is_leave)
+    .map(s => `<option value="${s.code}"${s.code==='Y3'?' selected':(s.code==='M'?'':'')}>${s.code} — ${escapeHtml(s.label||s.code)}</option>`).join('');
+  showModal('autofill-modal', `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div style="font-size:17px;font-weight:800">🏗 Fill from other branches</div>
+      <button onclick="closeModal('autofill-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5">
+      Relocates <b>surplus</b> staff from same-city branches that have opted to share — only people already
+      working a day where their branch is over its minimum. Rest days are never touched, and no one's shift
+      count goes up.
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <label style="width:150px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">Shift to assign</div>
+        <select id="af-shift" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:8px">${shiftOpts}</select></label>
+      <label style="width:120px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">Staff per day</div>
+        <input type="number" id="af-perday" value="1" min="1" max="10" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:8px"></label>
+      <label style="width:150px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">Section</div>
+        <select id="af-section" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:8px">
+          <option value="">Any section</option><option value="General">General</option><option value="US">Ultrasound</option>
+        </select></label>
+    </div>
+    <div style="display:flex;gap:18px;margin-top:12px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px">
+        <input type="checkbox" id="af-skipfri" checked style="width:auto"> Skip Fridays (branch closed)</label>
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px">
+        <input type="checkbox" id="af-lock" style="width:auto"> Lock the schedule when done</label>
+    </div>
+    <div class="msg" id="af-msg" style="margin-top:10px"></div>
+    <div id="af-report" style="margin-top:10px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('autofill-modal')">Close</button>
+      <button class="btn btn-sm" id="af-run" onclick="runAutofill()">Fill now</button>
+    </div>
+  `);
+}
+
+async function runAutofill() {
+  const msg = document.getElementById('af-msg');
+  const report = document.getElementById('af-report');
+  const btn = document.getElementById('af-run');
+  const payload = {
+    shift_code: document.getElementById('af-shift').value,
+    per_day: parseInt(document.getElementById('af-perday').value) || 1,
+    section: document.getElementById('af-section').value || null,
+    skip_fridays: document.getElementById('af-skipfri').checked,
+    lock: document.getElementById('af-lock').checked,
+  };
+  btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Filling…'; report.innerHTML = '';
+  try {
+    const res = await API.post(`/schedules/${currentSchedule.id}/autofill-cross-cover`, payload);
+    if (res.detail) { msg.className = 'msg err'; msg.textContent = res.detail; btn.disabled = false; return; }
+    msg.className = 'msg'; msg.textContent = `✓ Placed ${res.filled} shift${res.filled!==1?'s':''} from: ${(res.donors||[]).join(', ') || '—'}`;
+    if ((res.shortfalls || []).length) {
+      report.innerHTML = `<div style="font-size:12px;color:#E63946;background:rgba(230,57,70,0.08);border-radius:8px;padding:8px 10px">
+        ⚠ Couldn't fully fill ${res.shortfalls.length} day(s): ${res.shortfalls.map(s=>`${s.date.slice(8)} (−${s.missing})`).join(', ')}.
+        Not enough surplus staff at sharing branches.</div>`;
+    }
+    await loadScheduleData();
+    toast(`Filled ${res.filled} shift(s)`);
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+  btn.disabled = false;
 }
 
 async function runGenerate() {
