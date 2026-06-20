@@ -283,6 +283,35 @@ check("relocated staffer not double-booked (donor cell freed)",
 check("autofill reported donors are sharing same-city only",
       set(afj.get("donors", [])) == {"ZZ Donor"}, afj.get("donors"))
 
+print("\n== scenario 8e: Y3-aware generation reserves a fair, leave-weighted share ==")
+# Pure split: capacity-weighted, always sums to the total, bigger capacity wins ties.
+check("split sums to total", sum(M._largest_remainder_share({1:6, 2:5, 3:0}, 2).values()) == 2)
+check("zero-capacity branch gets nothing", M._largest_remainder_share({1:6, 2:5, 3:0}, 2).get(3) == 0)
+check("single unit goes to the larger capacity", M._largest_remainder_share({1:6, 2:5}, 1) == {1:1, 2:0})
+# Integration: two same-city sharing branches, equal head-count, but one has a
+# staffer on leave -> the healthy branch carries Y3's need.
+tc = admin.post("/api/branches", json={"name": "ZZ Y3 City2"}).json()
+admin.put(f"/api/branches/{tc['id']}", json={"name": "ZZ Y3 City2", "city": "ZLeaveCity", "cover_need_per_day": 1})
+dx = admin.post("/api/branches", json={"name": "ZZ Dx"}).json()
+admin.put(f"/api/branches/{dx['id']}", json={"name": "ZZ Dx", "city": "ZLeaveCity", "shares_staff": True})
+dy = admin.post("/api/branches", json={"name": "ZZ Dy"}).json()
+admin.put(f"/api/branches/{dy['id']}", json={"name": "ZZ Dy", "city": "ZLeaveCity", "shares_staff": True})
+for bb in (dx, dy):
+    admin.post("/api/staff", json={"name": f"ZZ {bb['name']} g1", "branch_id": bb["id"]})
+    admin.post("/api/staff", json={"name": f"ZZ {bb['name']} g2", "branch_id": bb["id"]})
+# US staff must NOT add General capacity.
+admin.post("/api/staff", json={"name": "ZZ Dx US", "branch_id": dx["id"], "speciality": ["US"]})
+# One Dy staffer takes an approved leave day this month -> lowers Dy's capacity.
+dy_staff = [s for s in admin.get("/api/staff").json() if s["branch_id"] == dy["id"]][0]
+M.q("""INSERT INTO scheduling.leave_requests (staff_id,date,leave_type,status)
+       VALUES (%s,%s,'AL','approved')""", (dy_staff["id"], f"{YEAR}-08-12"), exec_only=True)
+sx = M._cross_cover_export_share(dx["id"], "ZLeaveCity", True, YEAR, MONTH)
+sy = M._cross_cover_export_share(dy["id"], "ZLeaveCity", True, YEAR, MONTH)
+check("shares sum to the city's need", sx + sy == 1, f"sx={sx} sy={sy}")
+check("leave-burdened branch carries a smaller share", sx == 1 and sy == 0, f"sx={sx} sy={sy}")
+check("a non-sharing target reserves nothing",
+      M._cross_cover_export_share(tc["id"], "ZLeaveCity", False, YEAR, MONTH) == 0)
+
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)

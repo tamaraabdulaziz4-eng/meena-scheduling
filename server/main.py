@@ -276,6 +276,9 @@ def init_schema():
             # we only pair branches in the same city.
             cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS city TEXT;")
             cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS shares_staff BOOLEAN NOT NULL DEFAULT false;")
+            # A target branch (e.g. Y3) that's staffed by importing General staff
+            # from same-city sharing branches: how many it needs each working day.
+            cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS cover_need_per_day INTEGER NOT NULL DEFAULT 0;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -1530,7 +1533,7 @@ def me(user=Depends(get_current_user)):
 
 @app.get("/api/branches")
 def list_branches(user=Depends(get_current_user)):
-    return q("SELECT id,name,city,shares_staff,created_at FROM scheduling.branches ORDER BY name")
+    return q("SELECT id,name,city,shares_staff,cover_need_per_day,created_at FROM scheduling.branches ORDER BY name")
 
 @app.post("/api/branches")
 async def create_branch(request: Request, user=Depends(require_superadmin)):
@@ -1548,16 +1551,17 @@ async def create_branch(request: Request, user=Depends(require_superadmin)):
 @app.put("/api/branches/{bid}")
 async def update_branch(bid: int, request: Request, user=Depends(require_superadmin)):
     body = await request.json()
-    cur = q("SELECT name,city,shares_staff FROM scheduling.branches WHERE id=%s", (bid,), one=True)
+    cur = q("SELECT name,city,shares_staff,cover_need_per_day FROM scheduling.branches WHERE id=%s", (bid,), one=True)
     if not cur: raise HTTPException(404, "Not found")
     name = (body.get("name") or cur["name"]).strip()
     city = body.get("city") if "city" in body else cur["city"]
     if isinstance(city, str): city = city.strip() or None
     shares = bool(body["shares_staff"]) if "shares_staff" in body else cur["shares_staff"]
-    row = q("""UPDATE scheduling.branches SET name=%s, city=%s, shares_staff=%s
-               WHERE id=%s RETURNING id,name,city,shares_staff""",
-            (name, city, shares, bid), one=True)
-    insert_audit(user, "UPDATE_BRANCH", name, f"city={city or '-'} shares={shares}")
+    need = max(0, int(body["cover_need_per_day"])) if "cover_need_per_day" in body else cur["cover_need_per_day"]
+    row = q("""UPDATE scheduling.branches SET name=%s, city=%s, shares_staff=%s, cover_need_per_day=%s
+               WHERE id=%s RETURNING id,name,city,shares_staff,cover_need_per_day""",
+            (name, city, shares, need, bid), one=True)
+    insert_audit(user, "UPDATE_BRANCH", name, f"city={city or '-'} shares={shares} need={need}")
     return row
 
 @app.delete("/api/branches/{bid}")
@@ -2549,6 +2553,55 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_admi
     return {"updated": len(rows), "status": new_status}
 
 # ── Sick-leave cover suggestions ──────────────────────────────────────────────
+
+def _largest_remainder_share(caps: dict, total: int) -> dict:
+    """Split `total` whole units across keys proportionally to their capacity,
+    using the largest-remainder method (so the parts always sum to `total`).
+    Keys with more capacity get the leftover units; zero-capacity keys get 0."""
+    keys = list(caps.keys())
+    tot_cap = sum(max(0.0, float(caps[k])) for k in keys)
+    if total <= 0 or tot_cap <= 0:
+        return {k: 0 for k in keys}
+    raw  = {k: total * max(0.0, float(caps[k])) / tot_cap for k in keys}
+    base = {k: int(raw[k]) for k in keys}
+    rem  = total - sum(base.values())
+    # Hand the remaining units to the biggest fractional parts (ties → bigger cap).
+    order = sorted(keys, key=lambda k: (raw[k] - base[k], caps[k]), reverse=True)
+    for k in order[:max(0, rem)]:
+        base[k] += 1
+    return base
+
+def _cross_cover_export_share(branch_id, branch_city, shares_staff, year, month):
+    """How many EXTRA General staff/day this donor branch should field so the
+    city's cross-branch target(s) (e.g. Y3) get covered. The city's total per-day
+    need is split equally across sharing branches, weighted by each branch's
+    leave-adjusted General capacity — a branch with staff on leave carries less."""
+    if not shares_staff or not branch_city:
+        return 0
+    tgt = q("""SELECT COALESCE(SUM(cover_need_per_day),0) AS need FROM scheduling.branches
+               WHERE city IS NOT DISTINCT FROM %s AND COALESCE(cover_need_per_day,0)>0""",
+            (branch_city,), one=True)
+    total_need = int((tgt or {}).get("need") or 0)
+    if total_need <= 0:
+        return 0
+    donors = q("""SELECT id FROM scheduling.branches
+                  WHERE shares_staff=true AND city IS NOT DISTINCT FROM %s""", (branch_city,))
+    dids = [d["id"] for d in donors]
+    if branch_id not in dids:
+        return 0
+    ndays = _cal.monthrange(year, month)[1]
+    rows = q("""SELECT s.branch_id, s.speciality,
+                  (SELECT COUNT(*) FROM scheduling.leave_requests l
+                     WHERE l.staff_id=s.id AND l.status='approved'
+                       AND EXTRACT(YEAR FROM l.date)=%s AND EXTRACT(MONTH FROM l.date)=%s) AS leave_days
+                FROM scheduling.staff s WHERE s.active=true AND s.branch_id = ANY(%s)""",
+             (year, month, dids))
+    caps = {d: 0.0 for d in dids}
+    for r in rows:
+        if _section_of(r["speciality"]) != "General":
+            continue
+        caps[r["branch_id"]] += max(0.0, 1.0 - int(r["leave_days"] or 0) / ndays)
+    return _largest_remainder_share(caps, total_need).get(branch_id, 0)
 
 def _section_of(speciality):
     """Classify a staff member's section as 'US' or 'General'."""
@@ -3971,7 +4024,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                          AND l.status='approved'
                          AND EXTRACT(YEAR FROM l.date)=%s
                          AND EXTRACT(MONTH FROM l.date)=%s""", (branch_id, year, month))
-    branch     = q("SELECT id,name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True)
+    branch     = q("SELECT id,name,city,shares_staff FROM scheduling.branches WHERE id=%s", (branch_id,), one=True)
     prev_tail  = q("""SELECT e.staff_id,TO_CHAR(e.date,'YYYY-MM-DD') AS date,
                               e.shift_code,s.name AS staff_name
                        FROM scheduling.schedule_entries e
@@ -4107,6 +4160,18 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         }
         section_limits_for_solver[sec["section_name"]] = {"max_consecutive": sec_max_consecutive}
         print(f"[Generate] section={sec['section_name']} min_m={min_m} max_m={max_m} min_n={min_n} max_n={max_n} max_consecutive={sec_max_consecutive} min_o_block={sec_min_o_block} max_o_block={sec_max_o_block}")
+
+    # Cross-branch awareness: if this branch lends staff to a same-city target
+    # (e.g. Y3), reserve its fair share by raising General morning coverage so the
+    # surplus is guaranteed (not opportunistic). General only — never Ultrasound.
+    export_share = _cross_cover_export_share(branch_id, (branch or {}).get("city"),
+                                             (branch or {}).get("shares_staff"), year, month)
+    if export_share > 0 and "General" in nest_cfg_for_solver["sections"]:
+        g = nest_cfg_for_solver["sections"]["General"]
+        g["min_m"] += export_share
+        if g["max_m"] < g["min_m"]:
+            g["max_m"] = g["min_m"]
+        print(f"[Generate] cross-branch export: reserving +{export_share} General M/day → min_m={g['min_m']} max_m={g['max_m']}")
 
     # Prev tail
     prev_tail_by_solver = {}
