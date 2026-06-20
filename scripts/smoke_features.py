@@ -329,6 +329,19 @@ check("leave-burdened branch carries a smaller share", sx == 1 and sy == 0, f"sx
 check("a non-sharing target reserves nothing",
       M._cross_cover_export_share(tc["id"], "ZLeaveCity", False, YEAR, MONTH) == 0)
 
+print("\n== scenario 8f: schedule lookup is read-only (no accidental drafts) ==")
+FM = 11   # a month with no schedule yet
+lk = admin.get(f"/api/schedules/lookup?branch_id={bid}&year={YEAR}&month={FM}")
+check("lookup returns null for a fresh month", lk.status_code == 200 and lk.json().get("schedule") is None, lk.text)
+# Looking again must STILL be null — lookup never creates a row.
+lk2 = admin.get(f"/api/schedules/lookup?branch_id={bid}&year={YEAR}&month={FM}")
+check("repeated lookup never creates a draft", lk2.json().get("schedule") is None, lk2.json())
+# Explicit open is what creates it.
+op = admin.post("/api/schedules/open", json={"branch_id": bid, "year": YEAR, "month": FM})
+check("explicit open creates the schedule", op.status_code == 200 and op.json()["schedule"]["id"], op.text)
+lk3 = admin.get(f"/api/schedules/lookup?branch_id={bid}&year={YEAR}&month={FM}")
+check("lookup now finds the created schedule", lk3.json().get("schedule") is not None, lk3.json())
+
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)

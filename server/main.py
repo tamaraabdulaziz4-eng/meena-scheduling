@@ -2111,6 +2111,27 @@ async def open_schedule(request: Request, user=Depends(require_admin)):
     entries = get_entries(schedule["id"])
     return {"schedule": schedule, "entries": entries}
 
+@app.get("/api/schedules/lookup")
+def lookup_schedule(request: Request, user=Depends(require_admin)):
+    """Read-only: return the existing schedule for a branch/month (with entries),
+    or schedule=null if none exists — WITHOUT creating a draft. Browsing a branch
+    must never silently spawn an empty schedule; creation is an explicit action."""
+    p = request.query_params
+    branch_id, year, month = p.get("branch_id"), p.get("year"), p.get("month")
+    if not can_access_branch(user, branch_id): raise HTTPException(403, "Forbidden")
+    schedule = q("""SELECT s.*, cu.username AS created_by_name, ru.username AS reviewed_by_name,
+                           au.username AS approved_by_name,
+                           TO_CHAR(s.approved_at,'YYYY-MM-DD') AS approved_at_date
+                    FROM scheduling.schedules s
+                    LEFT JOIN scheduling.users cu ON cu.id=s.created_by
+                    LEFT JOIN scheduling.users ru ON ru.id=s.reviewed_by
+                    LEFT JOIN scheduling.users au ON au.id=s.approved_by
+                    WHERE s.branch_id=%s AND s.year=%s AND s.month=%s""",
+                 (branch_id, year, month), one=True)
+    if not schedule:
+        return {"schedule": None, "entries": []}
+    return {"schedule": schedule, "entries": get_entries(schedule["id"])}
+
 @app.get("/api/schedules/{sid}/entries")
 def list_entries(sid: int, user=Depends(get_current_user)):
     # A staff member sees only their own row, via /api/my-schedule — not the
