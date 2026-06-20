@@ -1526,8 +1526,31 @@ async def reject_registration(rid: int, request: Request, user=Depends(require_a
     return {"ok": True}
 
 @app.get("/api/auth/me")
-def me(user=Depends(get_current_user)):
+def me(response: Response, user=Depends(get_current_user)):
+    # Sliding session: re-issue the cookie on each app load so an active user is
+    # never silently logged out — the 30-day window keeps resetting while in use.
+    # Mirror the login payload exactly (note: epoch comes from token_epoch) so the
+    # epoch check in get_current_user keeps passing.
+    try:
+        payload = {k: user.get(k) for k in ("id", "username", "role", "branch_id", "branch_name", "staff_id")}
+        payload["epoch"] = int(user.get("token_epoch") or 0)
+        response.set_cookie("token", sign_token(payload), httponly=True, samesite="lax",
+                            secure=os.environ.get("COOKIE_SECURE", "1") != "0",
+                            max_age=JWT_DAYS * 86400)
+    except Exception:
+        pass
     return user
+
+@app.get("/api/health")
+def health():
+    """Cheap liveness probe. The dashboard pings this on a timer to keep the
+    (serverless) database warm, so the first real request after an idle spell
+    isn't stuck waiting for a cold connection."""
+    try:
+        q("SELECT 1", one=True)
+        return {"ok": True}
+    except Exception:
+        return {"ok": False}
 
 # ── Branches ──────────────────────────────────────────────────────────────────
 
@@ -2097,16 +2120,45 @@ def list_entries(sid: int, user=Depends(get_current_user)):
     assert_schedule_access(user, sid)
     return get_entries(sid)
 
+def _get_or_create_schedule_id(branch_id, year, month, created_by=None):
+    """Resolve a branch+month to its schedule id, creating a draft if missing."""
+    row = q("""INSERT INTO scheduling.schedules (branch_id,year,month,status,created_by)
+               VALUES (%s,%s,%s,'draft',%s)
+               ON CONFLICT (branch_id,year,month) DO UPDATE SET updated_at=NOW()
+               RETURNING id""", (branch_id, year, month, created_by), one=True)
+    return row["id"]
+
 def get_entries(schedule_id):
-    return q("""SELECT e.id,e.schedule_id,e.staff_id,
+    own = q("""SELECT e.id,e.schedule_id,e.staff_id,
                        TO_CHAR(e.date,'YYYY-MM-DD') AS date,
                        e.shift_code,e.cross_branch_id,e.is_oncall,e.note,
                        s.name AS staff_name,s.speciality,s.is_cross_branch,
-                       b.name AS cross_branch_name
+                       b.name AS cross_branch_name, NULL AS home_branch_name
                 FROM scheduling.schedule_entries e
                 JOIN scheduling.staff s ON s.id=e.staff_id
                 LEFT JOIN scheduling.branches b ON b.id=e.cross_branch_id
                 WHERE e.schedule_id=%s ORDER BY s.name,e.date""", (schedule_id,))
+    # Inbound cross-branch cover: staff from OTHER branches whose own rota places
+    # them at THIS branch (their entry carries cross_branch_id = this branch).
+    # Surface them so the host rota shows who's covering it.
+    sc = q("SELECT branch_id,year,month FROM scheduling.schedules WHERE id=%s", (schedule_id,), one=True)
+    inbound = []
+    if sc:
+        inbound = q("""SELECT e.id, %s AS schedule_id, e.staff_id,
+                              TO_CHAR(e.date,'YYYY-MM-DD') AS date,
+                              e.shift_code, e.cross_branch_id, e.is_oncall, e.note,
+                              s.name AS staff_name, s.speciality, s.is_cross_branch,
+                              hb.name AS cross_branch_name, ownb.name AS home_branch_name
+                       FROM scheduling.schedule_entries e
+                       JOIN scheduling.schedules ssc ON ssc.id=e.schedule_id
+                       JOIN scheduling.staff s ON s.id=e.staff_id
+                       LEFT JOIN scheduling.branches hb ON hb.id=e.cross_branch_id
+                       LEFT JOIN scheduling.branches ownb ON ownb.id=ssc.branch_id
+                       WHERE e.cross_branch_id=%s AND ssc.year=%s AND ssc.month=%s
+                         AND ssc.branch_id<>%s
+                       ORDER BY s.name,e.date""",
+                    (schedule_id, sc["branch_id"], sc["year"], sc["month"], sc["branch_id"]))
+    return own + inbound
 
 @app.put("/api/schedules/{sid}/entries")
 async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
@@ -2738,9 +2790,11 @@ def cover_candidates_for_branch(request: Request, user=Depends(require_reviewer)
 
 @app.post("/api/schedules/{sid}/cover")
 async def add_cross_branch_cover(sid: int, request: Request, user=Depends(require_reviewer)):
-    """Place a staff member from ANOTHER branch onto this branch's rota to cover
-    a day. Manager/superadmin only. The visitor's home branch is recorded in
-    cross_branch_id so both rotas can show where they came from."""
+    """Cover a day at THIS branch with a staff member from ANOTHER branch.
+    Manager/superadmin only. The cover shift is written on the VISITOR'S OWN rota
+    (their home schedule) with cross_branch_id pointing here — so their home
+    sheet shows e.g. 'Y3' that day, and this host rota shows them as a visitor.
+    One entry, so the person's shift count never double-counts."""
     body = await request.json()
     sched = assert_schedule_access(user, sid)
     staff_id = body.get("staff_id")
@@ -2762,6 +2816,7 @@ async def add_cross_branch_cover(sid: int, request: Request, user=Depends(requir
     codes.add("O")
     if code not in codes:
         raise HTTPException(400, f"Unknown shift code: {code}")
+    home_sid = _get_or_create_schedule_id(visitor["branch_id"], y, m, user["id"])
     row = q("""INSERT INTO scheduling.schedule_entries
                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
                VALUES (%s,%s,%s,%s,%s,false,%s)
@@ -2769,7 +2824,7 @@ async def add_cross_branch_cover(sid: int, request: Request, user=Depends(requir
                shift_code=EXCLUDED.shift_code, cross_branch_id=EXCLUDED.cross_branch_id
                RETURNING id,schedule_id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
                          shift_code,cross_branch_id,is_oncall,note""",
-            (sid, visitor["id"], date, code, visitor["branch_id"], "cover"), one=True)
+            (home_sid, visitor["id"], date, code, sched["branch_id"], "cover"), one=True)
     # Let the visitor know they're covering elsewhere.
     host = q("SELECT name FROM scheduling.branches WHERE id=%s", (sched["branch_id"],), one=True) or {}
     host_name = host.get("name", "another branch")
@@ -2781,11 +2836,14 @@ async def add_cross_branch_cover(sid: int, request: Request, user=Depends(requir
 
 @app.delete("/api/schedules/{sid}/cover")
 def remove_cross_branch_cover(sid: int, staff_id: int, date: str, user=Depends(require_reviewer)):
-    """Remove a cross-branch cover entry (manager/superadmin only)."""
+    """Remove a cross-branch cover (manager/superadmin only). The cover lives on
+    the visitor's own rota pointing here, so clear it there."""
     sched = assert_schedule_access(user, sid)
-    q("""DELETE FROM scheduling.schedule_entries
-         WHERE schedule_id=%s AND staff_id=%s AND date=%s AND cross_branch_id IS NOT NULL""",
-      (sid, staff_id, date), exec_only=True)
+    q("""DELETE FROM scheduling.schedule_entries e
+         USING scheduling.schedules sc
+         WHERE e.schedule_id=sc.id AND e.staff_id=%s AND e.date=%s
+           AND e.cross_branch_id=%s""",
+      (staff_id, date, sched["branch_id"]), exec_only=True)
     insert_audit(user, "CROSS_BRANCH_COVER_REMOVE", str(staff_id), f"branch {sched['branch_id']} on {date}")
     return {"ok": True}
 
@@ -2863,9 +2921,16 @@ async def autofill_cross_cover(sid: int, request: Request, user=Depends(require_
                       WHERE ns.nest_key=%s""", (y, m, nest)):
             minreq[(d["id"], _section_of([r["section_name"]]))] = int(r["req"])
 
-    # How many workers the target already has each day (own staff + prior covers).
+    # How many workers the target already has each day: its own staff PLUS staff
+    # from other branches already covering here (so a re-run doesn't double-fill).
     y3_count = {}
     for e in q("SELECT TO_CHAR(date,'YYYY-MM-DD') AS date, shift_code FROM scheduling.schedule_entries WHERE schedule_id=%s", (sid,)):
+        if _is_work_code(e["shift_code"]):
+            y3_count[e["date"]] = y3_count.get(e["date"], 0) + 1
+    for e in q("""SELECT TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
+                  FROM scheduling.schedule_entries e
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                  WHERE e.cross_branch_id=%s AND sc.year=%s AND sc.month=%s""", (target["id"], y, m)):
         if _is_work_code(e["shift_code"]):
             y3_count[e["date"]] = y3_count.get(e["date"], 0) + 1
 
@@ -2902,15 +2967,13 @@ async def autofill_cross_cover(sid: int, request: Request, user=Depends(require_
                 break
             if working_by.get((bid_s, sec, date), 0) - minreq.get((bid_s, sec), 2) <= 0:
                 continue   # branch's surplus got used up earlier this day
-            # Relocate: free the donor cell, place the cover shift on the target.
-            q("DELETE FROM scheduling.schedule_entries WHERE id=%s", (ent["id"],), exec_only=True)
-            q("""INSERT INTO scheduling.schedule_entries
-                 (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
-                 VALUES (%s,%s,%s,%s,%s,false,%s)
-                 ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
-                 shift_code=EXCLUDED.shift_code, cross_branch_id=EXCLUDED.cross_branch_id,
-                 note=EXCLUDED.note""",
-              (sid, sd, date, shift_code, bid_s, f"cover (was {ent['shift_code']} @ home)"),
+            # Relocate IN PLACE: rewrite the donor's own cell to the cover shift
+            # pointing at the target. Their home sheet now shows e.g. 'Y3' that
+            # day; the target rota shows them as a visitor. One entry, so their
+            # total shift count is unchanged.
+            q("""UPDATE scheduling.schedule_entries
+                 SET shift_code=%s, cross_branch_id=%s, note=%s WHERE id=%s""",
+              (shift_code, target["id"], f"cover (was {ent['shift_code']} @ home)", ent["id"]),
               exec_only=True)
             working_by[(bid_s, sec, date)] = working_by.get((bid_s, sec, date), 0) - 1
             already_lent.add((sd, date))

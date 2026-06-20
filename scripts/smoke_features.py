@@ -221,13 +221,19 @@ check("own-branch staff are not cover candidates",
 # team lead (admin) cannot assign cross-branch cover — reviewer only
 tlcov = lead.post(f"/api/schedules/{sid}/cover", json={"staff_id": visitor["id"], "date": cov_date, "shift_code": "M"})
 check("team lead can't assign cross-branch cover (403)", tlcov.status_code in (401, 403), tlcov.status_code)
-# manager assigns the visitor
+# manager assigns the visitor — the cover is written on the VISITOR'S OWN rota,
+# pointing at the host (so their home sheet shows it; host shows them as a guest).
 cov = admin.post(f"/api/schedules/{sid}/cover", json={"staff_id": visitor["id"], "date": cov_date, "shift_code": "M"})
 check("manager assigns cross-branch cover", cov.status_code == 200
-      and cov.json().get("cross_branch_id") == other_branch["id"], cov.text)
+      and cov.json().get("cross_branch_id") == bid, cov.text)
 ents_after = admin.get(f"/api/schedules/{sid}/entries").json()
-check("cover entry lands on the host rota",
+check("cover shows on the host rota (as a visitor)",
       any(e["staff_id"] == visitor["id"] and e["date"] == cov_date for e in ents_after), "missing")
+# The visitor's OWN branch rota records the shift that day, marked cross-branch.
+home_sched = admin.post("/api/schedules/open", json={"branch_id": other_branch["id"], "year": YEAR, "month": MONTH}).json()
+check("cover recorded on the visitor's home rota too",
+      any(e["staff_id"] == visitor["id"] and e["date"] == cov_date and e["cross_branch_id"] == bid
+          for e in home_sched["entries"]), "not on home rota")
 # can't add a SAME-branch staffer as a cover
 selfcov = admin.post(f"/api/schedules/{sid}/cover", json={"staff_id": A["id"], "date": cov_date, "shift_code": "M"})
 check("same-branch staff rejected as cover (400)", selfcov.status_code == 400, selfcov.status_code)
@@ -235,7 +241,7 @@ check("same-branch staff rejected as cover (400)", selfcov.status_code == 400, s
 rem = admin.delete(f"/api/schedules/{sid}/cover?staff_id={visitor['id']}&date={cov_date}")
 check("manager removes the cover", rem.status_code == 200, rem.text)
 ents_gone = admin.get(f"/api/schedules/{sid}/entries").json()
-check("cover entry removed from host rota",
+check("cover removed from both rotas",
       not any(e["staff_id"] == visitor["id"] and e["date"] == cov_date for e in ents_gone), "still there")
 
 print("\n== scenario 8d: auto-fill from surplus staff at same-city sharing branches ==")
@@ -269,16 +275,24 @@ af = admin.post(f"/api/schedules/{tsched}/autofill-cross-cover",
 check("autofill runs", af.status_code == 200, af.text)
 afj = af.json() if af.status_code == 200 else {}
 tents = admin.get(f"/api/schedules/{tsched}/entries").json()
-a4_cover = [e for e in tents if e["date"] == A4 and e["cross_branch_id"] == don["id"]]
+# Covers point at the target (host) and surface on its rota as visitors.
+a4_cover = [e for e in tents if e["date"] == A4 and e["cross_branch_id"] == tgt["id"]
+            and e["staff_id"] in (d1["id"], d2["id"], d3["id"])]
 check("surplus day filled by relocating one donor staffer", len(a4_cover) == 1, [e['date'] for e in tents][:5])
 dents = admin.get(f"/api/schedules/{dsched}/entries").json()
+# The relocated staffer's OWN rota now shows the cover shift pointing at Y3.
+relocated = a4_cover[0]["staff_id"] if a4_cover else None
+check("relocated shift shows on the donor's own rota (→ Y3)",
+      any(e["staff_id"] == relocated and e["date"] == A4 and e["cross_branch_id"] == tgt["id"]
+          for e in dents), "not on donor rota")
 a4_donor_work = [e for e in dents if e["date"] == A4 and e["shift_code"] == "M" and not e["cross_branch_id"]]
 check("donor stays at its minimum after lending (3->2)", len(a4_donor_work) == 2, len(a4_donor_work))
-check("no-surplus day is left untouched", not any(e["date"] == A5 and e["cross_branch_id"] == don["id"] for e in tents), "A5 touched")
+# The relocated person has exactly ONE shift that day (no double-booking).
+relo_a4 = [e for e in dents if e["staff_id"] == relocated and e["date"] == A4]
+check("relocated staffer not double-booked", len(relo_a4) == 1, relo_a4)
+check("no-surplus day is left untouched",
+      not any(e["date"] == A5 and e["cross_branch_id"] == tgt["id"] for e in tents), "A5 touched")
 check("far-city donor never used", not any(e["staff_id"] == farstaff["id"] for e in tents), "far used")
-check("relocated staffer not double-booked (donor cell freed)",
-      not any(e["staff_id"] in (d1["id"],d2["id"],d3["id"]) and e["date"]==A4 and e["shift_code"]=="M" and not e["cross_branch_id"]
-              for e in dents) or len(a4_donor_work)==2, "double")
 # A non-sharing same-city branch must contribute nobody.
 check("autofill reported donors are sharing same-city only",
       set(afj.get("donors", [])) == {"ZZ Donor"}, afj.get("donors"))

@@ -576,7 +576,9 @@ function visitorRows(nDays) {
   const visitors = {};   // staff_id → { name, home }
   for (const e of (currentEntries || [])) {
     if (ownIds.has(e.staff_id)) continue;
-    if (!visitors[e.staff_id]) visitors[e.staff_id] = { name: e.staff_name || `#${e.staff_id}`, home: e.cross_branch_name || '' };
+    // Inbound covers carry the home branch in home_branch_name; fall back to
+    // cross_branch_name for older-shaped rows.
+    if (!visitors[e.staff_id]) visitors[e.staff_id] = { name: e.staff_name || `#${e.staff_id}`, home: e.home_branch_name || e.cross_branch_name || '' };
   }
   const ids = Object.keys(visitors);
   if (!ids.length) return '';

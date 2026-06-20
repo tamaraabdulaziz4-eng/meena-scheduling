@@ -246,7 +246,9 @@ function handleSessionExpired() {
 // Sign the user out after a stretch of no activity (mouse/touch/key/scroll), so
 // an unattended screen doesn't stay logged in. Client-side: clears the cookie
 // and reloads to the login page with a notice.
-const IDLE_LIMIT_MS = 5 * 60 * 1000;     // 5 minutes — change here to adjust
+const IDLE_LIMIT_MS = 8 * 60 * 60 * 1000;  // 8 hours (a work shift). Was 5 min,
+                                           // which signed people out the moment
+                                           // they stepped away.
 let _lastActivity = Date.now();
 let _idleTimer = null;
 function _bumpActivity() { _lastActivity = Date.now(); }
@@ -283,7 +285,9 @@ document.addEventListener('keydown', e => {
   // Fire the primary action of whichever auth view is on screen — so Enter
   // never triggers the wrong form (e.g. logging in from the reset view).
   const vis = id => { const el = document.getElementById(id); return el && el.style.display !== 'none'; };
-  if (vis('login-view'))        doLogin();
+  // login-view is a real <form> now — its own submit handles Enter, so we skip
+  // it here to avoid firing the login twice.
+  if (vis('login-view'))        return;
   else if (vis('forgot-view'))  sendResetLink();
   else if (vis('reset-view'))   submitNewPassword();
   else if (vis('signup-view'))  submitInviteCode();
