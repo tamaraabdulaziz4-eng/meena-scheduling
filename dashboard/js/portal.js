@@ -66,6 +66,11 @@ function renderPortalGrid() {
   const nDays = daysInMonth(portalYear, portalMonth);
   const byDate = {};
   (d.entries || []).forEach(e => { byDate[e.date] = e; });
+  // Cross-branch cover days take precedence — that's where they actually work.
+  (d.cover || []).forEach(c => {
+    byDate[c.date] = { date: c.date, shift_code: c.shift_code, is_oncall: c.is_oncall,
+                       cross_branch_name: c.cover_at_branch };
+  });
 
   let cells = '';
   for (let day = 1; day <= nDays; day++) {
@@ -79,7 +84,7 @@ function renderPortalGrid() {
     const hij  = (typeof hijriShort === 'function') ? hijriShort(portalYear, portalMonth, day) : '';
     const timeStr = (st && st.start_time && st.end_time) ? `${fmt12(st.start_time)}–${fmt12(st.end_time)}` : '';
     cells += `
-      <div class="portal-day" style="border-color:${dow===5||dow===6?'var(--accent)':'var(--border)'}">
+      <div class="portal-day" style="border-color:${dow===5?'var(--accent)':'var(--border)'}">
         <div class="pd-top"><span class="pd-num">${day}</span><span class="pd-dow">${DAYS[dow]}</span></div>
         ${hij ? `<div class="pd-hijri">${hij}</div>` : ''}
         <div class="pd-shift" style="background:${bg};color:${txt}">
@@ -90,8 +95,8 @@ function renderPortalGrid() {
       </div>`;
   }
 
-  // Count working shifts
-  const worked = (d.entries || []).filter(e => !['O','AL','SL','TB','OC'].includes(e.shift_code) && !e.is_oncall).length;
+  // Count working shifts (including cross-branch cover days)
+  const worked = Object.values(byDate).filter(e => !['O','AL','SL','TB','OC',''].includes(e.shift_code) && !e.is_oncall).length;
   grid.innerHTML = `
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
       <strong>${escapeHtml(d.staff?.name || '')}</strong> · ${escapeHtml(d.staff?.branch_name || '')}
