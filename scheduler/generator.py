@@ -557,6 +557,27 @@ def generate_schedule(nest_name: str, year: int, month: int,
             if d + 2 < n_days:
                 model.add(b_m + get_bool(p, d + 2, "N") <= 1)
 
+    # ── Hard Constraint 4e: No Off touching Annual Leave ─────────────────────
+    # Leave must be bounded by working days: a person works the day before their
+    # leave starts and the day it ends — you can't glue rest days (O) onto a
+    # leave block to stretch the time away. For every leave block, force the day
+    # immediately before its start and immediately after its end to be a work
+    # shift (not O). Days that fall off the month edge are simply skipped.
+    for p, sec_name, sec in all_staff:
+        p_al = set(al_schedule.get(p, []))
+        if not p_al:
+            continue
+        allowed = set(sec["allowed_shifts"])
+        if "M" not in allowed and "N" not in allowed:
+            continue
+        for day in p_al:                      # 1-indexed AL day
+            # Block start: the prior day isn't AL → it must be worked.
+            if (day - 1) not in p_al and (day - 1) >= 1:
+                model.add(get_bool(p, day - 2, "O") == 0)
+            # Block end: the following day isn't AL → it must be worked.
+            if (day + 1) not in p_al and (day + 1) <= n_days:
+                model.add(get_bool(p, day, "O") == 0)
+
     # ── Hard Constraint 5: Max consecutive working shifts (per-staff) ───────────
     WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
     for p, sec_name, sec in all_staff:
