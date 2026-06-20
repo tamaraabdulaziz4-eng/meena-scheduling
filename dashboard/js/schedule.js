@@ -84,12 +84,28 @@ async function onBranchChange() {
 }
 
 async function changeMonth(delta) {
+  // Any modal/overlay left open (settings, generate diagnostics, shift picker)
+  // would otherwise stay as a dark dimming layer over the new month — looking
+  // like a "black screen" / frozen page. Clear them before we switch.
+  dismissScheduleOverlays();
   scheduleMonth += delta;
   if (scheduleMonth > 12) { scheduleMonth = 1; scheduleYear++; }
   if (scheduleMonth < 1)  { scheduleMonth = 12; scheduleYear--; }
   document.getElementById('month-label').textContent = monthLabel(scheduleYear, scheduleMonth);
   await loadScheduleData();
   animateIn('rota-wrap');
+}
+
+// Hide any open schedule modal/picker overlays and the busy loaders. Used when
+// changing month/branch so a stuck overlay can't leave the page dark or
+// unclickable (the reported "hangs / goes black on month change").
+function dismissScheduleOverlays() {
+  ['staff-settings-modal', 'generate-diagnostics-modal'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  if (typeof closePicker === 'function') { try { closePicker(); } catch (_) {} }
+  if (typeof hideLoader === 'function') { try { hideLoader(); } catch (_) {} }
 }
 
 function printSchedule() {
@@ -144,7 +160,14 @@ function buildScheduleReport() {
     </div>`;
 }
 
+let _scheduleLoadToken = 0;
 async function loadScheduleData() {
+  // Guard against overlapping loads: clicking the month arrows quickly fires
+  // several loads at once, and whichever HTTP response lands LAST would win —
+  // even if it's for an older month — leaving the grid stuck on stale data
+  // (the reported "hangs when I change the month"). Only the newest load is
+  // allowed to mutate state and render.
+  const token = ++_scheduleLoadToken;
   // Animated inline loader (no dimming overlay) while the month/branch loads.
   const wrap = document.getElementById('rota-wrap');
   if (wrap) wrap.innerHTML = LOADING_HTML;
@@ -162,6 +185,9 @@ async function loadScheduleData() {
         ? loadHolidaysForMonth(scheduleYear, scheduleMonth) : Promise.resolve()),
     ]);
 
+    // A newer load started while we were awaiting — drop this stale result.
+    if (token !== _scheduleLoadToken) return;
+
     scheduleStaff   = staffData.filter(s => s.active);
     currentSchedule = schedData.schedule;
     currentEntries  = schedData.entries;
@@ -174,6 +200,7 @@ async function loadScheduleData() {
     renderScheduleStats();
     renderRotaGrid();
   } catch (err) {
+    if (token !== _scheduleLoadToken) return;
     document.getElementById('rota-wrap').innerHTML =
       `<div class="empty"><div class="empty-icon">⚠️</div><p>${escapeHtml(err.message)}</p></div>`;
   }
@@ -873,6 +900,11 @@ async function openStaffSettingsModal(tab) {
           <input type="number" min="1" max="14" value="${sec.min_o_block ?? 2}" style="${inputStyle}"
             onchange="saveSectionMonthSetting(${secId}, 'min_o_block', this.value, this)">
         </td>
+        <td style="padding:8px 6px;text-align:center">
+          <input type="number" min="0" max="31" value="${sec.max_o_block ?? 0}" style="${inputStyle}"
+            title="Max consecutive days off (0 = no limit)"
+            onchange="saveSectionMonthSetting(${secId}, 'max_o_block', this.value, this)">
+        </td>
       </tr>`;
     } else {
       return `<tr>
@@ -883,6 +915,7 @@ async function openStaffSettingsModal(tab) {
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.max_n}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.max_consecutive ?? 4}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${sec.min_o_block ?? 2}</td>
+        <td style="padding:8px 6px;text-align:center;color:var(--muted)">${(sec.max_o_block ?? 0) || '—'}</td>
       </tr>`;
     }
   }).join('');
@@ -928,9 +961,10 @@ async function openStaffSettingsModal(tab) {
           <th style="${thStyle}">Min N</th>
           <th style="${thStyle}">Max N</th>
           <th style="${thStyle}">Max Consecutive</th>
-          <th style="${thStyle}">Min O Block</th>
+          <th style="${thStyle}">Min Off Block</th>
+          <th style="${thStyle}">Max Off Block</th>
         </tr></thead>
-        <tbody>${sectionRows || `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">No sections found</td></tr>`}</tbody>
+        <tbody>${sectionRows || `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--muted)">No sections found</td></tr>`}</tbody>
       </table>
     </div>
     ${canEdit ? `<div style="font-size:11px;color:var(--muted);margin-top:12px">Changes save automatically on input and will apply from the next Generate.</div>` : ''}
@@ -939,7 +973,7 @@ async function openStaffSettingsModal(tab) {
 }
 
 async function saveSectionMonthSetting(sectionId, field, value, inputEl) {
-  const sec = sectionMonthSettings[sectionId] || { min_m:1, max_m:2, min_n:1, max_n:2, max_consecutive: 4, min_o_block: 2 };
+  const sec = sectionMonthSettings[sectionId] || { min_m:1, max_m:2, min_n:1, max_n:2, max_consecutive: 4, min_o_block: 2, max_o_block: 0 };
   const updated = { ...sec, [field]: parseInt(value) };
   inputEl.disabled = true; inputEl.style.opacity = '0.5';
   try {
@@ -950,6 +984,7 @@ async function saveSectionMonthSetting(sectionId, field, value, inputEl) {
       min_n: updated.min_n, max_n: updated.max_n,
       max_consecutive: updated.max_consecutive ?? 4,
       min_o_block: updated.min_o_block ?? 2,
+      max_o_block: updated.max_o_block ?? 0,
     });
     sectionMonthSettings[sectionId] = updated;
     inputEl.style.borderColor = '#27ae60';
@@ -1040,6 +1075,9 @@ async function applyCrossBranch() {
 
 // ── Generate modal ────────────────────────────────────────────────────────────
 
+// Which section the next Generate run targets: '' = all sections.
+let genSectionChoice = '';
+
 function openGenerateModal() {
   document.getElementById('gen-msg').textContent = '';
 
@@ -1048,7 +1086,37 @@ function openGenerateModal() {
   document.getElementById('gen-overwrite-warning').innerHTML =
     `⚠ This will <strong>overwrite</strong> the current schedule for <strong>${branchName}</strong> — <strong>${monthName} ${scheduleYear}</strong>.`;
 
+  // Offer "General / Ultrasound / Both" only when this branch actually has both
+  // sections staffed — otherwise there's nothing to choose.
+  const hasUS = scheduleStaff.some(s => s.speciality?.includes('Ultrasound') && !s.speciality?.includes('General'));
+  const hasGen = scheduleStaff.some(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
+  const pick = document.getElementById('gen-section-pick');
+  if (hasUS && hasGen) {
+    genSectionChoice = '';
+    const opts = [['', 'Both sections'], ['General', 'General only'], ['US', 'Ultrasound only']];
+    document.getElementById('gen-section-choices').innerHTML = opts.map(([val, label]) =>
+      `<button type="button" class="gen-sec-chip" data-val="${val}" onclick="setGenSection('${val}')"
+        style="${genSecChipStyle(val === genSectionChoice)}">${label}</button>`).join('');
+    pick.style.display = 'block';
+  } else {
+    genSectionChoice = '';
+    pick.style.display = 'none';
+  }
+
   document.getElementById('generate-modal-overlay').classList.add('open');
+}
+
+function genSecChipStyle(active) {
+  return `padding:6px 14px;border-radius:20px;border:1px solid ${active ? 'var(--accent,#6B4EFF)' : 'var(--border)'};`
+       + `cursor:pointer;font-size:12px;font-weight:600;`
+       + (active ? 'background:var(--accent,#6B4EFF);color:#fff' : 'background:var(--card-alt);color:var(--muted)');
+}
+
+function setGenSection(val) {
+  genSectionChoice = val;
+  document.querySelectorAll('#gen-section-choices .gen-sec-chip').forEach(el => {
+    el.style.cssText = genSecChipStyle(el.dataset.val === val);
+  });
 }
 
 async function resetStaffSettingsToDefault() {
@@ -1101,6 +1169,7 @@ async function runGenerate() {
           year:      scheduleYear,
           month:     scheduleMonth,
           confirm:   confirmGen,
+          section:   genSectionChoice || undefined,
         });
         break;
       } catch (err) {
@@ -1126,7 +1195,9 @@ async function runGenerate() {
     renderScheduleStats();
     renderRotaGrid();
 
-    showSuccess('Schedule generated');
+    showSuccess(genSectionChoice
+      ? `${genSectionChoice === 'US' ? 'Ultrasound' : genSectionChoice} section generated`
+      : 'Schedule generated');
 
     // Show diagnostics if any section is non-optimal or infeasible.
     const sections = result.sections || {};
