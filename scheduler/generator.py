@@ -15,6 +15,10 @@ import sys
 from ortools.sat.python import cp_model
 
 from config import SHIFTS, WORK_SHIFTS, REST_SHIFTS, WEEKEND_DAYS_OF_WEEK, NESTS as _NESTS_DEFAULT
+try:
+    from config import TARGET_WEEKEND_OFF
+except ImportError:        # older config without the knob
+    TARGET_WEEKEND_OFF = 2
 from validator import validate_schedule, print_validation
 
 # _NESTS will be set to a merged dict at startup (default from config.py,
@@ -782,19 +786,28 @@ def generate_schedule(nest_name: str, year: int, month: int,
             objective_terms.append(spread)
 
     # ── Soft Constraint: Weekend rest fairness ────────────────────────────────
-    # Count weekend O per person — penalize high variance
+    # Count weekend (Friday) O per person — balance them evenly AND aim to give
+    # everyone TARGET_WEEKEND_OFF Fridays off when coverage allows.
+    wknd_days = [d for d in range(n_days) if is_weekend(year, month, d + 1)]
+    weekend_short_terms = []
     for sec_name, sec in nest_cfg["sections"].items():
         sec_staff = [p for p, sn, _ in all_staff if sn == sec_name]
         weekend_rest_counts = []
         for p in sec_staff:
-            wknd_days = [d for d in range(n_days)
-                         if is_weekend(year, month, d + 1)]
             if not wknd_days:
                 continue
             cnt = model.new_int_var(0, len(wknd_days),
                                     f"wknd_rest_{p}")
             model.add(cnt == sum(get_bool(p, d, "O") for d in wknd_days))
             weekend_rest_counts.append(cnt)
+
+            # Shortfall below the target (e.g. 2): penalize so the solver hands
+            # out a second Friday off whenever it can, not just one.
+            target = min(TARGET_WEEKEND_OFF, len(wknd_days))
+            if target > 0:
+                short = model.new_int_var(0, target, f"wknd_short_{p}")
+                model.add(short >= target - cnt)
+                weekend_short_terms.append(short)
 
         if len(weekend_rest_counts) >= 2:
             max_wknd = model.new_int_var(0, n_days, f"max_wknd_{sec_name}")
@@ -808,12 +821,14 @@ def generate_schedule(nest_name: str, year: int, month: int,
 
     # ── Objective ─────────────────────────────────────────────────────────────
     # Weights: M-block rest violations (500) > half-month single-type
-    #          preference (120) > fairness spread (100).
+    #          preference (120) > Friday-off target (110) > fairness spread (100).
     # The half-month preference sits just above fairness so the solver keeps
     # clean M-half/N-half blocks whenever it can, but never at the cost of a
-    # feasible rota.
+    # feasible rota. The Friday-off target nudges everyone toward 2 Fridays off
+    # while staying below the half-month block preference.
     total_obj  = [500 * t for t in rest_violation_terms]
     total_obj += [120 * t for t in halfmix_penalties]
+    total_obj += [110 * t for t in weekend_short_terms]
     total_obj += [100 * t for t in objective_terms]
 
     if total_obj:
