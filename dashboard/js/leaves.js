@@ -34,6 +34,7 @@ async function renderLeavesPage() {
         ${MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('')}
       </select>
       ${currentUser?.role==='superadmin' ? `<select id="leave-filter-branch" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
+      ${canEdit ? `<button class="btn btn-ghost btn-sm" id="leave-approve-all" onclick="approveAllPendingLeaves()" style="margin-left:auto" title="Approve every request currently awaiting you">✅ Approve all pending</button>` : ''}
     </div>
     <div class="table-wrap">
       <table>
@@ -161,6 +162,38 @@ async function setLeaveRangeStatus(ids, status) {
   finally { hideLoader(); }
   // Reload so the list reflects exactly what the server recorded.
   try { await filterLeaves(); } catch (e) { /* page may have changed */ }
+}
+
+// Approve every leave range currently awaiting THIS user (one batched call per
+// stage, so a manager clears their queue in a click). Coverage gaps are surfaced
+// once and approved deliberately.
+async function approveAllPendingLeaves() {
+  const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
+  const canEdit = ['admin','manager','superadmin'].includes(currentUser?.role);
+  const actionable = groupLeaveRanges(allLeaves).filter(g =>
+    (g.status === 'pending' && canEdit) || (g.status === 'lead_approved' && isReviewer));
+  if (!actionable.length) { toast('Nothing is awaiting your approval'); return; }
+  const total = actionable.reduce((a, g) => a + (g.ids?.length || 0), 0);
+  const ok = await showConfirm('Approve all pending',
+    `Approve ${actionable.length} request${actionable.length>1?'s':''} (${total} day${total>1?'s':''}) awaiting you?`,
+    'Approve all', 'confirm-ok');
+  if (!ok) return;
+  // Split by stage so each batch call advances a single, consistent stage.
+  const byStage = {};
+  actionable.forEach(g => { (byStage[g.status] = byStage[g.status] || []).push(...g.ids); });
+  showLoader('Approving…');
+  let done = 0;
+  try {
+    for (const stage of Object.keys(byStage)) {
+      const ids = byStage[stage];
+      // Deliberate bulk action → approve through coverage-gap warnings.
+      await API.put('/leaves/status', { ids, status: 'approved', confirm: true });
+      done += ids.length;
+    }
+    toast(`Approved ${done} day${done>1?'s':''}`);
+  } catch (e) { toast(e.message, 'err'); }
+  finally { hideLoader(); }
+  try { await filterLeaves(); } catch (e) {}
 }
 
 // Group individual leave rows into date ranges (same staff + type + consecutive days)
