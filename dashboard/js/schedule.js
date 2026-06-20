@@ -175,7 +175,7 @@ async function loadScheduleData() {
     // These four requests don't depend on each other, so fire them in parallel
     // instead of awaiting one after another — much faster, especially on a
     // cold Railway start.
-    const [staffData, schedData, , monthSettings] = await Promise.all([
+    const [staffData, schedData, , monthSettings, , secSettings] = await Promise.all([
       API.get(`/staff?branch_id=${currentBranchId}`),
       API.post('/schedules/open', { branch_id: currentBranchId, year: scheduleYear, month: scheduleMonth }),
       loadShiftTypes(currentBranchId),
@@ -183,11 +183,16 @@ async function loadScheduleData() {
         .catch(() => ({})),
       (typeof loadHolidaysForMonth === 'function'
         ? loadHolidaysForMonth(scheduleYear, scheduleMonth) : Promise.resolve()),
+      // Per-section coverage requirements (min M / min N) drive the coverage row,
+      // which differs between General (24h) and Ultrasound (often daytime only).
+      API.get(`/section-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`)
+        .catch(() => ({})),
     ]);
 
     // A newer load started while we were awaiting — drop this stale result.
     if (token !== _scheduleLoadToken) return;
 
+    sectionMonthSettings = secSettings || {};
     scheduleStaff   = staffData.filter(s => s.active);
     currentSchedule = schedData.schedule;
     currentEntries  = schedData.entries;
@@ -540,54 +545,80 @@ function renderRotaGrid() {
   }
 
   if (hasBothSections) {
+    // Each section gets its OWN coverage row against its OWN requirements —
+    // General and Ultrasound don't have the same M/N needs.
     html += staffRows(generalStaff, 'General Radiology');
+    html += coverageRow(nDays, generalStaff, 'General', sectionReqByName('General'));
     html += staffRows(usStaff, 'Ultrasound (US)');
+    html += coverageRow(nDays, usStaff, 'US', sectionReqByName('US'));
   } else {
     html += staffRows(scheduleStaff, '');
+    const onlyKey = usStaff.length ? 'US' : 'General';
+    html += coverageRow(nDays, scheduleStaff, onlyKey, sectionReqByName(onlyKey));
   }
-
-  html += coverageRow(nDays);
 
   html += `</tbody></table>`;
   wrap.innerHTML = html;
 }
 
-// ── 24h coverage check row ────────────────────────────────────────────────────
-// For each day, verify the day is fully covered (24h): there must be at least
-// one M (morning 12h) AND one N (night 12h) across all staff. If either is
-// missing the day is not fully covered → red marker with a tooltip explaining
-// what's missing.
-function coverageRow(nDays) {
+// Look up a section's coverage requirement (min M / min N per day) by name,
+// from the per-month section settings. Falls back to 24h (1 M + 1 N) when a
+// section has no explicit settings yet.
+function sectionReqByName(name) {
+  const want = String(name || '').toUpperCase();
+  const isUS = want === 'US' || want === 'ULTRASOUND';
+  for (const sec of Object.values(sectionMonthSettings || {})) {
+    const sn = String(sec.section_name || '').toUpperCase();
+    const secIsUS = sn === 'US' || sn === 'ULTRASOUND';
+    if (sn === want || (isUS && secIsUS)) {
+      return { min_m: sec.min_m ?? 1, min_n: sec.min_n ?? 1 };
+    }
+  }
+  return { min_m: 1, min_n: 1 };
+}
+
+// ── Section coverage check row ────────────────────────────────────────────────
+// Per section, verify each day meets THAT section's daily requirement: at least
+// `min_m` morning(s) and `min_n` night(s) among the section's own staff. This is
+// section-specific because General (24h: needs nights) and Ultrasound (often
+// daytime only, min_n=0) don't share the same requirement. A section with
+// min_n=0 is judged on mornings alone — no false "missing night" flags.
+function coverageRow(nDays, staffArr, sectionKey, req) {
+  const minM = Math.max(0, parseInt(req?.min_m ?? 1) || 0);
+  const minN = Math.max(0, parseInt(req?.min_n ?? 1) || 0);
+  const needsNight = minN >= 1;
+  const label = needsNight ? '24h Coverage' : 'Day Coverage';
+  const secName = sectionKey === 'US' ? 'Ultrasound' : (sectionKey || '');
+
   let cells = '';
   for (let i = 0; i < nDays; i++) {
     const d       = i + 1;
     const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-    // Count M and N across all staff for this day
+    // Count M and N among THIS section's staff for this day
     let mCount = 0, nCount = 0;
-    scheduleStaff.forEach(s => {
-      const entry = entryMap[`${s.id}_${dateStr}`];
-      const code  = entry?.shift_code;
+    staffArr.forEach(s => {
+      const code = entryMap[`${s.id}_${dateStr}`]?.shift_code;
       if (code === 'M') mCount++;
       else if (code === 'N') nCount++;
     });
 
-    const hasM = mCount >= 1;
-    const hasN = nCount >= 1;
+    const hasM = mCount >= minM;
+    const hasN = !needsNight || nCount >= minN;
     const covered = hasM && hasN;
 
     let marker, color, title;
     if (covered) {
       marker = '✓';
       color  = '#00C896';
-      title  = `Day ${d}: fully covered (M:${mCount} · N:${nCount})`;
+      title  = `Day ${d}${secName ? ' · ' + secName : ''}: covered (M:${mCount}/${minM}${needsNight ? ` · N:${nCount}/${minN}` : ' · no night needed'})`;
     } else {
       marker = '✕';
       color  = '#E63946';
       const missing = [];
-      if (!hasM) missing.push('M (morning)');
-      if (!hasN) missing.push('N (night)');
-      title  = `Day ${d}: NOT 24h covered — missing ${missing.join(' + ')} (M:${mCount} · N:${nCount})`;
+      if (!hasM) missing.push(`M (need ${minM}, have ${mCount})`);
+      if (!hasN) missing.push(`N (need ${minN}, have ${nCount})`);
+      title  = `Day ${d}${secName ? ' · ' + secName : ''}: NOT covered — short ${missing.join(' + ')}`;
     }
 
     cells += `<td style="text-align:center;padding:3px 0;background:${covered?'rgba(0,200,150,0.10)':'rgba(230,57,70,0.18)'}"
@@ -598,7 +629,7 @@ function coverageRow(nDays) {
 
   return `<tr class="rota-coverage-row" style="border-top:2px solid var(--accent)">
     <td class="rota-name-col" style="padding:4px 8px !important;white-space:nowrap;font-weight:700;font-size:11px;color:var(--muted)">
-      24h Coverage
+      ${secName ? secName + ' — ' : ''}${label}
     </td>
     ${cells}
     <td></td>
