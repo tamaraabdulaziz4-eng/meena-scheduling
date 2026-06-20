@@ -62,6 +62,7 @@ async function renderSchedulePage() {
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
           <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
         ` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="toggleRotaFullscreen()" title="Full-screen rota">⛶ Full screen</button>
         <button class="btn btn-ghost btn-sm" onclick="printSchedule()">🖨 Print</button>
       </div>
     </div>
@@ -110,6 +111,23 @@ function dismissScheduleOverlays() {
   });
   if (typeof closePicker === 'function') { try { closePicker(); } catch (_) {} }
   if (typeof hideLoader === 'function') { try { hideLoader(); } catch (_) {} }
+}
+
+// Expand the rota to full screen so the whole month fits without fighting the
+// rest of the page. Falls back to a CSS class where the Fullscreen API is blocked.
+function toggleRotaFullscreen() {
+  const wrap = document.getElementById('rota-wrap');
+  if (!wrap) return;
+  const exit = () => document.exitFullscreen?.();
+  if (document.fullscreenElement) { exit(); return; }
+  if (wrap.requestFullscreen) {
+    wrap.classList.add('rota-fs');
+    wrap.requestFullscreen().catch(() => wrap.classList.toggle('rota-fs'));
+    const onExit = () => { if (!document.fullscreenElement) { wrap.classList.remove('rota-fs'); document.removeEventListener('fullscreenchange', onExit); } };
+    document.addEventListener('fullscreenchange', onExit);
+  } else {
+    wrap.classList.toggle('rota-fs');   // older browsers: CSS-only overlay
+  }
 }
 
 function printSchedule() {
@@ -181,7 +199,9 @@ async function loadScheduleData() {
     // cold Railway start.
     const [staffData, schedData, , monthSettings, , secSettings] = await Promise.all([
       API.get(`/staff?branch_id=${currentBranchId}`),
-      API.post('/schedules/open', { branch_id: currentBranchId, year: scheduleYear, month: scheduleMonth }),
+      // Read-only: just look the schedule up. Browsing a branch/month must NOT
+      // silently create an empty draft — creation is an explicit action below.
+      API.get(`/schedules/lookup?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`),
       loadShiftTypes(currentBranchId),
       API.get(`/staff-month-settings?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`)
         .catch(() => ({})),
@@ -199,7 +219,7 @@ async function loadScheduleData() {
     sectionMonthSettings = secSettings || {};
     scheduleStaff   = staffData.filter(s => s.active);
     currentSchedule = schedData.schedule;
-    currentEntries  = schedData.entries;
+    currentEntries  = schedData.entries || [];
     buildEntryMap();
     staffMonthSettings = monthSettings || {};
 
@@ -207,12 +227,53 @@ async function loadScheduleData() {
     renderTeamLeadBanner();
     renderShiftLegend();
     renderScheduleStats();
+    // No schedule exists for this branch/month yet — show a clear empty state
+    // with an explicit "Create" action instead of a half-built grid.
+    if (!currentSchedule) { renderNoScheduleState(); return; }
     renderRotaGrid();
   } catch (err) {
     if (token !== _scheduleLoadToken) return;
     document.getElementById('rota-wrap').innerHTML =
       `<div class="empty"><div class="empty-icon">⚠️</div><p>${escapeHtml(err.message)}</p></div>`;
   }
+}
+
+// Shown when a branch/month has no schedule yet. Creation is explicit — a team
+// lead or full admin creates a blank schedule (or generates one); a manager just
+// sees that it isn't ready, so reviewing can't accidentally spawn a draft.
+function renderNoScheduleState() {
+  const wrap = document.getElementById('rota-wrap');
+  if (!wrap) return;
+  // Clear any status/banner/stats left over from a month that did have a rota.
+  ['schedule-status-bar', 'tl-status-banner-wrap', 'schedule-stats', 'shift-legend'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  });
+  const role = currentUser?.role;
+  const canBuild = ['admin', 'superadmin'].includes(role);
+  const canGenerate = ['admin', 'superadmin'].includes(role);
+  const label = monthLabel(scheduleYear, scheduleMonth);
+  wrap.innerHTML = `
+    <div class="empty" style="padding:48px 20px;text-align:center">
+      <div class="empty-icon" style="font-size:40px">🗓️</div>
+      <p style="font-weight:700;margin:8px 0 2px">No schedule for ${label} yet</p>
+      <p style="color:var(--muted);font-size:13px;max-width:420px;margin:0 auto 16px">
+        ${canBuild
+          ? 'Create a blank schedule to fill it in by hand, or generate one automatically.'
+          : 'The team lead hasn’t prepared this month’s schedule yet. You’ll be able to review it once it’s submitted.'}
+      </p>
+      ${canBuild ? `<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="createBlankSchedule()">➕ Create blank schedule</button>
+        ${canGenerate ? `<button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>` : ''}
+      </div>` : ''}
+    </div>`;
+}
+
+async function createBlankSchedule() {
+  try {
+    await API.post('/schedules/open', { branch_id: currentBranchId, year: scheduleYear, month: scheduleMonth });
+    await loadScheduleData();
+    toast('Schedule created');
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 function buildEntryMap() {
@@ -462,6 +523,8 @@ function renderRotaGrid() {
   if (!wrap) return;
 
   const nDays   = daysInMonth(scheduleYear, scheduleMonth);
+  const _now = new Date();
+  const _todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
   const isLocked = !!currentSchedule?.is_locked;
   // Reviewers (manager / full admin) are the authority on a schedule — the lock
   // exists to stop the team lead changing it mid-review, not the manager. So a
@@ -487,7 +550,7 @@ function renderRotaGrid() {
           const isToday = d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear();
           const title = [hij, holiday ? ('🎌 ' + holiday) : ''].filter(Boolean).join(' — ');
           const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5?'background:rgba(107,78,255,0.12);':'');
-          return `<th title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid #FF6B6B;':''}">${d}${holiday?'<span style="color:#FF6B6B">•</span>':''}</th>`;
+          return `<th class="${isToday?'is-today':''}" title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid #FF6B6B;':''}">${d}${holiday?'<span style="color:#FF6B6B">•</span>':''}</th>`;
         }).join('')}
         <th style="min-width:60px">Shifts</th>
       </tr>
@@ -521,19 +584,20 @@ function renderRotaGrid() {
         const isCross = entry?.cross_branch_id;
         if (st && !st.is_off && !st.is_leave) shiftCount++;
 
-        const bgColor  = isBlank ? '#000000' : (st?.color || '#D0D0D0');
-        const txtColor = isBlank ? '#000000' : contrastColor(bgColor);
+        const bgColor  = isBlank ? 'transparent' : (st?.color || '#D0D0D0');
+        const txtColor = isBlank ? 'var(--muted)' : contrastColor(bgColor);
         const weekend  = dow===5 ? 'rgba(107,78,255,0.04)' : '';
+        const isToday  = dateStr === _todayStr;
 
         const cellReadonly = isLocked && !isReviewer;
-        const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':''].filter(Boolean).join(' ');
+        const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':'', isToday?'is-today':''].filter(Boolean).join(' ');
         return `<td class="${classes}"
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
           onclick="${cellReadonly?'':'cellClick(this)'}"
           style="background:${bgColor};${weekend?`outline:1px solid rgba(107,78,255,0.15);`:''}"
           title="${s.name} — ${dateStr}${code ? ': '+code : ' (blank)'}${isOC?' + OC':''}${isCross?' (cross)':''}">
           <div class="shift-chip${isOC?' has-oc':''}${isCross?' cross':''}" style="color:${txtColor}">
-            ${isBlank ? '' : code}${isCross?'<sup style="font-size:7px">↗</sup>':''}
+            ${isBlank ? '—' : code}${isCross?'<sup style="font-size:7px">↗</sup>':''}
           </div>
         </td>`;
       }).join('');
