@@ -320,78 +320,39 @@ def generate_schedule(nest_name: str, year: int, month: int,
             is_shift[key] = b
         return is_shift[key]
 
-    # ── Hard Constraint 0b: Half-month M/N locking ───────────────────────────
-    # For each person, choose whether they do M in the first half and N in the
-    # second half, or vice-versa. Within a half-month, they can only work that
-    # half’s shift type (or be Off/AL).
+    # ── Soft Constraint 0b: Half-month M/N preference ────────────────────────
+    # We PREFER each person to stay on a single shift type within each half of
+    # the month (all-M or all-N per half) for circadian stability. This used to
+    # be a HARD rule, but it is only a comfort preference — not a safety rule —
+    # and as a hard constraint it routinely made normal months INFEASIBLE: a
+    # 4-person section with a single member on a 1–2 week holiday couldn't bend
+    # the rigid M-half/N-half split around the gap, so generation just failed.
     #
-    # This rigid split needs enough people to keep BOTH M and N covered in EACH
-    # half. Small sections (e.g. a 2–3 person Ultrasound team) can't sustain it,
-    # which makes the whole section INFEASIBLE and silently keeps its old rota.
-    # So we only apply the hard half-month lock to sections big enough to carry
-    # it; smaller sections still get every other rest rule, just without the
-    # forced M-half/N-half structure.
-    #
-    # Crucially we count AVAILABLE staff, not the roster: a 4-person section with
-    # one member on leave all month is really a 3-person section, and forcing the
-    # split on the remaining three would make 24h coverage impossible. A member is
-    # "available" if they're free to work most of the month (on leave < half of
-    # it). This is exactly the "4th person is on holiday, 3 must cover 24h" case.
-    avail_in_section = {}
-    for _p, _sn, _sec in all_staff:
-        _al_days = len(al_schedule.get(_p, []))
-        if _al_days < n_days / 2:
-            avail_in_section[_sn] = avail_in_section.get(_sn, 0) + 1
-    HALF_LOCK_MIN = 4
-
+    # Now it's soft: we penalise a person working BOTH M and N inside the same
+    # half. The solver still produces clean half-month blocks whenever it can,
+    # but it will mix when that's the only way to keep the rota feasible. Safety
+    # rules (no N→morning, rest after nights, max-consecutive) stay HARD below.
     half = (n_days + 1) // 2
-    first_half_is_m = {}
+    halfmix_penalties = []
     for p, sec_name, sec in all_staff:
-        if avail_in_section.get(sec_name, 0) < HALF_LOCK_MIN:
+        allowed = set(sec["allowed_shifts"])
+        if "M" not in allowed or "N" not in allowed:
             continue
-        first_half_is_m[p] = model.new_bool_var(f"first_half_m_{p}")
-        for d in range(n_days):
-            if p in al_schedule and (d + 1) in al_schedule[p]:
-                continue
-            in_first = (d + 1) <= half
-
-            # First half: if first_half_is_m -> forbid N, else forbid M
-            # Second half: opposite
-            if in_first:
-                model.add(get_bool(p, d, "N") == 0).only_enforce_if(first_half_is_m[p])
-                model.add(get_bool(p, d, "M") == 0).only_enforce_if(first_half_is_m[p].negated())
-            else:
-                model.add(get_bool(p, d, "M") == 0).only_enforce_if(first_half_is_m[p])
-                model.add(get_bool(p, d, "N") == 0).only_enforce_if(first_half_is_m[p].negated())
-
-        # Note: we do NOT force off-days at the half boundary globally.
-        # If a person ends an N-block at the boundary, HC4b will enforce rest.
-
-        # Mid-month switch rest: require at least one pair of consecutive Off
-        # days around the half-month boundary (unless AL forces otherwise).
-        #
-        # The half-month lock forces a shift-type change (M↔N) between halves.
-        # Requiring the same two fixed off-days for everyone can make coverage
-        # infeasible, so instead we require that each person has at least one
-        # consecutive "O O" pair in the 4-day window around the boundary.
-        #
-        # Window: (half-1, half), (half, half+1), (half+1, half+2)
-        # Any one of these pairs being O O satisfies the rest requirement.
-        p_al = set(al_schedule.get(p, []))
-        pair_bools = []
-        for a, b in ((half - 1, half), (half, half + 1), (half + 1, half + 2)):
-            if a < 1 or b > n_days:
-                continue
-            if a in p_al or b in p_al:
-                continue
-            ba = get_bool(p, a - 1, "O")
-            bb = get_bool(p, b - 1, "O")
-            both = model.new_bool_var(f"halfOO_{p}_{a}_{b}")
-            model.add_bool_and([ba, bb]).only_enforce_if(both)
-            model.add_bool_or([ba.negated(), bb.negated()]).only_enforce_if(both.negated())
-            pair_bools.append(both)
-        if pair_bools:
-            model.add_bool_or(pair_bools)
+        for lo, hi in ((0, half), (half, n_days)):   # first half, second half
+            days = range(lo, hi)
+            wm = model.new_bool_var(f"halfM_{p}_{lo}")
+            wn = model.new_bool_var(f"halfN_{p}_{lo}")
+            m_bools = [get_bool(p, d, "M") for d in days]
+            n_bools = [get_bool(p, d, "N") for d in days]
+            # wm == (works any M in this half); wn similarly.
+            model.add_bool_or(m_bools).only_enforce_if(wm)
+            model.add(sum(m_bools) == 0).only_enforce_if(wm.negated())
+            model.add_bool_or(n_bools).only_enforce_if(wn)
+            model.add(sum(n_bools) == 0).only_enforce_if(wn.negated())
+            mix = model.new_bool_var(f"halfmix_{p}_{lo}")   # works both M and N
+            model.add_bool_and([wm, wn]).only_enforce_if(mix)
+            model.add_bool_or([wm.negated(), wn.negated()]).only_enforce_if(mix.negated())
+            halfmix_penalties.append(mix)
 
     # ── Hard Constraint 0: Cross-month boundary ──────────────────────────────
     # Apply rest-day rules across the month boundary using prev_tail.
@@ -818,9 +779,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
             objective_terms.append(wknd_spread)
 
     # ── Objective ─────────────────────────────────────────────────────────────
-    # Weights: M-block rest violations (500) > fairness spread (100)
-    #          > M/N rotation preference (25)
+    # Weights: M-block rest violations (500) > half-month single-type
+    #          preference (120) > fairness spread (100).
+    # The half-month preference sits just above fairness so the solver keeps
+    # clean M-half/N-half blocks whenever it can, but never at the cost of a
+    # feasible rota.
     total_obj  = [500 * t for t in rest_violation_terms]
+    total_obj += [120 * t for t in halfmix_penalties]
     total_obj += [100 * t for t in objective_terms]
 
     if total_obj:
