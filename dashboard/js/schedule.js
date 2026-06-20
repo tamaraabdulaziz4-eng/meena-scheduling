@@ -1254,6 +1254,20 @@ function openGenerateDiagnosticsModal({ title, solver_status, sections, top_erro
       ? `<div style="margin-top:10px;color:var(--muted);font-size:12px">Example shortage days: ${shortages.map(s => `Day ${s.day} (avail ${s.available_staff} / need ${s.required_staff})`).join(', ')}</div>`
       : '';
 
+    // The exact setting(s) that, changed, make this section solvable.
+    const fixes = diag.fixes || [];
+    const fixesHtml = fixes.length
+      ? `<div style="margin-top:12px;padding:11px 13px;border-radius:10px;background:rgba(0,155,116,0.10);border:1px solid rgba(0,155,116,0.30)">
+           <div style="font-weight:700;color:#009B74;font-size:13px">✅ How to fix it — change one of these settings:</div>
+           <ul style="margin:8px 0 0 18px;color:var(--text);line-height:1.5">
+             ${fixes.map(f => `<li><strong>${esc(f.setting)}</strong>: ${esc(f.change)}</li>`).join('')}
+           </ul>
+           <div style="font-size:11px;color:var(--muted);margin-top:7px">Open ⚙️ Settings → Section Limits to change these for this month.</div>
+         </div>`
+      : (status === 'INFEASIBLE'
+          ? `<div style="margin-top:12px;color:var(--muted);font-size:12px">No single setting change unlocked it — the section is short of staff for this coverage. Add staff, reduce leave, or lower the daily Min M / Min N.</div>`
+          : '');
+
     return `
       <div style="padding:12px 12px;border:1px solid var(--border);border-radius:12px;margin-top:12px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
@@ -1262,6 +1276,7 @@ function openGenerateDiagnosticsModal({ title, solver_status, sections, top_erro
         </div>
         ${listHtml}
         ${shortageHtml}
+        ${fixesHtml}
       </div>`;
   }).join('');
 

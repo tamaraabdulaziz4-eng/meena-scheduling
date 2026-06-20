@@ -4059,6 +4059,51 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     if only_section and not any(_section_requested(s) for s in nest_cfg_for_solver["sections"]):
         raise HTTPException(400, f"Section '{only_section}' not found for this branch")
 
+    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits):
+        """When a section is infeasible, find WHICH setting is to blame by
+        re-solving with one setting relaxed at a time (short time limit). Each
+        relaxation that turns the section solvable is reported back as a concrete
+        'change this setting' fix, so the user isn't left guessing."""
+        sec_cur_k = int((section_limits_for_solver.get(sec_name) or {}).get("max_consecutive", 4) or 4)
+        cur_min_o = int(sec_cfg.get("min_o_block", 2) or 2)
+        cur_min_n = int(sec_cfg.get("min_n", 1) or 0)
+        cur_min_m = int(sec_cfg.get("min_m", 1) or 0)
+        cur_max_o = int(sec_cfg.get("max_o_block", 0) or 0)
+        # (label, human change, section-cfg overrides, new max_consecutive or None)
+        candidates = []
+        if cur_min_o >= 2:
+            candidates.append(("Min Off Block", f"{cur_min_o} → 1", {"min_o_block": 1}, None))
+        if cur_max_o >= 1:
+            candidates.append(("Max Off Block", f"{cur_max_o} → 0 (off)", {"max_o_block": 0}, None))
+        if cur_min_n >= 1:
+            candidates.append(("Min N (nights per day)", f"{cur_min_n} → 0", {"min_n": 0}, None))
+        if cur_min_m >= 1:
+            candidates.append(("Min M (mornings per day)", f"{cur_min_m} → 0", {"min_m": 0}, None))
+        candidates.append(("Max Consecutive", f"{sec_cur_k} → {sec_cur_k + 2}", None, sec_cur_k + 2))
+
+        fixes = []
+        for label, change, sec_over, new_k in candidates:
+            sec2 = dict(sec_cfg)
+            if sec_over:
+                sec2.update(sec_over)
+            seclim2 = {sec_name: dict(section_limits_for_solver.get(sec_name) or {})}
+            if new_k:
+                seclim2[sec_name]["max_consecutive"] = new_k
+            try:
+                res = solver_generate(
+                    nest_name=nest_name, year=year, month=month,
+                    al_schedule=sec_al, prev_tail=sec_prev_tail, time_limit=8,
+                    max_consecutive=(new_k or max_consecutive),
+                    staff_limits=sec_staff_limits,
+                    section_limits=seclim2,
+                    nest_cfg={"sections": {sec_name: sec2}},
+                )
+            except Exception:
+                continue
+            if res.get("status") in ("OPTIMAL", "FEASIBLE") and res.get("schedule"):
+                fixes.append({"setting": label, "change": change})
+        return fixes
+
     flat_entries = []
     summary      = []
     total_work   = 0
@@ -4095,10 +4140,16 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         )
 
         if sec_result["status"] == "INFEASIBLE" or not sec_result.get("schedule"):
+            diag = section_diagnostics(sec_name, sec_cfg, staff_keys)
+            # Pinpoint the exact setting(s) at fault by trying them one at a time.
+            try:
+                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits)
+            except Exception as _pe:
+                print(f"[Generate] relaxation probe failed for {sec_name}: {_pe}")
             section_results[sec_name] = {
                 "status": sec_result.get("status"),
                 "error": "Section infeasible",
-                "diagnostics": section_diagnostics(sec_name, sec_cfg, staff_keys),
+                "diagnostics": diag,
             }
             continue
 
