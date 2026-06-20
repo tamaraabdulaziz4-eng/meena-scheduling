@@ -2626,6 +2626,105 @@ async def request_cover(lid: int, request: Request, user=Depends(get_current_use
     insert_audit(user, "COVER_REQUEST", lv["staff_name"], f"asked {cand['name']} for {lv['date']}")
     return {"ok": True, "asked": cand["name"]}
 
+# ── Cross-branch cover (manager assigns a floater from another branch) ─────────
+@app.get("/api/cover-candidates")
+def cover_candidates_for_branch(request: Request, user=Depends(require_reviewer)):
+    """Free staff from OTHER branches who could cover a day at `branch_id`.
+    Manager/superadmin only. Ranked by lightest monthly load. Optional `section`
+    ('General'/'US') filters to the matching section."""
+    qp = request.query_params
+    try:
+        branch_id = int(qp.get("branch_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "branch_id required")
+    date = qp.get("date") or ""
+    if len(date) < 7:
+        raise HTTPException(400, "date required (YYYY-MM-DD)")
+    want = _section_of([qp.get("section")]) if qp.get("section") else None
+    y, m = int(date[:4]), int(date[5:7])
+    rows = q("""
+        SELECT s.id, s.name, s.branch_id, s.speciality, b.name AS branch_name,
+               e.shift_code AS shift_today,
+               (SELECT COUNT(*) FROM scheduling.schedule_entries e2
+                  JOIN scheduling.schedules sc2 ON sc2.id=e2.schedule_id
+                 WHERE e2.staff_id=s.id AND sc2.year=%s AND sc2.month=%s
+                   AND e2.shift_code NOT IN ('O','AL','SL','TB')) AS shifts_month
+        FROM scheduling.staff s
+        LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+        LEFT JOIN scheduling.schedules sc ON sc.branch_id=s.branch_id AND sc.year=%s AND sc.month=%s
+        LEFT JOIN scheduling.schedule_entries e ON e.schedule_id=sc.id AND e.staff_id=s.id AND e.date=%s
+        WHERE s.active=true AND s.branch_id<>%s
+    """, (y, m, y, m, date, branch_id))
+    cands = []
+    for r in rows:
+        if want and _section_of(r["speciality"]) != want:
+            continue
+        shift = r["shift_today"]
+        if shift in ("AL", "SL", "TB"):           # already off / on leave
+            continue
+        if shift is not None and shift != "O":     # already working a shift that day
+            continue
+        cands.append({
+            "staff_id": r["id"], "name": r["name"], "branch_name": r["branch_name"],
+            "section": _section_of(r["speciality"]),
+            "shifts_month": int(r["shifts_month"] or 0),
+        })
+    cands.sort(key=lambda c: (c["shifts_month"], c["name"]))
+    return {"date": date, "section": want, "candidates": cands}
+
+@app.post("/api/schedules/{sid}/cover")
+async def add_cross_branch_cover(sid: int, request: Request, user=Depends(require_reviewer)):
+    """Place a staff member from ANOTHER branch onto this branch's rota to cover
+    a day. Manager/superadmin only. The visitor's home branch is recorded in
+    cross_branch_id so both rotas can show where they came from."""
+    body = await request.json()
+    sched = assert_schedule_access(user, sid)
+    staff_id = body.get("staff_id")
+    date = body.get("date") or ""
+    code = body.get("shift_code") or "M"
+    visitor = q("SELECT id, name, branch_id FROM scheduling.staff WHERE id=%s AND active=true",
+                (staff_id,), one=True)
+    if not visitor:
+        raise HTTPException(404, "Staff member not found")
+    if visitor["branch_id"] == sched["branch_id"]:
+        raise HTTPException(400, "That staff member already belongs to this branch")
+    try:
+        y, m = int(date[:4]), int(date[5:7])
+    except Exception:
+        raise HTTPException(400, "Invalid date")
+    if y != sched["year"] or m != sched["month"]:
+        raise HTTPException(400, "Date is outside this schedule's month")
+    codes = {r["code"] for r in q("SELECT code FROM scheduling.shift_types")}
+    codes.add("O")
+    if code not in codes:
+        raise HTTPException(400, f"Unknown shift code: {code}")
+    row = q("""INSERT INTO scheduling.schedule_entries
+               (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
+               VALUES (%s,%s,%s,%s,%s,false,%s)
+               ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
+               shift_code=EXCLUDED.shift_code, cross_branch_id=EXCLUDED.cross_branch_id
+               RETURNING id,schedule_id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
+                         shift_code,cross_branch_id,is_oncall,note""",
+            (sid, visitor["id"], date, code, visitor["branch_id"], "cover"), one=True)
+    # Let the visitor know they're covering elsewhere.
+    host = q("SELECT name FROM scheduling.branches WHERE id=%s", (sched["branch_id"],), one=True) or {}
+    host_name = host.get("name", "another branch")
+    notify_staff_member(visitor["id"],
+                        f"You're scheduled to cover the {code} shift at {host_name} on {date}.",
+                        link="myschedule", ntype="info")
+    insert_audit(user, "CROSS_BRANCH_COVER", visitor["name"], f"{code} @ {host_name} on {date}")
+    return row
+
+@app.delete("/api/schedules/{sid}/cover")
+def remove_cross_branch_cover(sid: int, staff_id: int, date: str, user=Depends(require_reviewer)):
+    """Remove a cross-branch cover entry (manager/superadmin only)."""
+    sched = assert_schedule_access(user, sid)
+    q("""DELETE FROM scheduling.schedule_entries
+         WHERE schedule_id=%s AND staff_id=%s AND date=%s AND cross_branch_id IS NOT NULL""",
+      (sid, staff_id, date), exec_only=True)
+    insert_audit(user, "CROSS_BRANCH_COVER_REMOVE", str(staff_id), f"branch {sched['branch_id']} on {date}")
+    return {"ok": True}
+
 # ── Time-back / compensation claims ───────────────────────────────────────────
 _TB_REASONS = ("covered", "offday", "extra", "oncall")
 
@@ -2783,11 +2882,21 @@ def my_schedule(request: Request, user=Depends(get_current_user)):
                        LEFT JOIN scheduling.branches b ON b.id=e.cross_branch_id
                        WHERE e.schedule_id=%s AND e.staff_id=%s ORDER BY e.date""",
                     (sched["id"], staff_id))
+    # Cross-branch cover: days this person was placed onto ANOTHER branch's rota.
+    # Surface them on their own calendar so they see where they're working.
+    cover = q("""SELECT TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code, e.is_oncall,
+                        hb.name AS cover_at_branch
+                 FROM scheduling.schedule_entries e
+                 JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                 JOIN scheduling.branches hb ON hb.id=sc.branch_id
+                 WHERE e.staff_id=%s AND sc.year=%s AND sc.month=%s AND sc.branch_id<>%s
+                 ORDER BY e.date""",
+              (staff_id, year, month, staff["branch_id"]))
     # A draft/returned rota isn't final yet — the UI flags that for the staff member.
     finalised = bool(sched) and sched.get("status") in ("submitted","reviewed","approved")
     return {"staff": staff, "year": year, "month": month,
             "status": (sched or {}).get("status"),
-            "finalised": finalised, "entries": entries}
+            "finalised": finalised, "entries": entries, "cover": cover}
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 

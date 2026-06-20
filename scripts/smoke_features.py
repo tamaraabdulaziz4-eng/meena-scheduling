@@ -207,6 +207,37 @@ gbad = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month"
                                          "confirm": True, "section": "Nope"})
 check("unknown section is rejected (400)", gbad.status_code == 400, f"{gbad.status_code} {gbad.text}")
 
+print("\n== scenario 8c: cross-branch cover (manager places a floater) ==")
+# A staff member who belongs to a DIFFERENT branch covers a day on NEST3's rota.
+other_branch = next(b for b in branches if b["id"] != bid)
+visitor = admin.post("/api/staff", json={"name": "ZZ Visitor", "branch_id": other_branch["id"]}).json()
+cov_date = f"{YEAR}-08-07"
+# candidate listing only shows OTHER-branch free staff
+cc = admin.get(f"/api/cover-candidates?branch_id={bid}&date={cov_date}")
+check("cover candidates listed from other branches", cc.status_code == 200
+      and any(c["staff_id"] == visitor["id"] for c in cc.json().get("candidates", [])), cc.text)
+check("own-branch staff are not cover candidates",
+      all(c["staff_id"] != A["id"] for c in cc.json().get("candidates", [])), cc.json())
+# team lead (admin) cannot assign cross-branch cover — reviewer only
+tlcov = lead.post(f"/api/schedules/{sid}/cover", json={"staff_id": visitor["id"], "date": cov_date, "shift_code": "M"})
+check("team lead can't assign cross-branch cover (403)", tlcov.status_code in (401, 403), tlcov.status_code)
+# manager assigns the visitor
+cov = admin.post(f"/api/schedules/{sid}/cover", json={"staff_id": visitor["id"], "date": cov_date, "shift_code": "M"})
+check("manager assigns cross-branch cover", cov.status_code == 200
+      and cov.json().get("cross_branch_id") == other_branch["id"], cov.text)
+ents_after = admin.get(f"/api/schedules/{sid}/entries").json()
+check("cover entry lands on the host rota",
+      any(e["staff_id"] == visitor["id"] and e["date"] == cov_date for e in ents_after), "missing")
+# can't add a SAME-branch staffer as a cover
+selfcov = admin.post(f"/api/schedules/{sid}/cover", json={"staff_id": A["id"], "date": cov_date, "shift_code": "M"})
+check("same-branch staff rejected as cover (400)", selfcov.status_code == 400, selfcov.status_code)
+# removal
+rem = admin.delete(f"/api/schedules/{sid}/cover?staff_id={visitor['id']}&date={cov_date}")
+check("manager removes the cover", rem.status_code == 200, rem.text)
+ents_gone = admin.get(f"/api/schedules/{sid}/entries").json()
+check("cover entry removed from host rota",
+      not any(e["staff_id"] == visitor["id"] and e["date"] == cov_date for e in ents_gone), "still there")
+
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)

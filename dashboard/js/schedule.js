@@ -54,6 +54,9 @@ async function renderSchedulePage() {
           <button class="btn btn-ghost btn-sm btn-glow" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
           <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
         ` : ''}
+        ${['superadmin','manager'].includes(currentUser.role) ? `
+          <button class="btn btn-ghost btn-sm" onclick="openCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
+        ` : ''}
         ${['admin','superadmin','manager'].includes(currentUser.role) ? `
           <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
           <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
@@ -482,7 +485,7 @@ function renderRotaGrid() {
           const hij = (typeof hijriFull === 'function') ? hijriFull(scheduleYear, scheduleMonth, d) : '';
           const isToday = d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear();
           const title = [hij, holiday ? ('🎌 ' + holiday) : ''].filter(Boolean).join(' — ');
-          const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5||dow===6?'background:rgba(107,78,255,0.12);':'');
+          const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5?'background:rgba(107,78,255,0.12);':'');
           return `<th title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid #FF6B6B;':''}">${d}${holiday?'<span style="color:#FF6B6B">•</span>':''}</th>`;
         }).join('')}
         <th style="min-width:60px">Shifts</th>
@@ -490,7 +493,7 @@ function renderRotaGrid() {
       <tr>
         ${Array.from({length:nDays},(_,i)=>{
           const dow = dayOfWeek(scheduleYear, scheduleMonth, i+1);
-          const isWeekend = dow===5||dow===6;
+          const isWeekend = dow===5;
           return `<th style="font-size:8px;font-weight:700;color:${isWeekend?'var(--accent)':'var(--muted)'};padding:2px;${isWeekend?'background:rgba(107,78,255,0.1);':''}">${DAYS[dow]}</th>`;
         }).join('')}
         <th></th>
@@ -519,7 +522,7 @@ function renderRotaGrid() {
 
         const bgColor  = isBlank ? '#000000' : (st?.color || '#D0D0D0');
         const txtColor = isBlank ? '#000000' : contrastColor(bgColor);
-        const weekend  = dow===5||dow===6 ? 'rgba(107,78,255,0.04)' : '';
+        const weekend  = dow===5 ? 'rgba(107,78,255,0.04)' : '';
 
         const cellReadonly = isLocked && !isReviewer;
         const classes = ['rota-cell', cellReadonly?'readonly':'', isBlank?'blank-cell':''].filter(Boolean).join(' ');
@@ -557,11 +560,59 @@ function renderRotaGrid() {
     html += coverageRow(nDays, scheduleStaff, onlyKey, sectionReqByName(onlyKey));
   }
 
+  // Cross-branch cover: staff from OTHER branches placed on this rota show up as
+  // entries whose staff_id isn't one of this branch's staff. Render them in
+  // their own section so the covered days are visible here too.
+  html += visitorRows(nDays);
+
   html += `</tbody></table>`;
   wrap.innerHTML = html;
 }
 
-// Look up a section's coverage requirement (min M / min N per day) by name,
+// Rows for visiting (cross-branch) cover staff on this rota.
+function visitorRows(nDays) {
+  const ownIds = new Set(scheduleStaff.map(s => s.id));
+  const visitors = {};   // staff_id → { name, home }
+  for (const e of (currentEntries || [])) {
+    if (ownIds.has(e.staff_id)) continue;
+    if (!visitors[e.staff_id]) visitors[e.staff_id] = { name: e.staff_name || `#${e.staff_id}`, home: e.cross_branch_name || '' };
+  }
+  const ids = Object.keys(visitors);
+  if (!ids.length) return '';
+
+  const isReviewer = ['superadmin', 'manager'].includes(currentUser?.role);
+  let rows = `<tr class="rota-section-row"><td colspan="${nDays + 2}">🔁 Cross-branch Cover</td></tr>`;
+  for (const sid of ids) {
+    const v = visitors[sid];
+    let shiftCount = 0;
+    const cells = Array.from({ length: nDays }, (_, i) => {
+      const d = i + 1;
+      const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const entry = entryMap[`${sid}_${dateStr}`];
+      const code = entry?.shift_code || '';
+      const st = code ? (allShiftTypes.find(x => x.code === code) || { color: '#D0D0D0', is_off: false, is_leave: false }) : null;
+      if (st && !st.is_off && !st.is_leave) shiftCount++;
+      const bg = code ? (st?.color || '#D0D0D0') : 'transparent';
+      const txt = code ? contrastColor(bg) : 'inherit';
+      const removable = isReviewer && !!entry;
+      return `<td class="rota-cell" style="background:${bg};position:relative"
+        title="${escapeHtml(v.name)} (from ${escapeHtml(v.home || 'another branch')}) — ${dateStr}${code ? ': ' + code : ''}">
+        <div class="shift-chip" style="color:${txt}">${code || ''}</div>
+        ${removable ? `<span onclick="removeCover(${sid},'${dateStr}')" title="Remove cover"
+          style="position:absolute;top:-1px;right:1px;font-size:9px;color:#E63946;cursor:pointer;font-weight:800">×</span>` : ''}
+      </td>`;
+    }).join('');
+    rows += `<tr>
+      <td class="rota-name-col" style="padding:4px 8px !important;white-space:nowrap">
+        <span style="font-weight:600;font-size:12px">${escapeHtml(v.name)}</span>
+        <sup title="From ${escapeHtml(v.home)}" style="color:var(--accent,#6B4EFF)">↗ ${escapeHtml(v.home || '')}</sup>
+      </td>
+      ${cells}
+      <td style="text-align:center;font-weight:700;font-size:12px;color:var(--primary)">${shiftCount}</td>
+    </tr>`;
+  }
+  return rows;
+}
 // from the per-month section settings. Falls back to 24h (1 M + 1 N) when a
 // section has no explicit settings yet.
 function sectionReqByName(name) {
@@ -1177,6 +1228,96 @@ async function resetStaffSettingsToDefault() {
 }
 function closeGenerateModal() {
   document.getElementById('generate-modal-overlay').classList.remove('open');
+}
+
+// ── Cross-branch cover (manager only) ─────────────────────────────────────────
+function openCoverModal() {
+  if (!currentSchedule?.id) { toast('Open a branch schedule first', 'err'); return; }
+  const today = new Date();
+  const def = (scheduleYear === today.getFullYear() && scheduleMonth === today.getMonth() + 1)
+    ? `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`
+    : `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-01`;
+  const last = daysInMonth(scheduleYear, scheduleMonth);
+  showModal('cover-modal', `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div style="font-size:17px;font-weight:800">🔁 Cover from another branch</div>
+      <button onclick="closeModal('cover-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">Pick a day and a free staff member from another branch to cover it. It won't affect Generate.</div>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <label style="flex:1;min-width:120px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">Date</div>
+        <input type="date" id="cover-date" value="${def}"
+          min="${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-01"
+          max="${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(last).padStart(2,'0')}"
+          onchange="loadCoverCandidates()" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:8px"></label>
+      <label style="width:110px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">Shift</div>
+        <select id="cover-shift" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:8px">
+          <option value="M">Morning (M)</option><option value="N">Night (N)</option>
+        </select></label>
+      <label style="width:140px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">Section</div>
+        <select id="cover-section" onchange="loadCoverCandidates()" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:8px">
+          <option value="">Any section</option><option value="General">General</option><option value="US">Ultrasound</option>
+        </select></label>
+    </div>
+    <div style="font-size:12px;font-weight:600;margin:14px 0 6px">Available staff (other branches)</div>
+    <div id="cover-candidates" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:6px">
+      <div style="color:var(--muted);padding:12px;text-align:center">Loading…</div>
+    </div>
+    <div class="msg" id="cover-msg" style="margin-top:8px"></div>
+  `);
+  loadCoverCandidates();
+}
+
+async function loadCoverCandidates() {
+  const box = document.getElementById('cover-candidates');
+  if (!box) return;
+  const date = document.getElementById('cover-date').value;
+  const section = document.getElementById('cover-section').value;
+  box.innerHTML = `<div style="color:var(--muted);padding:12px;text-align:center">Loading…</div>`;
+  try {
+    const res = await API.get(`/cover-candidates?branch_id=${currentBranchId}&date=${date}${section ? '&section=' + section : ''}`);
+    const cands = res.candidates || [];
+    if (!cands.length) {
+      box.innerHTML = `<div style="color:var(--muted);padding:12px;text-align:center">No free staff from other branches on this day.</div>`;
+      return;
+    }
+    box.innerHTML = cands.map(c => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600;font-size:13px">${escapeHtml(c.name)}</div>
+          <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.branch_name || '')} · ${escapeHtml(c.section)} · ${c.shifts_month} shifts this month</div>
+        </div>
+        <button class="btn btn-sm" onclick="submitCover(${c.staff_id}, '${escapeHtml(c.name)}')">Assign</button>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<div style="color:var(--danger,#e74c3c);padding:12px;text-align:center">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function submitCover(staffId, name) {
+  const date = document.getElementById('cover-date').value;
+  const shift = document.getElementById('cover-shift').value;
+  const msg = document.getElementById('cover-msg');
+  try {
+    await API.post(`/schedules/${currentSchedule.id}/cover`, { staff_id: staffId, date, shift_code: shift });
+    msg.className = 'msg'; msg.textContent = `✓ ${name} assigned to cover ${shift} on ${date}`;
+    currentEntries = await API.get(`/schedules/${currentSchedule.id}/entries`);
+    buildEntryMap();
+    renderRotaGrid();
+    loadCoverCandidates();
+    toast('Cover assigned');
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+}
+
+async function removeCover(staffId, date) {
+  if (!currentSchedule?.id) return;
+  try {
+    await API.delete(`/schedules/${currentSchedule.id}/cover?staff_id=${staffId}&date=${date}`);
+    currentEntries = await API.get(`/schedules/${currentSchedule.id}/entries`);
+    buildEntryMap();
+    renderRotaGrid();
+    toast('Cover removed');
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 async function runGenerate() {
