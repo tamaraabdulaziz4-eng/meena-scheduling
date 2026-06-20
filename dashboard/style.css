@@ -479,6 +479,18 @@ body {
 .dz-head { font-size: 14px; font-weight: 800; color: #e05555; margin-bottom: 6px; }
 .dz-text { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 14px; max-width: 640px; }
 .dz-text b { color: var(--text); }
+/* Cover suggestions + time-back rows */
+.cover-row, .tb-row { display: flex; align-items: center; gap: 10px; padding: 10px 2px;
+  border-bottom: 1px solid var(--border); }
+.cover-row:last-child, .tb-row:last-child { border-bottom: none; }
+.tb-balance { background: linear-gradient(135deg, #f3f1fc, #e9e5fa); border: 1px solid #e3ddfa;
+  border-radius: 12px; padding: 10px 14px; font-size: 14px; color: var(--primary); margin-bottom: 14px; }
+.tb-balance b { font-size: 17px; }
+.tb-raise { background: var(--card-alt); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 16px; }
+.tb-raise-title, .tb-list-title { font-size: 12px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px; }
+.tb-list-title { margin-top: 4px; }
 /* Registration link rows (settings) */
 .reg-link-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .reg-link-label { flex: 0 0 92px; font-size: 12px; font-weight: 600; color: var(--text); }

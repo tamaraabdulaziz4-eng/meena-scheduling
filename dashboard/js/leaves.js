@@ -20,6 +20,7 @@ async function renderLeavesPage() {
   const title = isStaff ? 'My Leave' : 'Leave Management';
   const actions = [
     isSuper ? `<button class="btn btn-ghost btn-sm" onclick="openHolidaysModal()">⚙️ Settings</button>` : '',
+    (canEdit || isStaff) ? `<button class="btn btn-ghost btn-sm" onclick="openTimebackModal()">⏱ Time-back</button>` : '',
     (canEdit || isStaff) ? `<button class="btn btn-sm" onclick="openLeaveModal()">${isStaff ? '🌴 Request Leave' : '+ Add Leave'}</button>` : '',
   ].filter(Boolean).join(' ');
   setTopbar(title, 'Annual leave, sick leave, time-back', actions);
@@ -102,9 +103,12 @@ function renderLeavesList() {
     const days    = g.day_count;
     const st      = g.status || 'approved';
     const idsArg  = JSON.stringify(g.ids).replace(/"/g, '&quot;');
+    // Sick leave → a "find cover" button for reviewers, the branch lead and the owner.
+    const coverBtn = g.leave_type === 'SL'
+      ? `<button class="action-btn" onclick="openCoverModal(${g.ids[0]})">🔁 Cover</button> ` : '';
     let actions = '';
     if (canEdit) {
-      actions = '<td style="white-space:nowrap">';
+      actions = '<td style="white-space:nowrap">' + coverBtn;
       // Stage 1 ('pending') → team lead OR manager can act; stage 2
       // ('lead_approved') → manager/superadmin only.
       const canAct = (st === 'pending' && canEdit) || (st === 'lead_approved' && isReviewer);
@@ -114,11 +118,11 @@ function renderLeavesList() {
       }
       actions += `<button class="action-btn danger" onclick="deleteLeaveRange(${idsArg})">Delete</button></td>`;
     } else if (isStaff) {
-      // A staff member can withdraw their own request while it's still pending.
-      actions = '<td style="white-space:nowrap">';
+      // A staff member can withdraw their own pending request, and find cover for their own sick leave.
+      actions = '<td style="white-space:nowrap">' + coverBtn;
       actions += st === 'pending'
         ? `<button class="action-btn danger" onclick="withdrawLeaveRange(${idsArg})">Withdraw</button>`
-        : '<span style="font-size:11px;color:var(--muted)">—</span>';
+        : (coverBtn ? '' : '<span style="font-size:11px;color:var(--muted)">—</span>');
       actions += '</td>';
     }
     return `<tr>
@@ -323,4 +327,124 @@ async function deleteLeaveRange(ids) {
     toast(`${ids.length} leave day${ids.length !== 1 ? 's' : ''} deleted`);
   } catch (err) { toast(err.message, 'err'); }
   finally { hideLoader(); }
+}
+
+// ── Sick-leave cover suggestions ──────────────────────────────────────────────
+let _coverLeaveId = null;
+async function openCoverModal(lid) {
+  _coverLeaveId = lid;
+  document.getElementById('cover-summary').textContent = '';
+  document.getElementById('cover-list').innerHTML = LOADING_HTML;
+  document.getElementById('cover-modal-overlay').classList.add('open');
+  try {
+    const r = await API.get(`/leaves/${lid}/cover-suggestions`);
+    document.getElementById('cover-summary').innerHTML =
+      `Cover for <b>${escapeHtml(r.absent || '')}</b> — ${r.gap_shift ? 'shift <b>' + escapeHtml(r.gap_shift) + '</b>' : 'their shift'}` +
+      ` · ${escapeHtml(r.branch_name || '')} · ${fmtDateDisplay(r.date)} · section <b>${escapeHtml(r.section)}</b>`;
+    const list = document.getElementById('cover-list');
+    const cands = r.candidates || [];
+    if (!cands.length) {
+      list.innerHTML = `<div class="empty"><p>No free ${escapeHtml(r.section)} staff found across the branches that day.</p></div>`;
+      return;
+    }
+    list.innerHTML = cands.map(c => `
+      <div class="cover-row">
+        <div style="flex:1">
+          <b>${escapeHtml(c.name)}</b>
+          <span class="badge ${c.same_branch ? 'badge-purple' : 'badge-gray'}" style="margin-left:6px">${escapeHtml(c.branch_name || '')}</span>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Off that day · ${c.shifts_month} shifts this month${c.same_branch ? ' · same branch' : ''}</div>
+        </div>
+        <button class="btn btn-sm" onclick="requestCover(${c.staff_id}, ${JSON.stringify(c.name).replace(/"/g,'&quot;')})">Request</button>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('cover-list').innerHTML = `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`;
+  }
+}
+function closeCoverModal() { document.getElementById('cover-modal-overlay').classList.remove('open'); }
+async function requestCover(staffId, name) {
+  try {
+    await API.post(`/leaves/${_coverLeaveId}/request-cover`, { staff_id: staffId });
+    toast(`Cover request sent to ${name}`);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ── Time-back claims + balance ────────────────────────────────────────────────
+const TB_REASONS = { covered: 'Covered for a colleague', offday: 'Worked an off-day',
+                     extra: 'Extra shift / overtime', oncall: 'On-call / emergency' };
+const TB_STATUS = { pending: ['Awaiting team lead', 'badge-orange'], lead_approved: ['Awaiting manager', 'badge-yellow'],
+                    approved: ['Approved', 'badge-green'], rejected: ['Rejected', 'badge-gray'] };
+async function openTimebackModal() {
+  document.getElementById('tb-msg').textContent = '';
+  document.getElementById('tb-date').value = fmtDate(new Date());
+  const isStaff = currentUser?.role === 'staff';
+  // Reviewers/leads pick which staff the claim is for.
+  const staffRow = document.getElementById('tb-staff-row');
+  if (!isStaff) {
+    staffRow.style.display = '';
+    if (!allStaff.length) { try { await loadStaff(); } catch (e) {} }
+    document.getElementById('tb-staff').innerHTML =
+      allStaff.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  } else staffRow.style.display = 'none';
+  document.getElementById('timeback-modal-overlay').classList.add('open');
+  loadTimeback();
+}
+function closeTimebackModal() { document.getElementById('timeback-modal-overlay').classList.remove('open'); }
+async function loadTimeback() {
+  const bal = document.getElementById('tb-balance');
+  const list = document.getElementById('tb-list');
+  list.innerHTML = LOADING_HTML;
+  try {
+    const claims = await API.get('/timeback');
+    // Balance: for a staff member, their own; otherwise hidden (shown per row).
+    if (currentUser?.role === 'staff') {
+      const b = await API.get('/timeback/balance').catch(() => null);
+      bal.innerHTML = b ? `Your balance: <b>${b.balance}</b> day${b.balance === 1 ? '' : 's'}` : '';
+      bal.style.display = '';
+    } else bal.style.display = 'none';
+    renderTimebackList(claims);
+  } catch (e) { list.innerHTML = `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`; }
+}
+function renderTimebackList(claims) {
+  const list = document.getElementById('tb-list');
+  if (!claims.length) { list.innerHTML = `<div class="hm-muted" style="padding:8px 0">No claims yet.</div>`; return; }
+  const isStaff = currentUser?.role === 'staff';
+  const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
+  const canEdit = ['admin', 'superadmin', 'manager'].includes(currentUser?.role);
+  list.innerHTML = claims.map(t => {
+    const stt = TB_STATUS[t.status] || [t.status, 'badge-gray'];
+    const canAct = (t.status === 'pending' && canEdit) || (t.status === 'lead_approved' && isReviewer);
+    let act = '';
+    if (canAct) act = `<button class="action-btn" onclick="setTimebackStatus(${t.id},'approved')">${(t.status === 'pending' && !isReviewer) ? 'Approve → manager' : 'Approve'}</button>
+                       <button class="action-btn danger" onclick="setTimebackStatus(${t.id},'rejected')">Reject</button>`;
+    else if (isStaff && t.status === 'pending') act = `<button class="action-btn danger" onclick="withdrawTimeback(${t.id})">Withdraw</button>`;
+    return `<div class="tb-row">
+      <div style="flex:1">
+        <b>${escapeHtml(t.staff_name || '')}</b> · ${TB_REASONS[t.reason] || t.reason}
+        <div style="font-size:11.5px;color:var(--muted)">${fmtDateDisplay(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
+      </div>
+      <span class="badge ${stt[1]}">${stt[0]}</span>
+      <div style="white-space:nowrap">${act}</div>
+    </div>`;
+  }).join('');
+}
+async function submitTimeback() {
+  const msg = document.getElementById('tb-msg'); msg.className = 'msg';
+  const body = { date: document.getElementById('tb-date').value,
+                 reason: document.getElementById('tb-reason').value,
+                 note: document.getElementById('tb-note').value.trim() };
+  if (currentUser?.role !== 'staff') body.staff_id = document.getElementById('tb-staff').value || null;
+  if (!body.date) { msg.classList.add('err'); msg.textContent = 'Pick a date'; return; }
+  try {
+    await API.post('/timeback', body);
+    document.getElementById('tb-note').value = '';
+    toast('Claim submitted'); loadTimeback();
+  } catch (e) { msg.classList.add('err'); msg.textContent = e.message; }
+}
+async function setTimebackStatus(id, status) {
+  try { await API.put(`/timeback/${id}/status`, { status }); toast(`Claim ${status === 'approved' ? 'approved' : 'rejected'}`); loadTimeback(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+async function withdrawTimeback(id) {
+  try { await API.delete(`/timeback/${id}`); toast('Claim withdrawn'); loadTimeback(); }
+  catch (e) { toast(e.message, 'err'); }
 }

@@ -323,6 +323,26 @@ def init_schema():
             """)
             # Leave requests gained an approval workflow; older rows stay 'approved'.
             cur.execute("ALTER TABLE scheduling.leave_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';")
+            # The shift a sick-leave (SL) replaced on the rota, so we can suggest
+            # cover for exactly that shift later.
+            cur.execute("ALTER TABLE scheduling.leave_requests ADD COLUMN IF NOT EXISTS covered_shift TEXT;")
+            # Time-back / compensation claims: a staffer who covered a shift, worked
+            # an off-day, did extra/overtime or took an on-call raises a claim; once
+            # approved (team lead -> manager) it credits one day to their balance,
+            # and a TB leave they later take debits it.
+            cur.execute("""CREATE TABLE IF NOT EXISTS scheduling.timeback_claims (
+                               id SERIAL PRIMARY KEY,
+                               staff_id INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                               date DATE NOT NULL,
+                               reason TEXT NOT NULL DEFAULT 'covered',
+                               days NUMERIC NOT NULL DEFAULT 1,
+                               note TEXT,
+                               status TEXT NOT NULL DEFAULT 'pending',
+                               created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                               reviewed_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                               reviewed_at TIMESTAMP,
+                               created_at TIMESTAMP DEFAULT NOW()
+                           );""")
             # Org-wide key/value settings (e.g. the leave-request cutoff day).
             cur.execute("""CREATE TABLE IF NOT EXISTS scheduling.app_settings (
                                key TEXT PRIMARY KEY, value TEXT);""")
@@ -1029,6 +1049,21 @@ def leave_coverage_gap(staff_id, date):
                   WHERE schedule_id=%s AND date=%s AND shift_code=%s AND staff_id<>%s""",
                (sched["id"], date, code, staff_id), one=True)
     return None if (others and others["n"] > 0) else code
+
+def _current_rota_shift(staff_id, date):
+    """The working shift a staff member currently has on the rota for a date
+    (None if off / on leave / no rota). Captured before a sick-leave overwrites
+    it, so we can suggest cover for exactly that shift."""
+    sched = _schedule_for_leave(staff_id, date)
+    if not sched:
+        return None
+    cur = q("""SELECT shift_code FROM scheduling.schedule_entries
+               WHERE schedule_id=%s AND staff_id=%s AND date=%s""",
+            (sched["id"], staff_id, date), one=True)
+    code = cur and cur["shift_code"]
+    if not code or code in ("O", "AL", "SL", "TB", "OC"):
+        return None
+    return code
 
 # ── Nest helpers ──────────────────────────────────────────────────────────────
 
@@ -2261,20 +2296,21 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
     if date_to < date_from: raise HTTPException(400, '"To" date must be on or after "From" date')
 
     # Cutoff: staff and team leads must submit next-month (and later) leave before
-    # the cutoff day of the prior month. Managers/superadmins may override (e.g.
-    # emergencies) so the schedule can still reflect reality.
-    if user["role"] in ("staff", "admin"):
+    # the cutoff day of the prior month. Sick leave is an emergency notification,
+    # so it has no cutoff. Managers/superadmins may override too.
+    if user["role"] in ("staff", "admin") and leave_type != "SL":
         cutoff = get_leave_cutoff_day()
         for chk in {date_from, date_to}:
             ok, why = leave_window_open(chk, cutoff)
             if not ok:
                 raise HTTPException(400, why)
 
-    # Two-stage approval: a manager/full-admin records leave as already approved;
-    # a team lead's own entry has cleared stage 1 (awaiting the manager); a staff
-    # request starts at stage 1 (awaiting the branch team lead). Only 'approved'
-    # leave lands on the rota and is honoured by the generator.
-    if user["role"] in ("superadmin", "manager"):
+    # Sick leave is NOT an approval workflow — it just informs us and lands on the
+    # rota immediately (then we surface cover suggestions). Annual/other leave goes
+    # through the two-stage chain: staff -> team lead -> manager.
+    if leave_type == "SL":
+        new_status = "approved"
+    elif user["role"] in ("superadmin", "manager"):
         new_status = "approved"
     elif user["role"] == "admin":
         new_status = LEAVE_AWAIT_MANAGER
@@ -2294,23 +2330,33 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
 
     for d in dates:
         try:
+            # For sick leave, remember the shift it replaces so we can suggest cover.
+            covered = _current_rota_shift(staff_id, d) if leave_type == "SL" else None
             row = q("""INSERT INTO scheduling.leave_requests
-                       (staff_id,date,leave_type,status,note,created_by)
-                       VALUES (%s,%s,%s,%s,%s,%s)
+                       (staff_id,date,leave_type,status,note,created_by,covered_shift)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (staff_id,date) DO UPDATE
                        SET leave_type=EXCLUDED.leave_type,note=EXCLUDED.note,
-                           status=EXCLUDED.status,created_by=EXCLUDED.created_by
+                           status=EXCLUDED.status,created_by=EXCLUDED.created_by,
+                           covered_shift=EXCLUDED.covered_shift
                        RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
-                                 leave_type,status,note,created_by,created_at""",
-                    (staff_id, d, leave_type, new_status, note, user["id"]), one=True)
+                                 leave_type,status,note,created_by,created_at,covered_shift""",
+                    (staff_id, d, leave_type, new_status, note, user["id"], covered), one=True)
             if row:
                 leaves.append(row)
-                # Leave entered as approved (by a reviewer) goes straight onto the rota.
+                # Approved leave (reviewer entry or sick leave) goes straight on the rota.
                 if new_status == "approved":
                     apply_leave_to_schedule(staff_id, d, leave_type)
         except Exception: pass
 
-    if leaves and new_status == LEAVE_AWAIT_LEAD:
+    if leaves and leave_type == "SL":
+        # Sick leave: tell the branch lead + managers and point them at cover.
+        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (staff["branch_id"],))
+        msg = f"🤒 {staff['name']} reported sick — {len(leaves)} day(s). Tap to find cover."
+        for u in (leads or []):
+            notify(u["id"], msg, link="leaves", ntype="leave")
+        notify_roles(("manager", "superadmin"), msg, link="leaves", ntype="leave")
+    elif leaves and new_status == LEAVE_AWAIT_LEAD:
         # Stage 1: the branch team lead approves first (managers as fallback if
         # the branch has no lead).
         leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s",
@@ -2478,6 +2524,223 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_admi
         for sid in {lv["staff_id"] for lv in rows}:
             notify_staff_member(sid, f"Your leave was {new_status}", link="leaves", ntype=new_status)
     return {"updated": len(rows), "status": new_status}
+
+# ── Sick-leave cover suggestions ──────────────────────────────────────────────
+
+def _section_of(speciality):
+    """Classify a staff member's section as 'US' or 'General'."""
+    spec = [str(x).lower() for x in (speciality or [])]
+    if any(x == "us" or "ultrasound" in x for x in spec):
+        return "US"
+    return "General"
+
+def _cover_leave(lid):
+    return q("""SELECT l.id,l.staff_id,TO_CHAR(l.date,'YYYY-MM-DD') AS date,l.covered_shift,
+                       l.leave_type, s.name AS staff_name, s.branch_id, s.speciality,
+                       b.name AS branch_name
+                FROM scheduling.leave_requests l
+                JOIN scheduling.staff s ON s.id=l.staff_id
+                LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE l.id=%s""", (lid,), one=True)
+
+def _can_see_cover(user, lv):
+    if user["role"] in ("manager", "superadmin"):
+        return True
+    if user["role"] == "admin":
+        return can_access_branch(user, lv["branch_id"])
+    if user["role"] == "staff":
+        return user.get("staff_id") == lv["staff_id"]
+    return False
+
+@app.get("/api/leaves/{lid}/cover-suggestions")
+def cover_suggestions(lid: int, user=Depends(get_current_user)):
+    """Who could cover an absent staffer's shift: same section, free that day,
+    from ALL branches, ranked (same branch first, then lightest load)."""
+    lv = _cover_leave(lid)
+    if not lv:
+        raise HTTPException(404, "Leave not found")
+    if not _can_see_cover(user, lv):
+        raise HTTPException(403, "Forbidden")
+    date = lv["date"]; want = _section_of(lv["speciality"])
+    y, m = int(date[:4]), int(date[5:7])
+    rows = q("""
+        SELECT s.id, s.name, s.branch_id, s.speciality, b.name AS branch_name,
+               e.shift_code AS shift_today,
+               (SELECT COUNT(*) FROM scheduling.schedule_entries e2
+                  JOIN scheduling.schedules sc2 ON sc2.id=e2.schedule_id
+                 WHERE e2.staff_id=s.id AND sc2.year=%s AND sc2.month=%s
+                   AND e2.shift_code NOT IN ('O','AL','SL','TB')) AS shifts_month
+        FROM scheduling.staff s
+        LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+        LEFT JOIN scheduling.schedules sc ON sc.branch_id=s.branch_id AND sc.year=%s AND sc.month=%s
+        LEFT JOIN scheduling.schedule_entries e ON e.schedule_id=sc.id AND e.staff_id=s.id AND e.date=%s
+        WHERE s.active=true AND s.id<>%s
+    """, (y, m, y, m, date, lv["staff_id"]))
+    cands = []
+    for r in rows:
+        if _section_of(r["speciality"]) != want:
+            continue
+        shift = r["shift_today"]
+        if shift in ("AL", "SL", "TB"):     # already off / on leave
+            continue
+        if shift is not None and shift != "O":  # working a shift that day → not free
+            continue
+        cands.append({
+            "staff_id": r["id"], "name": r["name"], "branch_name": r["branch_name"],
+            "section": want, "shifts_month": int(r["shifts_month"] or 0),
+            "same_branch": r["branch_id"] == lv["branch_id"],
+        })
+    cands.sort(key=lambda c: (not c["same_branch"], c["shifts_month"], c["name"]))
+    return {"date": date, "gap_shift": lv["covered_shift"], "section": want,
+            "absent": lv["staff_name"], "branch_name": lv["branch_name"], "candidates": cands}
+
+@app.post("/api/leaves/{lid}/request-cover")
+async def request_cover(lid: int, request: Request, user=Depends(get_current_user)):
+    """Ping a candidate to cover the absent staffer's shift."""
+    body = await request.json()
+    lv = _cover_leave(lid)
+    if not lv:
+        raise HTTPException(404, "Leave not found")
+    if not _can_see_cover(user, lv):
+        raise HTTPException(403, "Forbidden")
+    cand = q("SELECT id, name FROM scheduling.staff WHERE id=%s", (body.get("staff_id"),), one=True)
+    if not cand:
+        raise HTTPException(404, "Staff not found")
+    shift = lv["covered_shift"] or "shift"
+    notify_staff_member(cand["id"],
+                        f"Cover request: please cover the {shift} shift at {lv['branch_name']} on "
+                        f"{lv['date']} — {lv['staff_name']} is on sick leave.",
+                        link="myschedule", ntype="info")
+    insert_audit(user, "COVER_REQUEST", lv["staff_name"], f"asked {cand['name']} for {lv['date']}")
+    return {"ok": True, "asked": cand["name"]}
+
+# ── Time-back / compensation claims ───────────────────────────────────────────
+_TB_REASONS = ("covered", "offday", "extra", "oncall")
+
+def _tb_balance(staff_id):
+    cr = q("SELECT COALESCE(SUM(days),0) AS c FROM scheduling.timeback_claims WHERE staff_id=%s AND status='approved'",
+           (staff_id,), one=True)
+    db = q("SELECT COUNT(*) AS c FROM scheduling.leave_requests WHERE staff_id=%s AND leave_type='TB' AND status='approved'",
+           (staff_id,), one=True)
+    return float(cr["c"] or 0) - float(db["c"] or 0)
+
+@app.get("/api/timeback")
+def list_timeback(request: Request, user=Depends(get_current_user)):
+    """Time-back claims, scoped: staff see their own, a team lead their branch,
+    a reviewer all."""
+    conds, vals = ["1=1"], []
+    if user["role"] == "staff":
+        conds.append("t.staff_id=%s"); vals.append(user.get("staff_id"))
+    elif user["role"] == "admin":
+        bid = user.get("branch_id")
+        if not bid: raise HTTPException(403, "No branch assigned to this account")
+        conds.append("s.branch_id=%s"); vals.append(bid)
+    elif user["role"] not in ("manager", "superadmin"):
+        raise HTTPException(403, "Forbidden")
+    rows = q(f"""SELECT t.id,t.staff_id,TO_CHAR(t.date,'YYYY-MM-DD') AS date,t.reason,t.days,
+                        t.note,t.status,t.created_at, s.name AS staff_name,
+                        s.branch_id, b.name AS branch_name
+                 FROM scheduling.timeback_claims t
+                 JOIN scheduling.staff s ON s.id=t.staff_id
+                 LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                 WHERE {' AND '.join(conds)} ORDER BY t.created_at DESC""", vals)
+    return rows
+
+@app.get("/api/timeback/balance")
+def timeback_balance(request: Request, user=Depends(get_current_user)):
+    sid = request.query_params.get("staff_id") or user.get("staff_id")
+    if not sid:
+        raise HTTPException(400, "staff_id required")
+    sid = _int_or_400(sid)
+    st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (sid,), one=True)
+    if not st:
+        raise HTTPException(404, "Staff not found")
+    if user["role"] == "staff" and user.get("staff_id") != sid:
+        raise HTTPException(403, "Forbidden")
+    if user["role"] == "admin" and not can_access_branch(user, st["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    return {"staff_id": sid, "balance": _tb_balance(sid)}
+
+@app.post("/api/timeback")
+async def create_timeback(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    staff_id = user.get("staff_id") if user["role"] == "staff" else body.get("staff_id")
+    date = body.get("date")
+    reason = body.get("reason") if body.get("reason") in _TB_REASONS else "covered"
+    note = body.get("note")
+    if user["role"] == "viewer" or (user["role"] != "staff" and not staff_id):
+        raise HTTPException(403 if user["role"] == "viewer" else 400, "staff_id required")
+    if not staff_id or not date:
+        raise HTTPException(400, "staff_id and date are required")
+    st = q("SELECT branch_id, name FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+    if not st:
+        raise HTTPException(404, "Staff not found")
+    if user["role"] != "staff" and not can_access_branch(user, st["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    # Same two-stage chain as leave: staff -> lead -> manager.
+    if user["role"] in ("superadmin", "manager"):
+        status = "approved"
+    elif user["role"] == "admin":
+        status = LEAVE_AWAIT_MANAGER
+    else:
+        status = LEAVE_AWAIT_LEAD
+    row = q("""INSERT INTO scheduling.timeback_claims (staff_id,date,reason,note,status,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s)
+               RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,reason,days,note,status""",
+            (staff_id, date, reason, note, status, user["id"]), one=True)
+    if status == LEAVE_AWAIT_LEAD:
+        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (st["branch_id"],))
+        msg = f"{st['name']}: time-back claim awaiting your approval"
+        for u in (leads or []):
+            notify(u["id"], msg, link="leaves", ntype="info")
+        if not leads:
+            notify_roles(("manager", "superadmin"), msg, link="leaves", ntype="info")
+    elif status == LEAVE_AWAIT_MANAGER:
+        notify_roles(("manager", "superadmin"), f"{st['name']}: time-back claim awaiting final approval",
+                     link="leaves", ntype="info")
+    return row
+
+@app.put("/api/timeback/{tid}/status")
+async def update_timeback_status(tid: int, request: Request, user=Depends(require_admin)):
+    """Two-stage approval (team lead -> manager), same rules as leave."""
+    body = await request.json()
+    requested = body.get("status")
+    t = q("""SELECT t.created_by, t.staff_id, t.status, TO_CHAR(t.date,'YYYY-MM-DD') AS date,
+                    s.name AS staff_name, s.branch_id
+             FROM scheduling.timeback_claims t JOIN scheduling.staff s ON s.id=t.staff_id
+             WHERE t.id=%s""", (tid,), one=True)
+    if not t:
+        raise HTTPException(404, "Claim not found")
+    if not can_access_branch(user, t["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    new_status = _leave_decide(user, t["status"], requested)
+    row = q("""UPDATE scheduling.timeback_claims SET status=%s, reviewed_by=%s, reviewed_at=NOW()
+               WHERE id=%s RETURNING id,status""", (new_status, user["id"], tid), one=True)
+    insert_audit(user, f"TIMEBACK_{new_status.upper()}", f"claim:{tid}", t["staff_name"])
+    if new_status == LEAVE_AWAIT_MANAGER:
+        notify_roles(("manager", "superadmin"),
+                     f"{t['staff_name']}'s time-back claim cleared the team lead — awaiting final approval",
+                     link="leaves", ntype="info")
+    notify_staff_member(t["staff_id"], f"Your time-back claim ({t['date']}) was {new_status.replace('_',' ')}",
+                        link="leaves", ntype=new_status if new_status in ("approved", "rejected") else "info")
+    return row
+
+@app.delete("/api/timeback/{tid}")
+def delete_timeback(tid: int, user=Depends(get_current_user)):
+    t = q("""SELECT t.staff_id, t.status, s.branch_id FROM scheduling.timeback_claims t
+             JOIN scheduling.staff s ON s.id=t.staff_id WHERE t.id=%s""", (tid,), one=True)
+    if not t:
+        raise HTTPException(404, "Claim not found")
+    if user["role"] == "staff":
+        if t["staff_id"] != user.get("staff_id") or t["status"] != "pending":
+            raise HTTPException(403, "Only your own pending claim can be withdrawn")
+    elif user["role"] in ("admin", "manager", "superadmin"):
+        if not can_access_branch(user, t["branch_id"]):
+            raise HTTPException(403, "Forbidden")
+    else:
+        raise HTTPException(403, "Forbidden")
+    q("DELETE FROM scheduling.timeback_claims WHERE id=%s", (tid,), exec_only=True)
+    return {"ok": True}
 
 # ── Staff self-service portal ─────────────────────────────────────────────────
 

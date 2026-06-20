@@ -191,6 +191,29 @@ check("new password works on a fresh login", login(f"stf{sfx}", "newstaff1").get
 check("old password no longer works",
       TestClient(app).post("/api/auth/login", json={"username": f"stf{sfx}", "password": "pass123"}).status_code == 401)
 
+print("\n== sick leave: no approval chain, just notify + cover ==")
+sl = STAFF.post("/api/leaves", json={"date_from": "2026-09-15", "date_to": "2026-09-15", "leave_type": "SL"})
+check("sick leave auto-approved (no chain)", sl.status_code == 200 and sl.json().get("status") == "approved", sl.text)
+slid = sl.json()["leaves"][0]["id"]
+cs = STAFF.get(f"/api/leaves/{slid}/cover-suggestions")
+check("staff sees cover suggestions for own sick leave", cs.status_code == 200, cs.text)
+check("suggestions list candidates from the pool", any(c["staff_id"] == sB["id"] for c in cs.json().get("candidates", [])), cs.text)
+check("manager sees cover suggestions too", MGR.get(f"/api/leaves/{slid}/cover-suggestions").status_code == 200)
+check("team lead can request a cover", LEADA.post(f"/api/leaves/{slid}/request-cover", json={"staff_id": sB["id"]}).status_code == 200)
+
+print("\n== time-back claims: team lead -> manager, balance ==")
+check("viewer can't raise a claim", VIEW.post("/api/timeback", json={"date": "2026-09-10", "reason": "covered"}).status_code in (401, 403))
+tb = STAFF.post("/api/timeback", json={"date": "2026-09-10", "reason": "covered", "note": "covered Sara"})
+check("staff raises a time-back claim (pending)", tb.status_code == 200 and tb.json().get("status") == "pending", tb.text)
+tbid = tb.json()["id"]
+check("staff can't approve own claim", STAFF.put(f"/api/timeback/{tbid}/status", json={"status": "approved"}).status_code in (401, 403))
+s1 = LEADA.put(f"/api/timeback/{tbid}/status", json={"status": "approved"})
+check("team lead clears stage 1", s1.status_code == 200 and s1.json().get("status") == "lead_approved", s1.text)
+check("lead can't give final approval", LEADA.put(f"/api/timeback/{tbid}/status", json={"status": "approved"}).status_code == 403)
+fin = MGR.put(f"/api/timeback/{tbid}/status", json={"status": "approved"})
+check("manager finalizes the claim", fin.status_code == 200 and fin.json().get("status") == "approved", fin.text)
+check("approved claim credits the balance (+1)", STAFF.get("/api/timeback/balance").json().get("balance") == 1)
+
 print("\n== danger zone: clear test data (superadmin only, runs LAST) ==")
 check("non-superadmin can't reset data", MGR.post("/api/admin/reset-data", json={"confirm": "RESET"}).status_code in (401, 403))
 check("reset needs the confirm token", admin.post("/api/admin/reset-data", json={}).status_code == 400)

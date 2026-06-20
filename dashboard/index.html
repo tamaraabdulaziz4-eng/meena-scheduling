@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260619p">
+<link rel="stylesheet" href="/style.css?v=20260619q">
 </head>
 <body>
 
@@ -660,6 +660,65 @@
 </div>
 
 <!-- ── Branch Modal ── -->
+<!-- Sick-leave cover suggestions -->
+<div class="modal-overlay" id="cover-modal-overlay">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h3>🔁 Suggest cover</h3>
+      <button class="modal-close" onclick="closeCoverModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="cover-summary" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+      <div id="cover-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeCoverModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Time-back claims + balance -->
+<div class="modal-overlay" id="timeback-modal-overlay">
+  <div class="modal" style="max-width:580px">
+    <div class="modal-header">
+      <h3>⏱ Time-back</h3>
+      <button class="modal-close" onclick="closeTimebackModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="tb-balance" class="tb-balance"></div>
+      <div class="tb-raise">
+        <div class="tb-raise-title">Raise a claim</div>
+        <div id="tb-staff-row" style="display:none" class="form-field">
+          <label>Staff</label>
+          <select id="tb-staff"></select>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="form-field" style="flex:1;min-width:130px">
+            <label>Date</label><input type="date" id="tb-date">
+          </div>
+          <div class="form-field" style="flex:1;min-width:150px">
+            <label>Reason</label>
+            <select id="tb-reason">
+              <option value="covered">Covered for a colleague</option>
+              <option value="offday">Worked an off-day</option>
+              <option value="extra">Extra shift / overtime</option>
+              <option value="oncall">On-call / emergency</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-field"><label>Note (optional)</label><input type="text" id="tb-note" placeholder="e.g. covered Sara's night shift"></div>
+        <button class="btn btn-sm" onclick="submitTimeback()">Submit claim</button>
+        <div class="msg" id="tb-msg"></div>
+      </div>
+      <div class="tb-list-title">Claims</div>
+      <div id="tb-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeTimebackModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="pw-modal-overlay">
   <div class="modal">
     <div class="modal-header">
@@ -816,24 +875,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260619p"></script>
-<script src="/js/auth.js?v=20260619p"></script>
-<script src="/js/util.js?v=20260619p"></script>
-<script src="/js/branches.js?v=20260619p"></script>
-<script src="/js/users.js?v=20260619p"></script>
-<script src="/js/staff.js?v=20260619p"></script>
-<script src="/js/leaves.js?v=20260619p"></script>
-<script src="/js/swaps.js?v=20260619p"></script>
-<script src="/js/holidays.js?v=20260619p"></script>
-<script src="/js/notifications.js?v=20260619p"></script>
-<script src="/js/portal.js?v=20260619p"></script>
-<script src="/js/cases.js?v=20260619p"></script>
-<script src="/js/home.js?v=20260619p"></script>
-<script src="/js/shifts.js?v=20260619p"></script>
-<script src="/js/schedule.js?v=20260619p"></script>
-<script src="/js/review.js?v=20260619p"></script>
-<script src="/js/export.js?v=20260619p"></script>
-<script src="/js/audit.js?v=20260619p"></script>
-<script src="/js/main.js?v=20260619p"></script>
+<script src="/js/api.js?v=20260619q"></script>
+<script src="/js/auth.js?v=20260619q"></script>
+<script src="/js/util.js?v=20260619q"></script>
+<script src="/js/branches.js?v=20260619q"></script>
+<script src="/js/users.js?v=20260619q"></script>
+<script src="/js/staff.js?v=20260619q"></script>
+<script src="/js/leaves.js?v=20260619q"></script>
+<script src="/js/swaps.js?v=20260619q"></script>
+<script src="/js/holidays.js?v=20260619q"></script>
+<script src="/js/notifications.js?v=20260619q"></script>
+<script src="/js/portal.js?v=20260619q"></script>
+<script src="/js/cases.js?v=20260619q"></script>
+<script src="/js/home.js?v=20260619q"></script>
+<script src="/js/shifts.js?v=20260619q"></script>
+<script src="/js/schedule.js?v=20260619q"></script>
+<script src="/js/review.js?v=20260619q"></script>
+<script src="/js/export.js?v=20260619q"></script>
+<script src="/js/audit.js?v=20260619q"></script>
+<script src="/js/main.js?v=20260619q"></script>
 </body>
 </html>
