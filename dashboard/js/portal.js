@@ -125,6 +125,21 @@ function renderPortalGrid() {
     banner.innerHTML = `<div class="tl-status-banner"><div class="ico">👀</div><div style="flex:1"><div class="ttl">Under review</div><div class="sub">Submitted to the manager — may still change.</div></div></div>`;
   }
 
+  // Leave balance + next-leave countdown card, above the status banner.
+  const bal = (d.leave_balance ?? null);
+  const up = d.upcoming_leave;
+  if (bal !== null || up) {
+    let summary = `<div class="hm-card" style="margin-bottom:12px"><div style="display:flex;gap:26px;flex-wrap:wrap;align-items:center">`;
+    if (bal !== null) summary += `<div><div style="font-size:24px;font-weight:800;color:var(--primary)">${bal}</div><div style="font-size:11px;color:var(--muted)">Leave days left</div></div>`;
+    if (up) {
+      const dd = up.days_until;
+      summary += `<div><div style="font-size:24px;font-weight:800;color:var(--accent,#6B4EFF)">${dd === 0 ? 'Today' : dd}</div>
+        <div style="font-size:11px;color:var(--muted)">${dd === 0 ? 'your leave starts today' : 'days until your leave'} · ${fmtDateDisplay(up.date)}</div></div>`;
+    }
+    summary += `</div></div>`;
+    banner.innerHTML = summary + banner.innerHTML;
+  }
+
   const nDays = daysInMonth(portalYear, portalMonth);
   const byDate = {};
   (d.entries || []).forEach(e => { byDate[e.date] = e; });

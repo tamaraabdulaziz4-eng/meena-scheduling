@@ -116,6 +116,16 @@ print("\n== scenario 2: staff portal + privacy ==")
 mys = staffA.get(f"/api/my-schedule?year={YEAR}&month={MONTH}")
 check("staff can read my-schedule", mys.status_code == 200, mys.text)
 check("my-schedule only own rows", all(True for _ in [0]) and isinstance(mys.json().get("entries"), list), mys.text)
+# Portal summary: leave balance + a countdown to the next approved leave.
+admin.put(f"/api/staff/{A['id']}", json={"leave_balance": 17})
+M.q("""INSERT INTO scheduling.leave_requests (staff_id,date,leave_type,status)
+       VALUES (%s,%s,'AL','approved') ON CONFLICT (staff_id,date) DO UPDATE SET status='approved',leave_type='AL'""",
+    (A["id"], f"{YEAR}-08-28"), exec_only=True)
+mj = staffA.get(f"/api/my-schedule?year={YEAR}&month={MONTH}").json()
+check("portal shows the staff's leave balance", float(mj.get("leave_balance") or 0) == 17, mj.get("leave_balance"))
+up = mj.get("upcoming_leave") or {}
+check("portal shows a countdown to the next approved leave",
+      bool(up.get("date")) and isinstance(up.get("days_until"), int) and up["days_until"] >= 0, up)
 leak = staffA.get(f"/api/schedules/{sid}/entries")
 check("staff blocked from full team rota (403)", leak.status_code == 403, leak.status_code)
 

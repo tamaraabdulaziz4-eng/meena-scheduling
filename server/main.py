@@ -1908,7 +1908,7 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
     if "branch_id" in body and body["branch_id"] and not can_access_branch(user, body["branch_id"]):
         raise HTTPException(403, "You can't move staff to a branch you don't manage")
     sets, params = [], []
-    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts","can_report","employee_id","email"):
+    for field in ("name","phone","branch_id","speciality","is_cross_branch","active","phase","min_shifts","max_shifts","can_report","employee_id","email","join_date","leave_balance"):
         if field in body:
             sets.append(f"{field}=%s")
             params.append(body[field] if body[field] != "" else None)
@@ -3367,11 +3367,21 @@ def my_schedule(request: Request, user=Depends(get_current_user)):
     p = request.query_params
     year  = int(p.get("year")  or today.year)
     month = int(p.get("month") or today.month)
-    staff = q("""SELECT s.id,s.name,s.branch_id,b.name AS branch_name
+    staff = q("""SELECT s.id,s.name,s.branch_id,b.name AS branch_name, s.leave_balance,
+                        TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date
                  FROM scheduling.staff s LEFT JOIN scheduling.branches b ON b.id=s.branch_id
                  WHERE s.id=%s""", (staff_id,), one=True)
     if not staff:
         raise HTTPException(404, "Staff record not found")
+    # Next approved leave (on/after today) so the portal can show a countdown.
+    nxt = q("""SELECT TO_CHAR(MIN(date),'YYYY-MM-DD') AS d FROM scheduling.leave_requests
+               WHERE staff_id=%s AND status='approved' AND leave_type IN ('AL','TB')
+                 AND date >= %s""", (staff_id, today.isoformat()), one=True)
+    upcoming = None
+    if nxt and nxt.get("d"):
+        from datetime import date as _d2
+        d = _d2(*map(int, nxt["d"].split("-")))
+        upcoming = {"date": nxt["d"], "days_until": (d - today).days}
     sched = q("""SELECT id,status,is_locked FROM scheduling.schedules
                  WHERE branch_id=%s AND year=%s AND month=%s""",
               (staff["branch_id"], year, month), one=True)
@@ -3397,7 +3407,8 @@ def my_schedule(request: Request, user=Depends(get_current_user)):
     finalised = bool(sched) and sched.get("status") in ("submitted","reviewed","approved")
     return {"staff": staff, "year": year, "month": month,
             "status": (sched or {}).get("status"),
-            "finalised": finalised, "entries": entries, "cover": cover}
+            "finalised": finalised, "entries": entries, "cover": cover,
+            "upcoming_leave": upcoming, "leave_balance": staff.get("leave_balance")}
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
