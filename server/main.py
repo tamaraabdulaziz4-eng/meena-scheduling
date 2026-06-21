@@ -3993,6 +3993,22 @@ def email_config(user=Depends(require_superadmin)):
         "app_url_set": bool(os.environ.get("APP_URL", "").strip()),
     }
 
+@app.get("/api/nafath-config")
+def nafath_config(user=Depends(require_superadmin)):
+    """Diagnostics for the Nafath (Sadq) setup (no secrets leaked) so a
+    misconfiguration is visible before testing on the live form."""
+    return {
+        "enabled": _nafath_enabled(),
+        "mock": _sadq_mock(),
+        "base_url": _sadq_base(),
+        "account_id_set": bool(_sadq_account_id()),
+        "thumbprint_set": bool(_sadq_thumbprint()),
+        "app_url_set": bool(os.environ.get("APP_URL", "").strip()),
+        "webhook_url": _nafath_webhook_url() or None,
+        # Ready to receive the push + the webhook callback end-to-end.
+        "ready": bool((_sadq_configured() or _sadq_mock()) and _nafath_webhook_url()),
+    }
+
 @app.post("/api/email-test")
 async def email_test(request: Request, user=Depends(require_superadmin)):
     """Send a test email synchronously and return the real provider error (e.g.
