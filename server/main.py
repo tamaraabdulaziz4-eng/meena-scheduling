@@ -1141,6 +1141,17 @@ app.add_middleware(CORSMiddleware, allow_origins=_CORS_ORIGINS,
                    allow_credentials=bool(_CORS_ORIGINS),
                    allow_methods=["*"], allow_headers=["*"])
 
+@app.middleware("http")
+async def _no_store_api(request: Request, call_next):
+    """API data is dynamic — never let the browser or a CDN cache it, or a read
+    right after an edit can serve a stale copy (the rota 'reverting' after a save).
+    Static assets keep their own (versioned) caching."""
+    resp = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
+
 @app.on_event("startup")
 def startup():
     init_schema()
