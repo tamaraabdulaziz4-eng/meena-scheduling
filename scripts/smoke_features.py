@@ -288,8 +288,9 @@ A4 = f"{YEAR}-08-04"   # Tuesday — surplus day (3 working)
 A5 = f"{YEAR}-08-05"   # Wednesday — exactly at min (2 working), no surplus
 for st in (d1, d2, d3):
     admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": st["id"], "date": A4, "shift_code": "M"})
+# A5: exactly one morning (== min_m), so there's no spare to lend that day.
 admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d1["id"], "date": A5, "shift_code": "M"})
-admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d2["id"], "date": A5, "shift_code": "M"})
+admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d2["id"], "date": A5, "shift_code": "O"})
 admin.put(f"/api/schedules/{dsched}/entries", json={"staff_id": d3["id"], "date": A5, "shift_code": "O"})
 # Far-city donor also has surplus on Aug 4 — but must NOT be used (different city).
 admin.put(f"/api/schedules/{fsched}/entries", json={"staff_id": farstaff["id"], "date": A4, "shift_code": "M"})
@@ -320,6 +321,29 @@ check("far-city donor never used", not any(e["staff_id"] == farstaff["id"] for e
 # A non-sharing same-city branch must contribute nobody.
 check("autofill reported donors are sharing same-city only",
       set(afj.get("donors", [])) == {"ZZ Donor"}, afj.get("donors"))
+
+print("\n== scenario 8d2: per-shift surplus — never pull the last night/morning ==")
+# Donor has 2 mornings + 1 night on Aug 4 (min 1 each). Only a MORNING is spare;
+# the single night must stay put so night coverage isn't broken.
+tt = admin.post("/api/branches", json={"name": "ZZ Y3 Shift"}).json()
+admin.put(f"/api/branches/{tt['id']}", json={"name": "ZZ Y3 Shift", "city": "ZShiftCity"})
+dn = admin.post("/api/branches", json={"name": "ZZ Donor Shift"}).json()
+admin.put(f"/api/branches/{dn['id']}", json={"name": "ZZ Donor Shift", "city": "ZShiftCity", "shares_staff": True})
+n1 = admin.post("/api/staff", json={"name": "ZZ N1", "branch_id": dn["id"]}).json()
+n2 = admin.post("/api/staff", json={"name": "ZZ N2", "branch_id": dn["id"]}).json()
+n3 = admin.post("/api/staff", json={"name": "ZZ N3", "branch_id": dn["id"]}).json()
+ttsched = admin.post("/api/schedules/open", json={"branch_id": tt["id"], "year": YEAR, "month": MONTH}).json()["schedule"]["id"]
+dnsched = admin.post("/api/schedules/open", json={"branch_id": dn["id"], "year": YEAR, "month": MONTH}).json()["schedule"]["id"]
+admin.put(f"/api/schedules/{dnsched}/entries", json={"staff_id": n1["id"], "date": A4, "shift_code": "M"})
+admin.put(f"/api/schedules/{dnsched}/entries", json={"staff_id": n2["id"], "date": A4, "shift_code": "M"})
+admin.put(f"/api/schedules/{dnsched}/entries", json={"staff_id": n3["id"], "date": A4, "shift_code": "N"})
+admin.post(f"/api/schedules/{ttsched}/autofill-cross-cover",
+           json={"shift_code": "M", "per_day": 1, "section": "General", "skip_fridays": True})
+dnents = admin.get(f"/api/schedules/{dnsched}/entries").json()
+n3row = next((e for e in dnents if e["staff_id"] == n3["id"] and e["date"] == A4), None)
+check("the lone night worker is NOT pulled", n3row and n3row["shift_code"] == "N" and not n3row["cross_branch_id"], n3row)
+m_taken = [e for e in dnents if e["staff_id"] in (n1["id"], n2["id"]) and e["date"] == A4 and e["cross_branch_id"] == tt["id"]]
+check("a spare morning was pulled instead", len(m_taken) == 1, m_taken)
 
 print("\n== scenario 8e: Y3-aware generation reserves a fair, leave-weighted share ==")
 # Pure split: capacity-weighted, always sums to the total, bigger capacity wins ties.
@@ -362,6 +386,23 @@ op = admin.post("/api/schedules/open", json={"branch_id": bid, "year": YEAR, "mo
 check("explicit open creates the schedule", op.status_code == 200 and op.json()["schedule"]["id"], op.text)
 lk3 = admin.get(f"/api/schedules/lookup?branch_id={bid}&year={YEAR}&month={FM}")
 check("lookup now finds the created schedule", lk3.json().get("schedule") is not None, lk3.json())
+
+print("\n== scenario 8g: sick-leave cover assigns the shift to the coverer ==")
+SLD = f"{YEAR}-08-22"
+admin.put(f"/api/schedules/{sid}/status", json={"status": "draft"})
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": SLD, "shift_code": "M"})
+# A calls in sick that day → SL auto-approved, remembers the M shift it replaced.
+slr = admin.post("/api/leaves", json={"staff_id": A["id"], "date_from": SLD, "date_to": SLD, "leave_type": "SL"})
+slid = slr.json()["leaves"][0]["id"]
+sug = admin.get(f"/api/leaves/{slid}/cover-suggestions").json()
+check("cover suggestions show the gap shift (M)", sug.get("gap_shift") == "M", sug)
+cand = next((c for c in sug.get("candidates", []) if c["staff_id"] == B["id"]), None)
+check("a free same-section colleague is suggested", cand is not None, sug.get("candidates"))
+rc = admin.post(f"/api/leaves/{slid}/request-cover", json={"staff_id": B["id"]})
+check("cover assigned (not just notified)", rc.status_code == 200 and rc.json().get("assigned") is True, rc.text)
+bent = admin.get(f"/api/schedules/{sid}/entries").json()
+bcover = next((e for e in bent if e["staff_id"] == B["id"] and e["date"] == SLD), None)
+check("coverer's own rota now shows the M shift", bcover and bcover["shift_code"] == "M", bcover)
 
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
