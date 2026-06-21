@@ -386,6 +386,10 @@ op = admin.post("/api/schedules/open", json={"branch_id": bid, "year": YEAR, "mo
 check("explicit open creates the schedule", op.status_code == 200 and op.json()["schedule"]["id"], op.text)
 lk3 = admin.get(f"/api/schedules/lookup?branch_id={bid}&year={YEAR}&month={FM}")
 check("lookup now finds the created schedule", lk3.json().get("schedule") is not None, lk3.json())
+# API reads must be non-cacheable, so an edit can't appear to "revert" from a
+# stale cached GET.
+check("API responses are marked no-store",
+      "no-store" in (lk3.headers.get("cache-control", "").lower()), lk3.headers.get("cache-control"))
 
 print("\n== scenario 8g: sick-leave cover assigns the shift to the coverer ==")
 SLD = f"{YEAR}-08-22"

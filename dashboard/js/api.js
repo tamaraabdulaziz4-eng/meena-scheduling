@@ -17,7 +17,9 @@ const API = {
     return 45000;                                                        // 45 s
   },
   async request(method, path, body) {
-    const opts = { method, credentials: 'include', headers: {} };
+    // no-store: never read API data from the browser cache — a GET right after a
+    // save must hit the server, or the rota looks like it reverted.
+    const opts = { method, credentials: 'include', cache: 'no-store', headers: {} };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
