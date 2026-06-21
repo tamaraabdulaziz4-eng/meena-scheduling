@@ -414,6 +414,8 @@ def init_schema():
             # at sign-up) so we can track leave accrual (21 days/year) from here on.
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS join_date DATE;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS leave_balance NUMERIC(5,1) NOT NULL DEFAULT 0;")
+            # When the balance above was recorded — accrual (22 days/yr) counts from here.
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS leave_balance_date DATE;")
             cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS join_date DATE;")
             cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS leave_balance NUMERIC(5,1) DEFAULT 0;")
             # Password-reset tokens (forgot-password via email). Stored hashed.
@@ -1569,13 +1571,14 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
         sec = reg.get("section") if reg.get("section") in ("General", "US") else "General"
         try:
             staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality,
-                                                        self_registered, join_date, leave_balance)
-                         VALUES (%s,%s,%s,%s,%s,%s,true,%s,%s)
+                                                        self_registered, join_date, leave_balance, leave_balance_date)
+                         VALUES (%s,%s,%s,%s,%s,%s,true,%s,%s,CURRENT_DATE)
                          ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
                          DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
                                        email=EXCLUDED.email, phone=EXCLUDED.phone,
                                        speciality=EXCLUDED.speciality, self_registered=true,
-                                       join_date=EXCLUDED.join_date, leave_balance=EXCLUDED.leave_balance
+                                       join_date=EXCLUDED.join_date, leave_balance=EXCLUDED.leave_balance,
+                                       leave_balance_date=CURRENT_DATE
                          RETURNING id, name""",
                       (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec],
                        reg.get("join_date"), reg.get("leave_balance") or 0),
@@ -1855,7 +1858,7 @@ def search_staff(request: Request, user=Depends(require_admin)):
         conds.append("s.branch_id=%s"); vals.append(user["branch_id"])
     rows = q(f"""
         SELECT s.id, s.name, s.employee_id, s.phone, s.email, s.speciality,
-               TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date, s.leave_balance,
+               TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date, s.leave_balance, s.leave_balance_date,
                s.branch_id, b.name AS branch_name,
                (SELECT COUNT(*) FROM scheduling.schedule_entries e
                   JOIN scheduling.schedules sc ON sc.id=e.schedule_id
@@ -1875,6 +1878,8 @@ def search_staff(request: Request, user=Depends(require_admin)):
     """, (y, m, y, m, today_str, *vals))
     for r in rows:
         r["section"] = _section_of(r.get("speciality"))
+        r["leave_balance"] = _live_leave_balance(r["id"], r.get("leave_balance"), r.get("leave_balance_date"))
+        r.pop("leave_balance_date", None)
     return {"results": rows}
 
 @app.post("/api/staff")
@@ -1912,6 +1917,9 @@ async def update_staff(sid: int, request: Request, user=Depends(require_admin)):
         if field in body:
             sets.append(f"{field}=%s")
             params.append(body[field] if body[field] != "" else None)
+    # Re-anchor accrual whenever the balance is (re)set manually.
+    if "leave_balance" in body:
+        sets.append("leave_balance_date=CURRENT_DATE")
     if not sets: return existing
     params.append(sid)
     try:
@@ -2851,6 +2859,27 @@ def _cross_cover_export_share(branch_id, branch_city, shares_staff, year, month)
         caps[r["branch_id"]] += max(0.0, 1.0 - int(r["leave_days"] or 0) / ndays)
     return _largest_remainder_share(caps, total_need).get(branch_id, 0)
 
+ANNUAL_LEAVE_DAYS = 22   # each staff accrues this many AL days per year
+
+def _live_leave_balance(staff_id, recorded, anchor):
+    """Current annual-leave balance: the recorded balance plus accrual (22 days/yr
+    from the date it was recorded) minus any approved AL taken since then. Returns
+    the live number rounded to 1 decimal; falls back to the recorded value if no
+    anchor date is set."""
+    base = float(recorded or 0)
+    if not anchor:
+        return round(base, 1)
+    from datetime import date as _d
+    today = _d.today()
+    anchor_d = anchor if hasattr(anchor, "year") else _d(*map(int, str(anchor)[:10].split("-")))
+    days = max(0, (today - anchor_d).days)
+    accrued = ANNUAL_LEAVE_DAYS * days / 365.25
+    taken = q("""SELECT COUNT(*) AS n FROM scheduling.leave_requests
+                 WHERE staff_id=%s AND status='approved' AND leave_type='AL'
+                   AND date > %s AND date <= %s""",
+              (staff_id, anchor_d.isoformat(), today.isoformat()), one=True)
+    return round(base + accrued - int((taken or {}).get("n") or 0), 1)
+
 def _section_of(speciality):
     """Classify a staff member's section as 'US' or 'General'."""
     spec = [str(x).lower() for x in (speciality or [])]
@@ -3368,11 +3397,15 @@ def my_schedule(request: Request, user=Depends(get_current_user)):
     year  = int(p.get("year")  or today.year)
     month = int(p.get("month") or today.month)
     staff = q("""SELECT s.id,s.name,s.branch_id,b.name AS branch_name, s.leave_balance,
+                        s.leave_balance_date,
                         TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date
                  FROM scheduling.staff s LEFT JOIN scheduling.branches b ON b.id=s.branch_id
                  WHERE s.id=%s""", (staff_id,), one=True)
     if not staff:
         raise HTTPException(404, "Staff record not found")
+    # Live, accrued balance (22/yr) for display.
+    staff["leave_balance"] = _live_leave_balance(staff_id, staff.get("leave_balance"), staff.get("leave_balance_date"))
+    staff.pop("leave_balance_date", None)
     # Next approved leave (on/after today) so the portal can show a countdown.
     nxt = q("""SELECT TO_CHAR(MIN(date),'YYYY-MM-DD') AS d FROM scheduling.leave_requests
                WHERE staff_id=%s AND status='approved' AND leave_type IN ('AL','TB')
