@@ -1336,6 +1336,15 @@ def _registration_code():
     code = get_setting("registration_code", "off")
     return None if (not code or code == "off") else code
 
+def _registration_open():
+    """Self-registration is OPEN by default (no invite code needed) — a superadmin
+    can close it by setting `registration_open` to 'off'."""
+    return get_setting("registration_open", "on") != "off"
+
+def _assert_registration_open():
+    if not _registration_open():
+        raise HTTPException(403, "Staff registration is currently closed. Please ask your manager.")
+
 def _check_registration_code(code):
     cur = _registration_code()
     if not cur or (code or "") != cur:
@@ -1343,8 +1352,8 @@ def _check_registration_code(code):
 
 @app.get("/api/register/info")
 def register_info(request: Request):
-    """Branch list for the onboarding form (only if the code is valid)."""
-    _check_registration_code(request.query_params.get("code"))
+    """Branch list for the onboarding form. Open registration — no code needed."""
+    _assert_registration_open()
     branches = q("SELECT id, name FROM scheduling.branches ORDER BY name")
     return {"ok": True, "branches": branches}
 
@@ -1352,7 +1361,7 @@ def register_info(request: Request):
 async def register_staff(request: Request):
     """Create (or update by Employee ID) a staff record from a self-submission."""
     body = await request.json()
-    _check_registration_code(body.get("code"))
+    _assert_registration_open()
     name = (body.get("name") or "").strip()
     emp_id = (body.get("employee_id") or "").strip()
     branch_id = body.get("branch_id")
@@ -1413,8 +1422,20 @@ async def register_staff(request: Request):
         label = "team-lead" if role == "admin" else "manager"
         notify_roles(("superadmin",), f"New {label} registration to review: {name}", link="staff", ntype="info")
         who = "an administrator"
-    return {"ok": True, "message": f"Thanks! Your account was created and is awaiting {who}'s approval. "
-                                   "Once approved you can sign in with your username and password."}
+    # Confirm to the registrant by email that we received it and it's pending.
+    if email:
+        try:
+            send_email(email, "Registration received — Meena Scheduling",
+                       f"Hi {name},\n\n"
+                       f"Your registration was received and is awaiting account activation by "
+                       f"{who}. You'll be able to sign in with your username once your account "
+                       f"is activated.\n\nThank you.")
+        except Exception as e:
+            print(f"[register] confirmation email to {email} failed: {e}", file=sys.stderr)
+    return {"ok": True, "emailed": bool(email),
+            "message": f"Thanks! Your registration was received and is awaiting {who}'s activation."
+                       + (" We've emailed you a confirmation." if email else "")
+                       + " You can sign in once your account is activated."}
 
 @app.get("/api/registrations")
 def list_registrations(request: Request, user=Depends(require_admin)):
@@ -3531,21 +3552,23 @@ def read_settings(user=Depends(get_current_user)):
            "cases_remind_hour": get_setting("cases_remind_hour", "7")}
     # Only a superadmin sees the registration links/code.
     if user["role"] == "superadmin":
+        is_open = _registration_open()
         code = _registration_code()
         app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
-        out["registration_open"] = bool(code)
+        out["registration_open"] = is_open
         base = (app_url if app_url else "")
+        marker = code or "open"   # registration is code-less now; marker just opens the form
         def _link(role):
-            if not code:
+            if not is_open:
                 return None
             suffix = "" if role == "staff" else f"&as={role}"
-            return f"{base}/?register={code}{suffix}"
+            return f"{base}/?register={marker}{suffix}"
         out["registration_link"] = _link("staff")          # back-compat
         out["registration_links"] = {
             "staff":   _link("staff"),
             "admin":   _link("admin"),
             "manager": _link("manager"),
-        } if code else None
+        } if is_open else None
     return out
 
 @app.put("/api/settings")
@@ -3575,16 +3598,16 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (val,), exec_only=True)
         insert_audit(user, "SET_CASES_REMIND_HOUR", val)
     if "registration" in body:
-        # "on" → (re)generate a code, "off" → close onboarding.
+        # "on" → open onboarding (no code needed), "off" → close it.
         action = body["registration"]
-        if action == "off":
-            val = "off"
-        else:
-            import secrets
-            val = secrets.token_urlsafe(9)
+        open_val = "off" if action == "off" else "on"
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('registration_open',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (open_val,), exec_only=True)
+        # Keep a code around for shareable links (optional; not required to register).
+        code_val = "off" if action == "off" else (_registration_code() or __import__("secrets").token_urlsafe(9))
         q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('registration_code',%s)
-             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (val,), exec_only=True)
-        insert_audit(user, "SET_REGISTRATION", "off" if val == "off" else "on")
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (code_val,), exec_only=True)
+        insert_audit(user, "SET_REGISTRATION", open_val)
     return read_settings(user)
 
 @app.get("/api/email-config")

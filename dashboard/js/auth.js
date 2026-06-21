@@ -16,8 +16,11 @@ function _showAuthView(view) {
 }
 function showLoginView()  { _showAuthView('login-view'); }
 
-// "New staff? Sign up" — collect the invite code the manager shared, validate
-// it, then drop into the onboarding form. Keeps the code gate intact.
+// "New staff? Sign up" — registration is open (no invite code), so drop straight
+// into the onboarding form as a staff member.
+function startStaffSignup() { startRegistration('', 'staff'); }
+
+// Legacy code-gated signup (kept for any older link); no longer the default path.
 function showSignupView() {
   const m = document.getElementById('signup-msg'); if (m) m.textContent = '';
   const c = document.getElementById('signup-code'); if (c) c.value = '';
@@ -125,6 +128,10 @@ async function submitRegistration() {
   }
   if (_regRole === 'staff' && !body.employee_id) {
     msg.style.color = ''; msg.textContent = 'Employee ID is required'; return;
+  }
+  // Email is required so we can send the "registration received" confirmation.
+  if (!body.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email)) {
+    msg.style.color = ''; msg.textContent = 'A valid email is required (we\'ll confirm your registration there)'; return;
   }
   if (!body.username || body.username.length < 3) {
     msg.style.color = ''; msg.textContent = 'Choose a username (at least 3 characters)'; return;

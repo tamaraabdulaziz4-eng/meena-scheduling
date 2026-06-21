@@ -178,9 +178,13 @@ uid = sess2.get("/api/auth/me").json()["id"]
 admin.put(f"/api/users/{uid}", json={"password": "newpass123"})
 check("old session dies after a password change", sess2.get("/api/auth/me").status_code == 401)
 check("new password signs in fine", login(f"viewer{sfx}", "newpass123").get("/api/auth/me").status_code == 200)
-# The public sign-up gate: /register/info rejects a bad/absent invite code.
-check("sign-up gate rejects a bad invite code",
-      TestClient(app).get("/api/register/info?code=totally-wrong").status_code == 403)
+# Registration is open (no invite code); a superadmin can still close it.
+check("open registration loads the form with no code",
+      TestClient(app).get("/api/register/info").status_code == 200)
+admin.put("/api/settings", json={"registration": "off"})
+check("a closed registration blocks the public form",
+      TestClient(app).get("/api/register/info").status_code == 403)
+admin.put("/api/settings", json={"registration": "on"})   # reopen for the rest of the run
 
 print("\n== change own password (any signed-in role) ==")
 check("wrong current password rejected",

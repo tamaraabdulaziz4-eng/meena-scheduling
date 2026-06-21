@@ -633,6 +633,22 @@ M._email_outbox.clear()
 M.notify(um2["id"], "x")
 check("no email when no address on file", len(M._email_outbox) == 0, M._email_outbox)
 
+print("\n== scenario 14b: open self-registration (no code) emails the registrant ==")
+M._email_outbox.clear()
+reg = admin.post("/api/register", json={"name": "ZZ NewStaff", "branch_id": bid,
+                 "employee_id": "9990001", "email": "newstaff@example.com",
+                 "username": f"zznew{sfx}", "password": "pass123", "section": "General"})
+check("registration accepted without an invite code", reg.status_code == 200, reg.text)
+check("registrant gets a confirmation email",
+      any(e["to"] == "newstaff@example.com" for e in M._email_outbox), M._email_outbox)
+pend = admin.get("/api/registrations").json()
+plist = pend if isinstance(pend, list) else pend.get("registrations", [])
+check("a pending registration awaits activation",
+      any(r.get("employee_id") == "9990001" and r.get("status") == "pending" for r in plist), plist)
+# /register/info works with no code (open onboarding form)
+info = admin.get("/api/register/info")
+check("onboarding branch list loads without a code", info.status_code == 200 and info.json().get("ok"), info.text)
+
 print("\n== scenario 14b: Resend payload ==")
 import os as _os
 _os.environ["RESEND_FROM"] = "Abdulaziz Alanazi <Abdulaziz.alanazi@meena-health.com>"
@@ -714,9 +730,9 @@ check("forgot hides non-existent accounts (generic + no email)",
 
 print("\n== scenario 18: staff self-registration ==")
 anon2 = TestClient(app)
-# Closed by default → the public form is blocked.
-check("registration closed by default", anon2.get("/api/register/info?code=whatever").status_code == 403)
-# Superadmin enables it and gets a shareable link with a code.
+# Open by default → the public onboarding form loads with no code.
+check("registration open by default (no code)", anon2.get("/api/register/info").status_code == 200)
+# Superadmin can still toggle it and gets shareable role links.
 en = admin.put("/api/settings", json={"registration": "on"})
 check("superadmin can open registration", en.status_code == 200 and en.json().get("registration_open") is True, en.text)
 link = en.json().get("registration_link") or ""
@@ -764,9 +780,10 @@ selfc = TestClient(app)
 li = selfc.post("/api/auth/login", json={"username": reg_uname, "password": "selfpass1"})
 check("approved registrant can sign in", li.status_code == 200, li.text)
 check("their account is a branch-scoped staff role", li.json().get("role") == "staff" and li.json().get("staff_id") == made["id"], li.text)
-# Wrong code is rejected.
-check("wrong code rejected", anon2.post("/api/register", json={"code": "nope", "name": "x", "branch_id": bid,
-      "employee_id": "y", "username": f"x{sfx}", "password": "xxxxxx1"}).status_code == 403)
+# Registration is open (code-less): a submission goes through regardless of any
+# stray code value, as long as the details are valid.
+check("open registration ignores any code value", anon2.post("/api/register", json={"code": "nope", "name": "ZZ NoCode", "branch_id": bid,
+      "employee_id": f"y{sfx}", "email": "nocode@example.com", "username": f"x{sfx}", "password": "xxxxxx1"}).status_code == 200)
 # Username-collision guard: a pending sign-up must NOT hijack an account that
 # claimed the username between submission and approval.
 anon3 = TestClient(app)
