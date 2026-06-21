@@ -52,7 +52,7 @@ function renderUsersList() {
       <td><strong>${escapeHtml(u.username)}</strong></td>
       <td>${ROLE_BADGE[u.role] || escapeHtml(u.role)}</td>
       <td>${escapeHtml(u.branch_name || '—')}</td>
-      <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
+      <td>${u.created_at ? new Date(u.created_at).toLocaleDateString('en-GB') : '—'}</td>
       <td>
         <button class="action-btn" onclick="openUserModal(${u.id})">Edit</button>
         ${u.id !== currentUser?.id

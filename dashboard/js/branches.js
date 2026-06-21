@@ -40,7 +40,7 @@ function renderBranchesList() {
       <td><strong>${escapeHtml(b.name)}</strong></td>
       <td>${b.city ? escapeHtml(b.city) : '<span style="color:var(--muted)">—</span>'}</td>
       <td>${b.shares_staff ? '<span style="color:var(--accent,#6B4EFF);font-weight:700">✓ shares</span>' : '<span style="color:var(--muted)">—</span>'}</td>
-      <td>${b.created_at ? new Date(b.created_at).toLocaleDateString() : '—'}</td>
+      <td>${b.created_at ? new Date(b.created_at).toLocaleDateString('en-GB') : '—'}</td>
       ${currentUser?.role === 'superadmin' ? `
       <td>
         <button class="action-btn" onclick="openBranchModal(${b.id},'${b.name.replace(/'/g,"\\'")}')">Edit</button>

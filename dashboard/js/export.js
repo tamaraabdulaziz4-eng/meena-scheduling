@@ -204,7 +204,7 @@ async function exportPDF() {
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.setFontSize(6); doc.setTextColor(150,150,170);
-      doc.text(`Generated ${new Date().toLocaleDateString()}  ·  Meena Health Scheduling`, margin, pageH - 4);
+      doc.text(`Generated ${new Date().toLocaleDateString('en-GB')}  ·  Meena Health Scheduling`, margin, pageH - 4);
       doc.text(`Page ${i} / ${pageCount}`, pageW - 24, pageH - 4);
     }
 

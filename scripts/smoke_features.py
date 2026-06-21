@@ -408,6 +408,17 @@ bent = admin.get(f"/api/schedules/{sid}/entries").json()
 bcover = next((e for e in bent if e["staff_id"] == B["id"] and e["date"] == SLD), None)
 check("coverer's own rota now shows the M shift", bcover and bcover["shift_code"] == "M", bcover)
 
+print("\n== scenario 8h: manager staff search (home lookup) ==")
+admin.put(f"/api/staff/{A['id']}", json={"employee_id": "EMP-A-1"})
+byname = admin.get("/api/staff/search?q=ZZ Tester").json().get("results", [])
+check("search by name returns matches with coverage fields",
+      any(r["id"] == A["id"] for r in byname) and all("shifts_month" in r and "today_shift" in r for r in byname), byname[:2])
+byid = admin.get("/api/staff/search?q=EMP-A-1").json().get("results", [])
+check("search by employee ID finds the staffer", any(r["id"] == A["id"] for r in byid), byid)
+check("too-short query returns nothing", admin.get("/api/staff/search?q=a").json().get("results") == [])
+leadhits = lead.get("/api/staff/search?q=ZZ Tester").json().get("results", [])
+check("team lead search is branch-scoped", all(r["branch_id"] == bid for r in leadhits), leadhits)
+
 print("\n== scenario 9: leave cutoff for future months ==")
 from datetime import date as _date
 check("window open before cutoff",  M.leave_window_open("2026-09-10", 15, today=_date(2026,8,10))[0] is True)

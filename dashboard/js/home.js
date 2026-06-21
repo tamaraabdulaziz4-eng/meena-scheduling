@@ -29,6 +29,13 @@ async function renderHomePage() {
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div class="hm-card">
+      <div class="hm-card-head"><div class="hm-card-title">Find a staff member</div></div>
+      <input id="hm-staff-q" type="search" placeholder="Search by name or employee ID…" autocomplete="off"
+        oninput="homeStaffSearch(this.value)"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-top:8px;font-family:inherit;font-size:13px">
+      <div id="hm-staff-results" style="margin-top:10px"></div>
+    </div>
+    <div class="hm-card">
       <div class="hm-card-head">
         <div class="hm-card-title">Today's cases</div>
         <div class="hm-card-meta" id="hm-cases-meta"></div>
@@ -108,4 +115,57 @@ function renderHomeCases(ov) {
            <span class="hm-pill wait">Pending</span>`}
     </div>`;
   }).join('');
+}
+
+// ── Manager home: live staff lookup by name / employee ID ─────────────────────
+let _hmSearchTimer = null;
+function homeStaffSearch(term) {
+  clearTimeout(_hmSearchTimer);
+  const box = document.getElementById('hm-staff-results');
+  const q = (term || '').trim();
+  if (q.length < 2) { if (box) box.innerHTML = ''; return; }
+  _hmSearchTimer = setTimeout(async () => {
+    try {
+      const r = await API.get(`/staff/search?q=${encodeURIComponent(q)}`);
+      renderHomeStaffResults(r.results || []);
+    } catch (e) { if (box) box.innerHTML = `<div class="hm-muted">${escapeHtml(e.message)}</div>`; }
+  }, 220);
+}
+
+function renderHomeStaffResults(rows) {
+  const box = document.getElementById('hm-staff-results');
+  if (!box) return;
+  if (!rows.length) { box.innerHTML = `<div class="hm-muted" style="padding:6px 2px">No matching staff.</div>`; return; }
+  const stName = code => {
+    if (!code) return '<span class="hm-muted">— off today</span>';
+    if (['O','AL','SL','TB'].includes(code)) return `<span class="badge badge-gray">${code}</span>`;
+    return `<span class="badge badge-green">${escapeHtml(code)}</span>`;
+  };
+  box.innerHTML = rows.map(s => `
+    <div style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-weight:700;font-size:14px">${escapeHtml(s.name)}
+          <span class="hm-muted" style="font-weight:500;font-size:12px">· ${escapeHtml(s.branch_name || '—')} · ${escapeHtml(s.section || '')}</span>
+        </div>
+        <div style="font-size:12px">Today: ${stName(s.today_shift)}</div>
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)">
+        ${s.employee_id ? `<span>🆔 ${escapeHtml(s.employee_id)}</span>` : ''}
+        ${s.phone ? `<span>📱 ${escapeHtml(s.phone)}</span>` : ''}
+        ${s.email ? `<span>✉️ ${escapeHtml(s.email)}</span>` : ''}
+        ${s.join_date ? `<span>📅 joined ${escapeHtml(s.join_date)}</span>` : ''}
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:12px">
+        <span><b>${s.shifts_month}</b> shifts this month</span>
+        <span><b>${s.leave_days_month}</b> leave days this month</span>
+        <span><b>${(s.leave_balance ?? 0)}</b> days leave balance</span>
+        <button class="action-btn" style="margin-left:auto" onclick="openStaffSchedule(${s.branch_id})">View rota →</button>
+      </div>
+    </div>`).join('');
+}
+
+// Jump to a branch's rota from a search result.
+function openStaffSchedule(branchId) {
+  if (branchId) window._pendingScheduleBranch = branchId;
+  showPage('schedule');
 }
