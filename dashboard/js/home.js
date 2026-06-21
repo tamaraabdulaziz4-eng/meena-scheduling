@@ -28,6 +28,7 @@ async function renderHomePage() {
     </div>
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
+    <div id="hm-approvals"></div>
     <div class="hm-card">
       <div class="hm-card-head"><div class="hm-card-title">Find a staff member</div></div>
       <input id="hm-staff-q" type="search" placeholder="Search by name or employee ID…" autocomplete="off"
@@ -52,6 +53,77 @@ async function renderHomePage() {
   renderHomeKpis(dash, ov);
   renderHomeActions(dash);
   renderHomeCases(ov);
+  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) renderHomeApprovals();
+}
+
+// ── "Needs your approval": pending leave / time-back / swaps, organized ───────
+async function renderHomeApprovals() {
+  const box = document.getElementById('hm-approvals');
+  if (!box) return;
+  const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
+  let leaves = [], tbs = [], swaps = [];
+  try {
+    [leaves, tbs, swaps] = await Promise.all([
+      API.get('/leaves').catch(() => []),
+      API.get('/timeback').catch(() => []),
+      API.get('/swaps').catch(() => []),
+    ]);
+  } catch (e) { return; }
+
+  // Leave ranges awaiting THIS user's action.
+  const groups = (typeof groupLeaveRanges === 'function' ? groupLeaveRanges(leaves) : leaves)
+    .filter(g => (g.status === 'pending') || (g.status === 'lead_approved' && isReviewer));
+  const tbPending = (tbs || []).filter(t => t.status === 'pending' || (t.status === 'lead_approved' && isReviewer));
+  const swapPending = (swaps || []).filter(s => ['pending', 'pending_lead', 'pending_manager'].includes(s.status));
+
+  if (!groups.length && !tbPending.length && !swapPending.length) {
+    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Needs your approval</div></div>
+      <div class="hm-muted" style="padding:6px 2px">You're all caught up 🎉</div></div>`;
+    return;
+  }
+  const row = (left, right) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px">${left}</div><div style="font-size:12px">${right}</div></div>`;
+  const section = (title, count, link, rows) => !count ? '' : `
+    <div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+        <div style="font-weight:700;font-size:13px">${title} <span class="badge badge-orange">${count}</span></div>
+        <button class="action-btn" onclick="showPage('${link}')">View all →</button>
+      </div>
+      ${rows}
+    </div>`;
+
+  const leaveRows = groups.slice(0, 5).map(g => {
+    const span = g.date_to && g.date_to !== g.date_from ? `${fmtDateDisplay(g.date_from)}–${fmtDateDisplay(g.date_to)}` : fmtDateDisplay(g.date_from);
+    return row(`<b>${escapeHtml(g.staff_name || '')}</b> · ${escapeHtml(g.leave_type)} · ${span} <span class="hm-muted">(${g.day_count}d)</span>`,
+      `<button class="action-btn" onclick='homeApproveLeave(${JSON.stringify(g.ids)})'>✓ Approve</button>`);
+  }).join('');
+  const tbRows = tbPending.slice(0, 5).map(t => row(
+    `<b>${escapeHtml(t.staff_name || '')}</b> · ${t.days}d · ${fmtDateDisplay(t.date)}`,
+    `<button class="action-btn" onclick="homeApproveTimeback(${t.id})">✓ Approve</button>`)).join('');
+  const swapRows = swapPending.slice(0, 5).map(s => row(
+    `<b>${escapeHtml(s.staff_a_name || '')}</b> ↔ ${escapeHtml(s.staff_b_name || '?')} · ${fmtDateDisplay(s.date_a)}`,
+    `<span class="badge badge-yellow">${escapeHtml(s.status.replace('pending_', 'awaiting '))}</span>`)).join('');
+
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head"><div class="hm-card-title">Needs your approval</div></div>
+    <div style="margin-top:6px">
+      ${section('Leave requests', groups.length, 'leaves', leaveRows)}
+      ${section('Time-back', tbPending.length, 'leaves', tbRows)}
+      ${section('Shift swaps', swapPending.length, 'swaps', swapRows)}
+    </div></div>`;
+}
+
+async function homeApproveLeave(ids) {
+  try {
+    await API.put('/leaves/status', { ids, status: 'approved', confirm: true });
+    toast('Leave approved'); renderHomeApprovals();
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function homeApproveTimeback(id) {
+  try {
+    await API.put(`/timeback/${id}/status`, { status: 'approved' });
+    toast('Time-back approved'); renderHomeApprovals();
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 function renderHomeKpis(d, ov) {
