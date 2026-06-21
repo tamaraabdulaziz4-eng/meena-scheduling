@@ -1082,7 +1082,7 @@ let sectionMonthSettings = {}; // section_id → { section_name, min_m, max_m, m
 
 async function openStaffSettingsModal(tab) {
   tab = tab || 'staff';
-  const monthName = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
+  const monthName = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('en-GB', { month: 'long' });
   const canEdit = ['admin','superadmin'].includes(currentUser?.role) && !currentSchedule?.is_locked;
   const inputStyle = `width:52px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;text-align:center`;
   const thStyle = `padding:8px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:center;border-bottom:1px solid var(--border)`;
@@ -1362,7 +1362,7 @@ function openGenerateModal() {
 // Warning text reflects whether we're overwriting everything or only filling blanks.
 function updateGenWarning() {
   const branchName = allBranches.find(b => b.id === currentBranchId)?.name || 'this branch';
-  const monthName  = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
+  const monthName  = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('en-GB', { month: 'long' });
   const preserve = document.getElementById('gen-preserve')?.checked;
   const el = document.getElementById('gen-overwrite-warning');
   if (!el) return;

@@ -11,7 +11,7 @@ async function renderAuditPage() {
         <table>
           <thead><tr><th>Time</th><th>User</th><th>Role</th><th>Branch</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
           <tbody>${logs.length ? logs.map(l => `<tr>
-            <td style="font-size:11px;color:var(--muted)">${l.created_at ? new Date(l.created_at).toLocaleString() : '—'}</td>
+            <td style="font-size:11px;color:var(--muted)">${l.created_at ? new Date(l.created_at).toLocaleString('en-GB') : '—'}</td>
             <td><strong>${escapeHtml(l.username || '—')}</strong></td>
             <td>${escapeHtml(l.role || '—')}</td>
             <td>${escapeHtml(l.branch || '—')}</td>

@@ -1776,6 +1776,50 @@ def list_staff(request: Request, user=Depends(get_current_user)):
                     ORDER BY b.name,s.name""")
     return rows
 
+@app.get("/api/staff/search")
+def search_staff(request: Request, user=Depends(require_admin)):
+    """Quick lookup by name or employee ID → the person's details plus their
+    current-month coverage (shifts worked, leave taken, today's shift). Powers the
+    manager home search. Branch-locked roles only see their own branch."""
+    term = (request.query_params.get("q") or "").strip()
+    if len(term) < 2:
+        return {"results": []}
+    from datetime import date as _d
+    today = _d.today()
+    y, m = today.year, today.month
+    today_str = today.isoformat()
+    like = f"%{term}%"
+    conds = ["s.active=true", "(s.name ILIKE %s OR s.employee_id ILIKE %s)"]
+    vals = [like, like]
+    # A branch-locked role (team lead/viewer) only searches its own branch.
+    if user["role"] not in ("superadmin", "manager"):
+        if not user.get("branch_id"):
+            raise HTTPException(403, "No branch assigned to this account")
+        conds.append("s.branch_id=%s"); vals.append(user["branch_id"])
+    rows = q(f"""
+        SELECT s.id, s.name, s.employee_id, s.phone, s.email, s.speciality,
+               TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date, s.leave_balance,
+               s.branch_id, b.name AS branch_name,
+               (SELECT COUNT(*) FROM scheduling.schedule_entries e
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                 WHERE e.staff_id=s.id AND sc.year=%s AND sc.month=%s
+                   AND e.shift_code NOT IN ('O','AL','SL','TB')) AS shifts_month,
+               (SELECT COUNT(*) FROM scheduling.schedule_entries e
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                 WHERE e.staff_id=s.id AND sc.year=%s AND sc.month=%s
+                   AND e.shift_code IN ('AL','SL','TB')) AS leave_days_month,
+               (SELECT e.shift_code FROM scheduling.schedule_entries e
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                 WHERE e.staff_id=s.id AND e.date=%s LIMIT 1) AS today_shift
+        FROM scheduling.staff s
+        LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+        WHERE {' AND '.join(conds)}
+        ORDER BY s.name LIMIT 25
+    """, (y, m, y, m, today_str, *vals))
+    for r in rows:
+        r["section"] = _section_of(r.get("speciality"))
+    return {"results": rows}
+
 @app.post("/api/staff")
 async def create_staff(request: Request, user=Depends(require_admin)):
     body = await request.json()

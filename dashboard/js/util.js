@@ -325,7 +325,8 @@ function leaveWindowOpen(targetDateStr, cutoffDay = leaveCutoffDay) {
 let _hijriDayFmt, _hijriFullFmt;
 try {
   _hijriDayFmt  = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { day: 'numeric', month: 'short' });
-  _hijriFullFmt = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', { day: 'numeric', month: 'long', year: 'numeric' });
+  // English (Latin) Hijri so dates never render in Arabic script.
+  _hijriFullFmt = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { day: 'numeric', month: 'long', year: 'numeric' });
 } catch (e) { _hijriDayFmt = _hijriFullFmt = null; }
 
 // Short Hijri "DD Mon" for a Gregorian y/m/d (1-based month). '' if unsupported.
@@ -334,10 +335,10 @@ function hijriShort(year, month, day) {
   try { return _hijriDayFmt.format(new Date(year, month - 1, day)); }
   catch (e) { return ''; }
 }
-// Full Arabic Hijri date for tooltips/labels.
+// Full Hijri date (English) for tooltips/labels.
 function hijriFull(year, month, day) {
   if (!_hijriFullFmt) return '';
-  try { return _hijriFullFmt.format(new Date(year, month - 1, day)) + ' هـ'; }
+  try { return _hijriFullFmt.format(new Date(year, month - 1, day)) + ' AH'; }
   catch (e) { return ''; }
 }
 
