@@ -1,4 +1,10 @@
 // ── Schedule page ─────────────────────────────────────────────────────────────
+// Section check that matches the backend: a staffer is Ultrasound if their
+// speciality contains "US" or "Ultrasound" (the stored value is usually "US",
+// so the old `.includes('Ultrasound')` test silently put them in General).
+function isUSStaff(s) {
+  return (s?.speciality || []).some(x => ['US', 'ULTRASOUND'].includes(String(x).trim().toUpperCase()));
+}
 let currentSchedule   = null;
 let currentEntries    = [];   // flat array from server
 let scheduleYear      = new Date().getFullYear();
@@ -423,8 +429,8 @@ function checkScheduleIssues() {
   const issues = [];
   const nDays = daysInMonth(scheduleYear, scheduleMonth);
   const isWork = c => c && !['O','AL','SL','TB','OC'].includes(c);
-  const general = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
-  const us = scheduleStaff.filter(s => s.speciality?.includes('Ultrasound') && !s.speciality?.includes('General'));
+  const general = scheduleStaff.filter(s => !isUSStaff(s));
+  const us = scheduleStaff.filter(s => isUSStaff(s));
   const sections = (us.length && general.length)
     ? [['General', general], ['US', us]]
     : [[us.length ? 'US' : 'General', scheduleStaff]];
@@ -638,8 +644,8 @@ function renderRotaGrid() {
   const isReviewer = ['superadmin','manager'].includes(currentUser?.role);
 
   // Group staff: General first, then US
-  const generalStaff = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
-  const usStaff      = scheduleStaff.filter(s => s.speciality?.includes('Ultrasound') && !s.speciality?.includes('General'));
+  const generalStaff = scheduleStaff.filter(s => !isUSStaff(s));
+  const usStaff      = scheduleStaff.filter(s => isUSStaff(s));
   // If everyone is general, show no section split
   const hasBothSections = usStaff.length > 0 && generalStaff.length > 0;
 
@@ -1341,8 +1347,8 @@ function openGenerateModal() {
 
   // Offer "General / Ultrasound / Both" only when this branch actually has both
   // sections staffed — otherwise there's nothing to choose.
-  const hasUS = scheduleStaff.some(s => s.speciality?.includes('Ultrasound') && !s.speciality?.includes('General'));
-  const hasGen = scheduleStaff.some(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
+  const hasUS = scheduleStaff.some(s => isUSStaff(s));
+  const hasGen = scheduleStaff.some(s => !isUSStaff(s));
   const pick = document.getElementById('gen-section-pick');
   if (hasUS && hasGen) {
     genSectionChoice = '';

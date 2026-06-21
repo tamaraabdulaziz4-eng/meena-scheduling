@@ -47,8 +47,8 @@ async function exportXLSX() {
     });
   }
 
-  const generalStaff = scheduleStaff.filter(s => !s.speciality?.includes('Ultrasound') || s.speciality?.includes('General'));
-  const usStaff      = scheduleStaff.filter(s => s.speciality?.includes('Ultrasound') && !s.speciality?.includes('General'));
+  const generalStaff = scheduleStaff.filter(s => !isUSStaff(s));
+  const usStaff      = scheduleStaff.filter(s => isUSStaff(s));
 
   if (usStaff.length && generalStaff.length) {
     addStaffRows(generalStaff, '');

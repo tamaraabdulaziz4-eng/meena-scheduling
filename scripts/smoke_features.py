@@ -126,6 +126,11 @@ check("portal shows the staff's leave balance", float(mj.get("leave_balance") or
 up = mj.get("upcoming_leave") or {}
 check("portal shows a countdown to the next approved leave",
       bool(up.get("date")) and isinstance(up.get("days_until"), int) and up["days_until"] >= 0, up)
+# Accrual: a balance of 10 recorded a year ago should read ~32 (10 + 22/yr).
+M.q("UPDATE scheduling.staff SET leave_balance=10, leave_balance_date=(CURRENT_DATE - INTERVAL '365 days') WHERE id=%s",
+    (A["id"],), exec_only=True)
+mj2 = staffA.get(f"/api/my-schedule?year={YEAR}&month={MONTH}").json()
+check("leave balance accrues ~22/yr", 31.0 <= float(mj2.get("leave_balance") or 0) <= 33.0, mj2.get("leave_balance"))
 leak = staffA.get(f"/api/schedules/{sid}/entries")
 check("staff blocked from full team rota (403)", leak.status_code == 403, leak.status_code)
 
