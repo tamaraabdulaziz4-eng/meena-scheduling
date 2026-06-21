@@ -1331,11 +1331,9 @@ let genSectionChoice = '';
 
 function openGenerateModal() {
   document.getElementById('gen-msg').textContent = '';
-
-  const branchName = allBranches.find(b => b.id === currentBranchId)?.name || 'this branch';
-  const monthName  = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
-  document.getElementById('gen-overwrite-warning').innerHTML =
-    `⚠ This will <strong>overwrite</strong> the current schedule for <strong>${branchName}</strong> — <strong>${monthName} ${scheduleYear}</strong>.`;
+  const pres = document.getElementById('gen-preserve');
+  if (pres) pres.checked = false;
+  updateGenWarning();
 
   // Offer "General / Ultrasound / Both" only when this branch actually has both
   // sections staffed — otherwise there's nothing to choose.
@@ -1355,6 +1353,18 @@ function openGenerateModal() {
   }
 
   document.getElementById('generate-modal-overlay').classList.add('open');
+}
+
+// Warning text reflects whether we're overwriting everything or only filling blanks.
+function updateGenWarning() {
+  const branchName = allBranches.find(b => b.id === currentBranchId)?.name || 'this branch';
+  const monthName  = new Date(scheduleYear, scheduleMonth - 1).toLocaleString('default', { month: 'long' });
+  const preserve = document.getElementById('gen-preserve')?.checked;
+  const el = document.getElementById('gen-overwrite-warning');
+  if (!el) return;
+  el.innerHTML = preserve
+    ? `✎ This will <strong>keep your manual cells</strong> and fill only the blanks for <strong>${branchName}</strong> — <strong>${monthName} ${scheduleYear}</strong>.`
+    : `⚠ This will <strong>overwrite</strong> the current schedule for <strong>${branchName}</strong> — <strong>${monthName} ${scheduleYear}</strong>.`;
 }
 
 function genSecChipStyle(active) {
@@ -1579,6 +1589,7 @@ async function runGenerate() {
           month:     scheduleMonth,
           confirm:   confirmGen,
           section:   genSectionChoice || undefined,
+          preserve_existing: !!document.getElementById('gen-preserve')?.checked,
         });
         break;
       } catch (err) {

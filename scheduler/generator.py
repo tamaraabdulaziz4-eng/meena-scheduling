@@ -187,10 +187,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
                       max_consecutive: int = 4,
                       staff_limits: dict = None,
                       section_limits: dict = None,
-                      nest_cfg: dict = None) -> dict:
+                      nest_cfg: dict = None,
+                      fixed_schedule: dict = None) -> dict:
     """
     staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits
     max_consecutive: max working days in a row (default 5)
+    fixed_schedule: { solver_key: {day(int): code(str)} } — cells the manager set
+        by hand and wants kept; the solver pins them and fills the rest.
     """
     """
     Generate a schedule for the given nest/month using CP-SAT.
@@ -300,12 +303,17 @@ def generate_schedule(nest_name: str, year: int, month: int,
             auto_allowed = ["M", "N"]  # fallback if section has no M/N configured
         auto_indices = [code_to_idx[c] for c in auto_allowed] + [o_idx]
         auto_domain  = cp_model.Domain.from_values(auto_indices)
+        pinned = (fixed_schedule or {}).get(p, {})
 
         for d in range(n_days):
             day = d + 1
             if p in al_schedule and day in al_schedule[p]:
                 # Force AL on AL days
                 v = model.new_int_var(al_idx, al_idx, f"s_{p}_{d}")
+            elif day in pinned and pinned[day] in code_to_idx:
+                # Manager pinned this cell — fix it and let the solver build around it.
+                fi = code_to_idx[pinned[day]]
+                v = model.new_int_var(fi, fi, f"s_{p}_{d}")
             else:
                 v = model.new_int_var_from_domain(auto_domain, f"s_{p}_{d}")
             shift_var[p].append(v)

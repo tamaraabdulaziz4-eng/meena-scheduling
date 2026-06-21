@@ -203,6 +203,20 @@ run("min_m=3+min_n=1 on 4 staff (no room to rest)", "S13",
 run("reserved surplus (min_m=2 on 5)", "S14",
     {"General": {"staff": P4 + ["E"], "min_m": 2, "max_m": 3, "min_n": 1, "max_n": 2}})
 
+# 14b) "Fill blanks only": pinned manual cells are kept exactly, solver fills the
+#      rest around them (incl. a non-auto code like D1 the solver never assigns).
+G.NESTS['SP'] = make_nest({'General': {'staff': P4, 'allowed_shifts': ['M','N','O','AL','D1'],
+                                       'min_m': 1, 'max_m': 2, 'min_n': 1, 'max_n': 2}})
+slp = {p: {'min_shifts': 0, 'max_shifts': 31, 'max_consecutive': 4} for p in P4}
+rp = G.generate_schedule('SP', 2026, 9, staff_limits=slp, section_limits={'General': {}},
+                         fixed_schedule={'A': {3: 'N'}, 'B': {5: 'D1'}, 'C': {1: 'O'}}, time_limit=15)
+print(f"\n— fixed_schedule pins manual cells  [{rp['status']}]")
+check("fixed-cell generate produced a rota", rp['status'] in ('OPTIMAL','FEASIBLE'), rp['status'])
+if rp.get('schedule'):
+    ok = rp['schedule']['A'][2]=='N' and rp['schedule']['B'][4]=='D1' and rp['schedule']['C'][0]=='O'
+    check("pinned cells kept exactly (N / D1 / O)", ok,
+          f"A3={rp['schedule']['A'][2]} B5={rp['schedule']['B'][4]} C1={rp['schedule']['C'][0]}")
+
 # 15) Bench-heavy with leave AND tight consecutive — combined stress.
 run("bench + leave + max_consec=3 combined", "S15",
     {"General": {"staff": P4 + ["E", "F", "G"], "min_m": 1, "max_m": 2, "min_n": 1, "max_n": 2}},
