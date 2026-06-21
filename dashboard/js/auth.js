@@ -12,6 +12,8 @@ function _showAuthView(view) {
     const el = document.getElementById(v);
     if (el) el.style.display = (v === view) ? 'block' : 'none';
   });
+  // Widen the card for the multi-field registration form; keep it narrow otherwise.
+  document.querySelector('.login-box')?.classList.toggle('reg-wide', view === 'register-view');
   document.getElementById('login-overlay').style.display = 'flex';
 }
 function showLoginView()  { _showAuthView('login-view'); }
@@ -119,6 +121,8 @@ async function submitRegistration() {
     employee_id: document.getElementById('reg-empid').value.trim(),
     email: document.getElementById('reg-email').value.trim(),
     phone: document.getElementById('reg-phone').value.trim(),
+    join_date: document.getElementById('reg-joindate')?.value || null,
+    leave_balance: parseFloat(document.getElementById('reg-leavebal')?.value || '0') || 0,
     username: document.getElementById('reg-username').value.trim(),
     password: pw,
   };
@@ -129,10 +133,12 @@ async function submitRegistration() {
   if (_regRole === 'staff' && !body.employee_id) {
     msg.style.color = ''; msg.textContent = 'Employee ID is required'; return;
   }
-  // Email is required so we can send the "registration received" confirmation.
-  if (!body.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email)) {
-    msg.style.color = ''; msg.textContent = 'A valid email is required (we\'ll confirm your registration there)'; return;
+  // Mobile is required; email must be a Meena work email (not a personal one).
+  if (!body.phone) { msg.style.color = ''; msg.textContent = 'Mobile number is required'; return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) || !body.email.toLowerCase().includes('@meena')) {
+    msg.style.color = ''; msg.textContent = 'Use your Meena work email (must contain @meena)'; return;
   }
+  if (body.leave_balance < 0) { msg.style.color = ''; msg.textContent = 'Leave balance can\'t be negative'; return; }
   if (!body.username || body.username.length < 3) {
     msg.style.color = ''; msg.textContent = 'Choose a username (at least 3 characters)'; return;
   }

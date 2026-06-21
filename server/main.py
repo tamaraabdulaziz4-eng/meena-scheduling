@@ -6,7 +6,7 @@ Run:
     python -m uvicorn server.main:app --port 3002 --reload
 """
 
-import os, sys, json, math, calendar as _cal
+import os, sys, json, math, re, calendar as _cal
 
 # Load .env from project root
 _env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -410,6 +410,12 @@ def init_schema():
             # Role-scoped invite links: a registration can target staff (default),
             # team-lead (admin) or manager. Higher roles need superadmin approval.
             cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS requested_role TEXT DEFAULT 'staff';")
+            # Join date + current annual-leave balance (carried from Meena self-service
+            # at sign-up) so we can track leave accrual (21 days/year) from here on.
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS join_date DATE;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS leave_balance NUMERIC(5,1) NOT NULL DEFAULT 0;")
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS join_date DATE;")
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS leave_balance NUMERIC(5,1) DEFAULT 0;")
             # Password-reset tokens (forgot-password via email). Stored hashed.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.password_resets (
@@ -1331,6 +1337,12 @@ async def reset_password(request: Request):
 # the manager doesn't keep them by hand. Employee/National ID is the unique key
 # that disambiguates people who share a name.
 
+def _is_meena_email(email: str) -> bool:
+    """Only accept a Meena work email — must contain '@meena' (e.g. @meena-health.com).
+    Blocks personal gmail/hotmail/etc. sign-ups."""
+    e = (email or "").strip().lower()
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", e)) and "@meena" in e
+
 def _registration_code():
     """The current registration code, or None when onboarding is closed."""
     code = get_setting("registration_code", "off")
@@ -1370,6 +1382,11 @@ async def register_staff(request: Request):
     section = body.get("section") if body.get("section") in ("General", "US") else "General"
     username = (body.get("username") or "").strip().lower()
     password = body.get("password") or ""
+    join_date = (body.get("join_date") or "").strip() or None
+    try:
+        leave_balance = float(body.get("leave_balance") or 0)
+    except (TypeError, ValueError):
+        leave_balance = 0.0
     # Which role is being requested (bound to the invite link). The role itself
     # grants nothing — an admin/manager sign-up only becomes that role once a
     # SUPERADMIN approves it (see approve_registration), so a tampered link can't
@@ -1395,6 +1412,16 @@ async def register_staff(request: Request):
     # Employee ID is required for staff (it's their rota identity); optional otherwise.
     if role == "staff" and not emp_id:
         raise HTTPException(400, "Employee ID is required")
+    # Mobile number is required so the branch can reach the staff member.
+    if not phone:
+        raise HTTPException(400, "Mobile number is required")
+    # Must be a Meena work email (not a personal gmail/etc.).
+    if not email or not _is_meena_email(email):
+        raise HTTPException(400, "Please use your Meena work email (must contain @meena)")
+    if join_date and not re.match(r"^\d{4}-\d{2}-\d{2}$", join_date):
+        raise HTTPException(400, "Join date must be a valid date")
+    if leave_balance < 0:
+        raise HTTPException(400, "Leave balance can't be negative")
     # Early, friendly check — the real guard is the UNIQUE index at approval.
     if q("SELECT 1 FROM scheduling.users WHERE username=%s", (username,), one=True):
         raise HTTPException(409, "That username is taken — please choose another")
@@ -1405,19 +1432,20 @@ async def register_staff(request: Request):
              WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
           (emp_id,), exec_only=True)
     q("""INSERT INTO scheduling.staff_registrations
-           (name, branch_id, employee_id, email, phone, section, username, password, requested_role)
-         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-      (name, branch_id, emp_id or None, email, phone, section, username, pw_hash, role), exec_only=True)
+           (name, branch_id, employee_id, email, phone, section, username, password,
+            requested_role, join_date, leave_balance)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+      (name, branch_id, emp_id or None, email, phone, section, username, pw_hash, role,
+       join_date, leave_balance), exec_only=True)
     # Route the approval request to whoever can approve THIS role.
     if role == "staff":
-        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
         msg = f"New staff registration to review: {name}" + (f" — ID {emp_id}" if emp_id else "")
-        if leads:
-            for u in leads:
-                notify(u["id"], msg, link="staff", ntype="info")
-        else:
-            notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
-        who = "your team lead"
+        # Notify BOTH the branch team lead AND the managers (so it isn't missed).
+        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
+        for u in (leads or []):
+            notify(u["id"], msg, link="staff", ntype="info")
+        notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
+        who = "your team lead or manager"
     else:
         label = "team-lead" if role == "admin" else "manager"
         notify_roles(("superadmin",), f"New {label} registration to review: {name}", link="staff", ntype="info")
@@ -1483,14 +1511,17 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
     if req_role == "staff":
         sec = reg.get("section") if reg.get("section") in ("General", "US") else "General"
         try:
-            staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality, self_registered)
-                         VALUES (%s,%s,%s,%s,%s,%s,true)
+            staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality,
+                                                        self_registered, join_date, leave_balance)
+                         VALUES (%s,%s,%s,%s,%s,%s,true,%s,%s)
                          ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
                          DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
                                        email=EXCLUDED.email, phone=EXCLUDED.phone,
-                                       speciality=EXCLUDED.speciality, self_registered=true
+                                       speciality=EXCLUDED.speciality, self_registered=true,
+                                       join_date=EXCLUDED.join_date, leave_balance=EXCLUDED.leave_balance
                          RETURNING id, name""",
-                      (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec]),
+                      (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec],
+                       reg.get("join_date"), reg.get("leave_balance") or 0),
                       one=True)
         except psycopg2.errors.UniqueViolation:
             raise HTTPException(409, "That Employee ID is already on a staff record")
