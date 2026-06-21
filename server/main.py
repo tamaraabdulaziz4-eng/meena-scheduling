@@ -2756,23 +2756,46 @@ def cover_suggestions(lid: int, user=Depends(get_current_user)):
 
 @app.post("/api/leaves/{lid}/request-cover")
 async def request_cover(lid: int, request: Request, user=Depends(get_current_user)):
-    """Ping a candidate to cover the absent staffer's shift."""
+    """Assign a candidate to cover the absent staffer's shift: put the SAME shift
+    (morning/night) on the covering person's own rota — across branches when
+    needed — and notify them. Falls back to a notification only if the assigner
+    can't edit the covering person's branch."""
     body = await request.json()
     lv = _cover_leave(lid)
     if not lv:
         raise HTTPException(404, "Leave not found")
     if not _can_see_cover(user, lv):
         raise HTTPException(403, "Forbidden")
-    cand = q("SELECT id, name FROM scheduling.staff WHERE id=%s", (body.get("staff_id"),), one=True)
+    cand = q("SELECT id, name, branch_id FROM scheduling.staff WHERE id=%s", (body.get("staff_id"),), one=True)
     if not cand:
         raise HTTPException(404, "Staff not found")
-    shift = lv["covered_shift"] or "shift"
-    notify_staff_member(cand["id"],
-                        f"Cover request: please cover the {shift} shift at {lv['branch_name']} on "
-                        f"{lv['date']} — {lv['staff_name']} is on sick leave.",
-                        link="myschedule", ntype="info")
-    insert_audit(user, "COVER_REQUEST", lv["staff_name"], f"asked {cand['name']} for {lv['date']}")
-    return {"ok": True, "asked": cand["name"]}
+    code = lv.get("covered_shift")             # the M/N shift being covered
+    date = lv["date"]
+    y, m = int(date[:4]), int(date[5:7])
+    placed = False
+    # Place the shift on the covering person's sheet when we have a real shift and
+    # the assigner can edit that branch (reviewers can edit any branch).
+    if code and code not in ("O", "AL", "SL", "TB") and can_access_branch(user, cand["branch_id"]):
+        cross = lv["branch_id"] if cand["branch_id"] != lv["branch_id"] else None
+        home_sid = _get_or_create_schedule_id(cand["branch_id"], y, m, user["id"])
+        q("""INSERT INTO scheduling.schedule_entries
+             (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
+             VALUES (%s,%s,%s,%s,%s,false,%s)
+             ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
+             shift_code=EXCLUDED.shift_code, cross_branch_id=EXCLUDED.cross_branch_id,
+             note=EXCLUDED.note""",
+          (home_sid, cand["id"], date, code, cross,
+           f"covering {lv['staff_name']} (SL)"), exec_only=True)
+        placed = True
+    shift = code or "shift"
+    msg = (f"You're covering the {shift} shift at {lv['branch_name']} on {date} — "
+           f"{lv['staff_name']} is on sick leave." if placed else
+           f"Cover request: please cover the {shift} shift at {lv['branch_name']} on "
+           f"{date} — {lv['staff_name']} is on sick leave.")
+    notify_staff_member(cand["id"], msg, link="myschedule", ntype="info")
+    insert_audit(user, "COVER_REQUEST", lv["staff_name"],
+                 f"{'assigned' if placed else 'asked'} {cand['name']} ({shift}) for {date}")
+    return {"ok": True, "asked": cand["name"], "assigned": placed, "shift": code}
 
 # ── Cross-branch cover (manager assigns a floater from another branch) ─────────
 @app.get("/api/cover-candidates")
@@ -2928,30 +2951,43 @@ async def autofill_cross_cover(sid: int, request: Request, user=Depends(require_
                 JOIN scheduling.schedules sc ON sc.id=e.schedule_id
                 WHERE sc.branch_id = ANY(%s) AND sc.year=%s AND sc.month=%s""", (donor_ids, y, m))
     shift_at = {}            # (staff_id, date) -> entry row
-    working_by = {}          # (branch_id, section, date) -> count of own workers
+    work_mn = {}             # (branch_id, section, date, 'M'|'N') -> count of own workers
     already_lent = set()     # (staff_id, date) already covering elsewhere
     for e in dent:
         shift_at[(e["staff_id"], e["date"])] = e
         if e["cross_branch_id"]:
             already_lent.add((e["staff_id"], e["date"]))
-        elif _is_work_code(e["shift_code"]):
+        elif e["shift_code"] in ("M", "N"):
             sec = sec_of.get(e["staff_id"], "General")
-            working_by[(e["branch_id"], sec, e["date"])] = \
-                working_by.get((e["branch_id"], sec, e["date"]), 0) + 1
+            k = (e["branch_id"], sec, e["date"], e["shift_code"])
+            work_mn[k] = work_mn.get(k, 0) + 1
 
-    # Minimum coverage (min_m+min_n) per donor branch + section.
-    minreq = {}
+    # Minimum coverage PER SHIFT (min_m / min_n) per donor branch + section, so we
+    # never pull the last morning (or night) and leave that shift uncovered.
+    minM, minN = {}, {}
     for d in donors:
         nest = branch_to_nest(d["name"])
         if not nest:
             continue
         for r in q("""SELECT ns.section_name,
-                             COALESCE(sms.min_m,1)+COALESCE(sms.min_n,1) AS req
+                             COALESCE(sms.min_m,1) AS mm, COALESCE(sms.min_n,1) AS mn
                       FROM scheduling.nest_sections ns
                       LEFT JOIN scheduling.section_month_settings sms
                              ON sms.section_id=ns.id AND sms.year=%s AND sms.month=%s
                       WHERE ns.nest_key=%s""", (y, m, nest)):
-            minreq[(d["id"], _section_of([r["section_name"]]))] = int(r["req"])
+            sec2 = _section_of([r["section_name"]])
+            minM[(d["id"], sec2)] = int(r["mm"])
+            minN[(d["id"], sec2)] = int(r["mn"])
+
+    def shift_surplus(bid_s, sec, date, code):
+        """How many of this person's shift the donor has to SPARE that day.
+        A non-M/N work code doesn't count toward M/N coverage, so it's always
+        spare. M/N must stay at or above their own minimum."""
+        if code == "M":
+            return work_mn.get((bid_s, sec, date, "M"), 0) - minM.get((bid_s, sec), 1)
+        if code == "N":
+            return work_mn.get((bid_s, sec, date, "N"), 0) - minN.get((bid_s, sec), 1)
+        return 99   # other work shift — removing it can't break morning/night cover
 
     # How many workers the target already has each day: its own staff PLUS staff
     # from other branches already covering here (so a re-run doesn't double-fill).
@@ -2989,16 +3025,18 @@ async def autofill_cross_cover(sid: int, request: Request, user=Depends(require_
             ent = shift_at.get((sd, date))
             if not ent or not _is_work_code(ent["shift_code"]):   # resting / unscheduled
                 continue
-            surplus = working_by.get((bid_s, sec, date), 0) - minreq.get((bid_s, sec), 2)
-            if surplus <= 0:                                       # no overlap to spare
+            # Only lend if THIS person's specific shift (M/N) is over its own
+            # minimum — so taking a morning never leaves the donor without one.
+            surplus = shift_surplus(bid_s, sec, date, ent["shift_code"])
+            if surplus <= 0:
                 continue
             pool.append((borrow_load.get(sd, 0), -surplus, s["name"], sd, bid_s, sec, ent))
         pool.sort()
         for _, _, _, sd, bid_s, sec, ent in pool:
             if need <= 0:
                 break
-            if working_by.get((bid_s, sec, date), 0) - minreq.get((bid_s, sec), 2) <= 0:
-                continue   # branch's surplus got used up earlier this day
+            if shift_surplus(bid_s, sec, date, ent["shift_code"]) <= 0:
+                continue   # this shift's surplus got used up earlier this day
             # Relocate IN PLACE: rewrite the donor's own cell to the cover shift
             # pointing at the target. Their home sheet now shows e.g. 'Y3' that
             # day; the target rota shows them as a visitor. One entry, so their
@@ -3007,7 +3045,9 @@ async def autofill_cross_cover(sid: int, request: Request, user=Depends(require_
                  SET shift_code=%s, cross_branch_id=%s, note=%s WHERE id=%s""",
               (shift_code, target["id"], f"cover (was {ent['shift_code']} @ home)", ent["id"]),
               exec_only=True)
-            working_by[(bid_s, sec, date)] = working_by.get((bid_s, sec, date), 0) - 1
+            if ent["shift_code"] in ("M", "N"):   # that shift now has one fewer
+                k = (bid_s, sec, date, ent["shift_code"])
+                work_mn[k] = work_mn.get(k, 0) - 1
             already_lent.add((sd, date))
             borrow_load[sd] = borrow_load.get(sd, 0) + 1
             assigned.append({"staff": name_of.get(sd, sd), "date": date})

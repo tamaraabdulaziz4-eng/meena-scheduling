@@ -394,7 +394,7 @@ async function openCoverModal(lid) {
           <span class="badge ${c.same_branch ? 'badge-purple' : 'badge-gray'}" style="margin-left:6px">${escapeHtml(c.branch_name || '')}</span>
           <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Off that day · ${c.shifts_month} shifts this month${c.same_branch ? ' · same branch' : ''}</div>
         </div>
-        <button class="btn btn-sm" onclick="requestCover(${c.staff_id}, ${JSON.stringify(c.name).replace(/"/g,'&quot;')})">Request</button>
+        <button class="btn btn-sm" onclick="requestCover(${c.staff_id}, ${JSON.stringify(c.name).replace(/"/g,'&quot;')})">Assign</button>
       </div>`).join('');
   } catch (e) {
     document.getElementById('cover-list').innerHTML = `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`;
@@ -403,8 +403,11 @@ async function openCoverModal(lid) {
 function closeCoverModal() { document.getElementById('cover-modal-overlay').classList.remove('open'); }
 async function requestCover(staffId, name) {
   try {
-    await API.post(`/leaves/${_coverLeaveId}/request-cover`, { staff_id: staffId });
-    toast(`Cover request sent to ${name}`);
+    const r = await API.post(`/leaves/${_coverLeaveId}/request-cover`, { staff_id: staffId });
+    closeCoverModal();
+    toast(r.assigned
+      ? `${name} assigned to cover the ${r.shift || ''} shift`.replace(/\s+/g, ' ')
+      : `Cover request sent to ${name}`);
   } catch (e) { toast(e.message, 'err'); }
 }
 

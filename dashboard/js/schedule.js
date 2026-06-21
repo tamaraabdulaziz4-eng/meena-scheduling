@@ -73,7 +73,7 @@ async function renderSchedulePage() {
           <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
         ` : ''}
         ${['superadmin','manager'].includes(currentUser.role) ? `
-          <button class="btn btn-ghost btn-sm" onclick="openCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
+          <button class="btn btn-ghost btn-sm" onclick="openCrossCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
           <button class="btn btn-ghost btn-sm" onclick="openAutofillModal()" id="btn-autofill" title="Auto-fill this branch from surplus staff at same-city sharing branches">🏗 Fill from other branches</button>
         ` : ''}
         ${['admin','superadmin','manager'].includes(currentUser.role) ? `
@@ -105,6 +105,10 @@ async function renderSchedulePage() {
 function syncScheduleHash() {
   if (typeof currentPage !== 'undefined' && currentPage !== 'schedule') return;
   if (!currentBranchId) return;
+  // Always remember the branch we're actually viewing — however we got here
+  // (dropdown, Review, or a deep link) — so leaving and coming back returns to
+  // THIS branch instead of snapping to another and making edits look lost.
+  try { localStorage.setItem('lastBranchId', String(currentBranchId)); } catch (e) {}
   const mm = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}`;
   const target = `#/schedule?branch=${currentBranchId}&month=${mm}`;
   if (location.hash !== target) {
@@ -1410,7 +1414,7 @@ function closeGenerateModal() {
 }
 
 // ── Cross-branch cover (manager only) ─────────────────────────────────────────
-function openCoverModal() {
+function openCrossCoverModal() {
   if (!currentSchedule?.id) { toast('Open a branch schedule first', 'err'); return; }
   const today = new Date();
   const def = (scheduleYear === today.getFullYear() && scheduleMonth === today.getMonth() + 1)
