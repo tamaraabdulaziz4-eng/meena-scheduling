@@ -202,6 +202,18 @@ g1 = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": 
 check("generate warns on pending leaves (409)", g1.status_code == 409, f"{g1.status_code} {g1.text}")
 check("warning flags pending_leaves", (g1.json().get("detail") or {}).get("confirm_required") == "pending_leaves", g1.text)
 
+print("\n== scenario 8a2: 'fill blanks only' keeps a manually pinned cell ==")
+admin.put(f"/api/schedules/{sid}/status", json={"status": "draft"})
+PIN = f"{YEAR}-08-06"
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": PIN, "shift_code": "N"})
+gp = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH,
+                                       "confirm": True, "preserve_existing": True})
+check("generate (preserve) ran", gp.status_code in (200, 422), gp.text)
+if gp.status_code == 200:
+    ents_pin = admin.get(f"/api/schedules/{sid}/entries").json()
+    pinned = next((e for e in ents_pin if e["staff_id"] == A["id"] and e["date"] == PIN), None)
+    check("manually pinned cell survived generation", pinned and pinned["shift_code"] == "N", pinned)
+
 print("\n== scenario 8b: generate a single section, leaving the other alone ==")
 # Requesting only "General" must route the solver to General alone — the US
 # section is never attempted (so its rota is left untouched). Feasibility of the

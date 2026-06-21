@@ -4222,6 +4222,26 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     for sk in list(al_schedule.keys()):
         al_schedule[sk] = sorted(set(al_schedule[sk]))
 
+    # "Fill blanks only": keep the manager's hand-entered cells and let the solver
+    # build the rest of the month around them. We pin every existing non-blank
+    # cell (work shifts and explicit O), except leave codes — those are already
+    # forced via al_schedule.
+    fixed_by_solver = {}
+    if body.get("preserve_existing"):
+        existing = q("""SELECT e.staff_id, TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
+                        FROM scheduling.schedule_entries e
+                        JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                        WHERE sc.branch_id=%s AND sc.year=%s AND sc.month=%s""",
+                     (branch_id, year, month))
+        for e in existing:
+            code = e["shift_code"]
+            if not code or code in ("AL", "SL", "TB"):
+                continue
+            sk = solver_key_by_staff_id.get(int(e["staff_id"]))
+            if not sk:
+                continue
+            fixed_by_solver.setdefault(sk, {})[int(e["date"][8:10])] = code
+
     # Build nest config dict for solver (after al_schedule is populated)
     nest_cfg_for_solver = {"sections": {}}
     section_limits_for_solver = {}
@@ -4514,7 +4534,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     if only_section and not any(_section_requested(s) for s in nest_cfg_for_solver["sections"]):
         raise HTTPException(400, f"Section '{only_section}' not found for this branch")
 
-    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits):
+    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed=None):
         """When a section is infeasible, find WHICH setting is to blame by
         re-solving with one setting relaxed at a time (short time limit). Each
         relaxation that turns the section solvable is reported back as a concrete
@@ -4552,6 +4572,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                     staff_limits=sec_staff_limits,
                     section_limits=seclim2,
                     nest_cfg={"sections": {sec_name: sec2}},
+                    fixed_schedule=sec_fixed,
                 )
             except Exception:
                 continue
@@ -4580,6 +4601,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         sec_al = {sk: al_schedule.get(sk, []) for sk in staff_keys if sk in al_schedule}
         sec_prev_tail = {sk: prev_tail_by_solver.get(sk, []) for sk in staff_keys if sk in prev_tail_by_solver}
         sec_staff_limits = {sk: staff_limits.get(sk, {}) for sk in staff_keys}
+        sec_fixed = {sk: fixed_by_solver[sk] for sk in staff_keys if sk in fixed_by_solver}
         sec_limits = {sec_name: section_limits_for_solver.get(sec_name, {})}
 
         # Pass this section's config straight to the solver (no global mutation).
@@ -4592,13 +4614,14 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             staff_limits=sec_staff_limits,
             section_limits=sec_limits,
             nest_cfg=sec_nest_cfg,
+            fixed_schedule=sec_fixed,
         )
 
         if sec_result["status"] == "INFEASIBLE" or not sec_result.get("schedule"):
             diag = section_diagnostics(sec_name, sec_cfg, staff_keys)
             # Pinpoint the exact setting(s) at fault by trying them one at a time.
             try:
-                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits)
+                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed)
             except Exception as _pe:
                 print(f"[Generate] relaxation probe failed for {sec_name}: {_pe}")
             section_results[sec_name] = {
