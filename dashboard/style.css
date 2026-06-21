@@ -647,9 +647,13 @@ tr:hover td { background: var(--table-row-hover); }
 #login-overlay {
   position: fixed; inset: 0; z-index: 1000;
   background: radial-gradient(ellipse at 30% 20%, #ffffff 0%, #f3f1fc 45%, #e9e5fa 100%);
-  display: flex; align-items: center; justify-content: center;
-  perspective: 1400px; overflow: hidden;
+  /* flex-start + auto scroll so a tall form (registration) can scroll on phones
+     instead of being clipped; the box keeps centring when it fits. */
+  display: flex; align-items: flex-start; justify-content: center;
+  perspective: 1400px; overflow-x: hidden; overflow-y: auto;
+  padding: 24px 0;
 }
+.login-box { margin: auto; }
 /* floating ambient orbs */
 #login-overlay::before, #login-overlay::after {
   content: ''; position: absolute; border-radius: 50%; filter: blur(1px);
@@ -699,6 +703,14 @@ tr:hover td { background: var(--table-row-hover); }
   animation: loginBadge 5s ease-in-out infinite;
 }
 @keyframes loginBadge { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+/* Registration has many fields — widen the card and lay them out in two columns
+   on desktop so it isn't one long scroll. */
+.login-box.reg-wide { width: min(600px, 94vw); }
+.onb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+@media (max-width: 540px) {
+  .onb-grid { grid-template-columns: 1fr; }
+  .login-box.reg-wide { width: min(360px, 94vw); }
+}
 .login-box h2 { text-align: center; font-size: 21px; font-weight: 700; color: var(--primary); margin-bottom: 4px; letter-spacing: -.3px; }
 .login-box p  { text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 26px; }
 .login-field  { margin-bottom: 16px; }

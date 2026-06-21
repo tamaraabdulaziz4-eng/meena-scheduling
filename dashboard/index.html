@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260621d">
+<link rel="stylesheet" href="/style.css?v=20260621e">
 </head>
 <body>
 
@@ -94,49 +94,61 @@
       <div class="onb-logo"><img src="/meena_onboarding_logo.jpeg" alt="Meena"></div>
       <h2>Staff Onboarding</h2>
       <p>Welcome! Fill in your details to join the team.</p>
-      <div class="login-field">
-        <label>Full name</label>
-        <input type="text" id="reg-name" placeholder="Your full name">
-      </div>
-      <div class="login-field">
-        <label>Branch</label>
-        <select id="reg-branch"></select>
-      </div>
-      <div class="login-field">
-        <label>Section</label>
-        <div class="onb-pills" id="reg-section">
-          <button type="button" class="onb-pill active" data-val="General" onclick="pickSection(this)">General</button>
-          <button type="button" class="onb-pill" data-val="US" onclick="pickSection(this)">Ultrasound (US)</button>
+      <div class="onb-grid">
+        <div class="login-field">
+          <label>Full name</label>
+          <input type="text" id="reg-name" placeholder="Your full name">
         </div>
-      </div>
-      <div class="login-field">
-        <label>Employee ID</label>
-        <input type="text" id="reg-empid" placeholder="e.g. 1234567890" inputmode="numeric">
-      </div>
-      <div class="login-field">
-        <label>Email <span style="color:var(--muted);font-weight:400">(we'll confirm your registration here)</span></label>
-        <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email">
-      </div>
-      <div class="login-field">
-        <label>Mobile <span style="color:var(--muted);font-weight:400">(optional)</span></label>
-        <input type="text" id="reg-phone" placeholder="05xxxxxxxx" inputmode="tel">
+        <div class="login-field">
+          <label>Branch</label>
+          <select id="reg-branch"></select>
+        </div>
+        <div class="login-field" style="grid-column:1/-1">
+          <label>Section</label>
+          <div class="onb-pills" id="reg-section">
+            <button type="button" class="onb-pill active" data-val="General" onclick="pickSection(this)">General</button>
+            <button type="button" class="onb-pill" data-val="US" onclick="pickSection(this)">Ultrasound (US)</button>
+          </div>
+        </div>
+        <div class="login-field">
+          <label>Employee ID</label>
+          <input type="text" id="reg-empid" placeholder="e.g. 1234567890" inputmode="numeric">
+        </div>
+        <div class="login-field">
+          <label>Mobile <span style="color:#E63946">*</span></label>
+          <input type="text" id="reg-phone" placeholder="05xxxxxxxx" inputmode="tel" autocomplete="tel">
+        </div>
+        <div class="login-field" style="grid-column:1/-1">
+          <label>Meena email <span style="color:var(--muted);font-weight:400">(must be @meena — we'll email a verification code)</span></label>
+          <input type="email" id="reg-email" placeholder="you@meena-health.com" autocomplete="email">
+        </div>
+        <div class="login-field">
+          <label>Join date</label>
+          <input type="date" id="reg-joindate">
+        </div>
+        <div class="login-field">
+          <label>Current leave balance <span style="color:var(--muted);font-weight:400">(days)</span></label>
+          <input type="number" id="reg-leavebal" min="0" step="0.5" placeholder="e.g. 21" inputmode="decimal">
+        </div>
       </div>
       <div class="onb-divider"><span>Create your login</span></div>
-      <div class="login-field">
-        <label>Username</label>
-        <input type="text" id="reg-username" placeholder="choose a username" autocomplete="username">
-      </div>
-      <div class="login-field">
-        <label>Password</label>
-        <div style="position:relative">
-          <input type="password" id="reg-password" placeholder="at least 6 characters" autocomplete="new-password" style="width:100%;padding-right:36px">
-          <button type="button" onclick="togglePw('reg-password')"
-            style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#888;padding:0">👁</button>
+      <div class="onb-grid">
+        <div class="login-field" style="grid-column:1/-1">
+          <label>Username</label>
+          <input type="text" id="reg-username" placeholder="choose a username" autocomplete="username">
         </div>
-      </div>
-      <div class="login-field">
-        <label>Confirm password</label>
-        <input type="password" id="reg-password2" placeholder="re-enter password" autocomplete="new-password">
+        <div class="login-field">
+          <label>Password</label>
+          <div style="position:relative">
+            <input type="password" id="reg-password" placeholder="at least 6 characters" autocomplete="new-password" style="width:100%;padding-right:36px">
+            <button type="button" onclick="togglePw('reg-password')"
+              style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#888;padding:0">👁</button>
+          </div>
+        </div>
+        <div class="login-field">
+          <label>Confirm password</label>
+          <input type="password" id="reg-password2" placeholder="re-enter password" autocomplete="new-password">
+        </div>
       </div>
       <button class="login-btn" onclick="submitRegistration()">Create account</button>
       <div class="login-error" id="reg-msg"></div>
@@ -905,24 +917,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260621d"></script>
-<script src="/js/auth.js?v=20260621d"></script>
-<script src="/js/util.js?v=20260621d"></script>
-<script src="/js/branches.js?v=20260621d"></script>
-<script src="/js/users.js?v=20260621d"></script>
-<script src="/js/staff.js?v=20260621d"></script>
-<script src="/js/leaves.js?v=20260621d"></script>
-<script src="/js/swaps.js?v=20260621d"></script>
-<script src="/js/holidays.js?v=20260621d"></script>
-<script src="/js/notifications.js?v=20260621d"></script>
-<script src="/js/portal.js?v=20260621d"></script>
-<script src="/js/cases.js?v=20260621d"></script>
-<script src="/js/home.js?v=20260621d"></script>
-<script src="/js/shifts.js?v=20260621d"></script>
-<script src="/js/schedule.js?v=20260621d"></script>
-<script src="/js/review.js?v=20260621d"></script>
-<script src="/js/export.js?v=20260621d"></script>
-<script src="/js/audit.js?v=20260621d"></script>
-<script src="/js/main.js?v=20260621d"></script>
+<script src="/js/api.js?v=20260621e"></script>
+<script src="/js/auth.js?v=20260621e"></script>
+<script src="/js/util.js?v=20260621e"></script>
+<script src="/js/branches.js?v=20260621e"></script>
+<script src="/js/users.js?v=20260621e"></script>
+<script src="/js/staff.js?v=20260621e"></script>
+<script src="/js/leaves.js?v=20260621e"></script>
+<script src="/js/swaps.js?v=20260621e"></script>
+<script src="/js/holidays.js?v=20260621e"></script>
+<script src="/js/notifications.js?v=20260621e"></script>
+<script src="/js/portal.js?v=20260621e"></script>
+<script src="/js/cases.js?v=20260621e"></script>
+<script src="/js/home.js?v=20260621e"></script>
+<script src="/js/shifts.js?v=20260621e"></script>
+<script src="/js/schedule.js?v=20260621e"></script>
+<script src="/js/review.js?v=20260621e"></script>
+<script src="/js/export.js?v=20260621e"></script>
+<script src="/js/audit.js?v=20260621e"></script>
+<script src="/js/main.js?v=20260621e"></script>
 </body>
 </html>
