@@ -896,6 +896,62 @@ lm = TestClient(app).post("/api/auth/login", json={"username": f"mgrsu{sfx}", "p
 check("approved manager signs in as all-branch manager",
       lm.status_code == 200 and lm.json().get("role") == "manager" and not lm.json().get("branch_id"), lm.text)
 
+print("\n== scenario: Nafath identity verification at registration (SADQ_MOCK) ==")
+os.environ["SADQ_MOCK"] = "1"
+try:
+    check("register/info reports Nafath enabled when configured",
+          TestClient(app).get("/api/register/info").json().get("nafath_enabled") is True)
+    nf = TestClient(app)
+    nsfx = str(int(time.time()))[-5:]
+    nemail = f"nafath{nsfx}@meena-health.com"
+    nid = "1234567890"
+    # 1) Registration must be blocked before Nafath is verified.
+    base_payload = {
+        "name": "Typed Wrongname", "branch_id": bid, "section": "General",
+        "employee_id": f"NAF{nsfx}", "email": nemail, "phone": "0590000000",
+        "username": f"nafuser{nsfx}", "password": "nafpass1",
+    }
+    blocked = reg_with_code(nf, base_payload)
+    check("registration blocked without Nafath verification", blocked.status_code == 400, blocked.text)
+    # 2) Start the Nafath flow → sandbox random is 1234, request stays pending.
+    start = nf.post("/api/register/nafath/start", json={"national_id": nid})
+    check("nafath start returns request_id + random", start.status_code == 200 and start.json().get("random") == "1234", start.text)
+    req_id = start.json()["request_id"]
+    check("status is pending before the user approves",
+          nf.get(f"/api/register/nafath/status?request_id={req_id}").json().get("status") == "pending")
+    # 3) Simulate Sadq's success webhook (public, no auth).
+    wh = TestClient(app).post("/api/nafath/webhook", json={
+        "requestId": req_id, "Status": 0,
+        "usersInfo": [{"FirstNameEn": "Saud", "LastNameEn": "Alharbi",
+                       "FirstNameAr": "سعود", "LastNameAr": "الحربي", "NationalId": nid}],
+    })
+    check("webhook accepted", wh.status_code == 200, wh.text)
+    sres = nf.get(f"/api/register/nafath/status?request_id={req_id}").json()
+    check("status flips to verified with official name", sres.get("status") == "verified" and sres.get("name_en") == "Saud Alharbi", sres)
+    # 4) Now registration succeeds and adopts the official Nafath name + National ID.
+    ok = reg_with_code(nf, {**base_payload, "nafath_request_id": req_id})
+    check("registration succeeds after Nafath verification", ok.status_code == 200, ok.text)
+    nreg = next((r for r in admin.get("/api/registrations").json() if r.get("username") == f"nafuser{nsfx}"), None)
+    check("registration stored the official Nafath name (not the typed one)", nreg and nreg.get("name") == "Saud Alharbi", nreg)
+    check("registration stored the National ID", nreg and nreg.get("national_id") == nid, nreg)
+    # 5) A verification can't be reused for a second sign-up.
+    reuse = reg_with_code(nf, {**base_payload, "employee_id": f"NAF{nsfx}b",
+                               "email": f"nafath{nsfx}b@meena-health.com",
+                               "username": f"nafuser{nsfx}b", "nafath_request_id": req_id})
+    check("a Nafath verification can't be reused", reuse.status_code == 400, reuse.text)
+    # 6) A failure webhook marks the request failed.
+    s2 = TestClient(app).post("/api/register/nafath/start", json={"national_id": "2123456789"})
+    rid2 = s2.json()["request_id"]
+    TestClient(app).post("/api/nafath/webhook", json={"requestId": rid2, "nationalId": "2123456789", "Status": 1})
+    check("failure webhook marks the request failed",
+          nf.get(f"/api/register/nafath/status?request_id={rid2}").json().get("status") == "failed")
+    check("invalid National ID is rejected",
+          TestClient(app).post("/api/register/nafath/start", json={"national_id": "12345"}).status_code == 400)
+finally:
+    os.environ.pop("SADQ_MOCK", None)
+check("register/info reports Nafath disabled when not configured",
+      TestClient(app).get("/api/register/info").json().get("nafath_enabled") is False)
+
 admin.put("/api/settings", json={"registration": "off"})
 check("registration can be closed again", admin.get("/api/settings").json().get("registration_open") is False)
 

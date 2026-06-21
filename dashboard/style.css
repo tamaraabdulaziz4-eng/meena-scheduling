@@ -303,6 +303,12 @@ body {
 .hm-pill.ok { color: #00A87D; background: rgba(0,200,150,.12); }
 .hm-pill.wait { color: #c9880a; background: rgba(255,167,60,.14); }
 
+/* Nafath verification inline spinner */
+.nf-spin { display:inline-block; width:13px; height:13px; vertical-align:-2px;
+  border:2px solid rgba(107,78,255,.25); border-top-color: var(--accent);
+  border-radius:50%; animation: nfspin .8s linear infinite; margin-right:4px; }
+@keyframes nfspin { to { transform: rotate(360deg); } }
+
 /* ── Home: interactive staff search (improved Design A) ─────────────────────── */
 .hm-search { margin-bottom: 20px; }
 .hm-searchbar {

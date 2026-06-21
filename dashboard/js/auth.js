@@ -113,16 +113,88 @@ async function startRegistration(code, role) {
   if (secField) secField.style.display = showStaffly ? '' : 'none';
   const sel = document.getElementById('reg-branch');
   const msg = document.getElementById('reg-msg');
-  if (!showBranch) { try { sel.innerHTML = ''; } catch (e) {} return; }
+  _resetNafath();
   try {
     const info = await API.get(`/register/info?code=${encodeURIComponent(code)}`);
-    sel.innerHTML = '<option value="">Select branch…</option>' +
-      (info.branches || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+    if (showBranch && sel) {
+      sel.innerHTML = '<option value="">Select branch…</option>' +
+        (info.branches || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+    } else if (sel) { try { sel.innerHTML = ''; } catch (e) {} }
+    // Nafath identity verification (when the server has it configured).
+    _nafathEnabled = !!info.nafath_enabled;
+    const nf = document.getElementById('reg-nafath-field');
+    if (nf) nf.style.display = _nafathEnabled ? '' : 'none';
   } catch (e) {
     msg.style.color = ''; msg.textContent = e.message || 'Registration is closed';
     document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn, #register-view .onb-pill')
       .forEach(el => el.disabled = true);
   }
+}
+
+// ── Nafath identity verification ──────────────────────────────────────────────
+let _nafathEnabled = false, _nafathVerified = false, _nafathRequestId = null, _nafathPollTimer = null;
+
+function _resetNafath() {
+  _nafathVerified = false; _nafathRequestId = null;
+  clearTimeout(_nafathPollTimer); _nafathPollTimer = null;
+  const st = document.getElementById('reg-nafath-status'); if (st) st.innerHTML = '';
+  const btn = document.getElementById('reg-nafath-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+}
+
+async function startNafath() {
+  const st = document.getElementById('reg-nafath-status');
+  const btn = document.getElementById('reg-nafath-btn');
+  const nid = (document.getElementById('reg-nationalid')?.value || '').trim();
+  if (!/^[12]\d{9}$/.test(nid)) {
+    st.style.color = '#E63946'; st.textContent = 'Enter a valid 10-digit National ID / Iqama (starts with 1 or 2)'; return;
+  }
+  _nafathVerified = false;
+  clearTimeout(_nafathPollTimer);
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const r = await API.post('/register/nafath/start', { national_id: nid });
+    _nafathRequestId = r.request_id;
+    st.style.color = 'var(--text)';
+    st.innerHTML = `<span class="nf-spin"></span> Open the <b>Nafath</b> app and choose number <b style="font-size:15px">${escapeHtml(String(r.random || ''))}</b> to confirm your identity…`;
+    _pollNafath(r.request_id, Date.now());
+  } catch (e) {
+    st.style.color = '#E63946'; st.textContent = e.message || 'Could not start Nafath verification';
+    btn.disabled = false; btn.textContent = 'Verify with Nafath';
+  }
+}
+
+function _pollNafath(rid, startedAt) {
+  _nafathPollTimer = setTimeout(async () => {
+    if (rid !== _nafathRequestId) return;                 // superseded by a new attempt
+    const st = document.getElementById('reg-nafath-status');
+    const btn = document.getElementById('reg-nafath-btn');
+    try {
+      const r = await API.get(`/register/nafath/status?request_id=${encodeURIComponent(rid)}`);
+      if (r.status === 'verified') {
+        _nafathVerified = true;
+        const nm = r.name_en || r.name_ar || '';
+        st.style.color = '#1a9d6a';
+        st.innerHTML = `✓ Identity verified${nm ? ` — <b>${escapeHtml(nm)}</b>` : ''}`;
+        if (btn) { btn.disabled = true; btn.textContent = 'Verified ✓'; }
+        // Adopt the official name on the form (read-only once verified).
+        const nameEl = document.getElementById('reg-name');
+        if (nameEl && nm) { nameEl.value = nm; nameEl.readOnly = true; }
+        return;
+      }
+      if (r.status === 'failed') {
+        st.style.color = '#E63946'; st.textContent = 'Nafath verification was rejected or cancelled. Please try again.';
+        if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+        return;
+      }
+    } catch (e) { /* keep polling */ }
+    if (Date.now() - startedAt > 120000) {                // give up after 2 minutes
+      st.style.color = '#E63946'; st.textContent = 'Verification timed out. Please try again.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+      return;
+    }
+    _pollNafath(rid, startedAt);
+  }, 3000);
 }
 
 async function submitRegistration() {
@@ -141,6 +213,7 @@ async function submitRegistration() {
     join_date: document.getElementById('reg-joindate')?.value || null,
     leave_balance: parseFloat(document.getElementById('reg-leavebal')?.value || '0') || 0,
     email_code: document.getElementById('reg-emailcode')?.value.trim(),
+    nafath_request_id: _nafathRequestId,
     username: document.getElementById('reg-username').value.trim(),
     password: pw,
   };
@@ -158,6 +231,9 @@ async function submitRegistration() {
   }
   if (!body.email_code || body.email_code.length < 4) {
     msg.style.color = ''; msg.textContent = 'Enter the verification code we emailed you (tap "Send code")'; return;
+  }
+  if (_nafathEnabled && !_nafathVerified) {
+    msg.style.color = ''; msg.textContent = 'Please verify your identity with Nafath first'; return;
   }
   if (body.leave_balance < 0) { msg.style.color = ''; msg.textContent = 'Leave balance can\'t be negative'; return; }
   if (!body.username || body.username.length < 3) {
