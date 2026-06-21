@@ -427,6 +427,15 @@ def init_schema():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pwreset_hash ON scheduling.password_resets(token_hash);")
+            # Email verification codes for self-registration (one per email).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.email_verifications (
+                    email TEXT PRIMARY KEY,
+                    code TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
             # Multi-stage swap approval: peer → team lead → manager. Track each step.
             for _col in ("peer_at TIMESTAMP",
                          "lead_by INTEGER", "lead_at TIMESTAMP",
@@ -1369,6 +1378,52 @@ def register_info(request: Request):
     branches = q("SELECT id, name FROM scheduling.branches ORDER BY name")
     return {"ok": True, "branches": branches}
 
+import secrets as _secrets_mod
+
+@app.post("/api/register/send-code")
+async def register_send_code(request: Request):
+    """Email a 6-digit verification code to a Meena address so we can confirm the
+    registrant owns it before their sign-up is accepted."""
+    _assert_registration_open()
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    if not _is_meena_email(email):
+        raise HTTPException(400, "Use your Meena work email (must contain @meena)")
+    # Throttle: one code per 45 seconds per address.
+    prev = q("SELECT created_at FROM scheduling.email_verifications WHERE email=%s", (email,), one=True)
+    if prev and prev.get("created_at") and \
+       (datetime.now(timezone.utc) - prev["created_at"]).total_seconds() < 45:
+        raise HTTPException(429, "A code was just sent — please wait a moment before requesting another.")
+    # No provider configured (and not in test capture) → don't pretend we sent it.
+    if not (os.environ.get("SMTP_CAPTURE") or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
+        raise HTTPException(503, "Email isn't set up on the server yet, so codes can't be sent. Ask your admin.")
+    code = f"{_secrets_mod.randbelow(900000) + 100000}"
+    q("""INSERT INTO scheduling.email_verifications (email, code, expires_at, attempts, created_at)
+         VALUES (%s,%s,%s,0,NOW())
+         ON CONFLICT (email) DO UPDATE SET code=EXCLUDED.code, expires_at=EXCLUDED.expires_at,
+                                           attempts=0, created_at=NOW()""",
+      (email, code, datetime.now(timezone.utc) + timedelta(minutes=10)), exec_only=True)
+    send_email(email, "Your Meena verification code",
+               f"Your verification code is {code}\n\nIt expires in 10 minutes. "
+               f"Enter it on the sign-up form to confirm your email.")
+    return {"ok": True}
+
+def _verify_email_code(email, code):
+    """Consume a verification code for `email`; raise 400 if missing/expired/wrong."""
+    email = (email or "").strip().lower()
+    code = (code or "").strip()
+    row = q("SELECT code, expires_at, attempts FROM scheduling.email_verifications WHERE email=%s", (email,), one=True)
+    if not row:
+        raise HTTPException(400, "Please request a verification code for your email first")
+    if row["attempts"] >= 6:
+        raise HTTPException(400, "Too many wrong attempts — request a new code")
+    if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc):
+        raise HTTPException(400, "Your verification code expired — request a new one")
+    if not code or code != row["code"]:
+        q("UPDATE scheduling.email_verifications SET attempts=attempts+1 WHERE email=%s", (email,), exec_only=True)
+        raise HTTPException(400, "Incorrect verification code")
+    q("DELETE FROM scheduling.email_verifications WHERE email=%s", (email,), exec_only=True)
+
 @app.post("/api/register")
 async def register_staff(request: Request):
     """Create (or update by Employee ID) a staff record from a self-submission."""
@@ -1425,6 +1480,8 @@ async def register_staff(request: Request):
     # Early, friendly check — the real guard is the UNIQUE index at approval.
     if q("SELECT 1 FROM scheduling.users WHERE username=%s", (username,), one=True):
         raise HTTPException(409, "That username is taken — please choose another")
+    # Email must be verified with the code we just emailed.
+    _verify_email_code(email, body.get("email_code"))
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     # A re-submission for the same Employee ID replaces the earlier pending one.
     if emp_id:
