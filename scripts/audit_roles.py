@@ -17,6 +17,20 @@ def login(u, p):
     c = TestClient(app); r = c.post("/api/auth/login", json={"username": u, "password": p})
     assert r.status_code == 200, f"login {u}: {r.text}"; return c
 
+import re as _re
+def reg_with_code(client, payload):
+    em = payload.get("email")
+    if em:
+        client.post("/api/register/send-code", json={"email": em})
+        codev = None
+        for e in reversed(M._email_outbox):
+            if e.get("to") == em:
+                mm = _re.search(r"(\d{6})", (e.get("body") or ""))
+                if mm:
+                    codev = mm.group(1); break
+        payload = {**payload, "email_code": codev}
+    return client.post("/api/register", json=payload)
+
 admin = login("admin", "admin123")              # superadmin
 branches = admin.get("/api/branches").json()
 bidA = branches[0]["id"]; bidB = branches[1]["id"]
@@ -84,9 +98,9 @@ print("\n== registration flow across branches ==")
 admin.put("/api/settings", json={"registration": "on"})
 code = (admin.get("/api/settings").json().get("registration_link") or "").split("register=")[-1]
 anon = TestClient(app)
-anon.post("/api/register", json={"code": code, "name": "Reg ForA", "branch_id": bidA, "employee_id": f"RA{sfx}",
+reg_with_code(anon, {"code": code, "name": "Reg ForA", "branch_id": bidA, "employee_id": f"RA{sfx}",
           "email": "rega@meena-health.com", "phone": "0500000000", "username": f"rega{sfx}", "password": "regpass1"})
-anon.post("/api/register", json={"code": code, "name": "Reg ForB", "branch_id": bidB, "employee_id": f"RB{sfx}",
+reg_with_code(anon, {"code": code, "name": "Reg ForB", "branch_id": bidB, "employee_id": f"RB{sfx}",
           "email": "regb@meena-health.com", "phone": "0500000000", "username": f"regb{sfx}", "password": "regpass1"})
 qa = LEADA.get("/api/registrations").json()
 check("lead A sees only branch-A registration", any(r["employee_id"]==f"RA{sfx}" for r in qa) and not any(r["employee_id"]==f"RB{sfx}" for r in qa), qa)

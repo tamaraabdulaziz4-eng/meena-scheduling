@@ -22,6 +22,23 @@ function showLoginView()  { _showAuthView('login-view'); }
 // into the onboarding form as a staff member.
 function startStaffSignup() { startRegistration('', 'staff'); }
 
+// Email a 6-digit verification code to the entered Meena address.
+async function sendRegCode() {
+  const email = document.getElementById('reg-email').value.trim();
+  const msg = document.getElementById('reg-msg');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !email.toLowerCase().includes('@meena')) {
+    msg.style.color = ''; msg.textContent = 'Enter your Meena email first (must contain @meena)'; return;
+  }
+  const btn = document.getElementById('reg-sendcode-btn');
+  const label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await API.post('/register/send-code', { email });
+    msg.style.color = 'var(--muted)'; msg.textContent = 'Code sent — check your Meena email (expires in 10 min).';
+    document.getElementById('reg-emailcode')?.focus();
+  } catch (e) { msg.style.color = ''; msg.textContent = e.message || 'Could not send the code'; }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+
 // Legacy code-gated signup (kept for any older link); no longer the default path.
 function showSignupView() {
   const m = document.getElementById('signup-msg'); if (m) m.textContent = '';
@@ -123,6 +140,7 @@ async function submitRegistration() {
     phone: document.getElementById('reg-phone').value.trim(),
     join_date: document.getElementById('reg-joindate')?.value || null,
     leave_balance: parseFloat(document.getElementById('reg-leavebal')?.value || '0') || 0,
+    email_code: document.getElementById('reg-emailcode')?.value.trim(),
     username: document.getElementById('reg-username').value.trim(),
     password: pw,
   };
@@ -137,6 +155,9 @@ async function submitRegistration() {
   if (!body.phone) { msg.style.color = ''; msg.textContent = 'Mobile number is required'; return; }
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) || !body.email.toLowerCase().includes('@meena')) {
     msg.style.color = ''; msg.textContent = 'Use your Meena work email (must contain @meena)'; return;
+  }
+  if (!body.email_code || body.email_code.length < 4) {
+    msg.style.color = ''; msg.textContent = 'Enter the verification code we emailed you (tap "Send code")'; return;
   }
   if (body.leave_balance < 0) { msg.style.color = ''; msg.textContent = 'Leave balance can\'t be negative'; return; }
   if (!body.username || body.username.length < 3) {

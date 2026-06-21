@@ -28,6 +28,22 @@ def login(u, p):
     assert r.status_code == 200, f"login {u}: {r.status_code} {r.text}"
     return c
 
+import re as _re
+def reg_with_code(client, payload):
+    """Register helper: fetch the emailed verification code (SMTP_CAPTURE) and
+    submit it with the registration, mirroring the real two-step flow."""
+    em = payload.get("email")
+    if em:
+        client.post("/api/register/send-code", json={"email": em})
+        codev = None
+        for e in reversed(M._email_outbox):
+            if e.get("to") == em:
+                mm = _re.search(r"(\d{6})", (e.get("body") or ""))
+                if mm:
+                    codev = mm.group(1); break
+        payload = {**payload, "email_code": codev}
+    return client.post("/api/register", json=payload)
+
 print("\n== setup ==")
 admin = login("admin", "admin123")           # superadmin (acts as manager too)
 branches = admin.get("/api/branches").json()
@@ -646,7 +662,7 @@ check("no email when no address on file", len(M._email_outbox) == 0, M._email_ou
 
 print("\n== scenario 14b: open self-registration (no code) emails the registrant ==")
 M._email_outbox.clear()
-reg = admin.post("/api/register", json={"name": "ZZ NewStaff", "branch_id": bid,
+reg = reg_with_code(admin, {"name": "ZZ NewStaff", "branch_id": bid,
                  "employee_id": "9990001", "email": "newstaff@meena-health.com", "phone": "0500000000",
                  "join_date": "2024-01-15", "leave_balance": 12.5,
                  "username": f"zznew{sfx}", "password": "pass123", "section": "General"})
@@ -660,6 +676,18 @@ check("a pending registration awaits activation",
 # /register/info works with no code (open onboarding form)
 info = admin.get("/api/register/info")
 check("onboarding branch list loads without a code", info.status_code == 200 and info.json().get("ok"), info.text)
+# Email verification code is enforced.
+admin.post("/api/register/send-code", json={"email": "codetest@meena-health.com"})
+wrongc = admin.post("/api/register", json={"name": "CT", "branch_id": bid, "employee_id": f"CT1{sfx}",
+                    "email": "codetest@meena-health.com", "phone": "0500000000",
+                    "username": f"ct1{sfx}", "password": "pass1234", "email_code": "000000"})
+check("wrong verification code rejected", wrongc.status_code == 400, wrongc.text)
+nocodereg = admin.post("/api/register", json={"name": "CT", "branch_id": bid, "employee_id": f"CT2{sfx}",
+                       "email": "noco@meena-health.com", "phone": "0500000000",
+                       "username": f"ct2{sfx}", "password": "pass1234"})
+check("missing verification code rejected", nocodereg.status_code == 400, nocodereg.text)
+check("send-code refuses a non-Meena address",
+      admin.post("/api/register/send-code", json={"email": "x@gmail.com"}).status_code == 400)
 
 print("\n== scenario 14b: Resend payload ==")
 import os as _os
@@ -759,7 +787,7 @@ reg_uname = f"zzself{sfx}"
 noacct = anon2.post("/api/register", json={"code": code, "name": "ZZ NoAccount", "branch_id": bid,
                     "employee_id": f"EID{sfx}"})
 check("registration without username/password rejected", noacct.status_code == 400, noacct.text)
-reg = anon2.post("/api/register", json={"code": code, "name": "ZZ Self Signup", "section": "US",
+reg = reg_with_code(anon2, {"code": code, "name": "ZZ Self Signup", "section": "US",
                  "branch_id": bid, "employee_id": f"EID{sfx}", "email": "self@meena-health.com", "phone": "0500000000",
                  "join_date": "2023-06-01", "leave_balance": 18,
                  "username": reg_uname, "password": "selfpass1"})
@@ -781,7 +809,7 @@ dupu = anon2.post("/api/register", json={"code": code, "name": "Dup", "branch_id
                  "username": "admin", "password": "whatever1"})
 check("taken username rejected at signup", dupu.status_code == 409, dupu.text)
 # Re-submit same ID → still one pending entry (replaces).
-anon2.post("/api/register", json={"code": code, "name": "ZZ Self Renamed", "section": "US", "branch_id": bid,
+reg_with_code(anon2, {"code": code, "name": "ZZ Self Renamed", "section": "US", "branch_id": bid,
            "employee_id": f"EID{sfx}", "email": "self@meena-health.com", "phone": "0500000000",
            "join_date": "2023-06-01", "leave_balance": 18,
            "username": reg_uname, "password": "selfpass1"})
@@ -806,12 +834,12 @@ check("approved registrant can sign in", li.status_code == 200, li.text)
 check("their account is a branch-scoped staff role", li.json().get("role") == "staff" and li.json().get("staff_id") == made["id"], li.text)
 # Registration is open (code-less): a submission goes through regardless of any
 # stray code value, as long as the details are valid.
-check("open registration ignores any code value", anon2.post("/api/register", json={"code": "nope", "name": "ZZ NoCode", "branch_id": bid,
+check("open registration ignores any code value", reg_with_code(anon2, {"code": "nope", "name": "ZZ NoCode", "branch_id": bid,
       "employee_id": f"y{sfx}", "email": "nocode@meena-health.com", "phone": "0500000000", "username": f"x{sfx}", "password": "xxxxxx1"}).status_code == 200)
 # Username-collision guard: a pending sign-up must NOT hijack an account that
 # claimed the username between submission and approval.
 anon3 = TestClient(app)
-anon3.post("/api/register", json={"code": code, "name": "Race User", "branch_id": bid,
+reg_with_code(anon3, {"code": code, "name": "Race User", "branch_id": bid,
            "employee_id": f"RACE{sfx}", "email": "race@meena-health.com", "phone": "0500000000",
            "username": f"race{sfx}", "password": "racepass1"})
 admin.post("/api/users", json={"username": f"race{sfx}", "password": "strangerpw1", "role": "viewer"})
@@ -825,11 +853,11 @@ dupset = admin.put(f"/api/staff/{B['id']}", json={"employee_id": f"EID{sfx}"})
 check("duplicate Employee ID rejected on edit", dupset.status_code == 409, dupset.status_code)
 # Role-scoped invite links: team-lead & manager sign-ups need SUPERADMIN approval.
 anon4 = TestClient(app)
-ra = anon4.post("/api/register", json={"code": code, "role": "admin", "name": "Lead Signup",
+ra = reg_with_code(anon4, {"code": code, "role": "admin", "name": "Lead Signup",
                 "branch_id": bid, "username": f"leadsu{sfx}", "password": "leadpass1",
                 "email": "lead@meena-health.com", "phone": "0500000000"})
 check("team-lead sign-up accepted (pending)", ra.status_code == 200, ra.text)
-rm_ = anon4.post("/api/register", json={"code": code, "role": "manager", "name": "Mgr Signup",
+rm_ = reg_with_code(anon4, {"code": code, "role": "manager", "name": "Mgr Signup",
                 "username": f"mgrsu{sfx}", "password": "mgrpass1",
                 "email": "mgr@meena-health.com", "phone": "0500000000"})
 check("manager sign-up accepted (no branch needed)", rm_.status_code == 200, rm_.text)
