@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260621c">
+<link rel="stylesheet" href="/style.css?v=20260621d">
 </head>
 <body>
 
@@ -55,7 +55,7 @@
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:10px">
         <button type="button" onclick="showForgotView()"
           style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;font-family:inherit">Forgot password?</button>
-        <button type="button" onclick="showSignupView()"
+        <button type="button" onclick="startStaffSignup()"
           style="background:none;border:none;color:#6B4EFF;cursor:pointer;font-size:13px;font-family:inherit;font-weight:700">New staff? Sign up →</button>
       </div>
     </div>
@@ -114,7 +114,7 @@
         <input type="text" id="reg-empid" placeholder="e.g. 1234567890" inputmode="numeric">
       </div>
       <div class="login-field">
-        <label>Email</label>
+        <label>Email <span style="color:var(--muted);font-weight:400">(we'll confirm your registration here)</span></label>
         <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email">
       </div>
       <div class="login-field">
@@ -150,7 +150,7 @@
         <path class="success-path" fill="none" d="M14 27 l8 8 l16 -16"/>
       </svg>
       <h2 style="margin-top:14px">All done 🎉</h2>
-      <p id="register-done-msg">Your details were submitted and are awaiting your team lead's approval.</p>
+      <p id="register-done-msg">Your registration was received and is awaiting account activation. We've emailed you a confirmation.</p>
     </div>
 
     <!-- Set-new-password view (opened from the emailed link) -->
@@ -905,24 +905,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260621c"></script>
-<script src="/js/auth.js?v=20260621c"></script>
-<script src="/js/util.js?v=20260621c"></script>
-<script src="/js/branches.js?v=20260621c"></script>
-<script src="/js/users.js?v=20260621c"></script>
-<script src="/js/staff.js?v=20260621c"></script>
-<script src="/js/leaves.js?v=20260621c"></script>
-<script src="/js/swaps.js?v=20260621c"></script>
-<script src="/js/holidays.js?v=20260621c"></script>
-<script src="/js/notifications.js?v=20260621c"></script>
-<script src="/js/portal.js?v=20260621c"></script>
-<script src="/js/cases.js?v=20260621c"></script>
-<script src="/js/home.js?v=20260621c"></script>
-<script src="/js/shifts.js?v=20260621c"></script>
-<script src="/js/schedule.js?v=20260621c"></script>
-<script src="/js/review.js?v=20260621c"></script>
-<script src="/js/export.js?v=20260621c"></script>
-<script src="/js/audit.js?v=20260621c"></script>
-<script src="/js/main.js?v=20260621c"></script>
+<script src="/js/api.js?v=20260621d"></script>
+<script src="/js/auth.js?v=20260621d"></script>
+<script src="/js/util.js?v=20260621d"></script>
+<script src="/js/branches.js?v=20260621d"></script>
+<script src="/js/users.js?v=20260621d"></script>
+<script src="/js/staff.js?v=20260621d"></script>
+<script src="/js/leaves.js?v=20260621d"></script>
+<script src="/js/swaps.js?v=20260621d"></script>
+<script src="/js/holidays.js?v=20260621d"></script>
+<script src="/js/notifications.js?v=20260621d"></script>
+<script src="/js/portal.js?v=20260621d"></script>
+<script src="/js/cases.js?v=20260621d"></script>
+<script src="/js/home.js?v=20260621d"></script>
+<script src="/js/shifts.js?v=20260621d"></script>
+<script src="/js/schedule.js?v=20260621d"></script>
+<script src="/js/review.js?v=20260621d"></script>
+<script src="/js/export.js?v=20260621d"></script>
+<script src="/js/audit.js?v=20260621d"></script>
+<script src="/js/main.js?v=20260621d"></script>
 </body>
 </html>
