@@ -120,10 +120,17 @@ async function startRegistration(code, role) {
       sel.innerHTML = '<option value="">Select branch…</option>' +
         (info.branches || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
     } else if (sel) { try { sel.innerHTML = ''; } catch (e) {} }
-    // Nafath identity verification (when the server has it configured).
+    // Nafath identity verification (when the server has it configured). When on,
+    // identity is verified FIRST and the rest of the form stays hidden until then.
     _nafathEnabled = !!info.nafath_enabled;
-    const nf = document.getElementById('reg-nafath-field');
-    if (nf) nf.style.display = _nafathEnabled ? '' : 'none';
+    const identity = document.getElementById('reg-identity');
+    const rest = document.getElementById('reg-rest');
+    const intro = document.getElementById('reg-intro');
+    if (identity) identity.style.display = _nafathEnabled ? '' : 'none';
+    if (rest) rest.style.display = _nafathEnabled ? 'none' : '';
+    if (intro) intro.textContent = _nafathEnabled
+      ? 'First, verify your identity with Nafath. Then fill in the rest of your details.'
+      : 'Welcome! Fill in your details to join the team.';
   } catch (e) {
     msg.style.color = ''; msg.textContent = e.message || 'Registration is closed';
     document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn, #register-view .onb-pill')
@@ -140,6 +147,10 @@ function _resetNafath() {
   const st = document.getElementById('reg-nafath-status'); if (st) st.innerHTML = '';
   const btn = document.getElementById('reg-nafath-btn');
   if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+  const idInput = document.getElementById('reg-nationalid');
+  if (idInput) { idInput.readOnly = false; idInput.value = ''; }
+  const nameEl = document.getElementById('reg-name');
+  if (nameEl) nameEl.readOnly = false;
 }
 
 async function startNafath() {
@@ -175,9 +186,13 @@ function _pollNafath(rid, startedAt) {
         _nafathVerified = true;
         const nm = r.name_en || r.name_ar || '';
         st.style.color = '#1a9d6a';
-        st.innerHTML = `✓ Identity verified${nm ? ` — <b>${escapeHtml(nm)}</b>` : ''}`;
+        st.innerHTML = `✓ Identity verified${nm ? ` — <b>${escapeHtml(nm)}</b>` : ''}. Please complete the rest below.`;
         if (btn) { btn.disabled = true; btn.textContent = 'Verified ✓'; }
-        // Adopt the official name on the form (read-only once verified).
+        const idInput = document.getElementById('reg-nationalid');
+        if (idInput) idInput.readOnly = true;
+        // Reveal the rest of the form and adopt the official name (read-only).
+        const rest = document.getElementById('reg-rest');
+        if (rest) rest.style.display = '';
         const nameEl = document.getElementById('reg-name');
         if (nameEl && nm) { nameEl.value = nm; nameEl.readOnly = true; }
         return;
