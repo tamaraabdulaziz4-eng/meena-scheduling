@@ -14,3 +14,6 @@ __pycache__/
 # Generated UI preview images (produced by scripts/render_*.py)
 *_preview.png
 sidebar_options.png
+
+# Throwaway design mockups/previews
+mockups/
