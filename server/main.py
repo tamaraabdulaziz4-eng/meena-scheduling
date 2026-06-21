@@ -6,7 +6,7 @@ Run:
     python -m uvicorn server.main:app --port 3002 --reload
 """
 
-import os, sys, json, math, re, calendar as _cal
+import os, sys, json, math, re, uuid, calendar as _cal
 
 # Load .env from project root
 _env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -438,6 +438,28 @@ def init_schema():
                     attempts INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
+            # Nafath (Sadq) identity verifications for self-registration. Keyed by
+            # the GUID we generate; Sadq pushes the result to our public webhook.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.nafath_verifications (
+                    request_id UUID PRIMARY KEY,
+                    national_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    trans_id TEXT,
+                    random_code TEXT,
+                    name_ar TEXT,
+                    name_en TEXT,
+                    official_national_id TEXT,
+                    consumed BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_nafath_national ON scheduling.nafath_verifications(national_id);")
+            # National ID + Arabic official name captured from Nafath at sign-up.
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS national_id TEXT;")
+            cur.execute("ALTER TABLE scheduling.staff_registrations ADD COLUMN IF NOT EXISTS name_ar TEXT;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS national_id TEXT;")
+            cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS name_ar TEXT;")
             # Multi-stage swap approval: peer → team lead → manager. Track each step.
             for _col in ("peer_at TIMESTAMP",
                          "lead_by INTEGER", "lead_at TIMESTAMP",
@@ -783,6 +805,8 @@ def assert_can_edit_schedule(user: dict, sid) -> dict:
 # Shared: APP_URL (link/logo target), ORG_NAME (branding). Neither configured →
 #   in-app notifications only. SMTP_CAPTURE=1 → in-memory outbox (tests).
 _email_outbox = []
+# In-memory capture of outbound Nafath auth requests (tests / SADQ_MOCK).
+_sadq_outbox = []
 
 def _org_name():
     return os.environ.get("ORG_NAME", "Meena Health — Radiology Scheduling")
@@ -1373,12 +1397,160 @@ def _check_registration_code(code):
     if not cur or (code or "") != cur:
         raise HTTPException(403, "Staff registration is closed. Ask your manager for the current link.")
 
+# ── Nafath (Sadq) identity verification ───────────────────────────────────────
+def _sadq_base():
+    return os.environ.get("SADQ_BASE_URL", "https://api-sandbox.sadq-sa.com").rstrip("/")
+def _sadq_account_id():
+    return os.environ.get("SADQ_ACCOUNT_ID", "").strip()
+def _sadq_thumbprint():
+    return os.environ.get("SADQ_THUMBPRINT", "").strip()
+def _sadq_mock():
+    return os.environ.get("SADQ_MOCK") == "1"
+def _sadq_configured():
+    return bool(_sadq_account_id() and _sadq_thumbprint())
+
+def _nafath_enabled():
+    """Nafath is enforced when it's configured (prod sets SADQ_* env vars) or in
+    mock mode — unless a superadmin explicitly turns it off."""
+    if get_setting("nafath_required", "on") == "off":
+        return False
+    return _sadq_configured() or _sadq_mock()
+
+def _nafath_webhook_url():
+    base = os.environ.get("APP_URL", "").strip().rstrip("/")
+    return f"{base}/api/nafath/webhook" if base else ""
+
+def _valid_national_id(nid):
+    """Saudi National ID / Iqama: 10 digits, citizen (1xxxxxxxxx) or resident (2…)."""
+    return bool(re.match(r"^[12]\d{9}$", (nid or "").strip()))
+
+def _join_name(*parts):
+    return " ".join(str(p).strip() for p in parts if p and str(p).strip())
+
+def _sadq_nafath_auth(national_ids, request_id, webhook_url):
+    """Call IntegrationNafathAuth → returns the per-ID result list (each item has
+    nationalId, transId, random, error). The `random` is the number the user
+    selects in the Nafath app; the final result arrives later via webhook."""
+    payload = {"nationalIds": national_ids, "requestId": request_id,
+               "accountId": _sadq_account_id(), "webHookUrl": webhook_url}
+    if _sadq_mock():
+        # Deterministic fake for tests/local — matches the sandbox OTP (1234).
+        results = [{"nationalId": nid, "transId": f"mock-{request_id[:8]}",
+                    "random": "1234", "error": None, "code": None, "status": None}
+                   for nid in national_ids]
+        _sadq_outbox.append({"payload": payload, "results": results})
+        return results
+    import urllib.request, urllib.error
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_sadq_base()}/Authentication/Authority/IntegrationNafathAuth",
+        data=data, method="POST",
+        headers={"thumbPrint": _sadq_thumbprint(), "accountId": _sadq_account_id(),
+                 "Content-Type": "application/json", "Accept": "application/json",
+                 "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Sadq {e.code}: {e.read().decode('utf-8', 'replace')}") from None
+    try:
+        parsed = json.loads(raw) if raw else []
+    except ValueError:
+        raise RuntimeError(f"Sadq returned non-JSON: {raw[:200]}")
+    return parsed if isinstance(parsed, list) else [parsed]
+
+@app.post("/api/register/nafath/start")
+async def nafath_start(request: Request):
+    """Kick off Nafath verification for a National ID during sign-up. Returns the
+    `random` number the user must select in their Nafath app."""
+    _assert_registration_open()
+    body = await request.json()
+    nid = (body.get("national_id") or "").strip()
+    if not _valid_national_id(nid):
+        raise HTTPException(400, "Enter a valid 10-digit National ID / Iqama (starts with 1 or 2)")
+    if not (_sadq_configured() or _sadq_mock()):
+        raise HTTPException(503, "Nafath verification isn't configured on the server yet. Ask your admin.")
+    webhook = _nafath_webhook_url()
+    if not _sadq_mock() and not webhook:
+        raise HTTPException(503, "Server public URL (APP_URL) isn't set, so Nafath can't return the result. Ask your admin.")
+    # Throttle: one new request per National ID per 30 seconds.
+    prev = q("""SELECT created_at FROM scheduling.nafath_verifications
+                WHERE national_id=%s ORDER BY created_at DESC LIMIT 1""", (nid,), one=True)
+    if prev and prev.get("created_at") and \
+       (datetime.now(timezone.utc) - prev["created_at"]).total_seconds() < 30:
+        raise HTTPException(429, "A verification was just started — please wait a moment before retrying.")
+    request_id = str(uuid.uuid4())
+    try:
+        results = _sadq_nafath_auth([nid], request_id, webhook)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't reach Nafath: {e}")
+    r0 = (results or [{}])[0] or {}
+    if r0.get("error"):
+        raise HTTPException(400, f"Nafath rejected this request: {r0.get('error')}")
+    random_code = str(r0.get("random") or "")
+    q("""INSERT INTO scheduling.nafath_verifications
+           (request_id, national_id, status, trans_id, random_code, created_at, updated_at)
+         VALUES (%s,%s,'pending',%s,%s,NOW(),NOW())""",
+      (request_id, nid, r0.get("transId"), random_code), exec_only=True)
+    return {"ok": True, "request_id": request_id, "random": random_code}
+
+@app.get("/api/register/nafath/status")
+def nafath_status(request: Request):
+    """Poll the verification result while the user approves in their Nafath app."""
+    rid = (request.query_params.get("request_id") or "").strip()
+    if not rid:
+        raise HTTPException(400, "request_id required")
+    row = q("""SELECT status, name_ar, name_en, official_national_id, national_id
+               FROM scheduling.nafath_verifications WHERE request_id=%s""", (rid,), one=True)
+    if not row:
+        raise HTTPException(404, "Unknown verification request")
+    return {"status": row["status"], "name_ar": row.get("name_ar"),
+            "name_en": row.get("name_en"),
+            "national_id": row.get("official_national_id") or row.get("national_id")}
+
+@app.post("/api/nafath/webhook")
+async def nafath_webhook(request: Request):
+    """Public callback from Sadq/Nafath with the auth result. Matched by the
+    unguessable requestId we generated. Always answers 200 so Sadq won't retry."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False}
+    rid = str(body.get("requestId") or body.get("RequestId") or "").strip()
+    if not rid:
+        return {"ok": False}
+    row = q("""SELECT request_id, national_id, status FROM scheduling.nafath_verifications
+               WHERE request_id=%s""", (rid,), one=True)
+    if not row:
+        return {"ok": False}                       # unknown request — ignore quietly
+    status_val = body.get("Status", body.get("status"))
+    success = str(status_val) == "0"
+    if success:
+        users = body.get("usersInfo") or body.get("UsersInfo") or []
+        u = (users[0] if users else {}) or {}
+        off_nid = str(u.get("NationalId") or "").strip() or row["national_id"]
+        # The verified National ID must match the one we asked about.
+        if off_nid and row["national_id"] and off_nid != row["national_id"]:
+            q("UPDATE scheduling.nafath_verifications SET status='failed', updated_at=NOW() WHERE request_id=%s",
+              (rid,), exec_only=True)
+            return {"ok": True}
+        name_en = _join_name(u.get("FirstNameEn"), u.get("LastNameEn"))
+        name_ar = _join_name(u.get("FirstNameAr"), u.get("MiddleNameAr"),
+                             u.get("ThirdNameAr"), u.get("LastNameAr"))
+        q("""UPDATE scheduling.nafath_verifications
+             SET status='verified', name_ar=%s, name_en=%s, official_national_id=%s, updated_at=NOW()
+             WHERE request_id=%s""", (name_ar or None, name_en or None, off_nid, rid), exec_only=True)
+    else:
+        q("UPDATE scheduling.nafath_verifications SET status='failed', updated_at=NOW() WHERE request_id=%s",
+          (rid,), exec_only=True)
+    return {"ok": True}
+
 @app.get("/api/register/info")
 def register_info(request: Request):
     """Branch list for the onboarding form. Open registration — no code needed."""
     _assert_registration_open()
     branches = q("SELECT id, name FROM scheduling.branches ORDER BY name")
-    return {"ok": True, "branches": branches}
+    return {"ok": True, "branches": branches, "nafath_enabled": _nafath_enabled()}
 
 import secrets as _secrets_mod
 
@@ -1484,6 +1656,20 @@ async def register_staff(request: Request):
         raise HTTPException(409, "That username is taken — please choose another")
     # Email must be verified with the code we just emailed.
     _verify_email_code(email, body.get("email_code"))
+    # Identity must be verified through Nafath (when enabled). The official name
+    # from Nafath replaces the typed name, and we record the National ID.
+    national_id = name_ar = None
+    nafath_rid = (body.get("nafath_request_id") or "").strip()
+    if _nafath_enabled():
+        nv = q("SELECT * FROM scheduling.nafath_verifications WHERE request_id=%s",
+               (nafath_rid,), one=True) if nafath_rid else None
+        if not nv or nv["status"] != "verified":
+            raise HTTPException(400, "Please complete Nafath identity verification first")
+        if nv.get("consumed"):
+            raise HTTPException(400, "This Nafath verification was already used — verify again")
+        name = nv.get("name_en") or nv.get("name_ar") or name
+        name_ar = nv.get("name_ar")
+        national_id = nv.get("official_national_id") or nv.get("national_id")
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     # A re-submission for the same Employee ID replaces the earlier pending one.
     if emp_id:
@@ -1492,10 +1678,14 @@ async def register_staff(request: Request):
           (emp_id,), exec_only=True)
     q("""INSERT INTO scheduling.staff_registrations
            (name, branch_id, employee_id, email, phone, section, username, password,
-            requested_role, join_date, leave_balance)
-         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            requested_role, join_date, leave_balance, national_id, name_ar)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
       (name, branch_id, emp_id or None, email, phone, section, username, pw_hash, role,
-       join_date, leave_balance), exec_only=True)
+       join_date, leave_balance, national_id, name_ar), exec_only=True)
+    # Lock the Nafath verification so it can't be reused for another sign-up.
+    if _nafath_enabled() and nafath_rid:
+        q("UPDATE scheduling.nafath_verifications SET consumed=true, updated_at=NOW() WHERE request_id=%s",
+          (nafath_rid,), exec_only=True)
     # Route the approval request to whoever can approve THIS role.
     if role == "staff":
         msg = f"New staff registration to review: {name}" + (f" — ID {emp_id}" if emp_id else "")
@@ -1571,17 +1761,20 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
         sec = reg.get("section") if reg.get("section") in ("General", "US") else "General"
         try:
             staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality,
-                                                        self_registered, join_date, leave_balance, leave_balance_date)
-                         VALUES (%s,%s,%s,%s,%s,%s,true,%s,%s,CURRENT_DATE)
+                                                        self_registered, join_date, leave_balance, leave_balance_date,
+                                                        national_id, name_ar)
+                         VALUES (%s,%s,%s,%s,%s,%s,true,%s,%s,CURRENT_DATE,%s,%s)
                          ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
                          DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id,
                                        email=EXCLUDED.email, phone=EXCLUDED.phone,
                                        speciality=EXCLUDED.speciality, self_registered=true,
                                        join_date=EXCLUDED.join_date, leave_balance=EXCLUDED.leave_balance,
-                                       leave_balance_date=CURRENT_DATE
+                                       leave_balance_date=CURRENT_DATE,
+                                       national_id=EXCLUDED.national_id, name_ar=EXCLUDED.name_ar
                          RETURNING id, name""",
                       (reg["name"], reg["branch_id"], reg["employee_id"], reg["email"], reg["phone"], [sec],
-                       reg.get("join_date"), reg.get("leave_balance") or 0),
+                       reg.get("join_date"), reg.get("leave_balance") or 0,
+                       reg.get("national_id"), reg.get("name_ar")),
                       one=True)
         except psycopg2.errors.UniqueViolation:
             raise HTTPException(409, "That Employee ID is already on a staff record")
@@ -3798,6 +3991,22 @@ def email_config(user=Depends(require_superadmin)):
         "from": _email_from(),
         "reply_to": _sig_email(),
         "app_url_set": bool(os.environ.get("APP_URL", "").strip()),
+    }
+
+@app.get("/api/nafath-config")
+def nafath_config(user=Depends(require_superadmin)):
+    """Diagnostics for the Nafath (Sadq) setup (no secrets leaked) so a
+    misconfiguration is visible before testing on the live form."""
+    return {
+        "enabled": _nafath_enabled(),
+        "mock": _sadq_mock(),
+        "base_url": _sadq_base(),
+        "account_id_set": bool(_sadq_account_id()),
+        "thumbprint_set": bool(_sadq_thumbprint()),
+        "app_url_set": bool(os.environ.get("APP_URL", "").strip()),
+        "webhook_url": _nafath_webhook_url() or None,
+        # Ready to receive the push + the webhook callback end-to-end.
+        "ready": bool((_sadq_configured() or _sadq_mock()) and _nafath_webhook_url()),
     }
 
 @app.post("/api/email-test")

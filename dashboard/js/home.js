@@ -26,16 +26,24 @@ async function renderHomePage() {
         </div>
       </div>
     </div>
+    <div class="hm-search">
+      <div class="hm-searchbar">
+        <span class="hm-search-ic">🔎</span>
+        <input id="hm-staff-q" type="search" placeholder="Search any staff by name or employee ID…" autocomplete="off"
+          oninput="homeStaffSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';homeStaffSearch('')}">
+        <span class="hm-kbd" id="hm-search-kbd">/</span>
+      </div>
+      <div id="hm-staff-filters" class="hm-filters" style="display:none">
+        <button class="hm-fchip on" data-sec="" onclick="homeSetFilter(this,'')">All</button>
+        <button class="hm-fchip" data-sec="General" onclick="homeSetFilter(this,'General')">General</button>
+        <button class="hm-fchip" data-sec="US" onclick="homeSetFilter(this,'US')">Ultrasound</button>
+      </div>
+      <div id="hm-recent" class="hm-recent"></div>
+      <div id="hm-staff-results" class="hm-results"></div>
+    </div>
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div id="hm-approvals"></div>
-    <div class="hm-card">
-      <div class="hm-card-head"><div class="hm-card-title">Find a staff member</div></div>
-      <input id="hm-staff-q" type="search" placeholder="Search by name or employee ID…" autocomplete="off"
-        oninput="homeStaffSearch(this.value)"
-        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-top:8px;font-family:inherit;font-size:13px">
-      <div id="hm-staff-results" style="margin-top:10px"></div>
-    </div>
     <div class="hm-card">
       <div class="hm-card-head">
         <div class="hm-card-title">Today's cases</div>
@@ -54,6 +62,23 @@ async function renderHomePage() {
   renderHomeActions(dash);
   renderHomeCases(ov);
   if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) renderHomeApprovals();
+  renderHomeRecent();
+  _bindHomeSearchShortcut();
+}
+
+// Press "/" anywhere on Home to jump straight into the search box.
+let _hmShortcutBound = false;
+function _bindHomeSearchShortcut() {
+  if (_hmShortcutBound) return;
+  _hmShortcutBound = true;
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const el = document.getElementById('hm-staff-q');
+    if (!el || el.offsetParent === null) return;               // only when Home search is visible
+    const t = document.activeElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    e.preventDefault(); el.focus();
+  });
 }
 
 // ── "Needs your approval": pending leave / time-back / swaps, organized ───────
@@ -191,53 +216,119 @@ function renderHomeCases(ov) {
 
 // ── Manager home: live staff lookup by name / employee ID ─────────────────────
 let _hmSearchTimer = null;
+let _hmLastResults = [];      // last fetched rows (for client-side section filtering)
+let _hmFilter = '';           // '' | 'General' | 'US'
+let _hmLastTerm = '';
+
 function homeStaffSearch(term) {
   clearTimeout(_hmSearchTimer);
   const box = document.getElementById('hm-staff-results');
+  const filters = document.getElementById('hm-staff-filters');
+  const recent = document.getElementById('hm-recent');
   const q = (term || '').trim();
-  if (q.length < 2) { if (box) box.innerHTML = ''; return; }
+  _hmLastTerm = q;
+  if (q.length < 2) {
+    _hmLastResults = [];
+    if (box) box.innerHTML = '';
+    if (filters) filters.style.display = 'none';
+    renderHomeRecent();
+    return;
+  }
+  if (recent) recent.innerHTML = '';      // hide recents while actively searching
+  if (box) box.innerHTML = `<div class="hm-results-head hm-muted">Searching…</div>`;
   _hmSearchTimer = setTimeout(async () => {
     try {
       const r = await API.get(`/staff/search?q=${encodeURIComponent(q)}`);
-      renderHomeStaffResults(r.results || []);
-    } catch (e) { if (box) box.innerHTML = `<div class="hm-muted">${escapeHtml(e.message)}</div>`; }
+      _hmLastResults = r.results || [];
+      if (filters) filters.style.display = _hmLastResults.length ? 'flex' : 'none';
+      renderHomeStaffResults();
+    } catch (e) { if (box) box.innerHTML = `<div class="hm-muted" style="padding:8px">${escapeHtml(e.message)}</div>`; }
   }, 220);
 }
 
-function renderHomeStaffResults(rows) {
-  const box = document.getElementById('hm-staff-results');
-  if (!box) return;
-  if (!rows.length) { box.innerHTML = `<div class="hm-muted" style="padding:6px 2px">No matching staff.</div>`; return; }
-  const stName = code => {
-    if (!code) return '<span class="hm-muted">— off today</span>';
-    if (['O','AL','SL','TB'].includes(code)) return `<span class="badge badge-gray">${code}</span>`;
-    return `<span class="badge badge-green">${escapeHtml(code)}</span>`;
-  };
-  box.innerHTML = rows.map(s => `
-    <div style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-        <div style="font-weight:700;font-size:14px">${escapeHtml(s.name)}
-          <span class="hm-muted" style="font-weight:500;font-size:12px">· ${escapeHtml(s.branch_name || '—')} · ${escapeHtml(s.section || '')}</span>
-        </div>
-        <div style="font-size:12px">Today: ${stName(s.today_shift)}</div>
-      </div>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)">
-        ${s.employee_id ? `<span>🆔 ${escapeHtml(s.employee_id)}</span>` : ''}
-        ${s.phone ? `<span>📱 ${escapeHtml(s.phone)}</span>` : ''}
-        ${s.email ? `<span>✉️ ${escapeHtml(s.email)}</span>` : ''}
-        ${s.join_date ? `<span>📅 joined ${escapeHtml(s.join_date)}</span>` : ''}
-      </div>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:12px">
-        <span><b>${s.shifts_month}</b> shifts this month</span>
-        <span><b>${s.leave_days_month}</b> leave days this month</span>
-        <span><b>${(s.leave_balance ?? 0)}</b> days leave balance</span>
-        <button class="action-btn" style="margin-left:auto" onclick="openStaffSchedule(${s.branch_id})">View rota →</button>
-      </div>
-    </div>`).join('');
+function homeSetFilter(btn, sec) {
+  _hmFilter = sec;
+  document.querySelectorAll('#hm-staff-filters .hm-fchip').forEach(b => b.classList.toggle('on', b === btn));
+  renderHomeStaffResults();
 }
 
-// Jump to a branch's rota from a search result.
-function openStaffSchedule(branchId) {
+function _hmInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '–';
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+function _hmTodayBadge(code) {
+  if (!code || code === 'O') return `<span class="hm-tg off">off today</span>`;
+  if (['AL','SL','TB'].includes(code)) return `<span class="hm-tg lv">${code}</span>`;
+  return `<span class="hm-tg on">Today: ${escapeHtml(code)}</span>`;
+}
+
+function renderHomeStaffResults() {
+  const box = document.getElementById('hm-staff-results');
+  if (!box) return;
+  let rows = _hmLastResults;
+  if (_hmFilter) rows = rows.filter(s => (s.section || 'General') === _hmFilter);
+  if (!_hmLastResults.length) { box.innerHTML = `<div class="hm-results-head hm-muted">No staff match “${escapeHtml(_hmLastTerm)}”.</div>`; return; }
+  if (!rows.length) { box.innerHTML = `<div class="hm-results-head hm-muted">No ${_hmFilter === 'US' ? 'Ultrasound' : _hmFilter} staff in this match.</div>`; return; }
+
+  const head = `<div class="hm-results-head">${rows.length} ${rows.length === 1 ? 'match' : 'matches'} for “${escapeHtml(_hmLastTerm)}”</div>`;
+  box.innerHTML = head + rows.map(s => {
+    const bal = Number(s.leave_balance ?? 0);
+    const pct = Math.max(0, Math.min(100, Math.round((bal / 22) * 100)));
+    const secLabel = s.section === 'US' ? 'Ultrasound' : 'General';
+    const payload = encodeURIComponent(JSON.stringify({ id: s.id, name: s.name, branch_id: s.branch_id, branch_name: s.branch_name, section: s.section }));
+    return `
+    <div class="hm-sres">
+      <div class="hm-av">${escapeHtml(_hmInitials(s.name))}</div>
+      <div class="hm-sinfo">
+        <div class="hm-snm">${escapeHtml(s.name)}
+          <span class="hm-spill">${escapeHtml(s.branch_name || '—')} · ${escapeHtml(secLabel)}</span>
+          ${_hmTodayBadge(s.today_shift)}
+        </div>
+        <div class="hm-sct">
+          ${s.employee_id ? `🆔 ${escapeHtml(s.employee_id)}` : ''}
+          ${s.phone ? ` · 📱 ${escapeHtml(s.phone)}` : ''}
+          ${s.email ? ` · ✉️ ${escapeHtml(s.email)}` : ''}
+          ${s.join_date ? ` · joined ${escapeHtml(s.join_date)}` : ''}
+        </div>
+        <div class="hm-chips">
+          <span class="hm-chip2"><b>${s.shifts_month}</b> shifts this month</span>
+          <span class="hm-chip2"><b>${s.leave_days_month}</b> leave days</span>
+          <span class="hm-chip2"><b>${bal}</b> days balance</span>
+        </div>
+      </div>
+      <div class="hm-ring" style="--p:${pct}" title="${bal} of 22 annual leave days"><i>${bal}</i></div>
+      <button class="hm-rota-btn" onclick="openStaffSchedule(${s.branch_id}, '${payload}')">View rota →</button>
+    </div>`;
+  }).join('');
+}
+
+// ── Recently viewed staff (localStorage) ──────────────────────────────────────
+function _hmRecent() {
+  try { return JSON.parse(localStorage.getItem('hmRecentStaff') || '[]'); } catch { return []; }
+}
+function _hmPushRecent(s) {
+  if (!s || !s.id) return;
+  let list = _hmRecent().filter(x => x.id !== s.id);
+  list.unshift({ id: s.id, name: s.name, branch_id: s.branch_id, branch_name: s.branch_name, section: s.section });
+  list = list.slice(0, 5);
+  try { localStorage.setItem('hmRecentStaff', JSON.stringify(list)); } catch {}
+}
+function renderHomeRecent() {
+  const box = document.getElementById('hm-recent');
+  if (!box) return;
+  if (_hmLastTerm.length >= 2) { box.innerHTML = ''; return; }   // only on idle search
+  const list = _hmRecent();
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<span class="hm-recent-lbl">Recent</span>` + list.map(s => `
+    <button class="hm-rchip" onclick="openStaffSchedule(${s.branch_id}, '${encodeURIComponent(JSON.stringify(s))}')">
+      <span class="hm-rmini">${escapeHtml(_hmInitials(s.name))}</span>${escapeHtml(s.name)}
+    </button>`).join('');
+}
+
+// Jump to a branch's rota from a search result; remember the staff for "Recent".
+function openStaffSchedule(branchId, payload) {
+  if (payload) { try { _hmPushRecent(JSON.parse(decodeURIComponent(payload))); } catch {} }
   if (branchId) window._pendingScheduleBranch = branchId;
   showPage('schedule');
 }
