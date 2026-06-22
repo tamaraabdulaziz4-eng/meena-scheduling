@@ -116,6 +116,33 @@ app.get('/session', requireAuth, (_req, res) => {
   res.json({ ok: true, ready: isReady, state: lastState, qr: latestQr });
 });
 
+// Browser-friendly QR page for (re)linking WhatsApp. Open in any browser and
+// scan with the phone's WhatsApp → Linked devices → Link a device.
+// Auth via ?token=<BRIDGE_API_TOKEN> (so it works from a plain browser URL).
+app.get('/qr', async (req, res) => {
+  if (API_TOKEN) {
+    const t = String(req.query.token || '');
+    const a = Buffer.from(t), b = Buffer.from(API_TOKEN);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).send('Unauthorized — add ?token=YOUR_BRIDGE_API_TOKEN');
+    }
+  }
+  const wrap = (inner) => `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="refresh" content="15"><body style="font-family:system-ui,sans-serif;text-align:center;padding:28px;background:#f4f1fb">
+    ${inner}<p style="color:#9a95ba;font-size:12px;margin-top:18px">state: ${lastState} · auto-refreshes every 15s</p></body>`;
+  if (isReady) return res.send(wrap('<h2>✅ WhatsApp is already linked.</h2>'));
+  if (!latestQr) return res.send(wrap('<h2>Starting…</h2><p>Waiting for a QR. Refresh in a moment.</p>'));
+  try {
+    const QRCode = require('qrcode');
+    const dataUrl = await QRCode.toDataURL(latestQr, { width: 320, margin: 2 });
+    res.send(wrap(`<h2>Link Meena WhatsApp</h2>
+      <p>WhatsApp → <b>Linked devices</b> → <b>Link a device</b> → scan this:</p>
+      <img src="${dataUrl}" style="width:320px;height:320px;border-radius:12px;background:#fff;padding:10px">`));
+  } catch (e) {
+    res.status(500).send('QR render error: ' + e.message + ' (run: npm install)');
+  }
+});
+
 app.post('/send', requireAuth, async (req, res) => {
   try {
     if (!rateOk()) return res.status(429).json({ ok: false, error: 'Rate limit exceeded' });
