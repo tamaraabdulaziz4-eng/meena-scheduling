@@ -284,8 +284,10 @@ function renderHomeStaffResults() {
         <div class="hm-snm">${escapeHtml(s.name)}
           <span class="hm-spill">${escapeHtml(s.branch_name || '—')} · ${escapeHtml(secLabel)}</span>
           ${_hmTodayBadge(s.today_shift)}
+          ${s.national_id ? `<span class="hm-tg on" title="Verified with Nafath">✓ Nafath</span>` : ''}
         </div>
         <div class="hm-sct">
+          ${s.national_id ? `🪪 ${escapeHtml(s.national_id)} · ` : ''}${s.name_ar ? `${escapeHtml(s.name_ar)} · ` : ''}
           ${s.employee_id ? `🆔 ${escapeHtml(s.employee_id)}` : ''}
           ${s.phone ? ` · 📱 ${escapeHtml(s.phone)}` : ''}
           ${s.email ? ` · ✉️ ${escapeHtml(s.email)}` : ''}

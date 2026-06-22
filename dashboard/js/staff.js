@@ -95,13 +95,14 @@ function renderPendingRegs() {
       <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Staff who registered themselves — approve to add them, or reject.</div>
       <div class="table-wrap" style="border-radius:10px">
         <table>
-          <thead><tr><th>Name</th><th>Branch</th><th>Section</th><th>ID</th><th>Email / Mobile</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Branch</th><th>Section</th><th>ID</th><th>National ID</th><th>Email / Mobile</th><th>Actions</th></tr></thead>
           <tbody>${pendingRegs.map(r => `
             <tr>
-              <td><strong>${escapeHtml(r.name)}</strong></td>
+              <td><strong>${escapeHtml(r.name)}</strong>${r.name_ar ? `<br><span style="font-size:11px;color:var(--muted)">${escapeHtml(r.name_ar)}</span>` : ''}</td>
               <td style="font-size:12px;color:var(--muted)">${escapeHtml(r.branch_name || '—')}</td>
               <td><span class="spec-tag ${(r.section||'General').toLowerCase()}">${escapeHtml(r.section || 'General')}</span></td>
               <td style="font-size:12px">${escapeHtml(r.employee_id || '—')}</td>
+              <td style="font-size:12px">${r.national_id ? `${escapeHtml(r.national_id)} <span title="Verified with Nafath" style="color:#1a9d6a">✓</span>` : '<span style="color:var(--muted)">—</span>'}</td>
               <td style="font-size:12px;color:var(--muted)">${escapeHtml(r.email || '—')}${r.phone ? '<br>' + escapeHtml(r.phone) : ''}</td>
               <td style="white-space:nowrap">
                 <button class="action-btn" onclick="approveReg(${r.id})">Approve</button>
