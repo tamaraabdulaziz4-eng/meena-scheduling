@@ -1898,6 +1898,11 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
          SET status='approved', staff_id=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""",
       (staff_id_for_reg, user["id"], rid), exec_only=True)
     insert_audit(user, "REGISTRATION_APPROVE", reg["name"], f"role:{req_role}")
+    # Tell the new staff member their account is live (in-app + WhatsApp/email).
+    if account_created and staff_id_for_reg:
+        notify_staff_member(staff_id_for_reg,
+                            f"✅ Your Meena account is now active — sign in with your username \"{reg['username']}\".",
+                            link="home", ntype="activated")
     if account_created and reg.get("email"):
         try:
             _deliver_email(reg["email"], "Your Meena Scheduling account is ready",
