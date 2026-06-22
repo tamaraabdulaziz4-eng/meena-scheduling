@@ -75,7 +75,7 @@ PAGES.append(page("Overview — what Meena does",
      "Leave &amp; sick-leave management with smart cover suggestions.",
      "Shift swaps, daily-case reporting, and live notifications.",
      "Role-based access: staff, team lead, manager, admin."],
-    icon="🏥", label="Meena Scheduling", side="right", card_title="At a glance"))
+    icon=f'<img src="{LOGO}" style="height:74px">', label="Meena Scheduling", side="right", card_title="At a glance"))
 
 PAGES.append(page("Onboarding — identity with Nafath",
     "New staff verify their real identity through Nafath before an account is created.",
