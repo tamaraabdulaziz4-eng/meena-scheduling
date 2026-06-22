@@ -983,8 +983,15 @@ try:
     pcode = (_re.search(r"(\d{6})", sent[0]["message"]).group(1) if sent else None)
     bad = wc.post("/api/register", json={**wbase, "email_code": ecode, "phone_code": "000000"})
     check("wrong WhatsApp code is rejected", bad.status_code == 400, bad.text)
+    # Wizard step-gates: check endpoints validate WITHOUT consuming the codes.
+    check("check-phone-code rejects a wrong code",
+          wc.post("/api/register/check-phone-code", json={"phone": wphone, "phone_code": "111111"}).status_code == 400)
+    check("check-phone-code accepts the right code (no consume)",
+          wc.post("/api/register/check-phone-code", json={"phone": wphone, "phone_code": pcode}).status_code == 200)
+    check("check-email-code accepts the right code (no consume)",
+          wc.post("/api/register/check-email-code", json={"email": wemail, "email_code": ecode}).status_code == 200)
     ok = wc.post("/api/register", json={**wbase, "email_code": ecode, "phone_code": pcode})
-    check("registration succeeds with the correct WhatsApp code", ok.status_code == 200, ok.text)
+    check("registration still succeeds after checks (codes not consumed)", ok.status_code == 200, ok.text)
 finally:
     os.environ.pop("WHATSAPP_CAPTURE", None)
 check("register/info reports phone verification disabled when not configured",

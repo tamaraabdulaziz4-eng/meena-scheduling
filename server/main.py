@@ -1703,8 +1703,9 @@ async def register_send_phone_code(request: Request):
         raise HTTPException(502, f"Couldn't send the WhatsApp code: {e}")
     return {"ok": True}
 
-def _verify_phone_code(phone_raw, code):
-    """Consume a WhatsApp code for the number; raise 400 if missing/expired/wrong."""
+def _verify_phone_code(phone_raw, code, consume=True):
+    """Validate a WhatsApp code for the number; raise 400 if missing/expired/wrong.
+    With consume=False the code is checked but kept (used to gate a wizard step)."""
     to = _normalize_whatsapp_number(phone_raw)
     code = (code or "").strip()
     if not to:
@@ -1719,7 +1720,25 @@ def _verify_phone_code(phone_raw, code):
     if not code or code != row["code"]:
         q("UPDATE scheduling.phone_verifications SET attempts=attempts+1 WHERE phone=%s", (to,), exec_only=True)
         raise HTTPException(400, "Incorrect WhatsApp code")
-    q("DELETE FROM scheduling.phone_verifications WHERE phone=%s", (to,), exec_only=True)
+    if consume:
+        q("DELETE FROM scheduling.phone_verifications WHERE phone=%s", (to,), exec_only=True)
+
+@app.post("/api/register/check-phone-code")
+async def register_check_phone_code(request: Request):
+    """Validate the WhatsApp code WITHOUT consuming it, so the sign-up wizard can
+    confirm the step before moving on (the code is consumed at final submit)."""
+    _assert_registration_open()
+    body = await request.json()
+    _verify_phone_code(body.get("phone"), body.get("phone_code"), consume=False)
+    return {"ok": True}
+
+@app.post("/api/register/check-email-code")
+async def register_check_email_code(request: Request):
+    """Validate the email code WITHOUT consuming it (wizard step gate)."""
+    _assert_registration_open()
+    body = await request.json()
+    _verify_email_code(body.get("email"), body.get("email_code"), consume=False)
+    return {"ok": True}
 
 @app.post("/api/register/send-code")
 async def register_send_code(request: Request):
@@ -1749,8 +1768,9 @@ async def register_send_code(request: Request):
                f"Enter it on the sign-up form to confirm your email.")
     return {"ok": True}
 
-def _verify_email_code(email, code):
-    """Consume a verification code for `email`; raise 400 if missing/expired/wrong."""
+def _verify_email_code(email, code, consume=True):
+    """Validate a verification code for `email`; raise 400 if missing/expired/wrong.
+    With consume=False the code is checked but kept (used to gate a wizard step)."""
     email = (email or "").strip().lower()
     code = (code or "").strip()
     row = q("SELECT code, expires_at, attempts FROM scheduling.email_verifications WHERE email=%s", (email,), one=True)
@@ -1763,7 +1783,8 @@ def _verify_email_code(email, code):
     if not code or code != row["code"]:
         q("UPDATE scheduling.email_verifications SET attempts=attempts+1 WHERE email=%s", (email,), exec_only=True)
         raise HTTPException(400, "Incorrect verification code")
-    q("DELETE FROM scheduling.email_verifications WHERE email=%s", (email,), exec_only=True)
+    if consume:
+        q("DELETE FROM scheduling.email_verifications WHERE email=%s", (email,), exec_only=True)
 
 @app.post("/api/register")
 async def register_staff(request: Request):

@@ -142,28 +142,85 @@ async function startRegistration(code, role) {
       sel.innerHTML = '<option value="">Select branch…</option>' +
         (info.branches || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
     } else if (sel) { try { sel.innerHTML = ''; } catch (e) {} }
-    // Nafath identity verification (when the server has it configured). When on,
-    // identity is verified FIRST and the rest of the form stays hidden until then.
     _nafathEnabled = !!info.nafath_enabled;
-    // Mobile verification over WhatsApp (when the bridge is configured).
     _phoneVerifyEnabled = !!info.phone_verify_enabled;
     const pbtn = document.getElementById('reg-sendphone-btn');
     const pfield = document.getElementById('reg-phonecode-field');
     if (pbtn) pbtn.style.display = _phoneVerifyEnabled ? '' : 'none';
     if (pfield) pfield.style.display = _phoneVerifyEnabled ? '' : 'none';
-    const identity = document.getElementById('reg-identity');
-    const rest = document.getElementById('reg-rest');
-    const intro = document.getElementById('reg-intro');
-    if (identity) identity.style.display = _nafathEnabled ? '' : 'none';
-    if (rest) rest.style.display = _nafathEnabled ? 'none' : '';
-    if (intro) intro.textContent = _nafathEnabled
-      ? 'First, verify your identity with Nafath. Then fill in the rest of your details.'
-      : 'Welcome! Fill in your details to join the team.';
+    // Build the wizard step order and show the first step.
+    _regStepOrder = [];
+    if (_nafathEnabled) _regStepOrder.push('identity');
+    _regStepOrder.push('mobile', 'email', 'details', 'login');
+    showRegStep(0);
   } catch (e) {
     msg.style.color = ''; msg.textContent = e.message || 'Registration is closed';
-    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn, #register-view .onb-pill')
+    document.querySelectorAll('#register-view input, #register-view select, #register-view .login-btn, #register-view .reg-cont, #register-view .onb-pill')
       .forEach(el => el.disabled = true);
   }
+}
+
+// ── Sign-up wizard: one step at a time, each gated on the previous ────────────
+let _regStepOrder = [], _regStepIdx = 0;
+
+function showRegStep(idx) {
+  _regStepIdx = Math.max(0, Math.min(idx, _regStepOrder.length - 1));
+  const key = _regStepOrder[_regStepIdx];
+  document.querySelectorAll('#register-view .reg-step').forEach(s => {
+    s.style.display = (s.dataset.step === key) ? '' : 'none';
+  });
+  const prog = document.getElementById('reg-progress');
+  if (prog) prog.textContent = `Step ${_regStepIdx + 1} of ${_regStepOrder.length}`;
+  const msg = document.getElementById('reg-msg'); if (msg) msg.textContent = '';
+  // Focus the first visible input of the step.
+  const first = document.querySelector(`#register-view .reg-step[data-step="${key}"] input:not([type=hidden])`);
+  if (first && first.offsetParent !== null) setTimeout(() => { try { first.focus(); } catch (e) {} }, 50);
+}
+
+function regBack() {
+  if (_regStepIdx <= 0) { backToLogin(); return; }
+  showRegStep(_regStepIdx - 1);
+}
+
+const _regVal = id => (document.getElementById(id)?.value || '').trim();
+
+async function regNext() {
+  const key = _regStepOrder[_regStepIdx];
+  const msg = document.getElementById('reg-msg'); msg.style.color = '';
+  const contBtn = document.querySelector(`#register-view .reg-step[data-step="${key}"] .reg-cont`);
+  const setBusy = (on, label) => { if (contBtn) { contBtn.disabled = on; if (on) { contBtn._lbl = contBtn.textContent; contBtn.textContent = label; } else if (contBtn._lbl) contBtn.textContent = contBtn._lbl; } };
+
+  if (key === 'identity') {
+    if (!_nafathVerified) { msg.textContent = 'Please verify your identity with Nafath first'; return; }
+  } else if (key === 'mobile') {
+    const phone = _regVal('reg-phone');
+    if (!phone || phone.replace(/\D+/g, '').length < 8) { msg.textContent = 'Enter a valid mobile number'; return; }
+    if (_phoneVerifyEnabled) {
+      const codeV = _regVal('reg-phonecode');
+      if (!codeV) { msg.textContent = 'Enter the WhatsApp code we sent to your mobile'; return; }
+      setBusy(true, 'Checking…');
+      try { await API.post('/register/check-phone-code', { phone, phone_code: codeV }); }
+      catch (e) { msg.textContent = e.message || 'Wrong WhatsApp code'; setBusy(false); return; }
+      setBusy(false);
+    }
+  } else if (key === 'email') {
+    const email = _regVal('reg-email');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !email.toLowerCase().includes('@meena')) {
+      msg.textContent = 'Use your Meena work email (must contain @meena)'; return;
+    }
+    const codeV = _regVal('reg-emailcode');
+    if (!codeV) { msg.textContent = 'Enter the verification code we emailed you'; return; }
+    setBusy(true, 'Checking…');
+    try { await API.post('/register/check-email-code', { email, email_code: codeV }); }
+    catch (e) { msg.textContent = e.message || 'Wrong verification code'; setBusy(false); return; }
+    setBusy(false);
+  } else if (key === 'details') {
+    if (!_regVal('reg-name')) { msg.textContent = 'Your name is required'; return; }
+    if (_regRole !== 'manager' && !_regVal('reg-branch')) { msg.textContent = 'Please choose your branch'; return; }
+    if (_regRole === 'staff' && !_regVal('reg-empid')) { msg.textContent = 'Employee ID is required'; return; }
+    if ((parseFloat(_regVal('reg-leavebal') || '0') || 0) < 0) { msg.textContent = "Leave balance can't be negative"; return; }
+  }
+  showRegStep(_regStepIdx + 1);
 }
 
 // ── Nafath identity verification ──────────────────────────────────────────────
@@ -179,6 +236,8 @@ function _resetNafath() {
   if (idInput) { idInput.readOnly = false; idInput.value = ''; }
   const nameEl = document.getElementById('reg-name');
   if (nameEl) { nameEl.readOnly = false; nameEl.value = ''; }
+  const cont = document.getElementById('reg-cont-identity');
+  if (cont) cont.disabled = true;
 }
 
 // Leave the sign-up flow → stop any pending Nafath poll and return to sign in.
@@ -223,16 +282,16 @@ function _pollNafath(rid, startedAt) {
         st.innerHTML = `<div class="nf-verified">
             <div class="nf-check">✓</div>
             <div><b>Identity verified${nm ? ` — ${escapeHtml(nm)}` : ''}</b>
-              <div class="nf-sub2">Please complete the rest of your details below.</div></div>
+              <div class="nf-sub2">Tap Continue to proceed.</div></div>
           </div>`;
         if (btn) { btn.disabled = true; btn.textContent = 'Verified ✓'; }
         const idInput = document.getElementById('reg-nationalid');
         if (idInput) idInput.readOnly = true;
-        // Reveal the rest of the form and adopt the official name (read-only).
-        const rest = document.getElementById('reg-rest');
-        if (rest) rest.style.display = '';
+        // Adopt the official name (read-only) and unlock this step's Continue.
         const nameEl = document.getElementById('reg-name');
         if (nameEl && nm) { nameEl.value = nm; nameEl.readOnly = true; }
+        const cont = document.getElementById('reg-cont-identity');
+        if (cont) cont.disabled = false;
         return;
       }
       if (r.status === 'failed') {
@@ -302,13 +361,19 @@ async function submitRegistration() {
   if (pw !== pw2) {
     msg.style.color = ''; msg.textContent = 'Passwords do not match'; return;
   }
+  // Guard against double-submit + show progress so it never feels "stuck".
+  const sbtn = document.getElementById('reg-submit-btn');
+  if (sbtn && sbtn.disabled) return;
+  if (sbtn) { sbtn.disabled = true; sbtn.textContent = 'Creating…'; }
   try {
     const r = await API.post('/register', body);
-    // Premium success screen with the animated check.
     document.getElementById('register-done-msg').textContent =
       r.message || 'Your details were submitted and are awaiting approval.';
     _showAuthView('register-done');
-  } catch (e) { msg.style.color = ''; msg.textContent = e.message || 'Submission failed'; }
+  } catch (e) {
+    msg.style.color = ''; msg.textContent = e.message || 'Submission failed';
+    if (sbtn) { sbtn.disabled = false; sbtn.textContent = 'Create account'; }
+  }
 }
 
 async function submitNewPassword() {
