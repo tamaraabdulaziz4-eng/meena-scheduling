@@ -2052,6 +2052,7 @@ def search_staff(request: Request, user=Depends(require_admin)):
     rows = q(f"""
         SELECT s.id, s.name, s.employee_id, s.phone, s.email, s.speciality,
                TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date, s.leave_balance, s.leave_balance_date,
+               s.national_id, s.name_ar,
                s.branch_id, b.name AS branch_name,
                (SELECT COUNT(*) FROM scheduling.schedule_entries e
                   JOIN scheduling.schedules sc ON sc.id=e.schedule_id
