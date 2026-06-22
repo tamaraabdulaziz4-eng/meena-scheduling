@@ -370,6 +370,16 @@ body {
 .nafath-foot-txt { font-size: 10px; line-height: 1.5; color: #8a9a97; }
 .nafath-foot-txt > div:first-child { font-weight: 600; color: #6a807c; }
 
+/* ── Sign-up wizard (one step at a time) ───────────────────────────────────── */
+.reg-progress { font-size: 11.5px; font-weight: 800; color: var(--accent); text-align: center;
+  margin: 0 0 16px; letter-spacing: .5px; text-transform: uppercase; }
+.reg-step-title { font-size: 15px; font-weight: 700; color: var(--primary); margin: 0 0 14px; }
+.reg-nav { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+.reg-nav .reg-cont { margin-top: 0; width: auto; flex: 1; }
+.reg-ghost { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px;
+  font-weight: 600; font-family: inherit; white-space: nowrap; padding: 10px 6px; }
+.reg-ghost:hover { color: var(--accent); }
+
 /* ── Home: interactive staff search (improved Design A) ─────────────────────── */
 .hm-search { margin-bottom: 20px; }
 .hm-searchbar {
