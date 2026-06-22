@@ -1292,6 +1292,16 @@ def serve_onboarding_logo():
     p = os.path.join(DASHBOARD, "meena_onboarding_logo.jpeg")
     return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
 
+@app.get("/nafath_logo.png")
+def serve_nafath_logo():
+    p = os.path.join(DASHBOARD, "nafath_logo.png")
+    return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
+
+@app.get("/sdaia_logo.png")
+def serve_sdaia_logo():
+    p = os.path.join(DASHBOARD, "sdaia_logo.png")
+    return FileResponse(p) if os.path.exists(p) else FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
