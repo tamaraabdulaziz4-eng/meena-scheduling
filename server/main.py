@@ -4083,6 +4083,69 @@ async def email_test(request: Request, user=Depends(require_superadmin)):
     insert_audit(user, "EMAIL_TEST", to)
     return {"ok": True, "sent_to": to, "from": _email_from()}
 
+@app.get("/api/whatsapp-config")
+def whatsapp_config(user=Depends(require_superadmin)):
+    """Diagnostics for the WhatsApp bridge (no secrets leaked). Optionally pings
+    the bridge's /health so a misconfiguration is visible before testing."""
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    raw_types = (os.environ.get("WHATSAPP_ONLY_TYPES") or "").strip()
+    out = {
+        "enabled": bool(url),
+        "notify_url_set": bool(url),
+        "token_set": bool((os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()),
+        "only_types": [x.strip() for x in raw_types.split(",") if x.strip()],
+        "default_country": os.environ.get("WHATSAPP_DEFAULT_COUNTRY", "966"),
+        "bridge_health": None,
+    }
+    # Best-effort reachability + readiness check against the bridge.
+    if url:
+        try:
+            import urllib.request, urllib.parse
+            base = url.rsplit("/", 1)[0] if url.rstrip("/").endswith("/send") else url.rstrip("/")
+            health_url = base.rstrip("/") + "/health"
+            req = urllib.request.Request(health_url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                out["bridge_health"] = json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception as e:
+            out["bridge_health"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    out["ready"] = bool(out["bridge_health"] and out["bridge_health"].get("ready"))
+    return out
+
+@app.post("/api/whatsapp-test")
+async def whatsapp_test(request: Request, user=Depends(require_superadmin)):
+    """Send a test WhatsApp message synchronously through the bridge and return
+    the bridge's real response/error — the safest way to test from inside Meena."""
+    body = await request.json()
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    if not url:
+        raise HTTPException(400, "WhatsApp isn't configured. Set WHATSAPP_NOTIFY_URL in the environment.")
+    # Default to the caller's own staff phone if no number is passed.
+    to = (body.get("to") or "").strip()
+    if not to and user.get("staff_id"):
+        row = q("SELECT phone FROM scheduling.staff WHERE id=%s", (user["staff_id"],), one=True)
+        to = (row or {}).get("phone") or ""
+    to = _normalize_whatsapp_number(to)
+    if not to:
+        raise HTTPException(400, "No valid recipient — pass {\"to\": \"05xxxxxxxx\"}")
+    message = (body.get("message") or "Meena Scheduling — test WhatsApp message ✅").strip()
+    token = (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
+    try:
+        import urllib.request, urllib.error
+        data = json.dumps({"to": to, "message": message, "type": "info"}).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            res = json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        raise HTTPException(502, f"Bridge {e.code}: {detail}")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't reach the WhatsApp bridge: {e}")
+    insert_audit(user, "WHATSAPP_TEST", to)
+    return {"ok": True, "sent_to": to, "bridge": res}
+
 # ── Home dashboard ────────────────────────────────────────────────────────────
 
 @app.get("/api/dashboard")
