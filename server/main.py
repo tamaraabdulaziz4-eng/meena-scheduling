@@ -960,8 +960,56 @@ def send_email(to, subject, body):
     import threading
     threading.Thread(target=_worker, daemon=True).start()
 
+def _normalize_whatsapp_number(raw):
+    digits = re.sub(r"\D+", "", str(raw or "").strip())
+    if not digits:
+        return None
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("0"):
+        cc = re.sub(r"\D+", "", os.environ.get("WHATSAPP_DEFAULT_COUNTRY", "966")) or "966"
+        digits = cc + digits[1:]
+    return digits if 8 <= len(digits) <= 15 else None
+
+_WHATSAPP_NOTIFY_ALLOWED = None
+
+def _whatsapp_notify_enabled_for(ntype):
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    if not url:
+        return False
+    global _WHATSAPP_NOTIFY_ALLOWED
+    if _WHATSAPP_NOTIFY_ALLOWED is None:
+        raw = (os.environ.get("WHATSAPP_ONLY_TYPES") or "").strip()
+        _WHATSAPP_NOTIFY_ALLOWED = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
+    return not _WHATSAPP_NOTIFY_ALLOWED or ntype in _WHATSAPP_NOTIFY_ALLOWED
+
+def send_whatsapp(to, message, *, ntype="info", link=None):
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    if not url or not to or not message or not _whatsapp_notify_enabled_for(ntype):
+        return
+    to = _normalize_whatsapp_number(to)
+    if not to:
+        return
+    payload = {"to": to, "message": message, "type": ntype, "link": link}
+    token = (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
+    def _worker():
+        try:
+            import urllib.request
+            data = json.dumps(payload).encode("utf-8")
+            headers = {"Content-Type": "application/json", "Accept": "application/json",
+                       "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp.read()
+        except Exception as e:
+            print(f"[whatsapp] failed to {to}: {e}")
+    import threading
+    threading.Thread(target=_worker, daemon=True).start()
+
 def notify(user_id, message, link=None, ntype="info"):
-    """Create one in-app notification, and email it if the user opted in.
+    """Create one in-app notification, and email/WhatsApp it when configured.
     Best-effort: never break the caller."""
     if not user_id:
         return
@@ -970,12 +1018,17 @@ def notify(user_id, message, link=None, ntype="info"):
              VALUES (%s,%s,%s,%s)""", (user_id, message, link, ntype), exec_only=True)
     except Exception:
         pass
-    # Fan out to email (best-effort, async).
+    # Fan out to email / WhatsApp (best-effort, async).
     try:
-        u = q("""SELECT email, COALESCE(email_notifications,true) AS en
-                 FROM scheduling.users WHERE id=%s""", (user_id,), one=True)
+        u = q("""SELECT u.email, COALESCE(u.email_notifications,true) AS en,
+                        st.phone AS staff_phone
+                 FROM scheduling.users u
+                 LEFT JOIN scheduling.staff st ON st.id=u.staff_id
+                 WHERE u.id=%s""", (user_id,), one=True)
         if u and u.get("email") and u.get("en"):
             send_email(u["email"], "Meena Scheduling", message)
+        if u and u.get("staff_phone"):
+            send_whatsapp(u["staff_phone"], message, ntype=ntype, link=link)
     except Exception:
         pass
 
