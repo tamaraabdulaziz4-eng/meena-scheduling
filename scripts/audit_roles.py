@@ -98,16 +98,19 @@ print("\n== registration flow across branches ==")
 admin.put("/api/settings", json={"registration": "on"})
 code = (admin.get("/api/settings").json().get("registration_link") or "").split("register=")[-1]
 anon = TestClient(app)
-reg_with_code(anon, {"code": code, "name": "Reg ForA", "branch_id": bidA, "employee_id": f"RA{sfx}",
+# Staff sign-ups now auto-activate (identity is verified), so they never queue.
+ra = reg_with_code(TestClient(app), {"code": code, "name": "Reg ForA", "branch_id": bidA, "employee_id": f"RA{sfx}",
           "email": "rega@meena-health.com", "phone": "0500000000", "username": f"rega{sfx}", "password": "regpass1"})
-reg_with_code(anon, {"code": code, "name": "Reg ForB", "branch_id": bidB, "employee_id": f"RB{sfx}",
+rb = reg_with_code(TestClient(app), {"code": code, "name": "Reg ForB", "branch_id": bidB, "employee_id": f"RB{sfx}",
           "email": "regb@meena-health.com", "phone": "0500000000", "username": f"regb{sfx}", "password": "regpass1"})
-qa = LEADA.get("/api/registrations").json()
-check("lead A sees only branch-A registration", any(r["employee_id"]==f"RA{sfx}" for r in qa) and not any(r["employee_id"]==f"RB{sfx}" for r in qa), qa)
-regB = next(r for r in MGR.get("/api/registrations").json() if r["employee_id"] == f"RB{sfx}")
-check("lead A can't approve a branch-B registration", LEADA.post(f"/api/registrations/{regB['id']}/approve", json={}).status_code == 403)
-check("lead B approves own-branch registration", LEADB.post(f"/api/registrations/{regB['id']}/approve", json={}).status_code == 200)
-check("approving twice is rejected", LEADB.post(f"/api/registrations/{regB['id']}/approve", json={}).status_code == 400)
+check("branch-A staff sign-up auto-activates", ra.status_code == 200 and ra.json().get("auto_login") is True, ra.text)
+check("branch-B staff sign-up auto-activates", rb.status_code == 200 and rb.json().get("auto_login") is True, rb.text)
+check("auto-activated staff don't appear in any approval queue",
+      not any(r.get("employee_id") in (f"RA{sfx}", f"RB{sfx}") for r in MGR.get("/api/registrations").json()))
+check("branch-A staff can sign in immediately",
+      TestClient(app).post("/api/auth/login", json={"username": f"rega{sfx}", "password": "regpass1"}).status_code == 200)
+check("branch-B staff can sign in immediately",
+      TestClient(app).post("/api/auth/login", json={"username": f"regb{sfx}", "password": "regpass1"}).status_code == 200)
 
 print("\n== forgot password edge ==")
 # A user with no email on file → generic ok, no crash, no email.

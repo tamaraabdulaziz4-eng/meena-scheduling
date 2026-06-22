@@ -370,6 +370,13 @@ async function submitRegistration() {
     document.getElementById('register-done-msg').textContent =
       r.message || 'Your details were submitted and are awaiting approval.';
     _showAuthView('register-done');
+    if (r.auto_login) {
+      // Account is active and the session cookie is set — enter the app. Show
+      // the success screen briefly, with an explicit button as a fallback.
+      const enter = document.getElementById('reg-done-enter');
+      if (enter) enter.style.display = '';
+      setTimeout(() => { try { location.reload(); } catch (e) {} }, 1600);
+    }
   } catch (e) {
     msg.style.color = ''; msg.textContent = e.message || 'Submission failed';
     if (sbtn) { sbtn.disabled = false; sbtn.textContent = 'Create account'; }
