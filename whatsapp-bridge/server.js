@@ -9,14 +9,33 @@ const SESSION_NAME = process.env.WHATSAPP_SESSION_NAME || 'meena-whatsapp';
 // hardened setup, set BRIDGE_HOST=127.0.0.1 and front it with nginx + TLS
 // (see OPERATIONS.md) so the raw port isn't exposed to the internet.
 const HOST = process.env.BRIDGE_HOST || '0.0.0.0';
+const PUBLIC_BIND = !['127.0.0.1', 'localhost', '::1'].includes(HOST);
 
+// Hard safety: never run an UNAUTHENTICATED bridge on a public interface — that
+// is an open relay to send WhatsApp from the linked (personal!) account. Either
+// set a token, or bind to localhost (BRIDGE_HOST=127.0.0.1) behind nginx.
+if (PUBLIC_BIND && !API_TOKEN) {
+  console.error('✗ Refusing to start: bound to ' + HOST + ' with no BRIDGE_API_TOKEN. ' +
+                'Set BRIDGE_API_TOKEN, or set BRIDGE_HOST=127.0.0.1 and use nginx. See OPERATIONS.md.');
+  process.exit(1);
+}
 if (!API_TOKEN) {
-  console.warn('⚠  BRIDGE_API_TOKEN is NOT set — /send and /session are UNAUTHENTICATED. ' +
-               'Set BRIDGE_API_TOKEN (matching WHATSAPP_NOTIFY_TOKEN on the app) before exposing this service.');
+  console.warn('⚠  BRIDGE_API_TOKEN is NOT set — /send and /session are UNAUTHENTICATED (localhost only).');
 }
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+
+// Lightweight rate limit on /send so a leaked token can't be used to blast
+// messages from the account. Tune with SEND_RATE_PER_MIN (default 30/min).
+const SEND_RATE = Number(process.env.SEND_RATE_PER_MIN || 30);
+let _sendWindow = { start: Date.now(), count: 0 };
+function rateOk() {
+  const now = Date.now();
+  if (now - _sendWindow.start >= 60000) _sendWindow = { start: now, count: 0 };
+  _sendWindow.count += 1;
+  return _sendWindow.count <= SEND_RATE;
+}
 
 let client = null;
 let latestQr = null;
@@ -67,10 +86,14 @@ function scheduleReconnect(reason) {
   }, 5000);
 }
 
+const crypto = require('crypto');
 function requireAuth(req, res, next) {
   if (!API_TOKEN) return next();
   const auth = req.headers.authorization || '';
-  if (auth === `Bearer ${API_TOKEN}`) return next();
+  const expected = `Bearer ${API_TOKEN}`;
+  // Constant-time compare to avoid leaking the token via timing.
+  const a = Buffer.from(auth), b = Buffer.from(expected);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
   return res.status(401).json({ ok: false, error: 'Unauthorized' });
 }
 
@@ -95,6 +118,7 @@ app.get('/session', requireAuth, (_req, res) => {
 
 app.post('/send', requireAuth, async (req, res) => {
   try {
+    if (!rateOk()) return res.status(429).json({ ok: false, error: 'Rate limit exceeded' });
     if (!isReady || !client) {
       return res.status(503).json({ ok: false, error: 'WhatsApp client is not ready yet' });
     }
