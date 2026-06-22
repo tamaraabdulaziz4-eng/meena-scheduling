@@ -99,6 +99,11 @@ async function startRegistration(code, role) {
   _regCode = code; _regSection = 'General';
   _regRole = ['staff', 'admin', 'manager'].includes(role) ? role : 'staff';
   _showAuthView('register-view');
+  // Re-enable anything a previous failed/closed open may have disabled, and clear
+  // the inline error — otherwise reopening the form leaves dead controls.
+  document.querySelectorAll('#register-view input, #register-view select, #register-view button, #register-view .onb-pill')
+    .forEach(el => { el.disabled = false; });
+  const _m = document.getElementById('reg-msg'); if (_m) _m.textContent = '';
   // Tailor the form to the role: a manager spans all branches (no branch/section/
   // employee id); a team lead picks a branch but no section/employee id.
   const head = _REG_HEAD[_regRole];
@@ -150,8 +155,11 @@ function _resetNafath() {
   const idInput = document.getElementById('reg-nationalid');
   if (idInput) { idInput.readOnly = false; idInput.value = ''; }
   const nameEl = document.getElementById('reg-name');
-  if (nameEl) nameEl.readOnly = false;
+  if (nameEl) { nameEl.readOnly = false; nameEl.value = ''; }
 }
+
+// Leave the sign-up flow → stop any pending Nafath poll and return to sign in.
+function backToLogin() { _resetNafath(); showLoginView(); }
 
 async function startNafath() {
   const st = document.getElementById('reg-nafath-status');
