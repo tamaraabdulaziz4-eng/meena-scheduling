@@ -167,7 +167,10 @@ async function startNafath() {
     const r = await API.post('/register/nafath/start', { national_id: nid });
     _nafathRequestId = r.request_id;
     st.style.color = 'var(--text)';
-    st.innerHTML = `<span class="nf-spin"></span> Open the <b>Nafath</b> app and choose number <b style="font-size:15px">${escapeHtml(String(r.random || ''))}</b> to confirm your identity…`;
+    const num = String(r.random || '').trim();
+    st.innerHTML = num
+      ? `<span class="nf-spin"></span> Open the <b>Nafath</b> app and choose number <b style="font-size:22px;color:var(--accent)">${escapeHtml(num)}</b> to confirm your identity…`
+      : `<span class="nf-spin"></span> Open the <b>Nafath</b> app and approve the verification request to continue…`;
     _pollNafath(r.request_id, Date.now());
   } catch (e) {
     st.style.color = '#E63946'; st.textContent = e.message || 'Could not start Nafath verification';
