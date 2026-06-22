@@ -1480,6 +1480,17 @@ def _valid_national_id(nid):
 def _join_name(*parts):
     return " ".join(str(p).strip() for p in parts if p and str(p).strip())
 
+def _ci_get(d, *keys):
+    """Case-insensitive lookup over a dict (Sadq's field casing varies)."""
+    if not isinstance(d, dict):
+        return None
+    low = {str(k).lower(): v for k, v in d.items()}
+    for k in keys:
+        v = low.get(str(k).lower())
+        if v not in (None, ""):
+            return v
+    return None
+
 def _sadq_nafath_auth(national_ids, request_id, webhook_url):
     """Call IntegrationNafathAuth → returns the per-ID result list (each item has
     nationalId, transId, random, error). The `random` is the number the user
@@ -1537,14 +1548,19 @@ async def nafath_start(request: Request):
         results = _sadq_nafath_auth([nid], request_id, webhook)
     except Exception as e:
         raise HTTPException(502, f"Couldn't reach Nafath: {e}")
+    # Log the raw response so the real field shape is visible in the server logs.
+    print(f"[nafath] start nid={nid} req={request_id} -> {json.dumps(results, ensure_ascii=False)}", file=sys.stderr)
     r0 = (results or [{}])[0] or {}
-    if r0.get("error"):
-        raise HTTPException(400, f"Nafath rejected this request: {r0.get('error')}")
-    random_code = str(r0.get("random") or "")
+    err = _ci_get(r0, "error", "errorMessage", "message")
+    random_code = str(_ci_get(r0, "random", "randomNumber", "code", "otp") or "")
+    trans_id = _ci_get(r0, "transId", "transactionId", "id")
+    # Only fail if Nafath gave an error AND no number to act on.
+    if err and not random_code:
+        raise HTTPException(400, f"Nafath rejected this request: {err}")
     q("""INSERT INTO scheduling.nafath_verifications
            (request_id, national_id, status, trans_id, random_code, created_at, updated_at)
          VALUES (%s,%s,'pending',%s,%s,NOW(),NOW())""",
-      (request_id, nid, r0.get("transId"), random_code), exec_only=True)
+      (request_id, nid, trans_id, random_code), exec_only=True)
     return {"ok": True, "request_id": request_id, "random": random_code}
 
 @app.get("/api/register/nafath/status")
@@ -4061,6 +4077,31 @@ def nafath_config(user=Depends(require_superadmin)):
         "webhook_url": _nafath_webhook_url() or None,
         # Ready to receive the push + the webhook callback end-to-end.
         "ready": bool((_sadq_configured() or _sadq_mock()) and _nafath_webhook_url()),
+    }
+
+@app.post("/api/nafath-test")
+async def nafath_test(request: Request, user=Depends(require_superadmin)):
+    """Fire a real Nafath auth for a National ID and return Sadq's RAW response,
+    so the exact field shape (and whether a `random` number is returned) is
+    visible. This triggers a real push to that ID's Nafath app."""
+    body = await request.json()
+    nid = (body.get("national_id") or "").strip()
+    if not _valid_national_id(nid):
+        raise HTTPException(400, "Pass a valid 10-digit National ID: {\"national_id\":\"1xxxxxxxxx\"}")
+    if not (_sadq_configured() or _sadq_mock()):
+        raise HTTPException(503, "Nafath isn't configured (set SADQ_ACCOUNT_ID + SADQ_THUMBPRINT).")
+    request_id = str(uuid.uuid4())
+    webhook = _nafath_webhook_url()
+    try:
+        results = _sadq_nafath_auth([nid], request_id, webhook)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't reach Nafath: {e}")
+    r0 = (results or [{}])[0] or {}
+    return {
+        "ok": True, "request_id": request_id, "webhook_url": webhook or None,
+        "parsed_random": str(_ci_get(r0, "random", "randomNumber", "code", "otp") or "") or None,
+        "parsed_error": _ci_get(r0, "error", "errorMessage", "message"),
+        "raw": results,                 # the exact Sadq response
     }
 
 @app.post("/api/email-test")
