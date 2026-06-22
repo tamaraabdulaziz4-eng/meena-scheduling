@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260621p">
+<link rel="stylesheet" href="/style.css?v=20260621q">
 </head>
 <body>
 
@@ -142,9 +142,16 @@
           <label>Employee ID</label>
           <input type="text" id="reg-empid" placeholder="e.g. 1234567890" inputmode="numeric">
         </div>
-        <div class="login-field">
+        <div class="login-field" style="grid-column:1/-1">
           <label>Mobile <span style="color:#E63946">*</span></label>
-          <input type="text" id="reg-phone" placeholder="05xxxxxxxx" inputmode="tel" autocomplete="tel">
+          <div style="display:flex;gap:8px">
+            <input type="text" id="reg-phone" placeholder="05xxxxxxxx" inputmode="tel" autocomplete="tel" style="flex:1">
+            <button type="button" class="btn btn-sm" id="reg-sendphone-btn" onclick="sendPhoneCode()" style="white-space:nowrap;display:none">Send WhatsApp code</button>
+          </div>
+        </div>
+        <div class="login-field" id="reg-phonecode-field" style="grid-column:1/-1;display:none">
+          <label>WhatsApp code <span style="color:var(--muted);font-weight:400">(sent to your mobile)</span></label>
+          <input type="text" id="reg-phonecode" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
         </div>
         <div class="login-field" style="grid-column:1/-1">
           <label>Meena email <span style="color:var(--muted);font-weight:400">(must be @meena)</span></label>
@@ -955,24 +962,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260621p"></script>
-<script src="/js/auth.js?v=20260621p"></script>
-<script src="/js/util.js?v=20260621p"></script>
-<script src="/js/branches.js?v=20260621p"></script>
-<script src="/js/users.js?v=20260621p"></script>
-<script src="/js/staff.js?v=20260621p"></script>
-<script src="/js/leaves.js?v=20260621p"></script>
-<script src="/js/swaps.js?v=20260621p"></script>
-<script src="/js/holidays.js?v=20260621p"></script>
-<script src="/js/notifications.js?v=20260621p"></script>
-<script src="/js/portal.js?v=20260621p"></script>
-<script src="/js/cases.js?v=20260621p"></script>
-<script src="/js/home.js?v=20260621p"></script>
-<script src="/js/shifts.js?v=20260621p"></script>
-<script src="/js/schedule.js?v=20260621p"></script>
-<script src="/js/review.js?v=20260621p"></script>
-<script src="/js/export.js?v=20260621p"></script>
-<script src="/js/audit.js?v=20260621p"></script>
-<script src="/js/main.js?v=20260621p"></script>
+<script src="/js/api.js?v=20260621q"></script>
+<script src="/js/auth.js?v=20260621q"></script>
+<script src="/js/util.js?v=20260621q"></script>
+<script src="/js/branches.js?v=20260621q"></script>
+<script src="/js/users.js?v=20260621q"></script>
+<script src="/js/staff.js?v=20260621q"></script>
+<script src="/js/leaves.js?v=20260621q"></script>
+<script src="/js/swaps.js?v=20260621q"></script>
+<script src="/js/holidays.js?v=20260621q"></script>
+<script src="/js/notifications.js?v=20260621q"></script>
+<script src="/js/portal.js?v=20260621q"></script>
+<script src="/js/cases.js?v=20260621q"></script>
+<script src="/js/home.js?v=20260621q"></script>
+<script src="/js/shifts.js?v=20260621q"></script>
+<script src="/js/schedule.js?v=20260621q"></script>
+<script src="/js/review.js?v=20260621q"></script>
+<script src="/js/export.js?v=20260621q"></script>
+<script src="/js/audit.js?v=20260621q"></script>
+<script src="/js/main.js?v=20260621q"></script>
 </body>
 </html>

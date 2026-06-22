@@ -39,6 +39,23 @@ async function sendRegCode() {
   finally { btn.disabled = false; btn.textContent = label; }
 }
 
+let _phoneVerifyEnabled = false;
+async function sendPhoneCode() {
+  const phone = document.getElementById('reg-phone').value.trim();
+  const msg = document.getElementById('reg-msg');
+  if (!phone || phone.replace(/\D+/g, '').length < 8) {
+    msg.style.color = ''; msg.textContent = 'Enter your mobile number first'; return;
+  }
+  const btn = document.getElementById('reg-sendphone-btn');
+  const label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await API.post('/register/send-phone-code', { phone });
+    msg.style.color = 'var(--muted)'; msg.textContent = 'Code sent to your WhatsApp (expires in 10 min).';
+    document.getElementById('reg-phonecode')?.focus();
+  } catch (e) { msg.style.color = ''; msg.textContent = e.message || 'Could not send the WhatsApp code'; }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+
 // Legacy code-gated signup (kept for any older link); no longer the default path.
 function showSignupView() {
   const m = document.getElementById('signup-msg'); if (m) m.textContent = '';
@@ -128,6 +145,12 @@ async function startRegistration(code, role) {
     // Nafath identity verification (when the server has it configured). When on,
     // identity is verified FIRST and the rest of the form stays hidden until then.
     _nafathEnabled = !!info.nafath_enabled;
+    // Mobile verification over WhatsApp (when the bridge is configured).
+    _phoneVerifyEnabled = !!info.phone_verify_enabled;
+    const pbtn = document.getElementById('reg-sendphone-btn');
+    const pfield = document.getElementById('reg-phonecode-field');
+    if (pbtn) pbtn.style.display = _phoneVerifyEnabled ? '' : 'none';
+    if (pfield) pfield.style.display = _phoneVerifyEnabled ? '' : 'none';
     const identity = document.getElementById('reg-identity');
     const rest = document.getElementById('reg-rest');
     const intro = document.getElementById('reg-intro');
@@ -243,6 +266,7 @@ async function submitRegistration() {
     join_date: document.getElementById('reg-joindate')?.value || null,
     leave_balance: parseFloat(document.getElementById('reg-leavebal')?.value || '0') || 0,
     email_code: document.getElementById('reg-emailcode')?.value.trim(),
+    phone_code: document.getElementById('reg-phonecode')?.value.trim(),
     nafath_request_id: _nafathRequestId,
     username: document.getElementById('reg-username').value.trim(),
     password: pw,
@@ -261,6 +285,9 @@ async function submitRegistration() {
   }
   if (!body.email_code || body.email_code.length < 4) {
     msg.style.color = ''; msg.textContent = 'Enter the verification code we emailed you (tap "Send code")'; return;
+  }
+  if (_phoneVerifyEnabled && (!body.phone_code || body.phone_code.length < 4)) {
+    msg.style.color = ''; msg.textContent = 'Enter the WhatsApp code we sent to your mobile (tap "Send WhatsApp code")'; return;
   }
   if (_nafathEnabled && !_nafathVerified) {
     msg.style.color = ''; msg.textContent = 'Please verify your identity with Nafath first'; return;
