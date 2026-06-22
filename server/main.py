@@ -1080,10 +1080,21 @@ def notify_roles(roles, message, link=None, ntype="info", exclude_user=None):
         notify(u["id"], message, link, ntype)
 
 def notify_staff_member(staff_id, message, link=None, ntype="info"):
-    """Notify the user account linked to a staff record, if one exists."""
+    """Notify a staff member. If they have a login they get an in-app + email +
+    WhatsApp notification. If they were added manually (no login), still deliver
+    WhatsApp + email straight to the staff record so manual staff aren't left out."""
     u = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (staff_id,), one=True)
     if u:
         notify(u["id"], message, link, ntype)
+        return
+    # No login account → deliver directly to the staff record's phone/email.
+    st = q("SELECT phone, email FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+    if not st:
+        return
+    if st.get("phone"):
+        send_whatsapp(st["phone"], message, ntype=ntype, link=link)
+    if st.get("email"):
+        send_email(st["email"], "Meena Scheduling", message)
 
 def notify_branch_leads(branch_id, message, link=None, ntype="info"):
     """Notify the team lead(s) of a branch (role 'admin' pinned to that branch)."""

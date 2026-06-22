@@ -272,5 +272,18 @@ for b in admin.get("/api/branches").json():
     admin.post("/api/daily-cases", json={"branch_id": b["id"], "date": f"{y}-{mo:02d}-16", "xray": 3, "submit": True})
 check("M8 no 'daily cases complete' blast to managers", not any("daily cases complete" in n.lower() for n in (set(notes(admin)) - mgr_before)))
 
+print("== M10: manually-added staff (no login) still get WhatsApp/email ==")
+M._whatsapp_outbox.clear(); M._email_outbox.clear()
+manual = M.q("""INSERT INTO scheduling.staff (name, branch_id, phone, email, speciality, active)
+                VALUES (%s,%s,%s,%s,%s,true) RETURNING id""",
+             ("Manual Hire", bid, "0509998877", "manual@meena-health.com", ["General"]), one=True)["id"]
+check("M10 manual staff has no login account",
+      M.q("SELECT 1 FROM scheduling.users WHERE staff_id=%s", (manual,), one=True) is None)
+M.notify_staff_member(manual, "You're covering the M shift tomorrow", ntype="approved")
+check("M10 manual staff receives WhatsApp directly (by staff phone)",
+      any("509998877" in x["to"] for x in M._whatsapp_outbox), M._whatsapp_outbox)
+check("M10 manual staff receives the email too",
+      any(e.get("to") == "manual@meena-health.com" for e in M._email_outbox), M._email_outbox)
+
 print(f"\n=== SCENARIO AUDIT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
