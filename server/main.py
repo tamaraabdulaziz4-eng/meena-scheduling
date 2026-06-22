@@ -980,17 +980,13 @@ def _normalize_whatsapp_number(raw):
         digits = cc + digits[1:]
     return digits if 8 <= len(digits) <= 15 else None
 
-_WHATSAPP_NOTIFY_ALLOWED = None
-
 def _whatsapp_notify_enabled_for(ntype):
     url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
-    if not url:
+    if not url and not os.environ.get("WHATSAPP_CAPTURE"):
         return False
-    global _WHATSAPP_NOTIFY_ALLOWED
-    if _WHATSAPP_NOTIFY_ALLOWED is None:
-        raw = (os.environ.get("WHATSAPP_ONLY_TYPES") or "").strip()
-        _WHATSAPP_NOTIFY_ALLOWED = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
-    return not _WHATSAPP_NOTIFY_ALLOWED or ntype in _WHATSAPP_NOTIFY_ALLOWED
+    raw = (os.environ.get("WHATSAPP_ONLY_TYPES") or "").strip()
+    allowed = {x.strip() for x in raw.split(",") if x.strip()}
+    return not allowed or ntype in allowed
 
 # In-memory capture of outbound WhatsApp messages (tests; WHATSAPP_CAPTURE=1).
 _whatsapp_outbox = []
@@ -1000,7 +996,7 @@ def _whatsapp_send_now(to_normalized, message):
     JSON response. Bypasses the notify type-filter (used for verification codes).
     Raises on failure so the caller can surface the real error."""
     if os.environ.get("WHATSAPP_CAPTURE"):
-        _whatsapp_outbox.append({"to": to_normalized, "message": message})
+        _whatsapp_outbox.append({"to": to_normalized, "message": message, "type": "code"})
         return {"ok": True, "captured": True}
     url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
     if not url:
@@ -1021,10 +1017,14 @@ def _whatsapp_send_now(to_normalized, message):
 
 def send_whatsapp(to, message, *, ntype="info", link=None):
     url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
-    if not url or not to or not message or not _whatsapp_notify_enabled_for(ntype):
+    capture = os.environ.get("WHATSAPP_CAPTURE")
+    if not (url or capture) or not to or not message or not _whatsapp_notify_enabled_for(ntype):
         return
     to = _normalize_whatsapp_number(to)
     if not to:
+        return
+    if capture:
+        _whatsapp_outbox.append({"to": to, "message": message, "type": ntype})
         return
     payload = {"to": to, "message": message, "type": ntype, "link": link}
     token = (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
