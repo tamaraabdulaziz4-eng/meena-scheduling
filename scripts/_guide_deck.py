@@ -17,10 +17,10 @@ def uri(name, d=SH):
 LOGO = uri("meena_logo.png", os.path.join(ROOT, "dashboard"))
 _pageno = [0]
 
-def header():
+def header(section="MEENA STAFF SCHEDULING"):
     return f"""<div class="hd">
       <img class="hd-logo" src="{LOGO}">
-      <span class="hd-eyebrow">MEENA STAFF SCHEDULING</span></div>"""
+      <span class="hd-eyebrow">{section}</span></div>"""
 
 def footer():
     _pageno[0] += 1
@@ -44,13 +44,14 @@ def card(title, bullets):
     lis = "".join(f"<li>{b}</li>" for b in bullets)
     return f"""<div class="whatcard"><h3>{title}</h3><div class="rule"></div><ul>{lis}</ul></div>"""
 
-def page(title, subtitle, bullets, img=None, icon=None, label="", side="right", card_title="What this page does"):
+def page(title, subtitle, bullets, img=None, icon=None, label="", side="right",
+         card_title="What this page does", section="MEENA STAFF SCHEDULING"):
     c = card(card_title, bullets)
     s = stage(img, icon, label)
     body = (f'<div class="col card-col">{c}</div><div class="col stage-col">{s}</div>'
             if side == "right" else
             f'<div class="col stage-col">{s}</div><div class="col card-col">{c}</div>')
-    return f"""<div class="page">{header()}
+    return f"""<div class="page">{header(section)}
       <h1>{title}</h1><p class="sub">{subtitle}</p><div class="hr"></div>
       <div class="body">{body}</div>{footer()}</div>"""
 
@@ -68,22 +69,25 @@ COVER = f"""<div class="page cover">
 
 PAGES = [COVER]
 
+# ── Overview ──────────────────────────────────────────────────────────────────
 PAGES.append(page("Overview — what Meena does",
     "An end-to-end staff scheduling platform for the radiology branches.",
     ["Verified onboarding with Nafath identity + WhatsApp + email.",
      "Automatic rota generation, fill-blanks, and cross-branch cover.",
-     "Leave &amp; sick-leave management with smart cover suggestions.",
+     "Leave, sick-leave &amp; time-back with smart cover suggestions.",
      "Shift swaps, daily-case reporting, and live notifications.",
      "Role-based access: staff, team lead, manager, admin."],
-    icon=f'<img src="{LOGO}" style="height:74px">', label="Meena Scheduling", side="right", card_title="At a glance"))
+    icon=f'<img src="{LOGO}" style="height:74px">', label="Meena Scheduling",
+    side="right", card_title="At a glance", section="OVERVIEW"))
 
+# ── Onboarding ────────────────────────────────────────────────────────────────
 PAGES.append(page("Onboarding — identity with Nafath",
     "New staff verify their real identity through Nafath before an account is created.",
     ["Enter National ID / Iqama; a request is pushed to the Nafath app.",
      "The official name is returned by Nafath and locked onto the record.",
      "No manual invite codes to share — identity is the gate.",
      "Backed by SDAIA — the National Single Sign-On."],
-    img="03_nafath_verified.png", side="right"))
+    img="03_nafath_verified.png", side="right", section="ONBOARDING"))
 
 PAGES.append(page("A guided, step-by-step sign-up",
     "Onboarding is a clean wizard — each step is verified before the next.",
@@ -91,7 +95,7 @@ PAGES.append(page("A guided, step-by-step sign-up",
      "Work email confirmed with a 6-digit code (@meena only).",
      "Then staff details, then username &amp; password.",
      "Five clear steps with progress and back/continue."],
-    img="04_mobile_step.png", side="left"))
+    img="04_mobile_step.png", side="left", section="ONBOARDING"))
 
 PAGES.append(page("Instant activation &amp; sign-in",
     "On the last step the account is created and the staff member is signed in — no approval needed.",
@@ -99,15 +103,34 @@ PAGES.append(page("Instant activation &amp; sign-in",
      "Team-lead &amp; manager sign-ups still require an admin (privileged).",
      "Sign in any time with the chosen username and password.",
      "Forgot-password recovery by email."],
-    img="01_login.png", side="right"))
+    img="01_login.png", side="right", section="ONBOARDING"))
 
+# ── For staff ─────────────────────────────────────────────────────────────────
+PAGES.append(page("My Schedule — the staff portal",
+    "Every staff member gets a personal view of their month.",
+    ["Monthly calendar of shifts, colour-coded (Morning / Night / Off).",
+     "Live leave balance and a countdown to the next approved leave.",
+     "Shows whether the rota is approved or still a draft.",
+     "Request leave, see swaps, and report cases from one place."],
+    img="14_myschedule.png", side="left", section="FOR STAFF"))
+
+PAGES.append(page("Requesting leave &amp; time-back",
+    "Staff raise their own requests; approvals route automatically.",
+    ["Annual / sick leave with date ranges; balance updates live.",
+     "Time-back: claim hours back after covering an extra shift.",
+     "Track every request's status (awaiting lead, awaiting manager, approved).",
+     "Withdraw a pending request before it's approved."],
+    icon="🌴", label="Leave &amp; time-back", side="right",
+    card_title="What it does", section="FOR STAFF"))
+
+# ── Manager tools ─────────────────────────────────────────────────────────────
 PAGES.append(page("Manager home",
     "The home screen surfaces what needs attention across all branches.",
     ["Tiles: today's cases, patients, branches reported, items awaiting you.",
      "Pending approvals grouped and actionable in one place.",
      "Live daily-cases progress bar.",
      "Clean overview; deeper tools one click away."],
-    img="06_home.png", side="left"))
+    img="06_home.png", side="left", section="MANAGER TOOLS"))
 
 PAGES.append(page("Instant staff search",
     "Find any staff member by name or employee ID in one box.",
@@ -115,16 +138,15 @@ PAGES.append(page("Instant staff search",
      "✓ Nafath badge confirms verified identity.",
      "Quick General / Ultrasound filters; recent staff chips.",
      "Jump straight to a staff member's rota."],
-    img="07_home_search.png", side="right"))
+    img="07_home_search.png", side="right", section="MANAGER TOOLS"))
 
-PAGES.append(page("Schedules &amp; auto-generation",
-    "Generate fair monthly rotas in seconds, or fill only the gaps around manual choices.",
-    ["One-click generate per branch &amp; section using the solver.",
-     "Fill-blanks: pin some cells, let the generator complete the rest.",
-     "Cross-branch cover: pull surplus staff from sharing branches (Y3-aware) without touching rest days or exceeding shift counts.",
-     "Submit → review → approve workflow between team lead and manager.",
-     "Fridays-off targeting and per-shift (Morning/Night) balancing."],
-    icon="📅", label="Schedule &amp; rota", side="left", card_title="What it does"))
+PAGES.append(page("Staff directory &amp; approvals",
+    "Manage the team and approve privileged sign-ups.",
+    ["Staff grouped by branch, with section, ID and contact; edit or remove.",
+     "Pending team-lead / manager registrations shown with National ID + ✓.",
+     "Approve or reject privileged sign-ups in one click.",
+     "Add staff manually when needed."],
+    img="13_staff.png", side="left", section="MANAGER TOOLS"))
 
 PAGES.append(page("Leave management &amp; approvals",
     "Leave requests flow through the right approvers (team lead → manager).",
@@ -132,7 +154,7 @@ PAGES.append(page("Leave management &amp; approvals",
      "Approve directly or open for review; coverage gaps flagged first.",
      "Leave balances accrue automatically (22 days/year).",
      "Bulk 'approve all pending' for fast clearing."],
-    img="08_leaves.png", side="right"))
+    img="08_leaves.png", side="right", section="MANAGER TOOLS"))
 
 PAGES.append(page("Sick-leave cover suggestions",
     "When someone calls in sick, see who can cover that exact day and shift.",
@@ -140,7 +162,7 @@ PAGES.append(page("Sick-leave cover suggestions",
      "Grouped ✅ Same branch — preferred, then 🔁 Other branches.",
      "Lightest-workload first; one tap assigns the cover.",
      "The cover lands on the covering staff member's own rota."],
-    img="09_cover.png", side="left"))
+    img="09_cover.png", side="left", section="MANAGER TOOLS"))
 
 PAGES.append(page("Shift swaps",
     "Staff swap shifts through a safe, multi-stage approval chain.",
@@ -148,15 +170,44 @@ PAGES.append(page("Shift swaps",
      "Both staff are notified at request, decline and final approval.",
      "Overlapping or conflicting swaps on the same cell are blocked.",
      "Applied automatically to both rotas once approved."],
-    icon="🔁", label="Shift swaps", side="right", card_title="What it does"))
+    img="11_swaps.png", side="right", section="MANAGER TOOLS"))
 
+PAGES.append(page("Schedule review &amp; approval",
+    "Managers see every branch's schedule status and sign off across branches.",
+    ["At-a-glance counts: pending review, not submitted, approved.",
+     "Per-branch status with who prepared it and shift counts.",
+     "Approve, return for edits, or reopen an approved rota.",
+     "Filter by month and status."],
+    img="12_review.png", side="left", section="MANAGER TOOLS"))
+
+# ── Scheduling ────────────────────────────────────────────────────────────────
+PAGES.append(page("Schedules &amp; auto-generation",
+    "Generate fair monthly rotas in seconds, or fill only the gaps around manual choices.",
+    ["One-click generate per branch &amp; section using the solver.",
+     "Fill-blanks: pin some cells, let the generator complete the rest.",
+     "Cross-branch cover: pull surplus staff from sharing branches (Y3-aware) without touching rest days or exceeding shift counts.",
+     "Submit → review → approve workflow between team lead and manager.",
+     "Fridays-off targeting and per-shift (Morning/Night) balancing."],
+    icon="📅", label="Schedule &amp; rota", side="right",
+    card_title="What it does", section="SCHEDULING"))
+
+# ── Operations ────────────────────────────────────────────────────────────────
 PAGES.append(page("Daily cases &amp; reporting",
     "Each branch submits daily case counts; managers see completion in real time.",
     ["Per-modality counts (X-ray, CT, US, mammo, BMD…) + patient totals.",
      "Live progress: how many branches reported today.",
      "Branches that haven't submitted are reminded automatically.",
      "Printable daily-cases report."],
-    img="10_cases.png", side="left"))
+    img="10_cases.png", side="left", section="OPERATIONS"))
+
+PAGES.append(page("Printing &amp; export",
+    "Share rotas and reports outside the app.",
+    ["Print a clean monthly rota for a branch.",
+     "Print the daily-cases report for any day.",
+     "Print-optimised layouts (no sidebar, high contrast).",
+     "Useful for noticeboards and records."],
+    icon="🖨️", label="Print &amp; export", side="right",
+    card_title="What it does", section="OPERATIONS"))
 
 PAGES.append(page("Notifications — in-app, WhatsApp &amp; email",
     "Everyone is kept in the loop on the channels that matter, tuned to stay high-signal.",
@@ -164,7 +215,19 @@ PAGES.append(page("Notifications — in-app, WhatsApp &amp; email",
      "Managers &amp; leads: items awaiting their approval (leave, time-back, swaps, schedules).",
      "Sick-leave alerts point straight to cover suggestions.",
      "Low-value noise is deliberately suppressed."],
-    icon="🔔", label="Notifications", side="right", card_title="What it does"))
+    icon="🔔", label="Notifications", side="left",
+    card_title="What it does", section="OPERATIONS"))
+
+# ── Admin & configuration ─────────────────────────────────────────────────────
+PAGES.append(page("Admin &amp; configuration",
+    "System admins tailor the platform to how the branches work.",
+    ["Branches: city, staff-sharing groups, and daily cover need.",
+     "Users: accounts and roles (staff / team lead / manager / admin).",
+     "Shift types: codes, colours, and times.",
+     "Public holidays and per-section scheduling limits (min/max shifts).",
+     "Audit log: a full trail of who did what."],
+    icon="⚙️", label="Admin &amp; configuration", side="right",
+    card_title="What it does", section="ADMIN"))
 
 PAGES.append(page("Roles &amp; security",
     "Access is scoped to each role, and sessions are protected.",
@@ -172,7 +235,8 @@ PAGES.append(page("Roles &amp; security",
      "Identity verified at sign-up (Nafath); work-email + mobile confirmed.",
      "Privileged sign-ups (team lead / manager) require admin activation.",
      "Sliding 30-day sessions; dates shown in English throughout."],
-    icon="🔐", label="Roles &amp; security", side="left", card_title="What it does"))
+    icon="🔐", label="Roles &amp; security", side="left",
+    card_title="What it does", section="ADMIN"))
 
 HTML = f"""<!doctype html><html><head><meta charset="utf-8"><style>
   @page {{ size: A4 landscape; margin: 0; }}
