@@ -4686,11 +4686,21 @@ async def remind_daily_cases(request: Request):
       (key, now.isoformat()), exec_only=True)
     return {"date": date, "reminded": reminded}
 
+# Daily-cases reminders repeat every 30 minutes from the configured start hour
+# until the branch submits (or the window closes), so a missed report keeps
+# nudging. The window is bounded so it can't run past the 08:00 operational-date
+# rollover (which would start nagging about the next, empty day).
+_CASES_REMIND_EVERY_MIN = 30
+_CASES_REMIND_WINDOW_HOURS = 6
+
 def _cases_reminder_loop():
-    """Built-in scheduler: once a day at the configured KSA hour, remind the
-    branches that still haven't submitted. The per-day claim is atomic
-    (INSERT … ON CONFLICT DO NOTHING) so with multiple workers exactly one sends.
-    Disabled when cases_remind_hour isn't a valid 0–23 hour."""
+    """Built-in scheduler: starting at the configured KSA hour (cases_remind_hour),
+    re-remind every 30 minutes the branches that still haven't submitted, until
+    they do or the reminder window closes. _send_cases_reminders only targets
+    branches with no locked report, so a branch stops getting reminders the moment
+    it submits. Each 30-minute slot is claimed atomically (INSERT … ON CONFLICT DO
+    NOTHING) so with multiple workers exactly one sends per slot. Disabled when
+    cases_remind_hour isn't a valid 0–23 hour."""
     import time
     from datetime import datetime, timezone, timedelta
     while True:
@@ -4699,17 +4709,20 @@ def _cases_reminder_loop():
             hour = int(raw)
             if 0 <= hour <= 23:
                 ksa = datetime.now(timezone.utc) + timedelta(hours=3)
-                if ksa.hour == hour:
+                mins_since_start = (ksa.hour - hour) * 60 + ksa.minute
+                if 0 <= mins_since_start < _CASES_REMIND_WINDOW_HOURS * 60:
                     date = _operational_date_server()
+                    slot = mins_since_start // _CASES_REMIND_EVERY_MIN
                     claimed = q("""INSERT INTO scheduling.app_settings (key,value)
                                    VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
-                                (f"cases_remind_auto:{date}", ksa.isoformat()), one=True)
+                                (f"cases_remind_auto:{date}:{slot}", ksa.isoformat()), one=True)
                     if claimed:
                         names = _send_cases_reminders(date)
-                        print(f"[cases-reminder] reminded {len(names)} branch(es) for {date}")
+                        if names:
+                            print(f"[cases-reminder] slot {slot}: reminded {len(names)} branch(es) for {date}")
         except Exception as e:
             print(f"[cases-reminder] {e}")
-        time.sleep(600)   # re-check every 10 minutes
+        time.sleep(300)   # re-check every 5 minutes (slots are 30 minutes apart)
 
 def start_scheduler():
     # Skip under the test harness; otherwise one daemon thread per worker is fine
