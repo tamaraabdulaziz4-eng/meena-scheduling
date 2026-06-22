@@ -1160,9 +1160,6 @@ def _notify_leave_progress(lv, new_status, actor):
         notify_roles(("manager", "superadmin"),
                      f"{lv['staff_name']}'s {lv['leave_type']} leave ({lv['date']}) cleared by the team lead — awaiting your final approval",
                      link="leaves", ntype="leave")
-        notify_staff_member(lv["staff_id"],
-                            f"Your {lv['leave_type']} leave on {lv['date']} passed your team lead — awaiting manager approval",
-                            link="leaves", ntype="leave")
     elif new_status in ("approved", "rejected"):
         if lv.get("created_by") and lv["created_by"] != actor["id"]:
             notify(lv["created_by"],
@@ -1921,10 +1918,10 @@ async def register_staff(request: Request, response: Response):
         first = name.split()[0] if name else ""
         notify_staff_member(staff["id"], f"🎉 Welcome to Meena, {first}! Your account is active.",
                             link="home", ntype="activated")
+        # FYI to the branch team lead only (managers don't need every new hire).
         info = f"New staff joined: {name}" + (f" — ID {emp_id}" if emp_id else "") + (f" · {bname}" if bname else "")
         for u in (q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)) or []):
             notify(u["id"], info, link="staff", ntype="info")
-        notify_roles(("manager", "superadmin"), info, link="staff", ntype="info")
         if email:
             try:
                 send_email(email, "Welcome to Meena Scheduling — your account is ready",
@@ -3232,14 +3229,12 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_admi
         notify_branch_leads(bid, f"Coverage gap on approval: {'; '.join(items)} — please reassign or regenerate",
                             link="schedule", ntype="leave")
     if new_status == LEAVE_AWAIT_MANAGER:
-        # Stage 1 cleared in bulk → ping the managers once, and each staff member.
+        # Stage 1 cleared in bulk → ping the managers once (staff hear at the
+        # final decision, not at this intermediate step).
         names = ", ".join(sorted({lv["staff_name"] for lv in rows}))
         notify_roles(("manager", "superadmin"),
                      f"{names}: {len(rows)} leave day(s) cleared by the team lead — awaiting your final approval",
                      link="leaves", ntype="leave")
-        for sid in {lv["staff_id"] for lv in rows}:
-            notify_staff_member(sid, "Your leave passed the team lead — awaiting manager approval",
-                                link="leaves", ntype="leave")
     else:
         # Final approved/rejected → one summary per requester + each staff member.
         by_creator = defaultdict(list)
@@ -3807,10 +3802,6 @@ async def update_timeback_status(tid: int, request: Request, user=Depends(requir
     row = q("""UPDATE scheduling.timeback_claims SET status=%s, reviewed_by=%s, reviewed_at=NOW()
                WHERE id=%s RETURNING id,status""", (new_status, user["id"], tid), one=True)
     insert_audit(user, f"TIMEBACK_{new_status.upper()}", f"claim:{tid}", t["staff_name"])
-    if new_status == LEAVE_AWAIT_MANAGER:
-        notify_roles(("manager", "superadmin"),
-                     f"{t['staff_name']}'s time-back claim cleared the team lead — awaiting final approval",
-                     link="leaves", ntype="info")
     notify_staff_member(t["staff_id"], f"Your time-back claim ({t['date']}) was {new_status.replace('_',' ')}",
                         link="leaves", ntype=new_status if new_status in ("approved", "rejected") else "info")
     return row
@@ -4613,22 +4604,6 @@ async def save_daily_case(request: Request, user=Depends(get_current_user)):
     insert_audit(user, "DAILY_CASES_" + ("SUBMIT" if submit else "SAVE"),
                  f"branch:{branch_id}", date)
     out = _case_row(row)
-    # Keep the manager's inbox quiet: don't ping per branch. Only when this submit
-    # COMPLETES the day (every branch now has a locked report) send ONE summary.
-    if submit and not (existing and existing.get("locked")):
-        remaining = (q("""SELECT COUNT(*) AS c FROM scheduling.branches b
-                          WHERE NOT EXISTS (SELECT 1 FROM scheduling.daily_cases dc
-                                            WHERE dc.branch_id=b.id AND dc.date=%s AND dc.locked=true)""",
-                       (date,), one=True) or {}).get("c", 1)
-        if remaining == 0:
-            tot = q("""SELECT COUNT(*) AS branches,
-                              COALESCE(SUM(xray+ct+us+mamo+bmd+insert_cd),0) AS cases,
-                              COALESCE(SUM(total_pt),0) AS pt
-                       FROM scheduling.daily_cases WHERE date=%s AND locked=true""", (date,), one=True)
-            notify_roles(("manager", "superadmin"),
-                         f"Daily cases complete for {date}: all {tot['branches']} branches submitted — "
-                         f"{tot['cases']} cases, {tot['pt']} patients",
-                         link="cases", ntype="submitted")
     if warning:
         out["warning"] = warning
     return out

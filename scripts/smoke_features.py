@@ -578,21 +578,15 @@ nan = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDv, "ct": "
 check("non-numeric count rejected (400)", nan.status_code == 400, nan.status_code)
 warn = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDv, "xray": 5, "total_pt": 0})
 check("warns when cases logged but patients=0", bool(warn.json().get("warning")), warn.json())
-# Manager-noise rule: a single branch submitting must NOT ping the manager —
-# only a completed day (every branch in) sends one summary.
+# Manager-noise rule: daily-cases submissions never ping the manager (the
+# completion summary was removed as low-value noise).
 CDc = f"{YEAR}-08-29"
 mgr_b4 = {n["id"] for n in mgr.get("/api/notifications").json()["notifications"]}
-lead.post("/api/daily-cases", json={"branch_id": bid, "date": CDc, "xray": 4, "submit": True})
-mgr_mid = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in mgr_b4]
-check("single-branch submit does NOT ping the manager",
-      not any("daily cases" in (n["message"] or "").lower() for n in mgr_mid), mgr_mid)
-# Re-fetch: extra branches may have been created by earlier scenarios, and the
-# "day complete" check on the server counts every branch.
 for b in admin.get("/api/branches").json():
     admin.post("/api/daily-cases", json={"branch_id": b["id"], "date": CDc, "xray": 1, "submit": True})
 mgr_done = [n for n in mgr.get("/api/notifications").json()["notifications"] if n["id"] not in mgr_b4]
-comp = [n for n in mgr_done if "daily cases complete" in (n["message"] or "").lower()]
-check("manager gets ONE completion summary when all branches submit", len(comp) == 1, comp)
+check("daily-cases submissions never ping the manager",
+      not any("daily cases" in (n["message"] or "").lower() for n in mgr_done), mgr_done)
 r2 = lead.post("/api/daily-cases", json={"branch_id": bid, "date": CD, "xray": 1, "submit": False})
 check("locked report rejects edit", r2.status_code == 403, r2.status_code)
 ov = admin.get(f"/api/daily-cases/overview?date={CD}").json()
