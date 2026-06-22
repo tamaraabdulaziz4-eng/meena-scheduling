@@ -1669,7 +1669,12 @@ import secrets as _secrets_mod
 
 # ── Mobile-number verification over WhatsApp ──────────────────────────────────
 def _phone_verify_enabled():
-    """Phone verification works only when the WhatsApp bridge is configured."""
+    """Phone verification (WhatsApp code) is on when the bridge is configured —
+    unless explicitly turned off with PHONE_VERIFY=off. The off switch lets you
+    keep registration working (email + Nafath still verify identity) if the
+    WhatsApp bridge is ever down or unlinked, without touching the VPS."""
+    if (os.environ.get("PHONE_VERIFY") or "").strip().lower() in ("off", "0", "false", "no"):
+        return False
     return bool((os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()) or bool(os.environ.get("WHATSAPP_CAPTURE"))
 
 @app.post("/api/register/send-phone-code")
