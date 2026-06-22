@@ -53,9 +53,56 @@ COVER = {"date": TODAY, "gap_shift": "M", "section": "General", "absent": "Moham
     {"staff_id": 8, "name": "Aisha Al-Zahrani", "branch_name": "NEST 1", "section": "General", "shifts_month": 17, "same_branch": False}]}
 
 AUTHED = {"v": False}
+STAFF_MODE = {"v": False}
+
+SHIFT_TYPES = [
+    {"id": 1, "branch_id": None, "code": "M", "label": "Morning (12h)", "start_time": "08:00", "end_time": "20:00", "color": "#2B9FFF", "is_off": False, "is_leave": False, "is_oncall": False, "sort_order": 1},
+    {"id": 2, "branch_id": None, "code": "N", "label": "Night (12h)", "start_time": "20:00", "end_time": "08:00", "color": "#6B4EFF", "is_off": False, "is_leave": False, "is_oncall": False, "sort_order": 2},
+    {"id": 11, "branch_id": None, "code": "O", "label": "Off", "start_time": None, "end_time": None, "color": "#E0E0E0", "is_off": True, "is_leave": False, "is_oncall": False, "sort_order": 11},
+    {"id": 13, "branch_id": None, "code": "AL", "label": "Annual Leave", "start_time": None, "end_time": None, "color": "#FD79A8", "is_off": False, "is_leave": True, "is_oncall": False, "sort_order": 13},
+    {"id": 14, "branch_id": None, "code": "SL", "label": "Sick Leave", "start_time": None, "end_time": None, "color": "#FAB1A0", "is_off": False, "is_leave": True, "is_oncall": False, "sort_order": 14},
+]
+REVIEW_OV = {"branches": [
+    {"branch_id": 1, "branch_name": "NEST 1", "schedule_id": 1, "status": "approved", "created_by_name": "lead.n1", "staff_count": 6, "shift_count": 132},
+    {"branch_id": 2, "branch_name": "NEST 2", "schedule_id": 2, "status": "submitted", "created_by_name": "lead.n2", "staff_count": 5, "shift_count": 110},
+    {"branch_id": 3, "branch_name": "NEST 3", "schedule_id": 3, "status": "reviewed", "created_by_name": "lead.n3", "staff_count": 7, "shift_count": 150},
+    {"branch_id": 4, "branch_name": "NEST 4", "schedule_id": None, "status": "not_submitted", "created_by_name": None, "staff_count": 4, "shift_count": 0},
+    {"branch_id": 5, "branch_name": "NEST 6", "schedule_id": 5, "status": "draft", "created_by_name": "lead.n6", "staff_count": 5, "shift_count": 60},
+    {"branch_id": 6, "branch_name": "Al-Jubail", "schedule_id": 6, "status": "approved", "created_by_name": "lead.jb", "staff_count": 4, "shift_count": 88}],
+    "summary": {"pending": 2, "not_submitted": 1, "approved": 2, "draft": 1, "total": 6}}
+STAFF_LIST = [staff(i, n, br, sec, emp, ph, bal) for i, (n, br, sec, emp, ph, bal) in enumerate([
+    ("Abdulaziz Alanazi", 3, "General", "1014542233", "0581453234", 11.5),
+    ("Sara Al-Harbi", 1, "General", "1022113344", "0551110099", 17.0),
+    ("Mohammed Al-Otaibi", 3, "General", "1033442211", "0553334455", 14.0),
+    ("Noura Al-Shehri", 3, "General", "1044556677", "0556667788", 9.5),
+    ("Reem Al-Dosari", 3, "US", "1066778899", "0552223344", 6.0),
+    ("Aisha Al-Zahrani", 1, "General", "1088990011", "0557778899", 13.0)], 1)]
+for s in STAFF_LIST:
+    s["active"] = True; s["speciality"] = [s["section"]]
+REGS = [{"id": 1, "name": "Yousef Al-Harthy", "branch_name": "NEST 3", "branch_id": 3, "employee_id": "1099001122",
+         "email": "yousef@meena-health.com", "phone": "0500001122", "section": "General",
+         "requested_role": "admin", "national_id": "1099001122", "name_ar": "يوسف الحارثي"}]
+SWAPS = [{"id": 1, "staff_a_name": "Sara Al-Harbi", "staff_b_name": "Aisha Al-Zahrani", "date_a": "2026-06-26",
+          "date_b": "2026-06-28", "status": "pending_manager", "branch_id": 1, "branch_name": "NEST 1"},
+         {"id": 2, "staff_a_name": "Mohammed Al-Otaibi", "staff_b_name": "Khalid Al-Qahtani", "date_a": "2026-06-24",
+          "date_b": "2026-06-25", "status": "pending_lead", "branch_id": 3, "branch_name": "NEST 3"}]
+ME_STAFF = {"id": 9, "username": "abdulaziz", "role": "staff", "branch_id": 3, "branch_name": "NEST 3", "staff_id": 1}
+_ent = []
+for day in range(1, 29):
+    code = ["M", "M", "N", "N", "O", "O", "O"][day % 7]
+    _ent.append({"date": f"2026-06-{day:02d}", "shift_code": code, "is_oncall": False, "note": None, "cross_branch_name": None})
+MY_SCHED = {"staff": {"id": 1, "name": "Abdulaziz Alanazi", "branch_id": 3, "branch_name": "NEST 3", "leave_balance": 11.8},
+            "year": 2026, "month": 6, "status": "approved", "finalised": True, "entries": _ent, "cover": [],
+            "upcoming_leave": {"date": "2026-07-05", "days_until": 13}, "leave_balance": 11.8}
 
 def api_stub(path, qs):
     if path == "register/info": return {"ok": True, "branches": BR, "nafath_enabled": True, "phone_verify_enabled": True}
+    if path == "shift-types": return SHIFT_TYPES
+    if path.startswith("schedules/review-overview"): return REVIEW_OV
+    if path == "staff" or path.startswith("staff?"): return STAFF_LIST
+    if path == "registrations": return REGS
+    if path == "swaps" or path.startswith("swaps?"): return SWAPS
+    if path.startswith("my-schedule"): return MY_SCHED
     if path == "register/nafath/start": return {"ok": True, "request_id": "demo-123", "random": "47"}
     if path == "register/nafath/status": return {"status": "verified", "name_en": "Saud Alharbi", "name_ar": "سعود الحربي", "national_id": "1098765432"}
     if path in ("register/send-phone-code", "register/check-phone-code", "register/send-code", "register/check-email-code"): return {"ok": True}
@@ -82,7 +129,8 @@ def make_handler():
                     route.fulfill(status=401, content_type="application/json", body='{"detail":"Not authenticated"}')
                     return
                 if sub == "auth/me":
-                    route.fulfill(status=200, content_type="application/json", body=json.dumps(ME)); return
+                    who = ME_STAFF if STAFF_MODE["v"] else ME
+                    route.fulfill(status=200, content_type="application/json", body=json.dumps(who)); return
                 if sub == "settings":
                     route.fulfill(status=200, content_type="application/json", body="{}"); return
                 route.fulfill(status=200, content_type="application/json",
@@ -150,5 +198,14 @@ with sync_playwright() as p:
         pg.evaluate("closeCoverModal()")
     except Exception as e: print("cover", e)
     pg.evaluate("showPage('cases')"); pg.wait_for_timeout(2000); shot("10_cases.png")
+    safe(lambda: (pg.evaluate("showPage('swaps')"), pg.wait_for_timeout(2000), shot("11_swaps.png")), "swaps")
+    safe(lambda: (pg.evaluate("showPage('review')"), pg.wait_for_timeout(2000), shot("12_review.png")), "review")
+    safe(lambda: (pg.evaluate("showPage('staff')"), pg.wait_for_timeout(2000), shot("13_staff.png")), "staff")
+
+    # ── Phase 3: staff portal (My Schedule) ──────────────────────────────────
+    STAFF_MODE["v"] = True
+    safe(lambda: (pg.goto(ORIGIN + "/index.html", wait_until="domcontentloaded", timeout=15000),
+                  pg.wait_for_timeout(2500), pg.evaluate("showPage('myschedule')"),
+                  pg.wait_for_timeout(2200), shot("14_myschedule.png")), "myschedule")
     b.close()
 print("DONE", shots)
