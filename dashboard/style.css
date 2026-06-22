@@ -309,33 +309,33 @@ body {
   border-radius:50%; animation: nfspin .8s linear infinite; margin-right:4px; }
 @keyframes nfspin { to { transform: rotate(360deg); } }
 
-/* ── Nafath: premium identity-verification card (brand green) ───────────────── */
+/* ── Nafath: premium identity-verification card (official teal #48A8A0) ─────── */
 .nafath-card {
-  border: 1.5px solid #cdeede; border-radius: 20px; padding: 22px;
-  background: linear-gradient(180deg, #f4fcf7, #ffffff);
-  box-shadow: 0 16px 40px rgba(20,140,80,.13);
+  border: 1.5px solid #cfe9e6; border-radius: 20px; padding: 22px;
+  background: linear-gradient(180deg, #f2fbfa, #ffffff);
+  box-shadow: 0 16px 40px rgba(46,126,119,.14);
   position: relative; overflow: hidden;
 }
 .nafath-card::before {
   content: ""; position: absolute; top: -60px; right: -50px; width: 160px; height: 160px;
-  background: radial-gradient(closest-side, rgba(52,199,123,.18), transparent); pointer-events: none;
+  background: radial-gradient(closest-side, rgba(72,168,160,.18), transparent); pointer-events: none;
 }
 .nafath-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.nafath-logo { height: 40px; display: block; }
-.nafath-secure { font-size: 11px; font-weight: 800; color: #0E8C4F;
-  background: rgba(52,199,123,.14); padding: 5px 11px; border-radius: 20px; white-space: nowrap; }
-.nafath-title { font-size: 17px; font-weight: 800; color: #0c5e38; }
-.nafath-sub { font-size: 12.5px; color: #5b7a69; margin: 5px 0 16px; line-height: 1.55; }
+.nafath-logo { height: 38px; width: auto; display: block; }
+.nafath-secure { font-size: 11px; font-weight: 800; color: #2E7E77;
+  background: rgba(72,168,160,.14); padding: 5px 11px; border-radius: 20px; white-space: nowrap; }
+.nafath-title { font-size: 17px; font-weight: 800; color: #1f635c; }
+.nafath-sub { font-size: 12.5px; color: #5b7975; margin: 5px 0 16px; line-height: 1.55; }
 .nafath-inputrow { display: flex; gap: 10px; }
 .nafath-inputrow input {
-  flex: 1; min-width: 0; padding: 13px 15px; border: 1.5px solid #cdeede; border-radius: 13px;
-  font-family: inherit; font-size: 15px; background: #fff; color: #0c3a24; outline: none;
+  flex: 1; min-width: 0; padding: 13px 15px; border: 1.5px solid #cfe9e6; border-radius: 13px;
+  font-family: inherit; font-size: 15px; background: #fff; color: #11403b; outline: none;
 }
-.nafath-inputrow input:focus { border-color: #2BB673; box-shadow: 0 0 0 3px rgba(43,182,115,.16); }
+.nafath-inputrow input:focus { border-color: #48A8A0; box-shadow: 0 0 0 3px rgba(72,168,160,.18); }
 .nafath-btn {
-  background: linear-gradient(135deg, #34C77B, #0E8C4F); color: #fff; border: none; border-radius: 13px;
+  background: linear-gradient(135deg, #5cbdb5, #2E7E77); color: #fff; border: none; border-radius: 13px;
   padding: 0 24px; font-weight: 800; font-size: 14px; cursor: pointer; font-family: inherit; white-space: nowrap;
-  box-shadow: 0 8px 20px rgba(20,140,80,.28);
+  box-shadow: 0 8px 20px rgba(46,126,119,.28);
 }
 .nafath-btn:hover { filter: brightness(1.06); }
 .nafath-btn:disabled { opacity: .55; cursor: default; box-shadow: none; }
@@ -343,25 +343,32 @@ body {
 .nafath-status:empty { margin-top: 0; }
 
 /* Waiting-for-approval panel + the big number to pick */
-.nf-waiting { text-align: center; background: #fff; border: 1.5px dashed #bfe6d2; border-radius: 16px; padding: 18px; }
-.nf-pick { font-size: 13px; color: #0c5e38; font-weight: 700; }
+.nf-waiting { text-align: center; background: #fff; border: 1.5px dashed #b7e0db; border-radius: 16px; padding: 18px; }
+.nf-pick { font-size: 13px; color: #1f635c; font-weight: 700; }
 .nf-num {
-  font-size: 48px; font-weight: 900; letter-spacing: 8px; color: #0E8C4F; line-height: 1.1;
+  font-size: 48px; font-weight: 900; letter-spacing: 8px; color: #2E7E77; line-height: 1.1;
   margin: 10px 0; font-variant-numeric: tabular-nums; animation: nfpulse 1.7s ease-in-out infinite;
 }
 @keyframes nfpulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.07); opacity: .85; } }
-.nf-hint { font-size: 12.5px; color: #5b7a69; }
-.nf-spin-green { border-color: rgba(43,182,115,.25); border-top-color: #0E8C4F; }
+.nf-hint { font-size: 12.5px; color: #5b7975; }
+.nf-spin-green { border-color: rgba(72,168,160,.25); border-top-color: #2E7E77; }
 .nf-err { font-size: 12.5px; color: #c0392b; text-align: center; padding: 4px; }
 
 /* Verified state */
 .nf-verified { display: flex; align-items: center; gap: 13px;
-  background: rgba(52,199,123,.1); border: 1px solid #bfe6d2; border-radius: 16px; padding: 15px 16px; }
+  background: rgba(72,168,160,.1); border: 1px solid #b7e0db; border-radius: 16px; padding: 15px 16px; }
 .nf-check { width: 38px; height: 38px; border-radius: 50%; flex: 0 0 auto; color: #fff;
-  background: linear-gradient(135deg, #34C77B, #0E8C4F); display: grid; place-items: center;
-  font-size: 19px; font-weight: 900; box-shadow: 0 6px 16px rgba(20,140,80,.3); }
-.nf-verified b { color: #0c5e38; font-size: 14px; }
-.nf-sub2 { font-size: 11.5px; color: #5b7a69; margin-top: 2px; }
+  background: linear-gradient(135deg, #5cbdb5, #2E7E77); display: grid; place-items: center;
+  font-size: 19px; font-weight: 900; box-shadow: 0 6px 16px rgba(46,126,119,.3); }
+.nf-verified b { color: #1f635c; font-size: 14px; }
+.nf-sub2 { font-size: 11.5px; color: #5b7975; margin-top: 2px; }
+
+/* SDAIA attribution footer */
+.nafath-foot { display: flex; align-items: center; gap: 12px; margin-top: 18px;
+  padding-top: 14px; border-top: 1px solid #e6f1ef; }
+.nafath-foot-logo { height: 30px; width: auto; flex: 0 0 auto; opacity: .95; }
+.nafath-foot-txt { font-size: 10px; line-height: 1.5; color: #8a9a97; }
+.nafath-foot-txt > div:first-child { font-weight: 600; color: #6a807c; }
 
 /* ── Home: interactive staff search (improved Design A) ─────────────────────── */
 .hm-search { margin-bottom: 20px; }
