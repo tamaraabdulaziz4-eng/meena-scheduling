@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260621n">
+<link rel="stylesheet" href="/style.css?v=20260621o">
 </head>
 <body>
 
@@ -97,14 +97,18 @@
 
       <!-- Step 1: verify identity with Nafath FIRST (shown only when enabled) -->
       <div id="reg-identity" style="display:none">
-        <div class="login-field" id="reg-nafath-field">
-          <label>National ID / Iqama <span style="color:#E63946">*</span>
-            <span style="color:var(--muted);font-weight:400">— verify your identity with Nafath to continue</span></label>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="reg-nationalid" inputmode="numeric" maxlength="10" placeholder="10-digit ID (starts 1 or 2)" style="flex:1">
-            <button type="button" class="btn btn-sm" id="reg-nafath-btn" onclick="startNafath()" style="white-space:nowrap">Verify with Nafath</button>
+        <div class="nafath-card" id="reg-nafath-field">
+          <div class="nafath-head">
+            <img src="/nafath_logo.svg" class="nafath-logo" alt="نفاذ Nafath">
+            <span class="nafath-secure">🔒 Secure identity</span>
           </div>
-          <div id="reg-nafath-status" style="font-size:12.5px;margin-top:8px"></div>
+          <div class="nafath-title">Verify your identity with Nafath</div>
+          <div class="nafath-sub">Enter your National ID / Iqama. We'll send a request to your <b>Nafath</b> app to approve.</div>
+          <div class="nafath-inputrow">
+            <input type="text" id="reg-nationalid" inputmode="numeric" maxlength="10" placeholder="National ID / Iqama (starts 1 or 2)">
+            <button type="button" id="reg-nafath-btn" class="nafath-btn" onclick="startNafath()">Verify</button>
+          </div>
+          <div id="reg-nafath-status" class="nafath-status"></div>
         </div>
       </div>
 
@@ -942,24 +946,24 @@
 </div>
 
 
-<script src="/js/api.js?v=20260621n"></script>
-<script src="/js/auth.js?v=20260621n"></script>
-<script src="/js/util.js?v=20260621n"></script>
-<script src="/js/branches.js?v=20260621n"></script>
-<script src="/js/users.js?v=20260621n"></script>
-<script src="/js/staff.js?v=20260621n"></script>
-<script src="/js/leaves.js?v=20260621n"></script>
-<script src="/js/swaps.js?v=20260621n"></script>
-<script src="/js/holidays.js?v=20260621n"></script>
-<script src="/js/notifications.js?v=20260621n"></script>
-<script src="/js/portal.js?v=20260621n"></script>
-<script src="/js/cases.js?v=20260621n"></script>
-<script src="/js/home.js?v=20260621n"></script>
-<script src="/js/shifts.js?v=20260621n"></script>
-<script src="/js/schedule.js?v=20260621n"></script>
-<script src="/js/review.js?v=20260621n"></script>
-<script src="/js/export.js?v=20260621n"></script>
-<script src="/js/audit.js?v=20260621n"></script>
-<script src="/js/main.js?v=20260621n"></script>
+<script src="/js/api.js?v=20260621o"></script>
+<script src="/js/auth.js?v=20260621o"></script>
+<script src="/js/util.js?v=20260621o"></script>
+<script src="/js/branches.js?v=20260621o"></script>
+<script src="/js/users.js?v=20260621o"></script>
+<script src="/js/staff.js?v=20260621o"></script>
+<script src="/js/leaves.js?v=20260621o"></script>
+<script src="/js/swaps.js?v=20260621o"></script>
+<script src="/js/holidays.js?v=20260621o"></script>
+<script src="/js/notifications.js?v=20260621o"></script>
+<script src="/js/portal.js?v=20260621o"></script>
+<script src="/js/cases.js?v=20260621o"></script>
+<script src="/js/home.js?v=20260621o"></script>
+<script src="/js/shifts.js?v=20260621o"></script>
+<script src="/js/schedule.js?v=20260621o"></script>
+<script src="/js/review.js?v=20260621o"></script>
+<script src="/js/export.js?v=20260621o"></script>
+<script src="/js/audit.js?v=20260621o"></script>
+<script src="/js/main.js?v=20260621o"></script>
 </body>
 </html>

@@ -146,7 +146,7 @@ function _resetNafath() {
   clearTimeout(_nafathPollTimer); _nafathPollTimer = null;
   const st = document.getElementById('reg-nafath-status'); if (st) st.innerHTML = '';
   const btn = document.getElementById('reg-nafath-btn');
-  if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+  if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
   const idInput = document.getElementById('reg-nationalid');
   if (idInput) { idInput.readOnly = false; idInput.value = ''; }
   const nameEl = document.getElementById('reg-name');
@@ -158,7 +158,7 @@ async function startNafath() {
   const btn = document.getElementById('reg-nafath-btn');
   const nid = (document.getElementById('reg-nationalid')?.value || '').trim();
   if (!/^[12]\d{9}$/.test(nid)) {
-    st.style.color = '#E63946'; st.textContent = 'Enter a valid 10-digit National ID / Iqama (starts with 1 or 2)'; return;
+    st.innerHTML = `<div class="nf-err">Enter a valid 10-digit National ID / Iqama (starts with 1 or 2)</div>`; return;
   }
   _nafathVerified = false;
   clearTimeout(_nafathPollTimer);
@@ -166,15 +166,16 @@ async function startNafath() {
   try {
     const r = await API.post('/register/nafath/start', { national_id: nid });
     _nafathRequestId = r.request_id;
-    st.style.color = 'var(--text)';
     const num = String(r.random || '').trim();
-    st.innerHTML = num
-      ? `<span class="nf-spin"></span> Open the <b>Nafath</b> app and choose number <b style="font-size:22px;color:var(--accent)">${escapeHtml(num)}</b> to confirm your identity…`
-      : `<span class="nf-spin"></span> Open the <b>Nafath</b> app and approve the verification request to continue…`;
+    st.innerHTML = `<div class="nf-waiting">
+        <div class="nf-pick">${num ? 'Open the <b>Nafath</b> app and tap the number:' : 'Open the <b>Nafath</b> app and approve the request:'}</div>
+        ${num ? `<div class="nf-num">${escapeHtml(num)}</div>` : ''}
+        <div class="nf-hint"><span class="nf-spin nf-spin-green"></span> Waiting for your approval…</div>
+      </div>`;
     _pollNafath(r.request_id, Date.now());
   } catch (e) {
-    st.style.color = '#E63946'; st.textContent = e.message || 'Could not start Nafath verification';
-    btn.disabled = false; btn.textContent = 'Verify with Nafath';
+    st.innerHTML = `<div class="nf-err">${escapeHtml(e.message || 'Could not start Nafath verification')}</div>`;
+    btn.disabled = false; btn.textContent = 'Verify';
   }
 }
 
@@ -188,8 +189,11 @@ function _pollNafath(rid, startedAt) {
       if (r.status === 'verified') {
         _nafathVerified = true;
         const nm = r.name_en || r.name_ar || '';
-        st.style.color = '#1a9d6a';
-        st.innerHTML = `✓ Identity verified${nm ? ` — <b>${escapeHtml(nm)}</b>` : ''}. Please complete the rest below.`;
+        st.innerHTML = `<div class="nf-verified">
+            <div class="nf-check">✓</div>
+            <div><b>Identity verified${nm ? ` — ${escapeHtml(nm)}` : ''}</b>
+              <div class="nf-sub2">Please complete the rest of your details below.</div></div>
+          </div>`;
         if (btn) { btn.disabled = true; btn.textContent = 'Verified ✓'; }
         const idInput = document.getElementById('reg-nationalid');
         if (idInput) idInput.readOnly = true;
@@ -201,14 +205,14 @@ function _pollNafath(rid, startedAt) {
         return;
       }
       if (r.status === 'failed') {
-        st.style.color = '#E63946'; st.textContent = 'Nafath verification was rejected or cancelled. Please try again.';
-        if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+        st.innerHTML = `<div class="nf-err">Nafath verification was rejected or cancelled. Please try again.</div>`;
+        if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
         return;
       }
     } catch (e) { /* keep polling */ }
     if (Date.now() - startedAt > 120000) {                // give up after 2 minutes
-      st.style.color = '#E63946'; st.textContent = 'Verification timed out. Please try again.';
-      if (btn) { btn.disabled = false; btn.textContent = 'Verify with Nafath'; }
+      st.innerHTML = `<div class="nf-err">Verification timed out. Please try again.</div>`;
+      if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
       return;
     }
     _pollNafath(rid, startedAt);
