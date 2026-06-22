@@ -611,7 +611,7 @@ rem = admin.post(f"/api/daily-cases/remind?date={CD}", json={})
 check("remind endpoint ok", rem.status_code == 200, rem.text)
 check("NEST 3 reminded (no locked report)", nest3["name"] in (rem.json().get("reminded") or []), rem.json())
 lead_after = [n for n in lead.get("/api/notifications").json()["notifications"] if n["id"] not in lead_b4]
-check("team lead got a fill-in reminder", any("hasn't been submitted" in (n["message"] or "").lower() for n in lead_after), lead_after)
+check("team lead got a fill-in reminder", any("finalized in 20 minutes" in (n["message"] or "").lower() for n in lead_after), lead_after)
 check("reminder deduped within 6h", (admin.post(f"/api/daily-cases/remind?date={CD}", json={}).json() or {}).get("skipped"), "expected skipped")
 rfx = lead.post(f"/api/daily-cases/remind?date={CD}", json={})
 check("remind is superadmin/cron only", rfx.status_code in (401, 403), rfx.status_code)

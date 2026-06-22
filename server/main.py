@@ -4192,7 +4192,7 @@ def delete_holiday(hid: int, user=Depends(require_superadmin)):
 @app.get("/api/settings")
 def read_settings(user=Depends(get_current_user)):
     out = {"leave_cutoff_day": get_leave_cutoff_day(),
-           "cases_remind_hour": get_setting("cases_remind_hour", "7")}
+           "cases_remind_hour": get_setting("cases_remind_hour", "0")}
     # Only a superadmin sees the registration links/code.
     if user["role"] == "superadmin":
         is_open = _registration_open()
@@ -4647,8 +4647,9 @@ def _send_cases_reminders(date):
         targets = _cases_remind_targets(b["id"], date)
         if not targets:
             continue
-        msg = (f"Reminder: {b['name']}'s daily cases report for {date} "
-               f"hasn't been submitted yet — please fill it in.")
+        msg = (f"Reminder: please enter {b['name']}'s daily case numbers in the platform "
+               f"now (Daily Cases page). The numbers for {date} will be finalized in "
+               f"20 minutes — please complete your entry before then.")
         for uid in targets:
             notify(uid, msg, link="cases", ntype="reminder")
         reminded.append(b["name"])
@@ -4694,7 +4695,7 @@ def _cases_reminder_loop():
     from datetime import datetime, timezone, timedelta
     while True:
         try:
-            raw = get_setting("cases_remind_hour", "7")
+            raw = get_setting("cases_remind_hour", "0")
             hour = int(raw)
             if 0 <= hour <= 23:
                 ksa = datetime.now(timezone.utc) + timedelta(hours=3)
