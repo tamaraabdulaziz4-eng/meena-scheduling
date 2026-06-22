@@ -1803,6 +1803,9 @@ async def register_staff(request: Request, response: Response):
         leave_balance = float(body.get("leave_balance") or 0)
     except (TypeError, ValueError):
         leave_balance = 0.0
+    if not math.isfinite(leave_balance):     # reject NaN/Inf, and cap to the column range
+        leave_balance = 0.0
+    leave_balance = min(leave_balance, 9999.9)
     # Which role is being requested (bound to the invite link). The role itself
     # grants nothing — an admin/manager sign-up only becomes that role once a
     # SUPERADMIN approves it (see approve_registration), so a tampered link can't
@@ -1841,14 +1844,16 @@ async def register_staff(request: Request, response: Response):
     # Early, friendly check — the real guard is the UNIQUE index at approval.
     if q("SELECT 1 FROM scheduling.users WHERE username=%s", (username,), one=True):
         raise HTTPException(409, "That username is taken — please choose another")
-    # Mobile must be verified with the code we sent over WhatsApp (when enabled).
-    # Checked before the email code so a failed phone check doesn't burn it.
-    if _phone_verify_enabled():
-        _verify_phone_code(phone, body.get("phone_code"))
-    # Email must be verified with the code we just emailed.
-    _verify_email_code(email, body.get("email_code"))
-    # Identity must be verified through Nafath (when enabled). The official name
-    # from Nafath replaces the typed name, and we record the National ID.
+    # Auto-activation must never overwrite an existing account: an Employee ID
+    # that already has a login can't be re-registered (otherwise a new sign-up
+    # could hijack that staff member's account). Recover via sign-in / forgot-
+    # password instead. Checked before any verification code is consumed.
+    if role == "staff" and emp_id:
+        prior = q("SELECT id FROM scheduling.staff WHERE employee_id=%s", (emp_id,), one=True)
+        if prior and q("SELECT 1 FROM scheduling.users WHERE staff_id=%s", (prior["id"],), one=True):
+            raise HTTPException(409, "An account already exists for this Employee ID — please sign in or reset your password.")
+    # Identity (Nafath) is checked FIRST — read-only — so a Nafath failure does
+    # not burn the email/phone codes. Nafath is consumed later, only on success.
     national_id = name_ar = None
     nafath_rid = (body.get("nafath_request_id") or "").strip()
     if _nafath_enabled():
@@ -1861,6 +1866,12 @@ async def register_staff(request: Request, response: Response):
         name = nv.get("name_en") or nv.get("name_ar") or name
         name_ar = nv.get("name_ar")
         national_id = nv.get("official_national_id") or nv.get("national_id")
+    # Mobile must be verified with the code we sent over WhatsApp (when enabled).
+    # Checked before the email code so a failed phone check doesn't burn it.
+    if _phone_verify_enabled():
+        _verify_phone_code(phone, body.get("phone_code"))
+    # Email must be verified with the code we just emailed.
+    _verify_email_code(email, body.get("email_code"))
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     # A re-submission for the same Employee ID replaces any earlier pending one.
     if emp_id:

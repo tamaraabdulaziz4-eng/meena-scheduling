@@ -74,6 +74,7 @@ REGISTRATION
   R6  validation guards: @meena email, mobile required, username taken, codes required
   R7  team-lead sign-up stays pending until a superadmin approves
   R8  official Nafath name + National ID stored on the staff record
+  R9  an existing Employee ID can't be hijacked by a new sign-up
 MESSAGES / NOTIFICATIONS
   M1  activation → staff (in-app+WhatsApp+email); branch lead 'joined'; managers NOT
   M2  leave approved/rejected → staff notified (in-app + WhatsApp)
@@ -145,6 +146,22 @@ print("== R8: official name + National ID stored ==")
 st = M.q("SELECT name, national_id FROM scheduling.staff WHERE employee_id=%s", (f"E{sfx}",), one=True)
 check("R8 official Nafath name stored", st and st["name"] == "Omar Alharbi", st)
 check("R8 National ID stored", st and st["national_id"] == "1098765432", st)
+
+print("== R9: an existing Employee ID can't be hijacked ==")
+hj = TestClient(app)
+hjrid = hj.post("/api/register/nafath/start", json={"national_id": "2099887766"}).json().get("request_id")
+TestClient(app).post("/api/nafath/webhook", json={"requestId": hjrid, "Status": 0,
+    "usersInfo": [{"FirstNameEn": "Bad", "LastNameEn": "Actor", "NationalId": "2099887766"}]})
+hphone = "05099" + sfx
+hj.post("/api/register/send-phone-code", json={"phone": hphone}); hpc = wa_code(hphone.replace("0", "966", 1))
+hj.post("/api/register/send-code", json={"email": f"bad_{sfx}@meena-health.com"}); hec = email_code(f"bad_{sfx}@meena-health.com")
+hr = hj.post("/api/register", json={"name": "Bad Actor", "branch_id": bid, "section": "General",
+    "employee_id": f"E{sfx}",  # SAME Employee ID as the already-registered staff
+    "email": f"bad_{sfx}@meena-health.com", "phone": hphone, "username": f"bad{sfx}", "password": "badpass1",
+    "email_code": hec, "phone_code": hpc, "nafath_request_id": hjrid})
+check("R9 re-registering an existing Employee ID is rejected (409)", hr.status_code == 409, hr.text)
+check("R9 the original account is untouched",
+      TestClient(app).post("/api/auth/login", json={"username": f"omar{sfx}", "password": "staffpass1"}).status_code == 200)
 
 print("== R6: validation guards ==")
 base = {"branch_id": bid, "section": "General", "password": "x123456", "name": "X"}
