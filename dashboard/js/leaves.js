@@ -387,15 +387,22 @@ async function openCoverModal(lid) {
       list.innerHTML = `<div class="empty"><p>No free ${escapeHtml(r.section)} staff found across the branches that day.</p></div>`;
       return;
     }
-    list.innerHTML = cands.map(c => `
+    const row = c => `
       <div class="cover-row">
         <div style="flex:1">
           <b>${escapeHtml(c.name)}</b>
           <span class="badge ${c.same_branch ? 'badge-purple' : 'badge-gray'}" style="margin-left:6px">${escapeHtml(c.branch_name || '')}</span>
-          <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Off that day · ${c.shifts_month} shifts this month${c.same_branch ? ' · same branch' : ''}</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Off that day · ${c.shifts_month} shifts this month</div>
         </div>
         <button class="btn btn-sm" onclick="requestCover(${c.staff_id}, ${JSON.stringify(c.name).replace(/"/g,'&quot;')})">Assign</button>
-      </div>`).join('');
+      </div>`;
+    // Same branch first (preferred), then the other branches — each under a header.
+    const same  = cands.filter(c => c.same_branch);
+    const other = cands.filter(c => !c.same_branch);
+    const header = t => `<div style="font-size:12px;font-weight:800;color:var(--primary);margin:14px 2px 6px;letter-spacing:.2px">${t}</div>`;
+    list.innerHTML =
+      (same.length  ? header(`✅ Same branch — preferred (${same.length})`)  + same.map(row).join('')  : '') +
+      (other.length ? header(`🔁 Other branches (${other.length})`) + other.map(row).join('') : '');
   } catch (e) {
     document.getElementById('cover-list').innerHTML = `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`;
   }
