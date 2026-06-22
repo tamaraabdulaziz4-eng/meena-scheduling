@@ -952,6 +952,44 @@ finally:
 check("register/info reports Nafath disabled when not configured",
       TestClient(app).get("/api/register/info").json().get("nafath_enabled") is False)
 
+print("\n== scenario: mobile verification over WhatsApp (WHATSAPP_CAPTURE) ==")
+os.environ["WHATSAPP_CAPTURE"] = "1"
+try:
+    check("register/info reports phone verification enabled",
+          TestClient(app).get("/api/register/info").json().get("phone_verify_enabled") is True)
+    wc = TestClient(app)
+    wsfx = str(int(time.time()))[-5:]
+    wphone = "0590" + wsfx
+    wemail = f"wa{wsfx}@meena-health.com"
+    wbase = {"name": "WA Tester", "branch_id": bid, "section": "General",
+             "employee_id": f"WA{wsfx}", "email": wemail, "phone": wphone,
+             "username": f"wauser{wsfx}", "password": "wapass1"}
+    # One email code suffices — the phone check runs first, so failed phone checks
+    # don't consume it.
+    wc.post("/api/register/send-code", json={"email": wemail})
+    ecode = None
+    for e in reversed(M._email_outbox):
+        if e.get("to") == wemail:
+            mm = _re.search(r"(\d{6})", e.get("body") or ""); ecode = mm.group(1) if mm else None; break
+    blocked = wc.post("/api/register", json={**wbase, "email_code": ecode})
+    check("registration blocked without the WhatsApp code", blocked.status_code == 400, blocked.text)
+    # Request the WhatsApp code → captured outbox holds it for the normalized number.
+    M._whatsapp_outbox.clear()
+    sp = wc.post("/api/register/send-phone-code", json={"phone": wphone})
+    check("send-phone-code accepted", sp.status_code == 200, sp.text)
+    norm = wphone.replace("0", "966", 1) if wphone.startswith("0") else wphone
+    sent = [m for m in M._whatsapp_outbox if m["to"] == norm]
+    check("WhatsApp code message was sent to the normalized number", len(sent) == 1, M._whatsapp_outbox)
+    pcode = (_re.search(r"(\d{6})", sent[0]["message"]).group(1) if sent else None)
+    bad = wc.post("/api/register", json={**wbase, "email_code": ecode, "phone_code": "000000"})
+    check("wrong WhatsApp code is rejected", bad.status_code == 400, bad.text)
+    ok = wc.post("/api/register", json={**wbase, "email_code": ecode, "phone_code": pcode})
+    check("registration succeeds with the correct WhatsApp code", ok.status_code == 200, ok.text)
+finally:
+    os.environ.pop("WHATSAPP_CAPTURE", None)
+check("register/info reports phone verification disabled when not configured",
+      TestClient(app).get("/api/register/info").json().get("phone_verify_enabled") is False)
+
 admin.put("/api/settings", json={"registration": "off"})
 check("registration can be closed again", admin.get("/api/settings").json().get("registration_open") is False)
 

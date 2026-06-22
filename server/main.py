@@ -438,6 +438,15 @@ def init_schema():
                     attempts INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
+            # Mobile-number verification codes sent over WhatsApp (one per number).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.phone_verifications (
+                    phone TEXT PRIMARY KEY,
+                    code TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
             # Nafath (Sadq) identity verifications for self-registration. Keyed by
             # the GUID we generate; Sadq pushes the result to our public webhook.
             cur.execute("""
@@ -982,6 +991,33 @@ def _whatsapp_notify_enabled_for(ntype):
         raw = (os.environ.get("WHATSAPP_ONLY_TYPES") or "").strip()
         _WHATSAPP_NOTIFY_ALLOWED = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
     return not _WHATSAPP_NOTIFY_ALLOWED or ntype in _WHATSAPP_NOTIFY_ALLOWED
+
+# In-memory capture of outbound WhatsApp messages (tests; WHATSAPP_CAPTURE=1).
+_whatsapp_outbox = []
+
+def _whatsapp_send_now(to_normalized, message):
+    """Send a WhatsApp message synchronously through the bridge and return its
+    JSON response. Bypasses the notify type-filter (used for verification codes).
+    Raises on failure so the caller can surface the real error."""
+    if os.environ.get("WHATSAPP_CAPTURE"):
+        _whatsapp_outbox.append({"to": to_normalized, "message": message})
+        return {"ok": True, "captured": True}
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    if not url:
+        raise RuntimeError("WhatsApp isn't configured")
+    token = (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
+    import urllib.request, urllib.error
+    data = json.dumps({"to": to_normalized, "message": message, "type": "info"}).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Bridge {e.code}: {e.read().decode('utf-8', 'replace')}") from None
 
 def send_whatsapp(to, message, *, ntype="info", link=None):
     url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
@@ -1629,9 +1665,61 @@ def register_info(request: Request):
     """Branch list for the onboarding form. Open registration — no code needed."""
     _assert_registration_open()
     branches = q("SELECT id, name FROM scheduling.branches ORDER BY name")
-    return {"ok": True, "branches": branches, "nafath_enabled": _nafath_enabled()}
+    return {"ok": True, "branches": branches, "nafath_enabled": _nafath_enabled(),
+            "phone_verify_enabled": _phone_verify_enabled()}
 
 import secrets as _secrets_mod
+
+# ── Mobile-number verification over WhatsApp ──────────────────────────────────
+def _phone_verify_enabled():
+    """Phone verification works only when the WhatsApp bridge is configured."""
+    return bool((os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()) or bool(os.environ.get("WHATSAPP_CAPTURE"))
+
+@app.post("/api/register/send-phone-code")
+async def register_send_phone_code(request: Request):
+    """WhatsApp a 6-digit code to the registrant's mobile to confirm they own it."""
+    _assert_registration_open()
+    body = await request.json()
+    to = _normalize_whatsapp_number(body.get("phone"))
+    if not to:
+        raise HTTPException(400, "Enter a valid mobile number first")
+    if not _phone_verify_enabled():
+        raise HTTPException(503, "WhatsApp verification isn't set up on the server yet. Ask your admin.")
+    # Throttle: one code per 45 seconds per number.
+    prev = q("SELECT created_at FROM scheduling.phone_verifications WHERE phone=%s", (to,), one=True)
+    if prev and prev.get("created_at") and \
+       (datetime.now(timezone.utc) - prev["created_at"]).total_seconds() < 45:
+        raise HTTPException(429, "A code was just sent — please wait a moment before requesting another.")
+    code = f"{_secrets_mod.randbelow(900000) + 100000}"
+    q("""INSERT INTO scheduling.phone_verifications (phone, code, expires_at, attempts, created_at)
+         VALUES (%s,%s,%s,0,NOW())
+         ON CONFLICT (phone) DO UPDATE SET code=EXCLUDED.code, expires_at=EXCLUDED.expires_at,
+                                           attempts=0, created_at=NOW()""",
+      (to, code, datetime.now(timezone.utc) + timedelta(minutes=10)), exec_only=True)
+    try:
+        _whatsapp_send_now(to, f"Meena Scheduling verification code: {code}\n\n"
+                               f"It expires in 10 minutes. Enter it on the sign-up form to confirm your mobile number.")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't send the WhatsApp code: {e}")
+    return {"ok": True}
+
+def _verify_phone_code(phone_raw, code):
+    """Consume a WhatsApp code for the number; raise 400 if missing/expired/wrong."""
+    to = _normalize_whatsapp_number(phone_raw)
+    code = (code or "").strip()
+    if not to:
+        raise HTTPException(400, "Enter a valid mobile number")
+    row = q("SELECT code, expires_at, attempts FROM scheduling.phone_verifications WHERE phone=%s", (to,), one=True)
+    if not row:
+        raise HTTPException(400, "Please request a WhatsApp code for your mobile first")
+    if row["attempts"] >= 6:
+        raise HTTPException(400, "Too many wrong attempts — request a new code")
+    if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc):
+        raise HTTPException(400, "Your WhatsApp code expired — request a new one")
+    if not code or code != row["code"]:
+        q("UPDATE scheduling.phone_verifications SET attempts=attempts+1 WHERE phone=%s", (to,), exec_only=True)
+        raise HTTPException(400, "Incorrect WhatsApp code")
+    q("DELETE FROM scheduling.phone_verifications WHERE phone=%s", (to,), exec_only=True)
 
 @app.post("/api/register/send-code")
 async def register_send_code(request: Request):
@@ -1733,6 +1821,10 @@ async def register_staff(request: Request):
     # Early, friendly check — the real guard is the UNIQUE index at approval.
     if q("SELECT 1 FROM scheduling.users WHERE username=%s", (username,), one=True):
         raise HTTPException(409, "That username is taken — please choose another")
+    # Mobile must be verified with the code we sent over WhatsApp (when enabled).
+    # Checked before the email code so a failed phone check doesn't burn it.
+    if _phone_verify_enabled():
+        _verify_phone_code(phone, body.get("phone_code"))
     # Email must be verified with the code we just emailed.
     _verify_email_code(email, body.get("email_code"))
     # Identity must be verified through Nafath (when enabled). The official name
