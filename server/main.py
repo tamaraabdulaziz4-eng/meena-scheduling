@@ -1787,8 +1787,10 @@ def _verify_email_code(email, code, consume=True):
         q("DELETE FROM scheduling.email_verifications WHERE email=%s", (email,), exec_only=True)
 
 @app.post("/api/register")
-async def register_staff(request: Request):
-    """Create (or update by Employee ID) a staff record from a self-submission."""
+async def register_staff(request: Request, response: Response):
+    """Self-registration. Staff activate immediately (identity is verified via
+    Nafath + email + WhatsApp) and are signed in; team-lead/manager sign-ups
+    still require a superadmin to activate (privileged roles)."""
     body = await request.json()
     _assert_registration_open()
     name = (body.get("name") or "").strip()
@@ -1863,48 +1865,104 @@ async def register_staff(request: Request):
         name_ar = nv.get("name_ar")
         national_id = nv.get("official_national_id") or nv.get("national_id")
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    # A re-submission for the same Employee ID replaces the earlier pending one.
+    # A re-submission for the same Employee ID replaces any earlier pending one.
     if emp_id:
         q("""DELETE FROM scheduling.staff_registrations
              WHERE status='pending' AND employee_id IS NOT NULL AND employee_id=%s""",
           (emp_id,), exec_only=True)
+
+    # ── STAFF: activate immediately, no approval. Identity is already verified
+    #          (Nafath + email + WhatsApp), so create the account and sign them in.
+    if role == "staff":
+        sec = section if section in ("General", "US") else "General"
+        try:
+            staff = q("""INSERT INTO scheduling.staff (name, branch_id, employee_id, email, phone, speciality,
+                              self_registered, join_date, leave_balance, leave_balance_date, national_id, name_ar)
+                         VALUES (%s,%s,%s,%s,%s,%s,true,%s,%s,CURRENT_DATE,%s,%s)
+                         ON CONFLICT (employee_id) WHERE employee_id IS NOT NULL
+                         DO UPDATE SET name=EXCLUDED.name, branch_id=EXCLUDED.branch_id, email=EXCLUDED.email,
+                              phone=EXCLUDED.phone, speciality=EXCLUDED.speciality, self_registered=true,
+                              join_date=EXCLUDED.join_date, leave_balance=EXCLUDED.leave_balance,
+                              leave_balance_date=CURRENT_DATE, national_id=EXCLUDED.national_id, name_ar=EXCLUDED.name_ar
+                         RETURNING id, name""",
+                      (name, branch_id, emp_id or None, email, phone, [sec], join_date, leave_balance,
+                       national_id, name_ar), one=True)
+        except psycopg2.errors.UniqueViolation:
+            raise HTTPException(409, "That Employee ID is already on a staff record")
+        owner = q("SELECT id, staff_id FROM scheduling.users WHERE username=%s", (username,), one=True)
+        if owner and owner.get("staff_id") != staff["id"]:
+            raise HTTPException(409, "That username is taken — please choose another")
+        existing = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (staff["id"],), one=True)
+        try:
+            if existing:
+                urow = q("""UPDATE scheduling.users SET username=%s, password=%s, role='staff', branch_id=%s, email=%s
+                            WHERE id=%s RETURNING id, username, role, branch_id, staff_id,
+                                                  COALESCE(token_epoch,0) AS token_epoch""",
+                         (username, pw_hash, branch_id, email, existing["id"]), one=True)
+            else:
+                urow = q("""INSERT INTO scheduling.users (username,password,role,branch_id,staff_id,email)
+                            VALUES (%s,%s,'staff',%s,%s,%s)
+                            RETURNING id, username, role, branch_id, staff_id, COALESCE(token_epoch,0) AS token_epoch""",
+                         (username, pw_hash, branch_id, staff["id"], email), one=True)
+        except psycopg2.errors.UniqueViolation:
+            raise HTTPException(409, "That username is taken — please choose another")
+        if _nafath_enabled() and nafath_rid:
+            q("UPDATE scheduling.nafath_verifications SET consumed=true, updated_at=NOW() WHERE request_id=%s",
+              (nafath_rid,), exec_only=True)
+        # History row (self-activated → already approved).
+        q("""INSERT INTO scheduling.staff_registrations
+                (name, branch_id, employee_id, email, phone, section, username, password, requested_role,
+                 join_date, leave_balance, national_id, name_ar, status, staff_id, reviewed_at)
+             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'staff',%s,%s,%s,%s,'approved',%s,NOW())""",
+          (name, branch_id, emp_id or None, email, phone, sec, username, pw_hash,
+           join_date, leave_balance, national_id, name_ar, staff["id"]), exec_only=True)
+        # Notifications: welcome the new staff; inform the branch lead + managers (FYI).
+        bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
+        first = name.split()[0] if name else ""
+        notify_staff_member(staff["id"], f"🎉 Welcome to Meena, {first}! Your account is active.",
+                            link="home", ntype="activated")
+        info = f"New staff joined: {name}" + (f" — ID {emp_id}" if emp_id else "") + (f" · {bname}" if bname else "")
+        for u in (q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)) or []):
+            notify(u["id"], info, link="staff", ntype="info")
+        notify_roles(("manager", "superadmin"), info, link="staff", ntype="info")
+        if email:
+            try:
+                send_email(email, "Welcome to Meena Scheduling — your account is ready",
+                           f"Hi {name},\n\nYour account has been created and is ready to use. You're signed in "
+                           f"now, and can sign in any time with your username \"{username}\".\n\n— Meena Scheduling")
+            except Exception as e:
+                print(f"[register] welcome email to {email} failed: {e}", file=sys.stderr)
+        # Auto-login: issue the session cookie exactly like /auth/login.
+        payload = {"id": urow["id"], "username": urow["username"], "role": "staff",
+                   "branch_id": urow.get("branch_id"), "branch_name": bname or None,
+                   "staff_id": urow.get("staff_id"), "epoch": int(urow.get("token_epoch") or 0)}
+        response.set_cookie("token", sign_token(payload), httponly=True, samesite="lax",
+                            secure=os.environ.get("COOKIE_SECURE", "1") != "0",
+                            max_age=JWT_DAYS * 86400)
+        return {"ok": True, "auto_login": True, "user": payload,
+                "message": "Welcome! Your account is ready and you're signed in."}
+
+    # ── ADMIN / MANAGER: privileged roles still need a superadmin to activate ──
     q("""INSERT INTO scheduling.staff_registrations
            (name, branch_id, employee_id, email, phone, section, username, password,
             requested_role, join_date, leave_balance, national_id, name_ar)
          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
       (name, branch_id, emp_id or None, email, phone, section, username, pw_hash, role,
        join_date, leave_balance, national_id, name_ar), exec_only=True)
-    # Lock the Nafath verification so it can't be reused for another sign-up.
     if _nafath_enabled() and nafath_rid:
         q("UPDATE scheduling.nafath_verifications SET consumed=true, updated_at=NOW() WHERE request_id=%s",
           (nafath_rid,), exec_only=True)
-    # Route the approval request to whoever can approve THIS role.
-    if role == "staff":
-        msg = f"New staff registration to review: {name}" + (f" — ID {emp_id}" if emp_id else "")
-        # Notify BOTH the branch team lead AND the managers (so it isn't missed).
-        leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,))
-        for u in (leads or []):
-            notify(u["id"], msg, link="staff", ntype="info")
-        notify_roles(("manager", "superadmin"), msg, link="staff", ntype="info")
-        who = "your team lead or manager"
-    else:
-        label = "team-lead" if role == "admin" else "manager"
-        notify_roles(("superadmin",), f"New {label} registration to review: {name}", link="staff", ntype="info")
-        who = "an administrator"
-    # Confirm to the registrant by email that we received it and it's pending.
+    label = "team-lead" if role == "admin" else "manager"
+    notify_roles(("superadmin",), f"New {label} registration to review: {name}", link="staff", ntype="info")
     if email:
         try:
             send_email(email, "Registration received — Meena Scheduling",
-                       f"Hi {name},\n\n"
-                       f"Your registration was received and is awaiting account activation by "
-                       f"{who}. You'll be able to sign in with your username once your account "
-                       f"is activated.\n\nThank you.")
+                       f"Hi {name},\n\nYour {label} registration was received and is awaiting activation by "
+                       f"an administrator. You'll be able to sign in once it's approved.\n\nThank you.")
         except Exception as e:
             print(f"[register] confirmation email to {email} failed: {e}", file=sys.stderr)
     return {"ok": True, "emailed": bool(email),
-            "message": f"Thanks! Your registration was received and is awaiting {who}'s activation."
-                       + (" We've emailed you a confirmation." if email else "")
-                       + " You can sign in once your account is activated."}
+            "message": "Thanks! Your registration was received and is awaiting an administrator's activation."}
 
 @app.get("/api/registrations")
 def list_registrations(request: Request, user=Depends(require_admin)):
