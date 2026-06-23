@@ -119,13 +119,14 @@ async function initApp() {
   // Staff land on their own schedule; everyone else on the Home dashboard.
   window._defaultPage = isStaff ? 'myschedule' : 'home';
 
-  // Load global data
+  // Load global data. Staff don't need the full roster up front (only the swap
+  // modal does, and it lazy-loads it) — so don't make them wait on it before the
+  // first page paints.
   showLoader('Loading data…');
   try {
-    await Promise.all([
-      loadBranches(),
-      loadStaff(),
-    ]);
+    const loads = [loadBranches()];
+    if (!isStaff) loads.push(loadStaff());
+    await Promise.all(loads);
   } catch (e) { console.error('Data load error:', e); }
   hideLoader();
 
