@@ -2062,7 +2062,7 @@ async def register_staff(request: Request, response: Response):
         # Notifications: welcome the new staff; inform the branch lead + managers (FYI).
         bname = (q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True) or {}).get("name", "")
         first = name.split()[0] if name else ""
-        notify_staff_member(staff["id"], f"🎉 Welcome to Meena, {first}! Your account is active.",
+        notify_staff_member(staff["id"], f"Welcome to Meena, {first}! Your account is active.",
                             link="home", ntype="activated")
         # FYI to the branch team lead only (managers don't need every new hire).
         info = f"New staff joined: {name}" + (f" — ID {emp_id}" if emp_id else "") + (f" · {bname}" if bname else "")
@@ -2215,7 +2215,7 @@ async def approve_registration(rid: int, request: Request, user=Depends(require_
     # Tell the new staff member their account is live (in-app + WhatsApp/email).
     if account_created and staff_id_for_reg:
         notify_staff_member(staff_id_for_reg,
-                            f"✅ Your Meena account is now active — sign in with your username \"{reg['username']}\".",
+                            f"Your Meena account is now active — sign in with your username \"{reg['username']}\".",
                             link="home", ntype="activated")
     if account_created and reg.get("email"):
         try:
@@ -3227,7 +3227,7 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
     if leaves and leave_type == "SL":
         # Sick leave: tell the branch lead + managers and point them at cover.
         leads = q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (staff["branch_id"],))
-        msg = f"🤒 {staff['name']} reported sick — {len(leaves)} day(s). Tap to find cover."
+        msg = f"{staff['name']} reported sick — {len(leaves)} day(s). Tap to find cover."
         for u in (leads or []):
             notify(u["id"], msg, link="leaves", ntype="leave")
         notify_roles(("manager", "superadmin"), msg, link="leaves", ntype="leave")
@@ -4226,9 +4226,9 @@ async def create_announcement(request: Request, user=Depends(get_current_user)):
     if body.get("broadcast"):
         tag = "Action required" if kind == "action_required" else "Announcement"
         msg = f"[{tag}] {title}\n\n{text}"
-        staff = (q("SELECT id,name,phone,email FROM scheduling.staff WHERE branch_id=%s", (branch_id,))
+        staff = (q("SELECT id,name,phone,email FROM scheduling.staff WHERE branch_id=%s AND COALESCE(active,true)=true", (branch_id,))
                  if audience == "branch"
-                 else q("SELECT id,name,phone,email FROM scheduling.staff"))
+                 else q("SELECT id,name,phone,email FROM scheduling.staff WHERE COALESCE(active,true)=true"))
         delivered = _broadcast_to_staff(staff, msg, "announcements", "announcement")
     return {"id": row["id"], "broadcast": bool(body.get("broadcast")), "delivered": delivered}
 
@@ -5221,15 +5221,23 @@ def _operational_date_server():
     return ksa.strftime("%Y-%m-%d")
 
 def _cases_remind_targets(branch_id, date):
-    """User accounts that should fill a branch's daily report: its team lead(s),
-    can_report staff, and anyone scheduled Night that day."""
+    """User accounts that should fill a branch's daily report on THIS day: its team
+    lead(s), and staff who are actually on duty that day (scheduled a working shift)
+    and either flagged can_report or scheduled Night. We deliberately don't ping a
+    can_report person who is off / on leave that day."""
     ids = set()
     for r in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)):
         ids.add(r["id"])
-    for r in q("""SELECT u.id FROM scheduling.users u
+    # can_report staff who are actually working that day (not off / on leave).
+    for r in q("""SELECT DISTINCT u.id FROM scheduling.users u
                   JOIN scheduling.staff s ON s.id=u.staff_id
-                  WHERE u.role='staff' AND s.branch_id=%s AND COALESCE(s.can_report,false)=true""",
-               (branch_id,)):
+                  JOIN scheduling.schedule_entries e ON e.staff_id=s.id
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                  WHERE u.role='staff' AND s.branch_id=%s AND COALESCE(s.active,true)=true
+                    AND COALESCE(s.can_report,false)=true
+                    AND sc.branch_id=%s AND e.date=%s
+                    AND e.shift_code NOT IN ('O','AL','SL','TB','OC')""",
+               (branch_id, branch_id, date)):
         ids.add(r["id"])
     for r in q("""SELECT u.id FROM scheduling.users u
                   JOIN scheduling.schedule_entries e ON e.staff_id=u.staff_id
