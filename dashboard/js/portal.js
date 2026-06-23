@@ -16,6 +16,7 @@ async function renderMySchedulePage() {
       <button onclick="changePortalMonth(1)">&#8250;</button>
     </div>
     <div id="portal-banner"></div>
+    <div id="ms-shiftcheck"></div>
     <div id="ms-eotm"></div>
     <div id="portal-grid">${LOADING_HTML}</div>
     <div id="portal-legend" style="margin-top:16px"></div>
@@ -23,6 +24,42 @@ async function renderMySchedulePage() {
   await loadMySchedule();
   loadMyRequests();   // "everything that's mine" — open requests + their stage
   if (typeof renderHomeEotm === 'function') renderHomeEotm('ms-eotm');   // celebrate EOTM for staff too
+  renderMyShiftChecks();   // equipment-check confirmation for the shift they're on
+}
+
+// ── Per-shift equipment check (تشييك الأجهزة) ────────────────────────────────
+async function renderMyShiftChecks() {
+  const box = document.getElementById('ms-shiftcheck');
+  if (!box) return;
+  let data;
+  try { data = await API.get('/shift-checks/mine'); } catch (e) { box.innerHTML = ''; return; }
+  const checks = (data && data.checks) || [];
+  if (!checks.length) { box.innerHTML = ''; return; }
+  box.innerHTML = checks.map(c => {
+    if (c.done) {
+      return `<div class="hm-card" style="border-left:4px solid #2BAE66;display:flex;align-items:center;gap:10px">
+        <span style="font-size:20px">✅</span>
+        <div><b>${c.label} equipment check done</b>
+          <div class="hm-muted" style="font-size:12px">${c.confirmed_by_name ? 'By ' + escapeHtml(c.confirmed_by_name) : ''}${c.confirmed_at ? ' · ' + new Date(c.confirmed_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+        </div></div>`;
+    }
+    return `<div class="hm-card" style="border-left:4px solid #FF9F43;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:22px">🩻</span>
+        <div><b>${c.label} equipment check</b>
+          <div class="hm-muted" style="font-size:12px">Confirm the device check for your shift.</div></div>
+      </div>
+      <button class="btn btn-sm" onclick="confirmMyShiftCheck('${c.shift}','${c.date}',${c.branch_id})">✓ Done — تم</button>
+    </div>`;
+  }).join('');
+}
+
+async function confirmMyShiftCheck(shift, date, branchId) {
+  try {
+    await API.post('/shift-checks', { shift, date, branch_id: branchId });
+    toast('Equipment check confirmed ✓');
+    renderMyShiftChecks();
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 // A consolidated "My requests" card so a staff member tracks every open request

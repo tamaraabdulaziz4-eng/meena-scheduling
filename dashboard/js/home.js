@@ -45,6 +45,7 @@ async function renderHomePage() {
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div id="hm-approvals"></div>
+    <div id="hm-shiftcheck"></div>
     <div class="hm-card">
       <div class="hm-card-head">
         <div class="hm-card-title">Today's cases</div>
@@ -63,6 +64,7 @@ async function renderHomePage() {
   renderHomeActions(dash);
   renderHomeCases(ov);
   renderHomeEotm();
+  renderHomeShiftChecks();
   if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) renderHomeApprovals();
   renderHomeRecent();
   _bindHomeSearchShortcut();
@@ -449,4 +451,31 @@ function ensureEotmModal() {
       </div>
     </div>`;
   document.body.appendChild(div.firstElementChild);
+}
+
+// ── Equipment checks status (today) ───────────────────────────────────────────
+async function renderHomeShiftChecks() {
+  const box = document.getElementById('hm-shiftcheck');
+  if (!box) return;
+  const today = fmtDate(new Date());
+  let d;
+  try { d = await API.get(`/shift-checks/overview?date=${today}`); } catch (e) { box.innerHTML = ''; return; }
+  const branches = (d && d.branches) || [];
+  if (!branches.length) { box.innerHTML = ''; return; }
+  const pill = (c) => {
+    const done = c.done;
+    const color = done ? '#2BAE66' : '#E8A33D';
+    const who = done && c.confirmed_by_name ? ` title="By ${escapeHtml(c.confirmed_by_name)}"` : '';
+    return `<span${who} style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
+      font-weight:700;padding:2px 9px;border-radius:10px;margin-left:6px">${done ? '✓' : '○'} ${c.label}</span>`;
+  };
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head"><div class="hm-card-title">Equipment checks today</div></div>
+    <div style="margin-top:6px">
+      ${branches.map(b => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+          <div style="font-size:13px;font-weight:600">${escapeHtml(b.branch_name)}</div>
+          <div>${b.checks.map(pill).join('')}</div>
+        </div>`).join('')}
+    </div></div>`;
 }

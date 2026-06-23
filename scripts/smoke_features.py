@@ -1085,5 +1085,43 @@ check("staff can't set EOTM", nope.status_code == 403, nope.text)
 admin.put("/api/employee-of-month", json={"staff_id": None})
 check("EOTM can be cleared", (admin.get("/api/employee-of-month").json().get("staff")) is None)
 
+print("\n== scenario 19: per-shift equipment checks ==")
+SCD = f"{YEAR}-08-28"
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": SCD, "shift_code": "M"})
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": B["id"], "date": SCD, "shift_code": "N"})
+# B is on Night, not Morning → can't confirm the Morning check.
+nb = staffB.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("off-shift staff can't confirm the check", nb.status_code == 403, nb.text)
+# A is on Morning → can confirm.
+ca = staffA.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("on-shift staff confirms the morning check", ca.status_code == 200 and ca.json().get("done") is True, ca.text)
+# Shared/idempotent: re-confirming is a no-op, still done.
+ca2 = staffA.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("re-confirm is idempotent", ca2.status_code == 200 and ca2.json().get("done") is True, ca2.text)
+st = staffA.get(f"/api/shift-checks?branch_id={bid}&date={SCD}").json()
+m = next((c for c in st["checks"] if c["shift"] == "M"), {})
+n = next((c for c in st["checks"] if c["shift"] == "N"), {})
+check("morning check shows done with confirmer", m.get("done") is True and bool(m.get("confirmed_by_name")), st)
+check("night check still pending", n.get("done") is False, st)
+ov = admin.get(f"/api/shift-checks/overview?date={SCD}").json()
+bov = next((b for b in ov["branches"] if b["branch_id"] == bid), {})
+check("overview shows the branch's checks", any(c["shift"] == "M" and c["done"] for c in bov.get("checks", [])), ov)
+# Night-shift staff confirms the night check.
+cn = staffB.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "N"})
+check("night-shift staff confirms the night check", cn.status_code == 200, cn.text)
+# Manager can reopen.
+ro = admin.put("/api/shift-checks/reopen", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("manager can reopen a check", ro.status_code == 200, ro.text)
+st2 = admin.get(f"/api/shift-checks?branch_id={bid}&date={SCD}").json()
+check("reopened check is pending again",
+      next((c for c in st2["checks"] if c["shift"] == "M"), {}).get("done") is False, st2)
+bad = admin.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "X"})
+check("invalid shift rejected", bad.status_code == 400, bad.text)
+# Shift-start hour setting round-trips.
+sm = admin.put("/api/settings", json={"shift_check_m_hour": 7})
+check("shift_check_m_hour setting round-trips",
+      sm.status_code == 200 and str(sm.json().get("shift_check_m_hour")) == "7", sm.text)
+admin.put("/api/settings", json={"shift_check_m_hour": 8})
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

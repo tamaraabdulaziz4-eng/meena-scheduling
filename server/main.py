@@ -537,6 +537,23 @@ def init_schema():
                     PRIMARY KEY (announcement_id, user_id)
                 );""")
 
+            # Per-shift equipment-check confirmation (تشييك الأجهزة). One row per
+            # branch/day/shift — the first person on that shift to confirm clears it
+            # for the rest. A reminder is sent if it isn't confirmed within 30 min of
+            # the shift starting.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.shift_checks (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    date DATE NOT NULL,
+                    shift TEXT NOT NULL,
+                    confirmed_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    confirmed_by_staff INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL,
+                    note TEXT,
+                    confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(branch_id, date, shift)
+                );""")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -4263,6 +4280,229 @@ async def set_eotm(request: Request, user=Depends(require_reviewer)):
     insert_audit(user, "EOTM_SET", f"staff:{sid}", st["name"])
     return {"ok": True, "staff_id": sid}
 
+# ── Per-shift equipment check ─────────────────────────────────────────────────
+# Twice a day the staff on shift confirm the equipment check was done — once at
+# the start of the morning shift (M) and once at the start of the night shift (N).
+# The first person on a shift to confirm clears it for everyone else on that
+# shift, and a reminder goes out if it isn't confirmed within 30 min of the start.
+
+_SHIFT_CHECK_SHIFTS = ("M", "N")
+_SHIFT_CHECK_LABELS = {"M": "Morning", "N": "Night"}
+
+def _shift_check_start_hour(shift):
+    key = "shift_check_m_hour" if shift == "M" else "shift_check_n_hour"
+    try:
+        return int(get_setting(key, "8" if shift == "M" else "20"))
+    except (TypeError, ValueError):
+        return 8 if shift == "M" else 20
+
+def _shift_check_active_date(shift):
+    """The date whose shift is currently 'live' in KSA. A night shift starts at
+    20:00 and runs past midnight, so before 08:00 it still belongs to yesterday."""
+    from datetime import datetime, timezone, timedelta
+    ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+    if shift == "N" and ksa.hour < 8:
+        ksa -= timedelta(days=1)
+    return ksa.strftime("%Y-%m-%d")
+
+def _on_shift(branch_id, staff_id, date, shift):
+    return bool(q("""SELECT 1 FROM scheduling.schedule_entries e
+                     JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                     WHERE sc.branch_id=%s AND e.staff_id=%s AND e.date=%s AND e.shift_code=%s""",
+                  (branch_id, staff_id, date, shift), one=True))
+
+def _can_confirm_shift_check(user, branch_id, date, shift):
+    """A reviewer/team lead (their branch), or a staff member scheduled on that
+    shift that day (or flagged can_report) may confirm the check."""
+    role = user["role"]
+    if role in ("superadmin", "manager"):
+        return True
+    if not can_access_branch(user, branch_id):
+        return False
+    if role == "admin":
+        return True
+    if role == "staff":
+        sid = user.get("staff_id")
+        st = q("SELECT can_report FROM scheduling.staff WHERE id=%s", (sid,), one=True)
+        if st and st.get("can_report"):
+            return True
+        return _on_shift(branch_id, sid, date, shift)
+    return False
+
+def _shift_check_row(branch_id, date, shift):
+    return q("""SELECT k.shift, TO_CHAR(k.confirmed_at,'YYYY-MM-DD"T"HH24:MI:SS') AS confirmed_at,
+                       COALESCE(s.name, u.username) AS confirmed_by_name
+                FROM scheduling.shift_checks k
+                LEFT JOIN scheduling.users u ON u.id=k.confirmed_by
+                LEFT JOIN scheduling.staff s ON s.id=k.confirmed_by_staff
+                WHERE k.branch_id=%s AND k.date=%s AND k.shift=%s""",
+             (branch_id, date, shift), one=True)
+
+@app.get("/api/shift-checks")
+def get_shift_checks(request: Request, user=Depends(get_current_user)):
+    p = request.query_params
+    branch_id = p.get("branch_id") or user.get("branch_id")
+    date = p.get("date")
+    if not branch_id or not date:
+        raise HTTPException(400, "branch_id and date required")
+    branch_id = _int_or_400(branch_id)
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
+    out = []
+    for sh in _SHIFT_CHECK_SHIFTS:
+        r = _shift_check_row(branch_id, date, sh)
+        out.append({"shift": sh, "label": _SHIFT_CHECK_LABELS[sh], "done": bool(r),
+                    "confirmed_by_name": r["confirmed_by_name"] if r else None,
+                    "confirmed_at": r["confirmed_at"] if r else None,
+                    "start_hour": _shift_check_start_hour(sh),
+                    "can_confirm": _can_confirm_shift_check(user, branch_id, date, sh)})
+    return {"branch_id": branch_id, "date": date, "checks": out}
+
+@app.get("/api/shift-checks/mine")
+def my_shift_checks(user=Depends(get_current_user)):
+    """The check(s) the logged-in staff member is on the hook for right now."""
+    sid = user.get("staff_id")
+    if not sid:
+        return {"checks": []}
+    st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (sid,), one=True)
+    if not st or not st.get("branch_id"):
+        return {"checks": []}
+    branch_id = st["branch_id"]
+    out = []
+    for sh in _SHIFT_CHECK_SHIFTS:
+        date = _shift_check_active_date(sh)
+        if not _on_shift(branch_id, sid, date, sh):
+            continue
+        r = _shift_check_row(branch_id, date, sh)
+        out.append({"shift": sh, "label": _SHIFT_CHECK_LABELS[sh], "date": date,
+                    "branch_id": branch_id, "done": bool(r),
+                    "confirmed_by_name": r["confirmed_by_name"] if r else None,
+                    "confirmed_at": r["confirmed_at"] if r else None})
+    return {"checks": out}
+
+@app.get("/api/shift-checks/overview")
+def shift_checks_overview(request: Request, user=Depends(get_current_user)):
+    date = request.query_params.get("date")
+    if not date:
+        raise HTTPException(400, "date required")
+    if user["role"] in ("superadmin", "manager"):
+        branches = q("SELECT id,name FROM scheduling.branches ORDER BY name")
+    else:
+        branches = q("SELECT id,name FROM scheduling.branches WHERE id=%s", (user.get("branch_id"),))
+    out = []
+    for b in branches:
+        checks = []
+        for sh in _SHIFT_CHECK_SHIFTS:
+            r = _shift_check_row(b["id"], date, sh)
+            checks.append({"shift": sh, "label": _SHIFT_CHECK_LABELS[sh], "done": bool(r),
+                           "confirmed_by_name": r["confirmed_by_name"] if r else None,
+                           "confirmed_at": r["confirmed_at"] if r else None})
+        out.append({"branch_id": b["id"], "branch_name": b["name"], "checks": checks})
+    return {"date": date, "branches": out}
+
+@app.post("/api/shift-checks")
+async def confirm_shift_check(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    branch_id = body.get("branch_id") or user.get("branch_id")
+    date = body.get("date")
+    shift = body.get("shift")
+    if not branch_id or not date or shift not in _SHIFT_CHECK_SHIFTS:
+        raise HTTPException(400, "branch_id, date and a valid shift are required")
+    branch_id = _int_or_400(branch_id)
+    if not _can_confirm_shift_check(user, branch_id, date, shift):
+        raise HTTPException(403, "You're not on this shift")
+    note = (body.get("note") or "").strip()[:300] or None
+    # Idempotent: the first confirmer wins; a second tap is a no-op (still "done").
+    created = q("""INSERT INTO scheduling.shift_checks
+                      (branch_id,date,shift,confirmed_by,confirmed_by_staff,note)
+                   VALUES (%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (branch_id,date,shift) DO NOTHING
+                   RETURNING id""",
+                (branch_id, date, shift, user["id"], user.get("staff_id"), note), one=True)
+    if created:
+        insert_audit(user, "SHIFT_CHECK_CONFIRM", f"branch:{branch_id}", f"{date} {shift}")
+        notify_branch_leads(branch_id,
+                            f"{_SHIFT_CHECK_LABELS[shift]} equipment check confirmed by {user.get('username') or 'staff'}",
+                            link="cases", ntype="info")
+    r = _shift_check_row(branch_id, date, shift)
+    return {"ok": True, "shift": shift, "done": True,
+            "confirmed_by_name": r["confirmed_by_name"] if r else user.get("username"),
+            "confirmed_at": r["confirmed_at"] if r else None}
+
+@app.put("/api/shift-checks/reopen")
+async def reopen_shift_check(request: Request, user=Depends(require_reviewer)):
+    body = await request.json()
+    branch_id, date, shift = body.get("branch_id"), body.get("date"), body.get("shift")
+    if not branch_id or not date or shift not in _SHIFT_CHECK_SHIFTS:
+        raise HTTPException(400, "branch_id, date and a valid shift are required")
+    branch_id = _int_or_400(branch_id)
+    q("DELETE FROM scheduling.shift_checks WHERE branch_id=%s AND date=%s AND shift=%s",
+      (branch_id, date, shift), exec_only=True)
+    insert_audit(user, "SHIFT_CHECK_REOPEN", f"branch:{branch_id}", f"{date} {shift}")
+    return {"ok": True}
+
+def _shift_check_targets(branch_id, date, shift):
+    """Logged-in staff on that shift + the branch lead(s)."""
+    ids = set()
+    for r in q("""SELECT u.id FROM scheduling.users u
+                  JOIN scheduling.schedule_entries e ON e.staff_id=u.staff_id
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                  WHERE u.role='staff' AND sc.branch_id=%s AND e.date=%s AND e.shift_code=%s""",
+               (branch_id, date, shift)):
+        ids.add(r["id"])
+    for r in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)):
+        ids.add(r["id"])
+    return ids
+
+def _send_shift_check_reminders(date, shift):
+    """Remind the staff on every branch that has someone on this shift but no
+    confirmation yet. Returns the branch names reminded."""
+    pending = q("""SELECT DISTINCT sc.branch_id AS branch_id, b.name AS name
+                   FROM scheduling.schedule_entries e
+                   JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                   JOIN scheduling.branches b ON b.id=sc.branch_id
+                   WHERE e.date=%s AND e.shift_code=%s
+                     AND NOT EXISTS (SELECT 1 FROM scheduling.shift_checks k
+                                     WHERE k.branch_id=sc.branch_id AND k.date=%s AND k.shift=%s)""",
+                (date, shift, date, shift))
+    reminded = []
+    for b in pending:
+        targets = _shift_check_targets(b["branch_id"], date, shift)
+        if not targets:
+            continue
+        label = _SHIFT_CHECK_LABELS[shift].lower()
+        msg = (f"Reminder: please confirm the {label} equipment check for {b['name']} — "
+               f"open the app and tap ✓ Done.")
+        for uid in targets:
+            notify(uid, msg, link="myschedule", ntype="reminder")
+        reminded.append(b["name"])
+    return reminded
+
+def _shift_check_reminder_loop():
+    """Once per shift, ~30 min after it starts, remind branches that still haven't
+    confirmed the equipment check. Each (date,shift) is claimed atomically so
+    exactly one worker sends."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+            for shift in _SHIFT_CHECK_SHIFTS:
+                start = _shift_check_start_hour(shift)
+                mins = (ksa.hour - start) * 60 + ksa.minute
+                if 30 <= mins < 60:   # the half-hour grace window after the shift start
+                    date = ksa.strftime("%Y-%m-%d")
+                    claimed = q("""INSERT INTO scheduling.app_settings (key,value)
+                                   VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
+                                (f"shiftchk_remind:{date}:{shift}", ksa.isoformat()), one=True)
+                    if claimed:
+                        names = _send_shift_check_reminders(date, shift)
+                        if names:
+                            print(f"[shift-check] {shift} reminded {len(names)} branch(es) for {date}")
+        except Exception as e:
+            print(f"[shift-check] {e}")
+        time.sleep(300)
+
 # ── Staff self-service portal ─────────────────────────────────────────────────
 
 @app.get("/api/my-schedule")
@@ -4605,7 +4845,9 @@ def delete_holiday(hid: int, user=Depends(require_superadmin)):
 @app.get("/api/settings")
 def read_settings(user=Depends(get_current_user)):
     out = {"leave_cutoff_day": get_leave_cutoff_day(),
-           "cases_remind_hour": get_setting("cases_remind_hour", "0")}
+           "cases_remind_hour": get_setting("cases_remind_hour", "0"),
+           "shift_check_m_hour": get_setting("shift_check_m_hour", "8"),
+           "shift_check_n_hour": get_setting("shift_check_n_hour", "20")}
     # Only a superadmin sees the registration links/code.
     if user["role"] == "superadmin":
         is_open = _registration_open()
@@ -4653,6 +4895,17 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
         q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('cases_remind_hour',%s)
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (val,), exec_only=True)
         insert_audit(user, "SET_CASES_REMIND_HOUR", val)
+    for _sk in ("shift_check_m_hour", "shift_check_n_hour"):
+        if _sk in body:
+            try:
+                hv = int(body[_sk])
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{_sk} must be an hour 0–23")
+            if not (0 <= hv <= 23):
+                raise HTTPException(400, f"{_sk} must be an hour 0–23")
+            q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+                 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (_sk, str(hv)), exec_only=True)
+            insert_audit(user, "SET_" + _sk.upper(), str(hv))
     if "registration" in body:
         # "on" → open onboarding (no code needed), "off" → close it.
         action = body["registration"]
@@ -5167,6 +5420,7 @@ def start_scheduler():
         return
     import threading
     threading.Thread(target=_cases_reminder_loop, daemon=True).start()
+    threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
 
 @app.put("/api/daily-cases/reopen")
 async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):
