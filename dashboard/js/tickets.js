@@ -10,16 +10,16 @@ const TICKET_STATUS_META = {
   closed:      { label: 'Closed',      color: '#9a95ba' },
 };
 const TICKET_CATEGORY_META = {
-  device_fault:   { label: 'Device fault',      icon: '🩻' },
-  pacs:           { label: 'PACS / imaging',    icon: '🖥️' },
-  report_blocked: { label: 'Blocked report',    icon: '📄' },
-  ovr:            { label: 'OVR / incident',    icon: '🚨' },
-  stock:          { label: 'Stock / supplies',  icon: '📦' },
-  request:        { label: 'Request',           icon: '📝' },
-  other:          { label: 'Other',             icon: '💬' },
+  device_fault:   { label: 'Device fault',      icon: '' },
+  pacs:           { label: 'PACS / imaging',    icon: '' },
+  report_blocked: { label: 'Blocked report',    icon: '' },
+  ovr:            { label: 'OVR / incident',    icon: '' },
+  stock:          { label: 'Stock / supplies',  icon: '' },
+  request:        { label: 'Request',           icon: '' },
+  other:          { label: 'Other',             icon: '' },
   // legacy values kept for older tickets
-  issue:          { label: 'Issue',             icon: '⚠️' },
-  fault:          { label: 'Fault',             icon: '🔧' },
+  issue:          { label: 'Issue',             icon: '' },
+  fault:          { label: 'Fault',             icon: '' },
 };
 const TICKET_PRIORITY_META = {
   low:    { label: 'Low',    color: '#9a95ba' },
@@ -85,7 +85,7 @@ function renderTicketsList() {
   const list = document.getElementById('tickets-list');
   if (!list) return;
   if (!ticketsData.length) {
-    list.innerHTML = `<div class="empty"><div class="empty-icon">🎫</div>
+    list.innerHTML = `<div class="empty">
       <p>No tickets here.</p>
       <button class="btn btn-sm" style="margin-top:12px" onclick="openCreateTicketModal()">+ Raise a ticket</button></div>`;
     return;
@@ -99,14 +99,13 @@ function renderTicketsList() {
       <div class="ticket-row" onclick="openTicketDetail(${t.id})"
            style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--border);
                   border-radius:14px;margin-bottom:10px;cursor:pointer;background:var(--card)">
-        <div style="font-size:20px">${cat.icon}</div>
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">#${t.id} · ${escapeHtml(t.subject)}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px">
             ${cat.label}${hi ? ' · ' + hi : ''}
             ${isManager ? ' · ' + escapeHtml(t.staff_name || t.created_by_name || '') : ''}
             ${t.branch_name ? ' · ' + escapeHtml(t.branch_name) : ''}
-            · ${ticketTimeAgo(t.updated_at)}${Number(t.updates) ? ' · 💬 ' + t.updates : ''}
+            · ${ticketTimeAgo(t.updated_at)}${Number(t.updates) ? ' · ' + t.updates + ' replies' : ''}
           </div>
         </div>
         ${ticketStatusBadge(t.status)}
@@ -183,7 +182,7 @@ function renderTicketDetail(t) {
                 background:${u.is_status_change ? 'rgba(91,141,239,0.08)' : 'var(--card)'};
                 border:1px solid var(--border)">
       <div style="font-size:12px;color:var(--muted);margin-bottom:3px">
-        ${u.is_status_change ? '🔄 ' : ''}${escapeHtml(u.author || 'system')} · ${ticketTimeAgo(u.created_at)}
+        ${escapeHtml(u.author || 'system')} · ${ticketTimeAgo(u.created_at)}
       </div>
       <div style="white-space:pre-wrap">${escapeHtml(u.body)}</div>
     </div>`).join('') || `<div style="color:var(--muted);font-size:13px;padding:6px 0">No replies yet.</div>`;
@@ -194,9 +193,9 @@ function renderTicketDetail(t) {
       <textarea id="td-note" rows="2" placeholder="Optional note for the staff member (e.g. what you did)"
         style="width:100%;margin-bottom:8px"></textarea>
       <div style="display:flex;flex-wrap:wrap;gap:8px">
-        ${t.status !== 'escalated'   ? `<button class="btn btn-sm btn-ghost" onclick="setTicketStatus('escalated')">⬆ Escalate</button>` : ''}
-        ${t.status !== 'in_progress' ? `<button class="btn btn-sm btn-ghost" onclick="setTicketStatus('in_progress')">⏳ In progress</button>` : ''}
-        ${t.status !== 'resolved'    ? `<button class="btn btn-sm" onclick="setTicketStatus('resolved')">✓ Resolved</button>` : ''}
+        ${t.status !== 'escalated'   ? `<button class="btn btn-sm btn-ghost" onclick="setTicketStatus('escalated')">Escalate</button>` : ''}
+        ${t.status !== 'in_progress' ? `<button class="btn btn-sm btn-ghost" onclick="setTicketStatus('in_progress')">In progress</button>` : ''}
+        ${t.status !== 'resolved'    ? `<button class="btn btn-sm" onclick="setTicketStatus('resolved')">Resolved</button>` : ''}
         ${t.status !== 'closed'      ? `<button class="btn btn-sm btn-ghost" onclick="setTicketStatus('closed')">Close</button>` : ''}
       </div>
     </div>` : '';
@@ -206,9 +205,9 @@ function renderTicketDetail(t) {
   document.getElementById('td-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
       ${ticketStatusBadge(t.status)}
-      <span style="font-size:12px;color:var(--muted)">${cat.icon} ${cat.label}</span>
+      <span style="font-size:12px;color:var(--muted)">${cat.label}</span>
       <span style="font-size:12px;color:${pri.color};font-weight:600">● ${pri.label}</span>
-      ${t.branch_name ? `<span style="font-size:12px;color:var(--muted)">🏢 ${escapeHtml(t.branch_name)}</span>` : ''}
+      ${t.branch_name ? `<span style="font-size:12px;color:var(--muted)">${escapeHtml(t.branch_name)}</span>` : ''}
     </div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
       Raised by ${escapeHtml(t.staff_name || t.created_by_name || '')} · ${ticketTimeAgo(t.created_at)}
@@ -299,7 +298,7 @@ function ensureTicketModal() {
       <div class="modal">
         <div class="modal-header">
           <h3>Raise a Ticket</h3>
-          <button class="modal-close" onclick="closeCreateTicketModal()">✕</button>
+          <button class="modal-close" onclick="closeCreateTicketModal()">&times;</button>
         </div>
         <div class="modal-body">
           <div style="display:flex;flex-direction:column;gap:14px">
@@ -311,13 +310,13 @@ function ensureTicketModal() {
               <div class="form-field" style="flex:1">
                 <label>Type</label>
                 <select id="tk-category">
-                  <option value="device_fault">🩻 Device fault / breakdown</option>
-                  <option value="pacs">🖥️ PACS / imaging system</option>
-                  <option value="report_blocked">📄 Blocked report</option>
-                  <option value="ovr">🚨 OVR / incident</option>
-                  <option value="stock">📦 Stock / supplies needed</option>
-                  <option value="request">📝 Request</option>
-                  <option value="other">💬 Other</option>
+                  <option value="device_fault">Device fault / breakdown</option>
+                  <option value="pacs">PACS / imaging system</option>
+                  <option value="report_blocked">Blocked report</option>
+                  <option value="ovr">OVR / incident</option>
+                  <option value="stock">Stock / supplies needed</option>
+                  <option value="request">Request</option>
+                  <option value="other">Other</option>
                 </select>
               </div>
               <div class="form-field" style="flex:1">
@@ -353,7 +352,7 @@ function ensureTicketDetailModal() {
       <div class="modal" style="max-width:560px">
         <div class="modal-header">
           <h3 id="td-title">Ticket</h3>
-          <button class="modal-close" onclick="closeTicketDetail()">✕</button>
+          <button class="modal-close" onclick="closeTicketDetail()">&times;</button>
         </div>
         <div class="modal-body" id="td-body">${LOADING_HTML}</div>
       </div>

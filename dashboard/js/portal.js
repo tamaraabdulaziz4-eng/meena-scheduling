@@ -6,7 +6,7 @@ let portalYear  = new Date().getFullYear();
 let portalMonth = new Date().getMonth() + 1;
 
 async function renderMySchedulePage() {
-  setTopbar('My Schedule', '', `<button class="btn btn-sm" onclick="openLeaveModal()">🌴 Request Leave</button>`);
+  setTopbar('My Schedule', '', `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero(`Welcome, ${currentUser?.username || ''}`, 'My Schedule', 'Your shifts, leave and swaps')}
@@ -37,19 +37,17 @@ async function renderMyShiftChecks() {
   if (!checks.length) { box.innerHTML = ''; return; }
   box.innerHTML = checks.map(c => {
     if (c.done) {
-      return `<div class="hm-card" style="border-left:4px solid #2BAE66;display:flex;align-items:center;gap:10px">
-        <span style="font-size:20px">✅</span>
-        <div><b>${c.label} equipment check done</b>
-          <div class="hm-muted" style="font-size:12px">${c.confirmed_by_name ? 'By ' + escapeHtml(c.confirmed_by_name) : ''}${c.confirmed_at ? ' · ' + new Date(c.confirmed_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
-        </div></div>`;
+      return `<div class="hm-card" style="border-left:4px solid #2BAE66">
+        <b>${c.label} equipment check — done</b>
+        <div class="hm-muted" style="font-size:12px;margin-top:2px">${c.confirmed_by_name ? 'By ' + escapeHtml(c.confirmed_by_name) : ''}${c.confirmed_at ? ' · ' + new Date(c.confirmed_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+      </div>`;
     }
     return `<div class="hm-card" style="border-left:4px solid #FF9F43;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:22px">🩻</span>
-        <div><b>${c.label} equipment check</b>
-          <div class="hm-muted" style="font-size:12px">Confirm the device check for your shift.</div></div>
+      <div>
+        <b>${c.label} equipment check</b>
+        <div class="hm-muted" style="font-size:12px;margin-top:2px">Confirm the device check for your shift.</div>
       </div>
-      <button class="btn btn-sm" onclick="confirmMyShiftCheck('${c.shift}','${c.date}',${c.branch_id})">✓ Done — تم</button>
+      <button class="btn btn-sm" onclick="confirmMyShiftCheck('${c.shift}','${c.date}',${c.branch_id})">Confirm done</button>
     </div>`;
   }).join('');
 }
@@ -57,7 +55,7 @@ async function renderMyShiftChecks() {
 async function confirmMyShiftCheck(shift, date, branchId) {
   try {
     await API.post('/shift-checks', { shift, date, branch_id: branchId });
-    toast('Equipment check confirmed ✓');
+    toast('Equipment check confirmed');
     renderMyShiftChecks();
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -143,7 +141,7 @@ async function loadMySchedule() {
     renderPortalGrid();
   } catch (e) {
     document.getElementById('portal-grid').innerHTML =
-      `<div class="empty"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message)}</p></div>`;
+      `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`;
   }
 }
 
@@ -155,13 +153,13 @@ function renderPortalGrid() {
 
   // Status banner
   if (!d.status) {
-    banner.innerHTML = `<div class="tl-status-banner"><div class="ico">📭</div><div style="flex:1"><div class="ttl">No schedule yet</div><div class="sub">Your team lead hasn't created this month's rota.</div></div></div>`;
+    banner.innerHTML = `<div class="tl-status-banner"><div class="ico"></div><div style="flex:1"><div class="ttl">No schedule yet</div><div class="sub">Your team lead hasn't created this month's rota.</div></div></div>`;
   } else if (!d.finalised) {
-    banner.innerHTML = `<div class="tl-status-banner warn"><div class="ico" style="background:rgba(255,159,67,.15)">✏️</div><div style="flex:1"><div class="ttl">Draft — not final</div><div class="sub">This rota is still being prepared and may change.</div></div></div>`;
+    banner.innerHTML = `<div class="tl-status-banner warn"><div class="ico" style="background:rgba(255,159,67,.15)"></div><div style="flex:1"><div class="ttl">Draft — not final</div><div class="sub">This rota is still being prepared and may change.</div></div></div>`;
   } else if (d.status === 'approved') {
-    banner.innerHTML = `<div class="tl-status-banner ok"><div class="ico" style="background:rgba(0,200,150,.15)">✓</div><div style="flex:1"><div class="ttl" style="color:#009B74">Approved</div><div class="sub">This rota has been approved by your manager.</div></div></div>`;
+    banner.innerHTML = `<div class="tl-status-banner ok"><div class="ico" style="background:rgba(0,200,150,.15)"></div><div style="flex:1"><div class="ttl" style="color:#009B74">Approved</div><div class="sub">This rota has been approved by your manager.</div></div></div>`;
   } else {
-    banner.innerHTML = `<div class="tl-status-banner"><div class="ico">👀</div><div style="flex:1"><div class="ttl">Under review</div><div class="sub">Submitted to the manager — may still change.</div></div></div>`;
+    banner.innerHTML = `<div class="tl-status-banner"><div class="ico"></div><div style="flex:1"><div class="ttl">Under review</div><div class="sub">Submitted to the manager — may still change.</div></div></div>`;
   }
 
   // Leave balance + next-leave countdown card, above the status banner.

@@ -57,7 +57,7 @@ function renderAnnouncementsList() {
   const list = document.getElementById('ann-list');
   if (!list) return;
   if (!announcementsData.length) {
-    list.innerHTML = `<div class="empty"><div class="empty-icon">📢</div><p>No announcements yet.</p></div>`;
+    list.innerHTML = `<div class="empty"><p>No announcements yet.</p></div>`;
     return;
   }
   const canManage = annCanPost();
@@ -67,16 +67,16 @@ function renderAnnouncementsList() {
       ? `<span style="background:#E255551a;color:#E25555;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px">Action required</span>`
       : `<span style="background:#5B8DEF1a;color:#5B8DEF;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px">Announcement</span>`;
     const ackBtn = (required && !a.acked)
-      ? `<button class="btn btn-sm" onclick="ackAnnouncement(${a.id})">✓ Acknowledge</button>`
-      : (required && a.acked ? `<span style="color:#2BAE66;font-size:12px;font-weight:600">✓ Acknowledged</span>` : '');
+      ? `<button class="btn btn-sm" onclick="ackAnnouncement(${a.id})">Acknowledge</button>`
+      : (required && a.acked ? `<span style="color:#2BAE66;font-size:12px;font-weight:600">Acknowledged</span>` : '');
     const mgrTools = canManage ? `
-      ${required ? `<button class="btn btn-sm btn-ghost" onclick="viewAnnAcks(${a.id})">👁 ${a.ack_count || 0} seen</button>` : ''}
+      ${required ? `<button class="btn btn-sm btn-ghost" onclick="viewAnnAcks(${a.id})">${a.ack_count || 0} acknowledged</button>` : ''}
       <button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="deleteAnnouncement(${a.id})">Delete</button>` : '';
     return `
       <div style="border:1px solid var(--border);border-left:4px solid ${required ? '#E25555' : '#5B8DEF'};
                   border-radius:14px;padding:16px;margin-bottom:12px;background:var(--card)">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          ${a.pinned ? '📌 ' : ''}${kindBadge}
+          ${a.pinned ? '<span style="background:var(--border);color:var(--muted);font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px">PINNED</span>' : ''}${kindBadge}
           <span style="font-weight:700;font-size:15px">${escapeHtml(a.title)}</span>
         </div>
         <div style="white-space:pre-wrap;margin:6px 0 10px">${escapeHtml(personalizeAnnouncement(a.body))}</div>
@@ -212,7 +212,7 @@ function ensureAnnModal() {
       <div class="modal">
         <div class="modal-header">
           <h3>New Circular</h3>
-          <button class="modal-close" onclick="closeAnnModal()">✕</button>
+          <button class="modal-close" onclick="closeAnnModal()">&times;</button>
         </div>
         <div class="modal-body">
           <div style="display:flex;flex-direction:column;gap:14px">
@@ -229,8 +229,8 @@ function ensureAnnModal() {
               <div class="form-field" style="flex:1">
                 <label>Type</label>
                 <select id="ann-kind">
-                  <option value="announcement">📢 Announcement</option>
-                  <option value="action_required">🚨 Action required (needs acknowledgement)</option>
+                  <option value="announcement">Announcement</option>
+                  <option value="action_required">Action required (needs acknowledgement)</option>
                 </select>
               </div>
               <div class="form-field" style="flex:1" id="ann-audience-wrap">
@@ -242,7 +242,7 @@ function ensureAnnModal() {
               <input type="checkbox" id="ann-broadcast"> Also send over <b>WhatsApp + email</b> to everyone now
             </label>
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-              <input type="checkbox" id="ann-pinned"> 📌 Pin to top
+              <input type="checkbox" id="ann-pinned"> Pin to top
             </label>
             <div class="msg" id="ann-msg"></div>
           </div>
