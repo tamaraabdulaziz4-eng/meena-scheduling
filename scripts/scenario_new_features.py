@@ -146,5 +146,18 @@ check("cross-branch staff can't read another branch's checks", staffC.get(f"/api
 ov = admin.get(f"/api/shift-checks/overview?date={D}").json()
 check("overview lists branches", any(b["branch_id"] == b1 for b in ov["branches"]))
 
+# ── Notification targeting: only on-duty staff get the cases reminder ──────────
+print("\n== cases reminder targets only on-duty staff ==")
+D2 = f"{YEAR}-09-20"
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": B["id"], "date": D2, "shift_code": "N"})
+M.q("UPDATE scheduling.staff SET can_report=true WHERE id=%s", (A["id"],), exec_only=True)  # A is can_report but OFF on D2
+rd = admin.post(f"/api/daily-cases/remind?date={D2}&force=1", json={})
+check("cases reminder runs", rd.status_code == 200, rd.text)
+key = "daily case numbers"
+na = [n for n in staffA.get("/api/notifications").json()["notifications"] if key in (n["message"] or "")]
+nb = [n for n in staffB.get("/api/notifications").json()["notifications"] if key in (n["message"] or "")]
+check("off-duty can_report staff is NOT reminded", len(na) == 0, na)
+check("on-duty night staff IS reminded", len(nb) >= 1, nb)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
