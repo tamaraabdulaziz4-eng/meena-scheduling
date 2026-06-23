@@ -41,9 +41,11 @@ async function renderHomePage() {
       <div id="hm-recent" class="hm-recent"></div>
       <div id="hm-staff-results" class="hm-results"></div>
     </div>
+    <div id="hm-eotm"></div>
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div id="hm-approvals"></div>
+    <div id="hm-shiftcheck"></div>
     <div class="hm-card">
       <div class="hm-card-head">
         <div class="hm-card-title">Today's cases</div>
@@ -61,6 +63,8 @@ async function renderHomePage() {
   renderHomeKpis(dash, ov);
   renderHomeActions(dash);
   renderHomeCases(ov);
+  renderHomeEotm();
+  renderHomeShiftChecks();
   if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) renderHomeApprovals();
   renderHomeRecent();
   _bindHomeSearchShortcut();
@@ -333,4 +337,145 @@ function openStaffSchedule(branchId, payload) {
   if (payload) { try { _hmPushRecent(JSON.parse(decodeURIComponent(payload))); } catch {} }
   if (branchId) window._pendingScheduleBranch = branchId;
   showPage('schedule');
+}
+
+// ── Employee of the Month ─────────────────────────────────────────────────────
+async function renderHomeEotm(containerId = 'hm-eotm') {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
+  let d = null;
+  try { d = await API.get('/employee-of-month'); } catch (e) { box.innerHTML = ''; return; }
+  if (!d || !d.staff) {
+    box.innerHTML = isReviewer ? `
+      <div class="hm-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div><span style="font-size:18px">🏆</span> <b>Employee of the Month</b>
+          <span class="hm-muted" style="margin-left:6px">not set</span></div>
+        <button class="btn btn-sm" onclick="openEotmModal()">Choose</button>
+      </div>` : '';
+    return;
+  }
+  const s = d.staff;
+  box.innerHTML = `
+    <div class="hm-card" style="background:linear-gradient(120deg,#6B4EFF12,#ffb84712);border:1px solid #6B4EFF33">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="font-size:38px;line-height:1">🏆</div>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.5px;color:#6B4EFF;text-transform:uppercase">
+            Employee of the Month${d.period ? ' · ' + escapeHtml(d.period) : ''}</div>
+          <div style="font-size:21px;font-weight:800">${escapeHtml(s.name)}</div>
+          <div class="hm-muted" style="font-size:13px">${escapeHtml(s.branch_name || '')}</div>
+          ${d.note ? `<div style="margin-top:4px;font-style:italic">“${escapeHtml(d.note)}”</div>` : ''}
+        </div>
+        ${isReviewer ? `<div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn btn-sm btn-ghost" onclick="openEotmModal()">Change</button>
+          <button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="clearEotm()">Clear</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+}
+
+async function clearEotm() {
+  const ok = await showConfirm('Clear Employee of the Month', 'Remove the current selection from the home page?', 'Clear', '');
+  if (!ok) return;
+  try { await API.put('/employee-of-month', { staff_id: null }); toast('Cleared'); renderHomeEotm(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+
+function openEotmModal() {
+  ensureEotmModal();
+  if (!allStaff || !allStaff.length) { loadStaff().then(fillEotmStaff).catch(() => {}); }
+  else fillEotmStaff();
+  const now = new Date();
+  document.getElementById('eotm-period').value =
+    now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  document.getElementById('eotm-note').value = '';
+  document.getElementById('eotm-msg').textContent = '';
+  document.getElementById('eotm-modal-overlay').classList.add('open');
+}
+function fillEotmStaff() {
+  const sel = document.getElementById('eotm-staff');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select staff…</option>' +
+    (allStaff || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${escapeHtml(s.branch_name || '?')})</option>`).join('');
+}
+function closeEotmModal() { document.getElementById('eotm-modal-overlay').classList.remove('open'); }
+
+async function saveEotm() {
+  const msg = document.getElementById('eotm-msg');
+  const sid = document.getElementById('eotm-staff').value;
+  if (!sid) { msg.className = 'msg err'; msg.textContent = 'Pick a staff member'; return; }
+  try {
+    await API.put('/employee-of-month', {
+      staff_id: Number(sid),
+      note: document.getElementById('eotm-note').value.trim(),
+      period: document.getElementById('eotm-period').value.trim(),
+    });
+    closeEotmModal();
+    toast('Employee of the Month set 🏆');
+    renderHomeEotm();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+}
+
+function ensureEotmModal() {
+  if (document.getElementById('eotm-modal-overlay')) return;
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <div class="modal-overlay" id="eotm-modal-overlay">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>🏆 Employee of the Month</h3>
+          <button class="modal-close" onclick="closeEotmModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="form-field">
+              <label>Staff *</label>
+              <select id="eotm-staff"></select>
+            </div>
+            <div class="form-field">
+              <label>Period</label>
+              <input type="text" id="eotm-period" placeholder="e.g. June 2026">
+            </div>
+            <div class="form-field">
+              <label>Note (optional)</label>
+              <input type="text" id="eotm-note" maxlength="300" placeholder="Why they earned it">
+            </div>
+            <div class="msg" id="eotm-msg"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeEotmModal()">Cancel</button>
+          <button class="btn" onclick="saveEotm()">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(div.firstElementChild);
+}
+
+// ── Equipment checks status (today) ───────────────────────────────────────────
+async function renderHomeShiftChecks() {
+  const box = document.getElementById('hm-shiftcheck');
+  if (!box) return;
+  const today = fmtDate(new Date());
+  let d;
+  try { d = await API.get(`/shift-checks/overview?date=${today}`); } catch (e) { box.innerHTML = ''; return; }
+  const branches = (d && d.branches) || [];
+  if (!branches.length) { box.innerHTML = ''; return; }
+  const pill = (c) => {
+    const done = c.done;
+    const color = done ? '#2BAE66' : '#E8A33D';
+    const who = done && c.confirmed_by_name ? ` title="By ${escapeHtml(c.confirmed_by_name)}"` : '';
+    return `<span${who} style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
+      font-weight:700;padding:2px 9px;border-radius:10px;margin-left:6px">${done ? '✓' : '○'} ${c.label}</span>`;
+  };
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head"><div class="hm-card-title">Equipment checks today</div></div>
+    <div style="margin-top:6px">
+      ${branches.map(b => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+          <div style="font-size:13px;font-weight:600">${escapeHtml(b.branch_name)}</div>
+          <div>${b.checks.map(pill).join('')}</div>
+        </div>`).join('')}
+    </div></div>`;
 }

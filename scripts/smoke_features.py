@@ -611,7 +611,7 @@ rem = admin.post(f"/api/daily-cases/remind?date={CD}", json={})
 check("remind endpoint ok", rem.status_code == 200, rem.text)
 check("NEST 3 reminded (no locked report)", nest3["name"] in (rem.json().get("reminded") or []), rem.json())
 lead_after = [n for n in lead.get("/api/notifications").json()["notifications"] if n["id"] not in lead_b4]
-check("team lead got a fill-in reminder", any("hasn't been submitted" in (n["message"] or "").lower() for n in lead_after), lead_after)
+check("team lead got a fill-in reminder", any("finalized in 20 minutes" in (n["message"] or "").lower() for n in lead_after), lead_after)
 check("reminder deduped within 6h", (admin.post(f"/api/daily-cases/remind?date={CD}", json={}).json() or {}).get("skipped"), "expected skipped")
 rfx = lead.post(f"/api/daily-cases/remind?date={CD}", json={})
 check("remind is superadmin/cron only", rfx.status_code in (401, 403), rfx.status_code)
@@ -979,6 +979,156 @@ check("register/info reports phone verification disabled when not configured",
 
 admin.put("/api/settings", json={"registration": "off"})
 check("registration can be closed again", admin.get("/api/settings").json().get("registration_open") is False)
+
+print("\n== scenario 14: support tickets ==")
+# Staff raises a ticket.
+tk = staffA.post("/api/tickets", json={"subject": "Scanner #2 not powering on",
+                                       "description": "Console is dark since this morning.",
+                                       "category": "fault", "priority": "high"})
+check("staff can raise a ticket", tk.status_code == 200 and tk.json().get("status") == "open", tk.text)
+tid = tk.json().get("id")
+# Branch lead is notified of the new ticket.
+ln = lead.get("/api/notifications").json()
+check("team lead notified of new ticket",
+      any("ticket" in (n["message"] or "").lower() for n in ln["notifications"]), ln)
+# Staff sees their own; lead sees it on their branch.
+mine = staffA.get("/api/tickets").json()
+check("staff sees their own ticket", any(t["id"] == tid for t in mine), mine)
+leadlist = lead.get("/api/tickets?status=active").json()
+check("team lead sees the branch ticket", any(t["id"] == tid for t in leadlist), leadlist)
+# A different staff member cannot view it.
+other = staffB.get(f"/api/tickets/{tid}")
+check("unrelated staff can't view another's ticket", other.status_code == 403, other.text)
+# Staff cannot change status.
+nope = staffA.put(f"/api/tickets/{tid}/status", json={"status": "resolved"})
+check("staff can't change ticket status", nope.status_code == 403, nope.text)
+# Lead escalates → staff notified.
+esc = lead.put(f"/api/tickets/{tid}/status", json={"status": "escalated", "note": "Raised to facilities."})
+check("lead can escalate", esc.status_code == 200 and esc.json().get("status") == "escalated", esc.text)
+an = staffA.get("/api/notifications").json()
+check("staff notified ticket escalated",
+      any("escalated" in (n["message"] or "").lower() for n in an["notifications"]), an)
+# Lead resolves with a note → resolution recorded, staff notified.
+res = lead.put(f"/api/tickets/{tid}/status", json={"status": "resolved", "note": "Replaced the power unit."})
+check("lead can resolve", res.status_code == 200 and res.json().get("status") == "resolved", res.text)
+det = staffA.get(f"/api/tickets/{tid}").json()
+check("resolution is stored on the ticket", "power unit" in (det.get("resolution") or "").lower(), det)
+check("thread records the status changes",
+      sum(1 for u in det.get("updates", []) if u.get("is_status_change")) >= 2, det.get("updates"))
+# Staff replies → lead notified.
+rep = staffA.post(f"/api/tickets/{tid}/updates", json={"body": "Thanks, it works now."})
+check("staff can reply on the thread", rep.status_code == 200, rep.text)
+ln2 = lead.get("/api/notifications").json()
+check("lead notified of the reply",
+      any("reply" in (n["message"] or "").lower() for n in ln2["notifications"]), ln2)
+# Open-ticket count surfaces for the lead while active; resolved drops out of 'active'.
+active_after = lead.get("/api/tickets?status=active").json()
+check("resolved ticket leaves the active list", not any(t["id"] == tid for t in active_after), active_after)
+# Validation: empty subject is rejected.
+bad = staffA.post("/api/tickets", json={"subject": "   "})
+check("empty subject rejected", bad.status_code == 400, bad.text)
+# Manager can delete any ticket.
+dele = admin.delete(f"/api/tickets/{tid}")
+check("manager can delete a ticket", dele.status_code == 200, dele.text)
+check("deleted ticket is gone", admin.get(f"/api/tickets/{tid}").status_code == 404)
+
+print("\n== scenario 17: announcements / circulars ==")
+# Manager posts an all-staff announcement.
+ap = admin.post("/api/announcements", json={"title": "Annual leave policy update",
+                                            "body": "Please review the new policy.", "kind": "announcement"})
+check("manager can post an announcement", ap.status_code == 200, ap.text)
+aid = ap.json().get("id")
+# Staff see it.
+seen = staffA.get("/api/announcements").json()
+check("staff sees the all-staff announcement", any(a["id"] == aid for a in seen), seen)
+# Action-required broadcast over WhatsApp + email, forced past the type filter.
+import os as _os
+_os.environ["WHATSAPP_CAPTURE"] = "1"
+_os.environ["WHATSAPP_ONLY_TYPES"] = "approved"   # excludes 'announcement' on purpose
+M._whatsapp_outbox.clear(); M._email_outbox.clear()
+bcStaff = admin.post("/api/staff", json={"name": "ZZ Broadcast", "branch_id": bid,
+                                         "phone": "0501234567", "email": "bc@example.com"}).json()
+try:
+    br = admin.post("/api/announcements", json={"title": "Mandatory fire drill",
+                                                "body": "Attend at 2pm.", "kind": "action_required",
+                                                "broadcast": True})
+    check("action-required broadcast accepted", br.status_code == 200 and br.json().get("delivered", 0) > 0, br.text)
+    baid = br.json().get("id")
+    wamsg = [m for m in M._whatsapp_outbox if m["to"] == "966501234567"]
+    check("broadcast reached WhatsApp despite the type filter (force)",
+          any("fire drill" in (m["message"] or "").lower() for m in wamsg), M._whatsapp_outbox)
+    check("broadcast reached email", any(e["to"] == "bc@example.com" for e in M._email_outbox), M._email_outbox)
+finally:
+    _os.environ.pop("WHATSAPP_CAPTURE", None); _os.environ.pop("WHATSAPP_ONLY_TYPES", None)
+# Staff acknowledges the action-required circular.
+ackr = staffA.post(f"/api/announcements/{baid}/ack", json={})
+check("staff can acknowledge", ackr.status_code == 200, ackr.text)
+after = staffA.get("/api/announcements").json()
+check("ack is reflected for the staff member",
+      next((a for a in after if a["id"] == baid), {}).get("acked") is True, after)
+acks = admin.get(f"/api/announcements/{baid}/acks").json()
+check("manager sees who acknowledged", any(r["username"] == f"zza{sfx}" for r in acks), acks)
+# A team lead can post only to their branch; a staff member cannot post at all.
+sp = staffA.post("/api/announcements", json={"title": "x", "body": "y"})
+check("staff can't post announcements", sp.status_code == 403, sp.text)
+# Delete cleans up.
+check("manager can delete an announcement", admin.delete(f"/api/announcements/{aid}").status_code == 200)
+
+print("\n== scenario 18: employee of the month ==")
+setr = admin.put("/api/employee-of-month", json={"staff_id": A["id"], "period": "June 2026", "note": "Great work"})
+check("manager can set employee of the month", setr.status_code == 200, setr.text)
+eotm = staffA.get("/api/employee-of-month").json()
+check("everyone can read the current EOTM", (eotm.get("staff") or {}).get("id") == A["id"], eotm)
+check("EOTM carries the note", eotm.get("note") == "Great work", eotm)
+nope = staffA.put("/api/employee-of-month", json={"staff_id": B["id"]})
+check("staff can't set EOTM", nope.status_code == 403, nope.text)
+admin.put("/api/employee-of-month", json={"staff_id": None})
+check("EOTM can be cleared", (admin.get("/api/employee-of-month").json().get("staff")) is None)
+
+print("\n== scenario 19: per-shift equipment checks ==")
+SCD = f"{YEAR}-08-28"
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": SCD, "shift_code": "M"})
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": B["id"], "date": SCD, "shift_code": "N"})
+# B is on Night, not Morning → can't confirm the Morning check.
+nb = staffB.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("off-shift staff can't confirm the check", nb.status_code == 403, nb.text)
+# A is on Morning → can confirm.
+ca = staffA.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("on-shift staff confirms the morning check", ca.status_code == 200 and ca.json().get("done") is True, ca.text)
+# Shared/idempotent: re-confirming is a no-op, still done.
+ca2 = staffA.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("re-confirm is idempotent", ca2.status_code == 200 and ca2.json().get("done") is True, ca2.text)
+st = staffA.get(f"/api/shift-checks?branch_id={bid}&date={SCD}").json()
+m = next((c for c in st["checks"] if c["shift"] == "M"), {})
+n = next((c for c in st["checks"] if c["shift"] == "N"), {})
+check("morning check shows done with confirmer", m.get("done") is True and bool(m.get("confirmed_by_name")), st)
+check("night check still pending", n.get("done") is False, st)
+ov = admin.get(f"/api/shift-checks/overview?date={SCD}").json()
+bov = next((b for b in ov["branches"] if b["branch_id"] == bid), {})
+check("overview shows the branch's checks", any(c["shift"] == "M" and c["done"] for c in bov.get("checks", [])), ov)
+# Night-shift staff confirms the night check.
+cn = staffB.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "N"})
+check("night-shift staff confirms the night check", cn.status_code == 200, cn.text)
+# Manager can reopen.
+ro = admin.put("/api/shift-checks/reopen", json={"branch_id": bid, "date": SCD, "shift": "M"})
+check("manager can reopen a check", ro.status_code == 200, ro.text)
+st2 = admin.get(f"/api/shift-checks?branch_id={bid}&date={SCD}").json()
+check("reopened check is pending again",
+      next((c for c in st2["checks"] if c["shift"] == "M"), {}).get("done") is False, st2)
+bad = admin.post("/api/shift-checks", json={"branch_id": bid, "date": SCD, "shift": "X"})
+check("invalid shift rejected", bad.status_code == 400, bad.text)
+# Shift-start hour setting round-trips.
+sm = admin.put("/api/settings", json={"shift_check_m_hour": 7})
+check("shift_check_m_hour setting round-trips",
+      sm.status_code == 200 and str(sm.json().get("shift_check_m_hour")) == "7", sm.text)
+admin.put("/api/settings", json={"shift_check_m_hour": 8})
+
+print("\n== scenario 20: manual edits are flagged (preserved on regenerate) ==")
+me = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-17", "shift_code": "N"})
+check("a hand-entered cell is flagged is_manual", me.status_code == 200 and me.json().get("is_manual") is True, me.text)
+ments = admin.get(f"/api/schedules/{sid}/entries").json()
+mcell = next((e for e in ments if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-17"), None)
+check("entries list surfaces the manual flag", bool(mcell) and mcell.get("is_manual") is True, mcell)
 
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

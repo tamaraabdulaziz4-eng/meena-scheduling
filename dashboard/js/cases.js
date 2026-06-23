@@ -306,7 +306,9 @@ async function remindPendingCases() {
     `Notify the team leads / night staff of every branch that hasn't submitted ${fmtDateDisplay(casesDate)} yet?`, 'Send reminders');
   if (!ok) return;
   try {
-    const r = await API.post(`/daily-cases/remind?date=${casesDate}`, {});
+    // force=1: an explicit manager click always sends now (the 6h dedupe is
+    // only meant to stop the automatic midnight job from double-firing).
+    const r = await API.post(`/daily-cases/remind?date=${casesDate}&force=1`, {});
     if (r.skipped) { toast('Already reminded recently — try again later'); return; }
     const n = (r.reminded || []).length;
     toast(n ? `Reminder sent to ${n} branch${n !== 1 ? 'es' : ''}` : 'All branches have already submitted 🎉');

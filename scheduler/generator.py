@@ -396,10 +396,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
                     b_m = get_bool(p, 0, mc)
                     model.add(b_m == 0)
 
-        # Rule (mirror of HC4d across the boundary): last day was a Morning →
-        # can't start a Night for two days (no "morning end of last month, night
-        # first of this one"). Block N on day 1 and day 2.
-        if last_code == "M" and "N" in allowed:
+        # Rule (mirror of HC4d across the boundary): last day was a Morning (any
+        # morning-type code, not just "M") → can't start a Night for two days (no
+        # "morning end of last month, night first of this one"). Block N on day 1 & 2.
+        if last_code in MORNING_CODES_SET and "N" in allowed:
             model.add(get_bool(p, 0, "N") == 0)
             if n_days >= 2:
                 model.add(get_bool(p, 1, "N") == 0)
@@ -430,9 +430,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
         # Additionally, if the boundary completes a full k-day work block,
         # enforce the 2-off-days rule at the start of the month.
         if k and k > 0:
+            # Count ANY trailing work shift (morning variants, night, day, etc.) —
+            # not just literal M/N — so a month that ended on a morning-variant run
+            # still limits how far the new month can extend the streak.
+            REST_CODES = {"O", "AL", "SL", "TB", "OC", "OFF", ""}
             trailing_work = 0
             for code in reversed(tail):
-                if code in ("M", "N"):
+                if code and code not in REST_CODES:
                     trailing_work += 1
                 else:
                     break
