@@ -1084,7 +1084,7 @@ def _whatsapp_send_now(to_normalized, message):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=40) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"Bridge {e.code}: {e.read().decode('utf-8', 'replace')}") from None
@@ -1115,7 +1115,7 @@ def send_whatsapp(to, message, *, ntype="info", link=None, force=False):
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             req = urllib.request.Request(url, data=data, method="POST", headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=40) as resp:
                 resp.read()
         except Exception as e:
             print(f"[whatsapp] failed to {to}: {e}")

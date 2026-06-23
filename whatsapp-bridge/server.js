@@ -152,6 +152,18 @@ app.get('/qr', async (req, res) => {
   }
 });
 
+// Cap a hanging WhatsApp Web call so the request fails fast with a clear error
+// instead of leaving the caller to time out with no information.
+function withTimeout(promise, ms, label) {
+  let t;
+  const guard = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(t));
+}
+const LOOKUP_TIMEOUT_MS = Number(process.env.LOOKUP_TIMEOUT_MS || 8000);
+const SEND_TIMEOUT_MS   = Number(process.env.SEND_TIMEOUT_MS   || 30000);
+
 app.post('/send', requireAuth, async (req, res) => {
   try {
     if (!rateOk()) return res.status(429).json({ ok: false, error: 'Rate limit exceeded' });
@@ -162,20 +174,23 @@ app.post('/send', requireAuth, async (req, res) => {
     const message = String((req.body && req.body.message) || '').trim();
     if (!message) return res.status(400).json({ ok: false, error: 'Message is required' });
 
-    // Resolve the real WhatsApp chat id; gives a clear error for non-WhatsApp numbers.
-    let chatId;
+    // The contact lookup (getNumberId) can hang on some WhatsApp Web builds —
+    // that's what makes /send time out. Cap it and fall back to the raw chat id,
+    // which sendMessage resolves on its own.
+    let chatId = `${digits}@c.us`;
     try {
-      const numberId = await client.getNumberId(digits);
-      if (!numberId) return res.status(422).json({ ok: false, error: 'Recipient is not on WhatsApp' });
-      chatId = numberId._serialized;
-    } catch (_e) {
-      chatId = `${digits}@c.us`;   // fall back if the lookup itself fails
+      const numberId = await withTimeout(client.getNumberId(digits), LOOKUP_TIMEOUT_MS, 'getNumberId');
+      if (numberId && numberId._serialized) chatId = numberId._serialized;
+    } catch (e) {
+      console.warn('getNumberId skipped:', e.message);
     }
 
-    const result = await client.sendMessage(chatId, message);
+    const result = await withTimeout(client.sendMessage(chatId, message), SEND_TIMEOUT_MS, 'sendMessage');
     return res.json({ ok: true, id: (result.id && result.id._serialized) || null, to: chatId });
   } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message || 'Send failed' });
+    const msg = err.message || 'Send failed';
+    const code = /timed out/i.test(msg) ? 504 : 400;
+    return res.status(code).json({ ok: false, error: msg });
   }
 });
 
