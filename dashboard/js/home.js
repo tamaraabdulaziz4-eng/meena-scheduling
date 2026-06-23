@@ -349,7 +349,7 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
   if (!d || !d.staff) {
     box.innerHTML = isReviewer ? `
       <div class="hm-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-        <div><span style="font-size:18px">🏆</span> <b>Employee of the Month</b>
+        <div><b>Employee of the Month</b>
           <span class="hm-muted" style="margin-left:6px">not set</span></div>
         <button class="btn btn-sm" onclick="openEotmModal()">Choose</button>
       </div>` : '';
@@ -359,7 +359,6 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
   box.innerHTML = `
     <div class="hm-card" style="background:linear-gradient(120deg,#6B4EFF12,#ffb84712);border:1px solid #6B4EFF33">
       <div style="display:flex;align-items:center;gap:14px">
-        <div style="font-size:38px;line-height:1">🏆</div>
         <div style="flex:1">
           <div style="font-size:12px;font-weight:700;letter-spacing:.5px;color:#6B4EFF;text-transform:uppercase">
             Employee of the Month${d.period ? ' · ' + escapeHtml(d.period) : ''}</div>
@@ -412,7 +411,7 @@ async function saveEotm() {
       period: document.getElementById('eotm-period').value.trim(),
     });
     closeEotmModal();
-    toast('Employee of the Month set 🏆');
+    toast('Employee of the Month set');
     renderHomeEotm();
   } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
@@ -424,8 +423,8 @@ function ensureEotmModal() {
     <div class="modal-overlay" id="eotm-modal-overlay">
       <div class="modal">
         <div class="modal-header">
-          <h3>🏆 Employee of the Month</h3>
-          <button class="modal-close" onclick="closeEotmModal()">✕</button>
+          <h3>Employee of the Month</h3>
+          <button class="modal-close" onclick="closeEotmModal()">&times;</button>
         </div>
         <div class="modal-body">
           <div style="display:flex;flex-direction:column;gap:14px">
