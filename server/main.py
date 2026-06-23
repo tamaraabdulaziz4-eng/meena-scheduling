@@ -480,6 +480,40 @@ def init_schema():
             # first stage of the new chain so they remain actionable.
             cur.execute("UPDATE scheduling.shift_swaps SET status='pending_peer' WHERE status='pending';")
 
+            # Support tickets: a staff member raises an issue / fault / request; a
+            # team lead or manager escalates it and marks the action taken. The
+            # creator is notified at every status change so they always know where
+            # it stands. ticket_updates is the conversation thread on a ticket.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tickets (
+                    id SERIAL PRIMARY KEY,
+                    created_by INTEGER NOT NULL REFERENCES scheduling.users(id) ON DELETE CASCADE,
+                    staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL,
+                    branch_id INTEGER REFERENCES scheduling.branches(id) ON DELETE SET NULL,
+                    category TEXT NOT NULL DEFAULT 'issue',
+                    priority TEXT NOT NULL DEFAULT 'normal',
+                    subject TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    handled_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    resolution TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON scheduling.tickets(status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_creator ON scheduling.tickets(created_by);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_branch ON scheduling.tickets(branch_id);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.ticket_updates (
+                    id SERIAL PRIMARY KEY,
+                    ticket_id INTEGER NOT NULL REFERENCES scheduling.tickets(id) ON DELETE CASCADE,
+                    user_id INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    body TEXT NOT NULL,
+                    is_status_change BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_updates_ticket ON scheduling.ticket_updates(ticket_id);")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -3850,6 +3884,200 @@ def delete_timeback(tid: int, user=Depends(get_current_user)):
     q("DELETE FROM scheduling.timeback_claims WHERE id=%s", (tid,), exec_only=True)
     return {"ok": True}
 
+# ── Support tickets ───────────────────────────────────────────────────────────
+# A staff member raises a ticket (issue / fault / request); a team lead or manager
+# picks it up, escalates it, and marks the action taken. The creator is notified
+# on every status change, and either side can post replies on the ticket thread.
+
+_TICKET_CATEGORIES = ("issue", "fault", "request", "other")
+_TICKET_PRIORITIES = ("low", "normal", "high")
+_TICKET_STATUSES   = ("open", "escalated", "in_progress", "resolved", "closed")
+_TICKET_ACTIVE     = ("open", "escalated", "in_progress")   # still needs attention
+
+def _ticket_can_manage(user, branch_id):
+    """Who can change a ticket's status: a reviewer (any branch) or the team lead
+    of the ticket's branch."""
+    if user["role"] in ("manager", "superadmin"):
+        return True
+    if user["role"] == "admin":
+        return can_access_branch(user, branch_id)
+    return False
+
+def _ticket_can_view(user, t):
+    if user["role"] in ("manager", "superadmin"):
+        return True
+    if t["created_by"] == user["id"]:
+        return True
+    if user["role"] == "admin":
+        return can_access_branch(user, t.get("branch_id"))
+    return False
+
+def _notify_ticket_managers(branch_id, message):
+    """Alert the people who can act on a ticket: its branch lead(s) + reviewers."""
+    notified = set()
+    if branch_id:
+        for u in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)):
+            notify(u["id"], message, link="tickets", ntype="ticket"); notified.add(u["id"])
+    for u in q("SELECT id FROM scheduling.users WHERE role = ANY(%s)", (["manager", "superadmin"],)):
+        if u["id"] not in notified:
+            notify(u["id"], message, link="tickets", ntype="ticket")
+
+@app.get("/api/tickets")
+def list_tickets(request: Request, user=Depends(get_current_user)):
+    """Tickets, scoped: a staff member sees their own; a team lead their branch
+    (plus any they raised); a reviewer sees all. Optional ?status=active|<status>."""
+    p = request.query_params
+    conds, vals = ["1=1"], []
+    role = user["role"]
+    if role in ("manager", "superadmin"):
+        pass
+    elif role == "admin":
+        conds.append("(t.branch_id=%s OR t.created_by=%s)"); vals += [user.get("branch_id"), user["id"]]
+    else:
+        conds.append("t.created_by=%s"); vals.append(user["id"])
+    status = (p.get("status") or "").strip()
+    if status == "active":
+        conds.append("t.status = ANY(%s)"); vals.append(list(_TICKET_ACTIVE))
+    elif status in _TICKET_STATUSES:
+        conds.append("t.status=%s"); vals.append(status)
+    rows = q(f"""SELECT t.id,t.category,t.priority,t.subject,t.status,t.branch_id,
+                        TO_CHAR(t.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at,
+                        TO_CHAR(t.updated_at,'YYYY-MM-DD"T"HH24:MI:SS') AS updated_at,
+                        b.name AS branch_name, cu.username AS created_by_name,
+                        COALESCE(s.name, cu.username) AS staff_name,
+                        (SELECT COUNT(*) FROM scheduling.ticket_updates tu WHERE tu.ticket_id=t.id) AS updates
+                 FROM scheduling.tickets t
+                 LEFT JOIN scheduling.branches b ON b.id=t.branch_id
+                 LEFT JOIN scheduling.users cu ON cu.id=t.created_by
+                 LEFT JOIN scheduling.staff s ON s.id=t.staff_id
+                 WHERE {' AND '.join(conds)}
+                 ORDER BY (t.status = ANY(%s)) DESC, t.updated_at DESC""",
+             vals + [list(_TICKET_ACTIVE)])
+    return rows
+
+@app.get("/api/tickets/{tid}")
+def get_ticket(tid: int, user=Depends(get_current_user)):
+    t = q("""SELECT t.id,t.created_by,t.staff_id,t.branch_id,t.category,t.priority,
+                    t.subject,t.description,t.status,t.handled_by,t.resolution,
+                    TO_CHAR(t.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at,
+                    TO_CHAR(t.updated_at,'YYYY-MM-DD"T"HH24:MI:SS') AS updated_at,
+                    b.name AS branch_name, cu.username AS created_by_name,
+                    hu.username AS handled_by_name,
+                    COALESCE(s.name, cu.username) AS staff_name
+             FROM scheduling.tickets t
+             LEFT JOIN scheduling.branches b ON b.id=t.branch_id
+             LEFT JOIN scheduling.users cu ON cu.id=t.created_by
+             LEFT JOIN scheduling.users hu ON hu.id=t.handled_by
+             LEFT JOIN scheduling.staff s ON s.id=t.staff_id
+             WHERE t.id=%s""", (tid,), one=True)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    if not _ticket_can_view(user, t):
+        raise HTTPException(403, "Forbidden")
+    t["updates"] = q("""SELECT tu.id, tu.body, tu.is_status_change, u.username AS author,
+                               TO_CHAR(tu.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
+                        FROM scheduling.ticket_updates tu
+                        LEFT JOIN scheduling.users u ON u.id=tu.user_id
+                        WHERE tu.ticket_id=%s ORDER BY tu.created_at ASC""", (tid,))
+    t["can_manage"] = _ticket_can_manage(user, t.get("branch_id"))
+    return t
+
+@app.post("/api/tickets")
+async def create_ticket(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    subject = (body.get("subject") or "").strip()
+    if not subject:
+        raise HTTPException(400, "A subject is required")
+    subject = subject[:200]
+    description = (body.get("description") or "").strip()[:4000] or None
+    category = body.get("category") if body.get("category") in _TICKET_CATEGORIES else "issue"
+    priority = body.get("priority") if body.get("priority") in _TICKET_PRIORITIES else "normal"
+    staff_id = user.get("staff_id")
+    branch_id = None
+    if staff_id:
+        st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+        branch_id = st["branch_id"] if st else None
+    if branch_id is None:
+        branch_id = user.get("branch_id")
+    row = q("""INSERT INTO scheduling.tickets
+                  (created_by,staff_id,branch_id,category,priority,subject,description)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id,status,subject,category,priority""",
+            (user["id"], staff_id, branch_id, category, priority, subject, description), one=True)
+    insert_audit(user, "TICKET_CREATE", f"ticket:{row['id']}", subject)
+    _notify_ticket_managers(branch_id, f"New {category} ticket from {user.get('username') or 'a staff member'}: {subject}")
+    return row
+
+@app.put("/api/tickets/{tid}/status")
+async def update_ticket_status(tid: int, request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    new_status = body.get("status")
+    if new_status not in _TICKET_STATUSES:
+        raise HTTPException(400, "Invalid status")
+    t = q("SELECT id,created_by,branch_id,subject,status FROM scheduling.tickets WHERE id=%s", (tid,), one=True)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    if not _ticket_can_manage(user, t.get("branch_id")):
+        raise HTTPException(403, "Only a team lead or manager can update a ticket")
+    note = (body.get("note") or "").strip() or None
+    resolution = (body.get("resolution") or "").strip() or None
+    if new_status in ("resolved", "closed") and not resolution:
+        resolution = note   # a closing note doubles as the resolution
+    q("""UPDATE scheduling.tickets
+            SET status=%s, handled_by=%s, resolution=COALESCE(%s, resolution), updated_at=NOW()
+          WHERE id=%s""", (new_status, user["id"], resolution, tid), exec_only=True)
+    label = new_status.replace("_", " ")
+    thread = f"Status changed to “{label}”" + (f" — {note}" if note else "")
+    q("""INSERT INTO scheduling.ticket_updates (ticket_id,user_id,body,is_status_change)
+         VALUES (%s,%s,%s,true)""", (tid, user["id"], thread), exec_only=True)
+    insert_audit(user, f"TICKET_{new_status.upper()}", f"ticket:{tid}", t["subject"])
+    tail = f": {resolution}" if resolution and new_status in ("resolved", "closed") else ""
+    notify(t["created_by"], f"Your ticket “{t['subject']}” is now {label}{tail}",
+           link="tickets", ntype="ticket")
+    return {"id": tid, "status": new_status}
+
+@app.post("/api/tickets/{tid}/updates")
+async def add_ticket_update(tid: int, request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    text = (body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(400, "Message is required")
+    text = text[:2000]
+    t = q("SELECT id,created_by,branch_id,subject FROM scheduling.tickets WHERE id=%s", (tid,), one=True)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    can_manage = _ticket_can_manage(user, t.get("branch_id"))
+    is_creator = (t["created_by"] == user["id"])
+    if not (can_manage or is_creator):
+        raise HTTPException(403, "Forbidden")
+    q("INSERT INTO scheduling.ticket_updates (ticket_id,user_id,body) VALUES (%s,%s,%s)",
+      (tid, user["id"], text), exec_only=True)
+    q("UPDATE scheduling.tickets SET updated_at=NOW() WHERE id=%s", (tid,), exec_only=True)
+    who = user.get("username") or "Someone"
+    if is_creator and not can_manage:
+        _notify_ticket_managers(t.get("branch_id"), f"New reply on ticket “{t['subject']}” from {who}")
+    elif t["created_by"] != user["id"]:
+        notify(t["created_by"], f"New reply on your ticket “{t['subject']}” from {who}",
+               link="tickets", ntype="ticket")
+    return {"ok": True}
+
+@app.delete("/api/tickets/{tid}")
+def delete_ticket(tid: int, user=Depends(get_current_user)):
+    t = q("SELECT id,created_by,branch_id,status,subject FROM scheduling.tickets WHERE id=%s", (tid,), one=True)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    if user["role"] in ("manager", "superadmin"):
+        pass
+    elif user["role"] == "admin" and can_access_branch(user, t.get("branch_id")):
+        pass
+    elif t["created_by"] == user["id"] and t["status"] == "open":
+        pass   # the creator can withdraw only while it's still untouched
+    else:
+        raise HTTPException(403, "You can't delete this ticket")
+    q("DELETE FROM scheduling.tickets WHERE id=%s", (tid,), exec_only=True)
+    insert_audit(user, "TICKET_DELETE", f"ticket:{tid}", t.get("subject"))
+    return {"ok": True}
+
 # ── Staff self-service portal ─────────────────────────────────────────────────
 
 @app.get("/api/my-schedule")
@@ -4436,6 +4664,16 @@ def dashboard_summary(user=Depends(get_current_user)):
     else:
         pending_registrations = 0
 
+    # Open support tickets needing attention (reviewer: all; team lead: own branch).
+    if is_reviewer:
+        open_tickets = c("SELECT COUNT(*) AS c FROM scheduling.tickets WHERE status = ANY(%s)",
+                         (list(_TICKET_ACTIVE),))
+    elif role == "admin":
+        open_tickets = c("""SELECT COUNT(*) AS c FROM scheduling.tickets
+                            WHERE status = ANY(%s) AND branch_id=%s""", (list(_TICKET_ACTIVE), bid))
+    else:
+        open_tickets = 0
+
     # Today's daily-cases submission progress.
     date = _operational_date_server()
     if is_reviewer:
@@ -4452,6 +4690,7 @@ def dashboard_summary(user=Depends(get_current_user)):
         "pending_leaves": pending_leaves,
         "pending_swaps": pending_swaps,
         "pending_registrations": pending_registrations,
+        "open_tickets": open_tickets,
         "cases_today": {"submitted": submitted, "total": total_branches, "date": date},
         "role": role,
     }

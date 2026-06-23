@@ -980,5 +980,57 @@ check("register/info reports phone verification disabled when not configured",
 admin.put("/api/settings", json={"registration": "off"})
 check("registration can be closed again", admin.get("/api/settings").json().get("registration_open") is False)
 
+print("\n== scenario 14: support tickets ==")
+# Staff raises a ticket.
+tk = staffA.post("/api/tickets", json={"subject": "Scanner #2 not powering on",
+                                       "description": "Console is dark since this morning.",
+                                       "category": "fault", "priority": "high"})
+check("staff can raise a ticket", tk.status_code == 200 and tk.json().get("status") == "open", tk.text)
+tid = tk.json().get("id")
+# Branch lead is notified of the new ticket.
+ln = lead.get("/api/notifications").json()
+check("team lead notified of new ticket",
+      any("ticket" in (n["message"] or "").lower() for n in ln["notifications"]), ln)
+# Staff sees their own; lead sees it on their branch.
+mine = staffA.get("/api/tickets").json()
+check("staff sees their own ticket", any(t["id"] == tid for t in mine), mine)
+leadlist = lead.get("/api/tickets?status=active").json()
+check("team lead sees the branch ticket", any(t["id"] == tid for t in leadlist), leadlist)
+# A different staff member cannot view it.
+other = staffB.get(f"/api/tickets/{tid}")
+check("unrelated staff can't view another's ticket", other.status_code == 403, other.text)
+# Staff cannot change status.
+nope = staffA.put(f"/api/tickets/{tid}/status", json={"status": "resolved"})
+check("staff can't change ticket status", nope.status_code == 403, nope.text)
+# Lead escalates → staff notified.
+esc = lead.put(f"/api/tickets/{tid}/status", json={"status": "escalated", "note": "Raised to facilities."})
+check("lead can escalate", esc.status_code == 200 and esc.json().get("status") == "escalated", esc.text)
+an = staffA.get("/api/notifications").json()
+check("staff notified ticket escalated",
+      any("escalated" in (n["message"] or "").lower() for n in an["notifications"]), an)
+# Lead resolves with a note → resolution recorded, staff notified.
+res = lead.put(f"/api/tickets/{tid}/status", json={"status": "resolved", "note": "Replaced the power unit."})
+check("lead can resolve", res.status_code == 200 and res.json().get("status") == "resolved", res.text)
+det = staffA.get(f"/api/tickets/{tid}").json()
+check("resolution is stored on the ticket", "power unit" in (det.get("resolution") or "").lower(), det)
+check("thread records the status changes",
+      sum(1 for u in det.get("updates", []) if u.get("is_status_change")) >= 2, det.get("updates"))
+# Staff replies → lead notified.
+rep = staffA.post(f"/api/tickets/{tid}/updates", json={"body": "Thanks, it works now."})
+check("staff can reply on the thread", rep.status_code == 200, rep.text)
+ln2 = lead.get("/api/notifications").json()
+check("lead notified of the reply",
+      any("reply" in (n["message"] or "").lower() for n in ln2["notifications"]), ln2)
+# Open-ticket count surfaces for the lead while active; resolved drops out of 'active'.
+active_after = lead.get("/api/tickets?status=active").json()
+check("resolved ticket leaves the active list", not any(t["id"] == tid for t in active_after), active_after)
+# Validation: empty subject is rejected.
+bad = staffA.post("/api/tickets", json={"subject": "   "})
+check("empty subject rejected", bad.status_code == 400, bad.text)
+# Manager can delete any ticket.
+dele = admin.delete(f"/api/tickets/{tid}")
+check("manager can delete a ticket", dele.status_code == 200, dele.text)
+check("deleted ticket is gone", admin.get(f"/api/tickets/{tid}").status_code == 404)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
