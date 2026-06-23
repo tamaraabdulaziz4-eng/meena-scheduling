@@ -231,6 +231,10 @@ def init_schema():
             """)
             cur.execute("UPDATE scheduling.shift_types SET branch_id=NULL WHERE branch_id IS NOT NULL;")
 
+            # Hand-entered cells are flagged so a later regenerate keeps them
+            # (the solver builds the rest of the month around them).
+            cur.execute("ALTER TABLE scheduling.schedule_entries ADD COLUMN IF NOT EXISTS is_manual BOOLEAN NOT NULL DEFAULT false;")
+
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS min_shifts INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS max_shifts INTEGER NOT NULL DEFAULT 17;")
@@ -2900,6 +2904,7 @@ def get_entries(schedule_id):
     own = q("""SELECT e.id,e.schedule_id,e.staff_id,
                        TO_CHAR(e.date,'YYYY-MM-DD') AS date,
                        e.shift_code,e.cross_branch_id,e.is_oncall,e.note,
+                       COALESCE(e.is_manual,false) AS is_manual,
                        s.name AS staff_name,s.speciality,s.is_cross_branch,
                        b.name AS cross_branch_name, NULL AS home_branch_name
                 FROM scheduling.schedule_entries e
@@ -2936,13 +2941,13 @@ async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
     sids, codes = schedule_validation_sets(sched)
     check_entry(sched, sids, codes, body.get("staff_id"), body.get("date"), body.get("shift_code", "O"))
     row = q("""INSERT INTO scheduling.schedule_entries
-               (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
-               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note,is_manual)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,true)
                ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
-               shift_code=%s,cross_branch_id=%s,is_oncall=%s,note=%s
+               shift_code=%s,cross_branch_id=%s,is_oncall=%s,note=%s,is_manual=true
                RETURNING id,schedule_id,staff_id,
                          TO_CHAR(date,'YYYY-MM-DD') AS date,
-                         shift_code,cross_branch_id,is_oncall,note""",
+                         shift_code,cross_branch_id,is_oncall,note,is_manual""",
             (sid, body.get("staff_id"), body.get("date"),
              body.get("shift_code","O"), body.get("cross_branch_id"),
              body.get("is_oncall",False), body.get("note"),
@@ -2967,10 +2972,10 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_adm
         with conn.cursor() as cur:
             for e in entries:
                 cur.execute("""INSERT INTO scheduling.schedule_entries
-                               (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s)
+                               (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note,is_manual)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,true)
                                ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
-                               shift_code=%s,cross_branch_id=%s,is_oncall=%s,note=%s""",
+                               shift_code=%s,cross_branch_id=%s,is_oncall=%s,note=%s,is_manual=true""",
                             (sid, e.get("staff_id"), e.get("date"),
                              e.get("shift_code","O"), e.get("cross_branch_id"),
                              e.get("is_oncall",False), e.get("note"),
@@ -5736,6 +5741,24 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     # cell (work shifts and explicit O), except leave codes — those are already
     # forced via al_schedule.
     fixed_by_solver = {}
+    # Always pin hand-entered (manual) cells so a regenerate keeps them — the
+    # solver builds the rest of the month around them, and they're never deleted
+    # or overwritten when persisting (see manual_cells below).
+    manual_cells = set()
+    manual_rows = q("""SELECT e.staff_id, TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
+                       FROM scheduling.schedule_entries e
+                       JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                       WHERE sc.branch_id=%s AND sc.year=%s AND sc.month=%s
+                         AND COALESCE(e.is_manual,false)=true""",
+                    (branch_id, year, month))
+    for e in manual_rows:
+        manual_cells.add((int(e["staff_id"]), e["date"]))
+        code = e["shift_code"]
+        # Leave codes are already forced via al_schedule; pin the rest for the solver.
+        if code and code not in ("AL", "SL", "TB"):
+            sk = solver_key_by_staff_id.get(int(e["staff_id"]))
+            if sk:
+                fixed_by_solver.setdefault(sk, {})[int(e["date"][8:10])] = code
     if body.get("preserve_existing"):
         existing = q("""SELECT e.staff_id, TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
                         FROM scheduling.schedule_entries e
@@ -5827,6 +5850,9 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         if not solver_key:
             continue
         prev_tail_by_solver.setdefault(solver_key, []).append(row["shift_code"])
+    print(f"[Generate] prev-month tail loaded for {len(prev_tail_by_solver)} staff "
+          f"(if 0, the previous month has no saved rota → no cross-month rest rules); "
+          f"manual cells pinned: {len(manual_cells)}")
 
     # Load per-month settings per staff (min/max used as constraints; max_shifts acts as ceiling)
     month_settings_rows = q("""
@@ -6206,10 +6232,17 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     try:
         with conn.cursor() as cur:
             if ok_staff_ids:
+                # Keep manual cells — only the solver-owned (non-manual) cells are
+                # cleared and rewritten.
                 cur.execute("""DELETE FROM scheduling.schedule_entries
-                               WHERE schedule_id=%s AND staff_id = ANY(%s)""",
+                               WHERE schedule_id=%s AND staff_id = ANY(%s)
+                                 AND COALESCE(is_manual,false)=false""",
                             (schedule["id"], ok_staff_ids))
             for e in flat_entries:
+                # Never overwrite a manual cell (the solver already pinned it, so
+                # the value matches anyway — this just protects the is_manual flag).
+                if (e["staff_id"], e["date"]) in manual_cells:
+                    continue
                 cur.execute("""INSERT INTO scheduling.schedule_entries
                                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
                                VALUES (%s,%s,%s,%s,%s,%s,%s)

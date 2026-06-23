@@ -1123,5 +1123,12 @@ check("shift_check_m_hour setting round-trips",
       sm.status_code == 200 and str(sm.json().get("shift_check_m_hour")) == "7", sm.text)
 admin.put("/api/settings", json={"shift_check_m_hour": 8})
 
+print("\n== scenario 20: manual edits are flagged (preserved on regenerate) ==")
+me = admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": f"{YEAR}-08-17", "shift_code": "N"})
+check("a hand-entered cell is flagged is_manual", me.status_code == 200 and me.json().get("is_manual") is True, me.text)
+ments = admin.get(f"/api/schedules/{sid}/entries").json()
+mcell = next((e for e in ments if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-17"), None)
+check("entries list surfaces the manual flag", bool(mcell) and mcell.get("is_manual") is True, mcell)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
