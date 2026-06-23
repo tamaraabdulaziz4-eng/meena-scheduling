@@ -5955,8 +5955,12 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         eff_min = max(0, eff_min)
 
         # Give the solver a small upward tolerance (+1) so it can balance fairness
-        # and coverage, but never exceed the ceiling.
-        eff_max = min(ceiling, max(eff_min, eff_target + 1))
+        # and coverage, but never exceed the ceiling. NOT for someone who took
+        # leave: their month should actually be lighter, so cap them at the
+        # leave-adjusted target instead of letting coverage creep them back up
+        # (e.g. 3 AL days → exactly 16 shifts, not 17).
+        upward = 0 if leave_days > 0 else 1
+        eff_max = min(ceiling, max(eff_min, eff_target + upward))
 
         return {
             "min_shifts": eff_min,
