@@ -1032,5 +1032,58 @@ dele = admin.delete(f"/api/tickets/{tid}")
 check("manager can delete a ticket", dele.status_code == 200, dele.text)
 check("deleted ticket is gone", admin.get(f"/api/tickets/{tid}").status_code == 404)
 
+print("\n== scenario 17: announcements / circulars ==")
+# Manager posts an all-staff announcement.
+ap = admin.post("/api/announcements", json={"title": "Annual leave policy update",
+                                            "body": "Please review the new policy.", "kind": "announcement"})
+check("manager can post an announcement", ap.status_code == 200, ap.text)
+aid = ap.json().get("id")
+# Staff see it.
+seen = staffA.get("/api/announcements").json()
+check("staff sees the all-staff announcement", any(a["id"] == aid for a in seen), seen)
+# Action-required broadcast over WhatsApp + email, forced past the type filter.
+import os as _os
+_os.environ["WHATSAPP_CAPTURE"] = "1"
+_os.environ["WHATSAPP_ONLY_TYPES"] = "approved"   # excludes 'announcement' on purpose
+M._whatsapp_outbox.clear(); M._email_outbox.clear()
+bcStaff = admin.post("/api/staff", json={"name": "ZZ Broadcast", "branch_id": bid,
+                                         "phone": "0501234567", "email": "bc@example.com"}).json()
+try:
+    br = admin.post("/api/announcements", json={"title": "Mandatory fire drill",
+                                                "body": "Attend at 2pm.", "kind": "action_required",
+                                                "broadcast": True})
+    check("action-required broadcast accepted", br.status_code == 200 and br.json().get("delivered", 0) > 0, br.text)
+    baid = br.json().get("id")
+    wamsg = [m for m in M._whatsapp_outbox if m["to"] == "966501234567"]
+    check("broadcast reached WhatsApp despite the type filter (force)",
+          any("fire drill" in (m["message"] or "").lower() for m in wamsg), M._whatsapp_outbox)
+    check("broadcast reached email", any(e["to"] == "bc@example.com" for e in M._email_outbox), M._email_outbox)
+finally:
+    _os.environ.pop("WHATSAPP_CAPTURE", None); _os.environ.pop("WHATSAPP_ONLY_TYPES", None)
+# Staff acknowledges the action-required circular.
+ackr = staffA.post(f"/api/announcements/{baid}/ack", json={})
+check("staff can acknowledge", ackr.status_code == 200, ackr.text)
+after = staffA.get("/api/announcements").json()
+check("ack is reflected for the staff member",
+      next((a for a in after if a["id"] == baid), {}).get("acked") is True, after)
+acks = admin.get(f"/api/announcements/{baid}/acks").json()
+check("manager sees who acknowledged", any(r["username"] == f"zza{sfx}" for r in acks), acks)
+# A team lead can post only to their branch; a staff member cannot post at all.
+sp = staffA.post("/api/announcements", json={"title": "x", "body": "y"})
+check("staff can't post announcements", sp.status_code == 403, sp.text)
+# Delete cleans up.
+check("manager can delete an announcement", admin.delete(f"/api/announcements/{aid}").status_code == 200)
+
+print("\n== scenario 18: employee of the month ==")
+setr = admin.put("/api/employee-of-month", json={"staff_id": A["id"], "period": "June 2026", "note": "Great work"})
+check("manager can set employee of the month", setr.status_code == 200, setr.text)
+eotm = staffA.get("/api/employee-of-month").json()
+check("everyone can read the current EOTM", (eotm.get("staff") or {}).get("id") == A["id"], eotm)
+check("EOTM carries the note", eotm.get("note") == "Great work", eotm)
+nope = staffA.put("/api/employee-of-month", json={"staff_id": B["id"]})
+check("staff can't set EOTM", nope.status_code == 403, nope.text)
+admin.put("/api/employee-of-month", json={"staff_id": None})
+check("EOTM can be cleared", (admin.get("/api/employee-of-month").json().get("staff")) is None)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

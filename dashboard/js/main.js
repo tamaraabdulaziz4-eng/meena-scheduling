@@ -114,6 +114,8 @@ async function initApp() {
   }
   // Open-ticket badge (team leads + reviewers).
   if (typeof loadTicketsBadge === 'function') loadTicketsBadge();
+  // Unacknowledged action-required circulars badge (everyone).
+  if (typeof loadAnnouncementsBadge === 'function') loadAnnouncementsBadge();
   // Staff land on their own schedule; everyone else on the Home dashboard.
   window._defaultPage = isStaff ? 'myschedule' : 'home';
 
@@ -172,6 +174,7 @@ async function renderRoute(page) {
                        break;
     case 'cases':      renderCasesPage(); break;
     case 'tickets':    await renderTicketsPage(); break;
+    case 'announcements': renderAnnouncementsPage(); break;
     case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
     case 'shifts':     try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}  renderShiftsPage(); break;
     case 'users':      try { await loadUsers(); } catch(e){}  renderUsersPage(); break;
@@ -189,7 +192,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','cases','tickets','branches','shifts','users','audit']);
+  'leaves','swaps','cases','tickets','announcements','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;

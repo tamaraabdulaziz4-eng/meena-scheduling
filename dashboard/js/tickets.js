@@ -10,10 +10,16 @@ const TICKET_STATUS_META = {
   closed:      { label: 'Closed',      color: '#9a95ba' },
 };
 const TICKET_CATEGORY_META = {
-  issue:   { label: 'Issue',   icon: '⚠️' },
-  fault:   { label: 'Fault',   icon: '🔧' },
-  request: { label: 'Request', icon: '📝' },
-  other:   { label: 'Other',   icon: '💬' },
+  device_fault:   { label: 'Device fault',      icon: '🩻' },
+  pacs:           { label: 'PACS / imaging',    icon: '🖥️' },
+  report_blocked: { label: 'Blocked report',    icon: '📄' },
+  ovr:            { label: 'OVR / incident',    icon: '🚨' },
+  stock:          { label: 'Stock / supplies',  icon: '📦' },
+  request:        { label: 'Request',           icon: '📝' },
+  other:          { label: 'Other',             icon: '💬' },
+  // legacy values kept for older tickets
+  issue:          { label: 'Issue',             icon: '⚠️' },
+  fault:          { label: 'Fault',             icon: '🔧' },
 };
 const TICKET_PRIORITY_META = {
   low:    { label: 'Low',    color: '#9a95ba' },
@@ -305,8 +311,11 @@ function ensureTicketModal() {
               <div class="form-field" style="flex:1">
                 <label>Type</label>
                 <select id="tk-category">
-                  <option value="issue">⚠️ Issue</option>
-                  <option value="fault">🔧 Fault / breakdown</option>
+                  <option value="device_fault">🩻 Device fault / breakdown</option>
+                  <option value="pacs">🖥️ PACS / imaging system</option>
+                  <option value="report_blocked">📄 Blocked report</option>
+                  <option value="ovr">🚨 OVR / incident</option>
+                  <option value="stock">📦 Stock / supplies needed</option>
                   <option value="request">📝 Request</option>
                   <option value="other">💬 Other</option>
                 </select>

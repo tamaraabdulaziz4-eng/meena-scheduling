@@ -16,11 +16,13 @@ async function renderMySchedulePage() {
       <button onclick="changePortalMonth(1)">&#8250;</button>
     </div>
     <div id="portal-banner"></div>
+    <div id="ms-eotm"></div>
     <div id="portal-grid">${LOADING_HTML}</div>
     <div id="portal-legend" style="margin-top:16px"></div>
     <div id="portal-requests" style="margin-top:20px"></div>`;
   await loadMySchedule();
   loadMyRequests();   // "everything that's mine" — open requests + their stage
+  if (typeof renderHomeEotm === 'function') renderHomeEotm('ms-eotm');   // celebrate EOTM for staff too
 }
 
 // A consolidated "My requests" card so a staff member tracks every open request
