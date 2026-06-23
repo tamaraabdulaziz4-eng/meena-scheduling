@@ -65,8 +65,10 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
         pool = get_pool()
         conn = pool.getconn()
         try:
-            # Quick liveness check — if the connection is broken this raises immediately
-            conn.reset()
+            # No preemptive conn.reset() here — it cost a full network round-trip on
+            # EVERY query. A dropped/stale connection raises OperationalError on
+            # execute (handled below with a retry + pool rebuild), and the generic
+            # except rolls back so connections are always returned to the pool clean.
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 if exec_only:
@@ -4405,11 +4407,21 @@ def shift_checks_overview(request: Request, user=Depends(get_current_user)):
         branches = q("SELECT id,name FROM scheduling.branches ORDER BY name")
     else:
         branches = q("SELECT id,name FROM scheduling.branches WHERE id=%s", (user.get("branch_id"),))
+    # One query for every confirmation on this date, then map in memory (avoids a
+    # per-branch/per-shift round-trip).
+    rows = q("""SELECT k.branch_id, k.shift,
+                       TO_CHAR(k.confirmed_at,'YYYY-MM-DD"T"HH24:MI:SS') AS confirmed_at,
+                       COALESCE(s.name, u.username) AS confirmed_by_name
+                FROM scheduling.shift_checks k
+                LEFT JOIN scheduling.users u ON u.id=k.confirmed_by
+                LEFT JOIN scheduling.staff s ON s.id=k.confirmed_by_staff
+                WHERE k.date=%s""", (date,))
+    by = {(r["branch_id"], r["shift"]): r for r in rows}
     out = []
     for b in branches:
         checks = []
         for sh in _SHIFT_CHECK_SHIFTS:
-            r = _shift_check_row(b["id"], date, sh)
+            r = by.get((b["id"], sh))
             checks.append({"shift": sh, "label": _SHIFT_CHECK_LABELS[sh], "done": bool(r),
                            "confirmed_by_name": r["confirmed_by_name"] if r else None,
                            "confirmed_at": r["confirmed_at"] if r else None})
