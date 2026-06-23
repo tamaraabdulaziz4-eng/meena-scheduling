@@ -9,6 +9,20 @@ function annCanPost() {
   return ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
 }
 
+// Swap {name}/{الاسم} for the viewer's own name when showing a circular (the
+// WhatsApp/email copy is already personalised per recipient on the server).
+function _viewerName() {
+  if (currentUser?.staff_id && typeof allStaff !== 'undefined' && Array.isArray(allStaff)) {
+    const s = allStaff.find(x => x.id === currentUser.staff_id);
+    if (s && s.name) return s.name;
+  }
+  return currentUser?.username || '';
+}
+function personalizeAnnouncement(body) {
+  const nm = _viewerName();
+  return String(body || '').replace(/\{name\}/g, nm || 'there').replace(/\{الاسم\}/g, nm || 'زميلنا');
+}
+
 function renderAnnouncementsPage() {
   setTopbar('Announcements', 'Circulars & bulletins',
     annCanPost() ? `<button class="btn btn-sm" onclick="openAnnModal()">+ New Circular</button>` : '');
@@ -65,7 +79,7 @@ function renderAnnouncementsList() {
           ${a.pinned ? '📌 ' : ''}${kindBadge}
           <span style="font-weight:700;font-size:15px">${escapeHtml(a.title)}</span>
         </div>
-        <div style="white-space:pre-wrap;margin:6px 0 10px">${escapeHtml(a.body)}</div>
+        <div style="white-space:pre-wrap;margin:6px 0 10px">${escapeHtml(personalizeAnnouncement(a.body))}</div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div style="font-size:12px;color:var(--muted)">
             ${escapeHtml(a.created_by_name || 'Management')}
@@ -209,6 +223,7 @@ function ensureAnnModal() {
             <div class="form-field">
               <label>Message *</label>
               <textarea id="ann-body" rows="5" placeholder="Write the circular / bulletin text"></textarea>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px">Tip: type <b>{name}</b> to greet each person by their own name.</div>
             </div>
             <div class="form-row">
               <div class="form-field" style="flex:1">

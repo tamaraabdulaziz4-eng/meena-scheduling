@@ -1184,26 +1184,37 @@ def notify_branch_leads(branch_id, message, link=None, ntype="info"):
     for u in leads:
         notify(u["id"], message, link, ntype)
 
+def _personalize(template, name):
+    """Substitute the recipient's name into a circular. Supports {name} and the
+    Arabic {الاسم}; a blank name falls back to a neutral greeting word."""
+    nm = (name or "").strip()
+    out = str(template or "")
+    if "{name}" in out or "{الاسم}" in out:
+        out = out.replace("{name}", nm or "there").replace("{الاسم}", nm or "زميلنا")
+    return out
+
 def _broadcast_to_staff(staff_rows, message, link, ntype):
     """Push a circular to staff: an in-app record for those with a login, plus
     WhatsApp + email to everyone (force=True so it ignores the WhatsApp type
-    filter — a manager broadcast must always go out). Returns how many staff were
-    reached on at least one channel."""
+    filter — a manager broadcast must always go out). The message is personalised
+    per recipient ({name}/{الاسم}). Returns how many staff were reached on at least
+    one channel."""
     n = 0
     for st in staff_rows:
+        msg = _personalize(message, st.get("name"))
         u = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (st["id"],), one=True)
         reached = False
         if u:
             try:
                 q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
-                     VALUES (%s,%s,%s,%s)""", (u["id"], message, link, ntype), exec_only=True)
+                     VALUES (%s,%s,%s,%s)""", (u["id"], msg, link, ntype), exec_only=True)
                 reached = True
             except Exception:
                 pass
         if st.get("phone"):
-            send_whatsapp(st["phone"], message, ntype=ntype, link=link, force=True); reached = True
+            send_whatsapp(st["phone"], msg, ntype=ntype, link=link, force=True); reached = True
         if st.get("email"):
-            send_email(st["email"], "Meena Scheduling", message); reached = True
+            send_email(st["email"], "Meena Scheduling", msg); reached = True
         if reached:
             n += 1
     return n
@@ -4213,9 +4224,9 @@ async def create_announcement(request: Request, user=Depends(get_current_user)):
     if body.get("broadcast"):
         tag = "Action required" if kind == "action_required" else "Announcement"
         msg = f"[{tag}] {title}\n\n{text}"
-        staff = (q("SELECT id,phone,email FROM scheduling.staff WHERE branch_id=%s", (branch_id,))
+        staff = (q("SELECT id,name,phone,email FROM scheduling.staff WHERE branch_id=%s", (branch_id,))
                  if audience == "branch"
-                 else q("SELECT id,phone,email FROM scheduling.staff"))
+                 else q("SELECT id,name,phone,email FROM scheduling.staff"))
         delivered = _broadcast_to_staff(staff, msg, "announcements", "announcement")
     return {"id": row["id"], "broadcast": bool(body.get("broadcast")), "delivered": delivered}
 

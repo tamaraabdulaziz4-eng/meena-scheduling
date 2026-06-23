@@ -1050,13 +1050,15 @@ bcStaff = admin.post("/api/staff", json={"name": "ZZ Broadcast", "branch_id": bi
                                          "phone": "0501234567", "email": "bc@example.com"}).json()
 try:
     br = admin.post("/api/announcements", json={"title": "Mandatory fire drill",
-                                                "body": "Attend at 2pm.", "kind": "action_required",
+                                                "body": "Hello {name}, attend at 2pm.", "kind": "action_required",
                                                 "broadcast": True})
     check("action-required broadcast accepted", br.status_code == 200 and br.json().get("delivered", 0) > 0, br.text)
     baid = br.json().get("id")
     wamsg = [m for m in M._whatsapp_outbox if m["to"] == "966501234567"]
     check("broadcast reached WhatsApp despite the type filter (force)",
           any("fire drill" in (m["message"] or "").lower() for m in wamsg), M._whatsapp_outbox)
+    check("broadcast is personalised with the recipient's name",
+          any("ZZ Broadcast" in (m["message"] or "") and "{name}" not in (m["message"] or "") for m in wamsg), wamsg)
     check("broadcast reached email", any(e["to"] == "bc@example.com" for e in M._email_outbox), M._email_outbox)
 finally:
     _os.environ.pop("WHATSAPP_CAPTURE", None); _os.environ.pop("WHATSAPP_ONLY_TYPES", None)
