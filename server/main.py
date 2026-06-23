@@ -4446,12 +4446,15 @@ async def confirm_shift_check(request: Request, user=Depends(get_current_user)):
             "confirmed_at": r["confirmed_at"] if r else None}
 
 @app.put("/api/shift-checks/reopen")
-async def reopen_shift_check(request: Request, user=Depends(require_reviewer)):
+async def reopen_shift_check(request: Request, user=Depends(get_current_user)):
     body = await request.json()
     branch_id, date, shift = body.get("branch_id"), body.get("date"), body.get("shift")
     if not branch_id or not date or shift not in _SHIFT_CHECK_SHIFTS:
         raise HTTPException(400, "branch_id, date and a valid shift are required")
     branch_id = _int_or_400(branch_id)
+    # A reviewer (any branch) or the team lead of this branch can reopen.
+    if user["role"] not in ("admin", "manager", "superadmin") or not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.shift_checks WHERE branch_id=%s AND date=%s AND shift=%s",
       (branch_id, date, shift), exec_only=True)
     insert_audit(user, "SHIFT_CHECK_REOPEN", f"branch:{branch_id}", f"{date} {shift}")
@@ -5763,13 +5766,19 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                          AND COALESCE(e.is_manual,false)=true""",
                     (branch_id, year, month))
     for e in manual_rows:
-        manual_cells.add((int(e["staff_id"]), e["date"]))
+        sid = int(e["staff_id"])
+        sk = solver_key_by_staff_id.get(sid)
+        day = int(e["date"][8:10])
         code = e["shift_code"]
+        # If approved leave now covers this day, the leave wins: don't pin OR
+        # protect the stale manual cell (otherwise pinning a work shift on a forced
+        # AL day makes the section infeasible). Let the solver's AL overwrite it.
+        if sk and day in al_schedule.get(sk, []):
+            continue
+        manual_cells.add((sid, e["date"]))
         # Leave codes are already forced via al_schedule; pin the rest for the solver.
-        if code and code not in ("AL", "SL", "TB"):
-            sk = solver_key_by_staff_id.get(int(e["staff_id"]))
-            if sk:
-                fixed_by_solver.setdefault(sk, {})[int(e["date"][8:10])] = code
+        if code and code not in ("AL", "SL", "TB") and sk:
+            fixed_by_solver.setdefault(sk, {})[day] = code
     if body.get("preserve_existing"):
         existing = q("""SELECT e.staff_id, TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
                         FROM scheduling.schedule_entries e
