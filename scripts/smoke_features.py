@@ -1175,5 +1175,69 @@ check("team lead can't report on another branch (403)",
 check("staff are blocked from reports (403)",
       staffA.get(f"/api/reports/fairness?branch_id={bid}&year={YEAR}&month={MONTH}").status_code == 403)
 
+print("\n== scenario 23: staff credentials / license expiry ==")
+soon = f"{YEAR}-{MONTH:02d}-28"   # expiring this month → should surface in expiring soon
+cc = admin.post("/api/credentials", json={"staff_id": A["id"], "kind": "scfhs",
+                                          "label": "Radiology specialist", "number": "R-123",
+                                          "expiry_date": soon})
+check("admin creates a credential", cc.status_code == 200 and "id" in cc.json(), cc.text)
+cid = cc.json().get("id")
+clist = admin.get(f"/api/credentials?branch_id={bid}").json()
+crow = next((r for r in clist if r["id"] == cid), None)
+check("credential appears in branch list with days_left",
+      crow is not None and "days_left" in crow and crow["staff_id"] == A["id"], clist)
+exp = admin.get("/api/credentials/expiring?days=3650").json()
+check("expiring endpoint surfaces the credential", any(i["id"] == cid for i in exp.get("items", [])), exp)
+own = staffA.get(f"/api/staff/{A['id']}/credentials").json()
+check("staff sees their own credentials", any(r["id"] == cid for r in own), own)
+check("staff can't see another staff's credentials (403)",
+      staffA.get(f"/api/staff/{B['id']}/credentials").status_code == 403)
+check("staff can't create credentials (403)",
+      staffA.post("/api/credentials", json={"staff_id": A["id"], "kind": "bls", "expiry_date": soon}).status_code == 403)
+check("team lead can't manage another branch's staff credential (403)",
+      lead.post("/api/credentials", json={"staff_id": sB["id"], "kind": "bls", "expiry_date": soon}).status_code == 403)
+check("credential requires an expiry date (400)",
+      admin.post("/api/credentials", json={"staff_id": A["id"], "kind": "bls"}).status_code == 400)
+upd = admin.put(f"/api/credentials/{cid}", json={"kind": "scfhs", "label": "Updated", "expiry_date": f"{YEAR}-12-31"})
+check("admin updates a credential", upd.status_code == 200, upd.text)
+check("update reflected in list",
+      next((r for r in admin.get(f"/api/credentials?branch_id={bid}").json() if r["id"] == cid), {}).get("expiry_date") == f"{YEAR}-12-31")
+dele = admin.delete(f"/api/credentials/{cid}")
+check("admin deletes a credential", dele.status_code == 200, dele.text)
+check("credential gone after delete",
+      not any(r["id"] == cid for r in admin.get(f"/api/credentials?branch_id={bid}").json()))
+
+print("\n== scenario 24: staff shift preferences ==")
+PY, PM = YEAR, MONTH
+pu = staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 6, "kind": "unavailable"})
+check("staff sets an unavailable day", pu.status_code == 200, pu.text)
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 7, "kind": "unavailable"})
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 8, "kind": "unavailable"})
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 15, "kind": "off"})
+mine = staffB.get(f"/api/preferences?year={PY}&month={PM}").json()
+check("staff sees their own preferences",
+      len([p for p in mine["preferences"] if p["kind"] == "unavailable"]) == 3, mine)
+check("invalid day rejected (400)",
+      staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 99, "kind": "off"}).status_code == 400)
+check("staff can't set another staff's preference (403)",
+      staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 6, "kind": "off", "staff_id": A["id"]}).status_code == 403)
+lp = lead.get(f"/api/preferences?branch_id={bid}&year={PY}&month={PM}").json()
+check("team lead sees branch preferences with staff name",
+      any(p["staff_id"] == B["id"] and p.get("staff_name") for p in lp["preferences"]), lp)
+g = admin.post("/api/generate", json={"branch_id": bid, "year": PY, "month": PM, "confirm": True, "ignore_manual": True})
+if g.status_code == 200:
+    sg = (g.json().get("schedule") or {}).get("id") or sid
+    ents = admin.get(f"/api/schedules/{sg}/entries").json()
+    bdays = {e["date"][8:10]: e["shift_code"] for e in ents if e["staff_id"] == B["id"]}
+    check("unavailable days are never worked (forced off)",
+          all(bdays.get(f"{d:02d}") not in ("M", "N") for d in (6, 7, 8)),
+          {d: bdays.get(f"{d:02d}") for d in (6, 7, 8)})
+    g2 = admin.post("/api/generate", json={"branch_id": bid, "year": PY, "month": PM,
+                                           "confirm": True, "ignore_manual": True, "ignore_prefs": True})
+    check("generation runs with preferences ignored", g2.status_code == 200, g2.text)
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 15, "kind": "none"})
+mine2 = staffB.get(f"/api/preferences?year={PY}&month={PM}").json()
+check("clearing a day removes the preference", not any(p["day"] == 15 for p in mine2["preferences"]), mine2)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

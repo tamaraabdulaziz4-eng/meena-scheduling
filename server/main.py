@@ -560,6 +560,38 @@ def init_schema():
                     UNIQUE(branch_id, date, shift)
                 );""")
 
+            # Staff credentials / licenses with expiry (SCFHS, BLS/ACLS, Iqama…) —
+            # so the team lead/manager is alerted before they lapse.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.staff_credentials (
+                    id SERIAL PRIMARY KEY,
+                    staff_id INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL DEFAULT 'other',
+                    label TEXT,
+                    number TEXT,
+                    expiry_date DATE NOT NULL,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_staff ON scheduling.staff_credentials(staff_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_expiry ON scheduling.staff_credentials(expiry_date);")
+
+            # Staff shift preferences for a month — collected before generation.
+            # kind: 'unavailable' (hard, forced Off) or 'off' (soft, prefer Off).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.shift_preferences (
+                    id SERIAL PRIMARY KEY,
+                    staff_id INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    day INTEGER NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'off',
+                    note TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (staff_id, year, month, day)
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_shift_prefs_month ON scheduling.shift_preferences(year,month);")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -5397,6 +5429,196 @@ def report_qc_log(request: Request, user=Depends(require_admin)):
         r["shift_label"] = _SHIFT_CHECK_LABELS.get(r["shift"], r["shift"])
     return {"from": date_from, "to": date_to, "log": rows}
 
+# ── Staff credentials / license expiry ────────────────────────────────────────
+_CREDENTIAL_KINDS = ("scfhs", "bls", "acls", "iqama", "passport", "classification", "other")
+
+def _can_manage_staff(user, staff_id):
+    if user["role"] in ("manager", "superadmin"):
+        return True
+    if user["role"] == "admin":
+        st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+        return bool(st and can_access_branch(user, st["branch_id"]))
+    return False
+
+@app.get("/api/credentials")
+def list_credentials(request: Request, user=Depends(require_admin)):
+    """All staff credentials in scope (team lead: own branch; manager: any/all)."""
+    _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
+    rows = q("""SELECT c.id, c.staff_id, c.kind, c.label, c.number,
+                       TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (c.expiry_date - CURRENT_DATE) AS days_left,
+                       s.name AS staff_name, s.branch_id, b.name AS branch_name
+                FROM scheduling.staff_credentials c
+                JOIN scheduling.staff s ON s.id=c.staff_id
+                LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
+                ORDER BY c.expiry_date""", (branch_ids,))
+    return rows
+
+@app.get("/api/credentials/expiring")
+def expiring_credentials(request: Request, user=Depends(require_admin)):
+    days = request.query_params.get("days") or "60"
+    try: days = max(1, min(365, int(days)))
+    except (TypeError, ValueError): days = 60
+    _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
+    rows = q("""SELECT c.id, c.kind, c.label,
+                       TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (c.expiry_date - CURRENT_DATE) AS days_left,
+                       s.name AS staff_name, b.name AS branch_name
+                FROM scheduling.staff_credentials c
+                JOIN scheduling.staff s ON s.id=c.staff_id
+                LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
+                  AND c.expiry_date <= CURRENT_DATE + %s
+                ORDER BY c.expiry_date""", (branch_ids, days))
+    return {"days": days, "items": rows}
+
+@app.get("/api/staff/{sid}/credentials")
+def staff_credentials(sid: int, user=Depends(get_current_user)):
+    # A staff member may view their own; a lead/manager their branch.
+    if user["role"] == "staff":
+        if user.get("staff_id") != sid:
+            raise HTTPException(403, "Forbidden")
+    elif not _can_manage_staff(user, sid):
+        raise HTTPException(403, "Forbidden")
+    return q("""SELECT id, kind, label, number,
+                       TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (expiry_date - CURRENT_DATE) AS days_left
+                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY expiry_date""", (sid,))
+
+@app.post("/api/credentials")
+async def create_credential(request: Request, user=Depends(require_admin)):
+    body = await request.json()
+    sid = _int_or_400(body.get("staff_id"), "staff_id")
+    if not _can_manage_staff(user, sid):
+        raise HTTPException(403, "Forbidden")
+    kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    expiry = (body.get("expiry_date") or "").strip()
+    if not expiry:
+        raise HTTPException(400, "expiry_date is required")
+    row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,expiry_date,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s)
+               RETURNING id, TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date""",
+            (sid, kind, (body.get("label") or "").strip()[:80] or None,
+             (body.get("number") or "").strip()[:60] or None, expiry, user["id"]), one=True)
+    insert_audit(user, "CREDENTIAL_ADD", f"staff:{sid}", f"{kind} {expiry}")
+    return row
+
+@app.put("/api/credentials/{cid}")
+async def update_credential(cid: int, request: Request, user=Depends(require_admin)):
+    c = q("SELECT staff_id FROM scheduling.staff_credentials WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    if not _can_manage_staff(user, c["staff_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    expiry = (body.get("expiry_date") or "").strip()
+    if not expiry:
+        raise HTTPException(400, "expiry_date is required")
+    q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,expiry_date=%s WHERE id=%s""",
+      (kind, (body.get("label") or "").strip()[:80] or None,
+       (body.get("number") or "").strip()[:60] or None, expiry, cid), exec_only=True)
+    return {"ok": True}
+
+@app.delete("/api/credentials/{cid}")
+def delete_credential(cid: int, user=Depends(require_admin)):
+    c = q("SELECT staff_id FROM scheduling.staff_credentials WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    if not _can_manage_staff(user, c["staff_id"]):
+        raise HTTPException(403, "Forbidden")
+    q("DELETE FROM scheduling.staff_credentials WHERE id=%s", (cid,), exec_only=True)
+    return {"ok": True}
+
+_PREF_KINDS = ("off", "unavailable")
+
+@app.get("/api/preferences")
+def list_preferences(request: Request, user=Depends(get_current_user)):
+    """Shift preferences for a month. Staff sees their own; a team lead/manager
+    sees everyone in scope (own branch / all)."""
+    p = request.query_params
+    year = _int_or_400(p.get("year"), "year")
+    month = _int_or_400(p.get("month"), "month")
+    if user["role"] == "staff":
+        sid = user.get("staff_id")
+        if not sid:
+            return {"year": year, "month": month, "preferences": []}
+        rows = q("""SELECT id, staff_id, day, kind, note FROM scheduling.shift_preferences
+                    WHERE staff_id=%s AND year=%s AND month=%s ORDER BY day""", (sid, year, month))
+        return {"year": year, "month": month, "preferences": rows}
+    if user["role"] not in ("admin", "manager", "superadmin"):
+        raise HTTPException(403, "Forbidden")
+    _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    rows = q("""SELECT pr.id, pr.staff_id, pr.day, pr.kind, pr.note, s.name AS staff_name, s.branch_id
+                FROM scheduling.shift_preferences pr
+                JOIN scheduling.staff s ON s.id=pr.staff_id
+                WHERE pr.year=%s AND pr.month=%s AND s.branch_id = ANY(%s)
+                  AND COALESCE(s.active,true)=true
+                ORDER BY s.name, pr.day""", (year, month, branch_ids))
+    return {"year": year, "month": month, "preferences": rows}
+
+@app.put("/api/preferences")
+async def set_preference(request: Request, user=Depends(get_current_user)):
+    """Set or clear one day's preference. Staff edit their own; a lead/manager
+    may edit any staff in scope. kind 'none' clears the day."""
+    body = await request.json()
+    year = _int_or_400(body.get("year"), "year")
+    month = _int_or_400(body.get("month"), "month")
+    day = _int_or_400(body.get("day"), "day")
+    import calendar as _cal
+    if month < 1 or month > 12 or day < 1 or day > _cal.monthrange(year, month)[1]:
+        raise HTTPException(400, "Invalid day for that month")
+    # Resolve the target staff and authorize.
+    if user["role"] == "staff":
+        sid = user.get("staff_id")
+        if not sid:
+            raise HTTPException(400, "No staff record linked to your account")
+        if body.get("staff_id") and int(body["staff_id"]) != int(sid):
+            raise HTTPException(403, "Forbidden")
+    else:
+        sid = _int_or_400(body.get("staff_id"), "staff_id")
+        if not _can_manage_staff(user, sid):
+            raise HTTPException(403, "Forbidden")
+    kind = (body.get("kind") or "off").strip().lower()
+    if kind in ("none", "clear", ""):
+        q("DELETE FROM scheduling.shift_preferences WHERE staff_id=%s AND year=%s AND month=%s AND day=%s",
+          (sid, year, month, day), exec_only=True)
+        return {"ok": True, "cleared": True}
+    if kind not in _PREF_KINDS:
+        raise HTTPException(400, "kind must be 'off', 'unavailable' or 'none'")
+    note = (body.get("note") or "").strip()[:200] or None
+    q("""INSERT INTO scheduling.shift_preferences (staff_id,year,month,day,kind,note)
+         VALUES (%s,%s,%s,%s,%s,%s)
+         ON CONFLICT (staff_id,year,month,day)
+         DO UPDATE SET kind=EXCLUDED.kind, note=EXCLUDED.note""",
+      (sid, year, month, day, kind, note), exec_only=True)
+    return {"ok": True, "kind": kind}
+
+def _send_credential_reminders():
+    """Notify staff + their branch lead(s) + reviewers about credentials expiring
+    within 30 days (or already expired), once per credential per threshold."""
+    rows = q("""SELECT c.id, c.kind, c.label, c.staff_id, s.branch_id,
+                       TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (c.expiry_date - CURRENT_DATE) AS days_left, s.name AS staff_name
+                FROM scheduling.staff_credentials c
+                JOIN scheduling.staff s ON s.id=c.staff_id
+                WHERE COALESCE(s.active,true)=true AND c.expiry_date <= CURRENT_DATE + 30""")
+    for r in rows:
+        dleft = r["days_left"]
+        bucket = "expired" if dleft < 0 else ("7" if dleft <= 7 else "30")
+        key = f"cred_remind:{r['id']}:{bucket}"
+        claimed = q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,'1')
+                       ON CONFLICT (key) DO NOTHING RETURNING key""", (key,), one=True)
+        if not claimed:
+            continue
+        label = (r["label"] or r["kind"].upper())
+        when = "has expired" if dleft < 0 else f"expires in {dleft} day(s) ({r['expiry_date']})"
+        msg = f"{r['staff_name']}'s {label} {when}."
+        notify_staff_member(r["staff_id"], msg, link="myschedule", ntype="reminder")
+        notify_branch_leads(r["branch_id"], msg, link="reports", ntype="reminder")
+        notify_roles(("manager", "superadmin"), msg, link="reports", ntype="reminder")
+
 # ── Daily radiology cases report ──────────────────────────────────────────────
 
 _CASE_FIELDS = ("xray", "ct", "us", "mamo", "bmd", "insert_cd",
@@ -5681,6 +5903,23 @@ def start_scheduler():
     import threading
     threading.Thread(target=_cases_reminder_loop, daemon=True).start()
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
+    threading.Thread(target=_credential_reminder_loop, daemon=True).start()
+
+def _credential_reminder_loop():
+    """Once a day, sweep for credentials expiring within 30 days and alert."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+            claimed = q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+                           ON CONFLICT (key) DO NOTHING RETURNING key""",
+                        (f"cred_sweep:{ksa.strftime('%Y-%m-%d')}", ksa.isoformat()), one=True)
+            if claimed:
+                _send_credential_reminders()
+        except Exception as e:
+            print(f"[cred-reminder] {e}")
+        time.sleep(3600)
 
 @app.put("/api/daily-cases/reopen")
 async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):
@@ -6006,6 +6245,23 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         al_schedule.setdefault(sk, []).append(day)
     for sk in list(al_schedule.keys()):
         al_schedule[sk] = sorted(set(al_schedule[sk]))
+
+    # Staff shift preferences for this month: 'unavailable' → forced Off (hard),
+    # 'off' → preferred Off (soft). The team lead can drop them with ignore_prefs.
+    unavailable_by_solver = {}
+    pref_off_by_solver = {}
+    if not bool(body.get("ignore_prefs")):
+        pref_rows = q("""SELECT staff_id, day, kind FROM scheduling.shift_preferences
+                         WHERE year=%s AND month=%s AND staff_id = ANY(%s)""",
+                      (year, month, list(staff_by_id.keys())))
+        for pr in pref_rows:
+            sk = solver_key_by_staff_id.get(int(pr["staff_id"]))
+            if not sk:
+                continue
+            if pr["kind"] == "unavailable":
+                unavailable_by_solver.setdefault(sk, []).append(int(pr["day"]))
+            elif pr["kind"] == "off":
+                pref_off_by_solver.setdefault(sk, []).append(int(pr["day"]))
 
     # "Fill blanks only": keep the manager's hand-entered cells and let the solver
     # build the rest of the month around them. We pin every existing non-blank
@@ -6383,7 +6639,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     if only_section and not any(_section_requested(s) for s in nest_cfg_for_solver["sections"]):
         raise HTTPException(400, f"Section '{only_section}' not found for this branch")
 
-    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed=None):
+    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed=None, sec_unavail=None):
         """When a section is infeasible, find WHICH setting is to blame by
         re-solving with one setting relaxed at a time (short time limit). Each
         relaxation that turns the section solvable is reported back as a concrete
@@ -6422,6 +6678,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                     section_limits=seclim2,
                     nest_cfg={"sections": {sec_name: sec2}},
                     fixed_schedule=sec_fixed,
+                    unavailable=sec_unavail,
                 )
             except Exception:
                 continue
@@ -6438,6 +6695,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             ("Locked manual cells", "clear the pinned hand-edited cells for this month", dict(fixed={})),
             ("Per-staff minimum shifts", "the forced ~full-month minimum is too tight — lower it", dict(staff=floor0)),
         ]
+        if sec_unavail:
+            extras.append(("Staff unavailable days", "too many staff marked the same days off — regenerate ignoring preferences", dict(unavail={})))
         for label, change, ov in extras:
             try:
                 res = solver_generate(
@@ -6449,6 +6708,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                     section_limits={sec_name: dict(section_limits_for_solver.get(sec_name) or {})},
                     nest_cfg={"sections": {sec_name: dict(sec_cfg)}},
                     fixed_schedule=ov.get("fixed", sec_fixed),
+                    unavailable=ov.get("unavail", sec_unavail),
                 )
             except Exception:
                 continue
@@ -6478,6 +6738,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         sec_prev_tail = {sk: prev_tail_by_solver.get(sk, []) for sk in staff_keys if sk in prev_tail_by_solver}
         sec_staff_limits = {sk: staff_limits.get(sk, {}) for sk in staff_keys}
         sec_fixed = {sk: fixed_by_solver[sk] for sk in staff_keys if sk in fixed_by_solver}
+        sec_unavail = {sk: unavailable_by_solver[sk] for sk in staff_keys if sk in unavailable_by_solver}
+        sec_pref_off = {sk: pref_off_by_solver[sk] for sk in staff_keys if sk in pref_off_by_solver}
         sec_limits = {sec_name: section_limits_for_solver.get(sec_name, {})}
 
         # Pass this section's config straight to the solver (no global mutation).
@@ -6491,13 +6753,15 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             section_limits=sec_limits,
             nest_cfg=sec_nest_cfg,
             fixed_schedule=sec_fixed,
+            unavailable=sec_unavail,
+            pref_off=sec_pref_off,
         )
 
         if sec_result["status"] == "INFEASIBLE" or not sec_result.get("schedule"):
             diag = section_diagnostics(sec_name, sec_cfg, staff_keys)
             # Pinpoint the exact setting(s) at fault by trying them one at a time.
             try:
-                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed)
+                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed, sec_unavail)
             except Exception as _pe:
                 print(f"[Generate] relaxation probe failed for {sec_name}: {_pe}")
             section_results[sec_name] = {

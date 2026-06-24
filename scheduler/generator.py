@@ -188,12 +188,18 @@ def generate_schedule(nest_name: str, year: int, month: int,
                       staff_limits: dict = None,
                       section_limits: dict = None,
                       nest_cfg: dict = None,
-                      fixed_schedule: dict = None) -> dict:
+                      fixed_schedule: dict = None,
+                      unavailable: dict = None,
+                      pref_off: dict = None) -> dict:
     """
     staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits
     max_consecutive: max working days in a row (default 5)
     fixed_schedule: { solver_key: {day(int): code(str)} } — cells the manager set
         by hand and wants kept; the solver pins them and fills the rest.
+    unavailable: { solver_key: [day(int), ...] } — staff-stated days they CANNOT
+        work; forced Off (hard), ranking below leave and manager pins.
+    pref_off: { solver_key: [day(int), ...] } — staff-stated days they'd PREFER
+        off; honored as a soft penalty (coverage and safety still win).
     """
     """
     Generate a schedule for the given nest/month using CP-SAT.
@@ -204,6 +210,8 @@ def generate_schedule(nest_name: str, year: int, month: int,
     al_schedule     = al_schedule or {}
     prev_tail       = prev_tail   or {}
     staff_limits    = staff_limits or {}
+    unavailable     = {k: set(v) for k, v in (unavailable or {}).items()}
+    pref_off        = {k: set(v) for k, v in (pref_off or {}).items()}
     section_limits  = section_limits or {}
     # Prefer an explicitly-passed config (avoids mutating the shared NESTS global
     # — two concurrent requests would otherwise read each other's settings).
@@ -314,6 +322,9 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 # Manager pinned this cell — fix it and let the solver build around it.
                 fi = code_to_idx[pinned[day]]
                 v = model.new_int_var(fi, fi, f"s_{p}_{d}")
+            elif day in unavailable.get(p, ()):
+                # Staff said they can't work this day → forced Off (hard).
+                v = model.new_int_var(o_idx, o_idx, f"s_{p}_{d}")
             else:
                 v = model.new_int_var_from_domain(auto_domain, f"s_{p}_{d}")
             shift_var[p].append(v)
@@ -831,14 +842,34 @@ def generate_schedule(nest_name: str, year: int, month: int,
             model.add(wknd_spread == max_wknd - min_wknd)
             objective_terms.append(wknd_spread)
 
+    # ── Soft Constraint: staff "prefer off" day requests ─────────────────────
+    # A staff member can flag days they'd rather not work. We penalise working on
+    # those days so the solver hands them the day off whenever coverage allows.
+    # Days that are already AL / pinned / unavailable are skipped (handled above).
+    pref_off_penalties = []
+    for p, sec_name, sec in all_staff:
+        for day in sorted(pref_off.get(p, ())):
+            d = day - 1
+            if d < 0 or d >= n_days:
+                continue
+            if p in al_schedule and day in al_schedule[p]:
+                continue
+            if day in (fixed_schedule or {}).get(p, {}):
+                continue
+            if day in unavailable.get(p, ()):
+                continue
+            # works = not Off on that day → 1 when the preference is violated.
+            pref_off_penalties.append(get_bool(p, d, "O").negated())
+
     # ── Objective ─────────────────────────────────────────────────────────────
-    # Weights: M-block rest violations (500) > half-month single-type
-    #          preference (120) > Friday-off target (110) > fairness spread (100).
-    # The half-month preference sits just above fairness so the solver keeps
-    # clean M-half/N-half blocks whenever it can, but never at the cost of a
-    # feasible rota. The Friday-off target nudges everyone toward 2 Fridays off
-    # while staying below the half-month block preference.
+    # Weights: M-block rest violations (500) > staff prefer-off requests (150) >
+    #          half-month single-type preference (120) > Friday-off target (110)
+    #          > fairness spread (100).
+    # A staff member's explicit prefer-off request sits just above the comfort
+    # and fairness niceties so it is generally honored, but stays well below the
+    # hard safety rules and never overrides coverage (which is a hard constraint).
     total_obj  = [500 * t for t in rest_violation_terms]
+    total_obj += [150 * t for t in pref_off_penalties]
     total_obj += [120 * t for t in halfmix_penalties]
     total_obj += [110 * t for t in weekend_short_terms]
     total_obj += [100 * t for t in objective_terms]
