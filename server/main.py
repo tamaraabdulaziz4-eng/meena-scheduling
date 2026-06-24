@@ -5259,6 +5259,44 @@ def dashboard_summary(user=Depends(get_current_user)):
         "role": role,
     }
 
+@app.get("/api/on-duty")
+def on_duty(request: Request, user=Depends(get_current_user)):
+    """Who's on shift on a given day (default today, KSA), with their contact info —
+    a manager sees every branch; a team lead sees their own."""
+    from datetime import datetime, timezone, timedelta
+    date = request.query_params.get("date")
+    if not date:
+        date = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d")
+    role = user["role"]
+    cond, vals = ["e.date=%s", "e.shift_code NOT IN ('O','AL','SL','TB','OC')"], [date]
+    if role not in ("superadmin", "manager"):
+        bid = user.get("branch_id")
+        if not bid:
+            return {"date": date, "branches": []}
+        cond.append("sc.branch_id=%s"); vals.append(bid)
+    rows = q(f"""SELECT sc.branch_id, b.name AS branch_name, s.id AS staff_id, s.name,
+                        s.phone, s.email, s.speciality, e.shift_code, e.is_oncall,
+                        e.cross_branch_id, cb.name AS cross_branch_name
+                 FROM scheduling.schedule_entries e
+                 JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                 JOIN scheduling.staff s ON s.id=e.staff_id
+                 JOIN scheduling.branches b ON b.id=sc.branch_id
+                 LEFT JOIN scheduling.branches cb ON cb.id=e.cross_branch_id
+                 WHERE {' AND '.join(cond)}
+                 ORDER BY b.name, e.shift_code, s.name""", vals)
+    by_branch = {}
+    for r in rows:
+        g = by_branch.setdefault(r["branch_id"], {"branch_id": r["branch_id"],
+                                                  "branch_name": r["branch_name"], "staff": []})
+        g["staff"].append({
+            "staff_id": r["staff_id"], "name": r["name"],
+            "phone": r.get("phone"), "email": r.get("email"),
+            "shift_code": r["shift_code"], "section": _section_of(r.get("speciality")),
+            "is_oncall": bool(r.get("is_oncall")),
+            "covering_at": r.get("cross_branch_name") if r.get("cross_branch_id") else None,
+        })
+    return {"date": date, "branches": list(by_branch.values())}
+
 # ── Daily radiology cases report ──────────────────────────────────────────────
 
 _CASE_FIELDS = ("xray", "ct", "us", "mamo", "bmd", "insert_cd",

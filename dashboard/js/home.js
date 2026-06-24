@@ -45,6 +45,7 @@ async function renderHomePage() {
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div id="hm-approvals"></div>
+    <div id="hm-onduty"></div>
     <div id="hm-shiftcheck"></div>
     <div class="hm-card">
       <div class="hm-card-head">
@@ -64,6 +65,7 @@ async function renderHomePage() {
   renderHomeActions(dash);
   renderHomeCases(ov);
   renderHomeEotm();
+  renderHomeOnDuty();
   renderHomeShiftChecks();
   if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) renderHomeApprovals();
   renderHomeRecent();
@@ -477,4 +479,48 @@ async function renderHomeShiftChecks() {
           <div>${b.checks.map(pill).join('')}</div>
         </div>`).join('')}
     </div></div>`;
+}
+
+// ── On duty today: who's on shift right now, per branch, with contact ─────────
+async function renderHomeOnDuty() {
+  const box = document.getElementById('hm-onduty');
+  if (!box) return;
+  let d;
+  try { d = await API.get('/on-duty'); } catch (e) { box.innerHTML = ''; return; }
+  const branches = (d && d.branches) || [];
+  if (!branches.length) {
+    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">On duty today</div></div>
+      <div class="hm-muted" style="padding:6px 2px">No one is scheduled on duty today.</div></div>`;
+    return;
+  }
+  const total = branches.reduce((a, b) => a + b.staff.length, 0);
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head"><div class="hm-card-title">On duty today</div>
+      <div class="hm-card-meta">${total} on shift</div></div>
+    ${branches.map(b => `
+      <div style="margin-top:8px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px">${escapeHtml(b.branch_name)}</div>
+        ${b.staff.map(onDutyRow).join('')}
+      </div>`).join('')}
+  </div>`;
+}
+
+function onDutyRow(s) {
+  const st = (typeof allShiftTypes !== 'undefined' && allShiftTypes)
+    ? allShiftTypes.find(x => x.code === s.shift_code) : null;
+  const color = st?.color || '#5B8DEF';
+  const badge = `<span style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
+    font-weight:700;padding:2px 8px;border-radius:9px">${escapeHtml(s.shift_code)}</span>`;
+  const sec = s.section === 'US' ? 'US' : 'General';
+  const phone = s.phone
+    ? `<a href="tel:${encodeURIComponent(s.phone)}" style="color:var(--accent);text-decoration:none">${escapeHtml(s.phone)}</a>` : '';
+  const tags = [sec, s.is_oncall ? 'On-call' : '', s.covering_at ? 'covering ' + escapeHtml(s.covering_at) : '']
+    .filter(Boolean).join(' · ');
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="min-width:0">
+        <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(s.name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${tags}${phone ? ' · ' + phone : ''}</div>
+      </div>
+      ${badge}
+    </div>`;
 }
