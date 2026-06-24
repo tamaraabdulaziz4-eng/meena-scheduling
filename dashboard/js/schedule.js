@@ -1365,7 +1365,35 @@ function openGenerateModal() {
   }
 
   renderGenStaffPicker();
+  const igp = document.getElementById('gen-ignore-prefs');
+  if (igp) igp.checked = false;
+  renderGenPrefsSummary();
   document.getElementById('generate-modal-overlay').classList.add('open');
+}
+
+// Show what staff asked for this month so the lead sees it before generating.
+async function renderGenPrefsSummary() {
+  const box = document.getElementById('gen-prefs-summary');
+  if (!box) { return; }
+  box.innerHTML = '';
+  let data;
+  try { data = await API.get(`/preferences?branch_id=${currentBranchId}&year=${scheduleYear}&month=${scheduleMonth}`); }
+  catch (e) { return; }
+  const prefs = (data && data.preferences) || [];
+  if (!prefs.length) { return; }
+  const byStaff = {};
+  prefs.forEach(p => {
+    const g = byStaff[p.staff_id] || (byStaff[p.staff_id] = { name: p.staff_name || '', off: [], un: [] });
+    (p.kind === 'unavailable' ? g.un : g.off).push(p.day);
+  });
+  const rows = Object.values(byStaff).map(g => {
+    const parts = [];
+    if (g.un.length) parts.push(`<span style="color:#E25555">can't work ${g.un.sort((a,b)=>a-b).join(', ')}</span>`);
+    if (g.off.length) parts.push(`<span style="color:#E2933F">prefer off ${g.off.sort((a,b)=>a-b).join(', ')}</span>`);
+    return `<div style="padding:3px 0"><b>${escapeHtml(g.name)}</b> — ${parts.join(' · ')}</div>`;
+  }).join('');
+  box.innerHTML = `<div style="background:var(--card-alt);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:12px">
+      <div style="font-weight:700;margin-bottom:4px">Staff preferences this month</div>${rows}</div>`;
 }
 
 // Per-generation staff picker: tick who goes into the rota (all ticked by default).
@@ -1628,6 +1656,7 @@ async function runGenerate() {
           section:   genSectionChoice || undefined,
           preserve_existing: !!document.getElementById('gen-preserve')?.checked,
           ignore_manual: !!document.getElementById('gen-ignore-manual')?.checked,
+          ignore_prefs: !!document.getElementById('gen-ignore-prefs')?.checked,
           exclude_staff_ids: genExcludedIds(),
         });
         break;

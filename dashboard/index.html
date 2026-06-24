@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260624e">
+<link rel="stylesheet" href="/style.css?v=20260624f">
 </head>
 <body>
 
@@ -778,6 +778,11 @@
           <input type="checkbox" id="gen-ignore-manual" style="width:auto;margin-top:2px">
           <span><strong>Fresh generate</strong> — ignore the pinned manual cells and rebuild everything (use this if generation says infeasible because of a stuck manual edit).</span>
         </label>
+        <div id="gen-prefs-summary" style="margin-bottom:10px"></div>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:10px;font-size:13px">
+          <input type="checkbox" id="gen-ignore-prefs" style="width:auto;margin-top:2px">
+          <span><strong>Ignore staff preferences</strong> — don't apply the prefer-off / can't-work days staff submitted (use this if their requests make the month infeasible).</span>
+        </label>
         <div style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.2);border-radius:10px;padding:10px 14px;font-size:12px;color:#cc4444" id="gen-overwrite-warning">
         </div>
         <div class="msg" id="gen-msg"></div>
@@ -1022,27 +1027,27 @@
 </div>
 
 
-<script src="/js/api.js?v=20260624e"></script>
-<script src="/js/auth.js?v=20260624e"></script>
-<script src="/js/util.js?v=20260624e"></script>
-<script src="/js/branches.js?v=20260624e"></script>
-<script src="/js/users.js?v=20260624e"></script>
-<script src="/js/staff.js?v=20260624e"></script>
-<script src="/js/leaves.js?v=20260624e"></script>
-<script src="/js/swaps.js?v=20260624e"></script>
-<script src="/js/holidays.js?v=20260624e"></script>
-<script src="/js/notifications.js?v=20260624e"></script>
-<script src="/js/portal.js?v=20260624e"></script>
-<script src="/js/cases.js?v=20260624e"></script>
-<script src="/js/tickets.js?v=20260624e"></script>
-<script src="/js/reports.js?v=20260624e"></script>
-<script src="/js/announcements.js?v=20260624e"></script>
-<script src="/js/home.js?v=20260624e"></script>
-<script src="/js/shifts.js?v=20260624e"></script>
-<script src="/js/schedule.js?v=20260624e"></script>
-<script src="/js/review.js?v=20260624e"></script>
-<script src="/js/export.js?v=20260624e"></script>
-<script src="/js/audit.js?v=20260624e"></script>
-<script src="/js/main.js?v=20260624e"></script>
+<script src="/js/api.js?v=20260624f"></script>
+<script src="/js/auth.js?v=20260624f"></script>
+<script src="/js/util.js?v=20260624f"></script>
+<script src="/js/branches.js?v=20260624f"></script>
+<script src="/js/users.js?v=20260624f"></script>
+<script src="/js/staff.js?v=20260624f"></script>
+<script src="/js/leaves.js?v=20260624f"></script>
+<script src="/js/swaps.js?v=20260624f"></script>
+<script src="/js/holidays.js?v=20260624f"></script>
+<script src="/js/notifications.js?v=20260624f"></script>
+<script src="/js/portal.js?v=20260624f"></script>
+<script src="/js/cases.js?v=20260624f"></script>
+<script src="/js/tickets.js?v=20260624f"></script>
+<script src="/js/reports.js?v=20260624f"></script>
+<script src="/js/announcements.js?v=20260624f"></script>
+<script src="/js/home.js?v=20260624f"></script>
+<script src="/js/shifts.js?v=20260624f"></script>
+<script src="/js/schedule.js?v=20260624f"></script>
+<script src="/js/review.js?v=20260624f"></script>
+<script src="/js/export.js?v=20260624f"></script>
+<script src="/js/audit.js?v=20260624f"></script>
+<script src="/js/main.js?v=20260624f"></script>
 </body>
 </html>

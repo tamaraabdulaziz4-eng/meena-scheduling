@@ -20,11 +20,56 @@ async function renderMySchedulePage() {
     <div id="ms-eotm"></div>
     <div id="portal-grid">${LOADING_HTML}</div>
     <div id="portal-legend" style="margin-top:16px"></div>
+    <div id="ms-prefs" style="margin-top:20px"></div>
     <div id="portal-requests" style="margin-top:20px"></div>`;
   await loadMySchedule();
   loadMyRequests();   // "everything that's mine" — open requests + their stage
   if (typeof renderHomeEotm === 'function') renderHomeEotm('ms-eotm');   // celebrate EOTM for staff too
   renderMyShiftChecks();   // equipment-check confirmation for the shift they're on
+  renderMyPreferences();   // day-off / unavailable wishes for the rota generator
+}
+
+// ── My preferences (prefer-off / unavailable days before the rota is built) ───
+let _myPrefs = {};   // day(int) → 'off' | 'unavailable'
+
+async function renderMyPreferences() {
+  const box = document.getElementById('ms-prefs');
+  if (!box) return;
+  let data;
+  try { data = await API.get(`/preferences?year=${portalYear}&month=${portalMonth}`); }
+  catch (e) { box.innerHTML = ''; return; }
+  _myPrefs = {};
+  (data.preferences || []).forEach(p => { _myPrefs[p.day] = p.kind; });
+  const nDays = daysInMonth(portalYear, portalMonth);
+  let cells = '';
+  for (let day = 1; day <= nDays; day++) {
+    const dow = dayOfWeek(portalYear, portalMonth, day);
+    const k = _myPrefs[day];
+    const bg = k === 'unavailable' ? '#E2555522' : k === 'off' ? '#E2933F22' : 'var(--card-alt)';
+    const bd = k === 'unavailable' ? '#E25555' : k === 'off' ? '#E2933F' : 'var(--border)';
+    cells += `<button class="pref-day" onclick="cyclePreference(${day})" title="Tap to change"
+        style="background:${bg};border:1px solid ${bd};border-radius:8px;padding:6px 0;cursor:pointer;text-align:center;min-width:0">
+        <div style="font-size:13px;font-weight:700">${day}</div>
+        <div style="font-size:9px;color:var(--muted)">${DAYS[dow]}</div></button>`;
+  }
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head"><div class="hm-card-title">My day preferences — ${monthLabel(portalYear, portalMonth)}</div></div>
+    <div class="hm-muted" style="font-size:12px;margin:4px 0 10px">Tap a day to cycle: normal → prefer off → can't work. Your team lead sees these before building the rota. Preferred-off is a wish; can't-work is kept off.</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${cells}</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px">
+      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E2933F22;border:1px solid #E2933F;vertical-align:middle"></span> Prefer off</span>
+      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E2555522;border:1px solid #E25555;vertical-align:middle"></span> Can't work</span>
+    </div></div>`;
+}
+
+async function cyclePreference(day) {
+  const order = { '': 'off', 'off': 'unavailable', 'unavailable': 'none' };
+  const next = order[_myPrefs[day] || ''] || 'off';
+  try {
+    await API.put('/preferences', { year: portalYear, month: portalMonth, day, kind: next });
+    if (next === 'none') delete _myPrefs[day]; else _myPrefs[day] = next;
+    renderMyPreferences();
+  } catch (e) { toast(e.message || 'Could not save', 'err'); }
 }
 
 // ── Per-shift equipment check (تشييك الأجهزة) ────────────────────────────────
@@ -129,6 +174,7 @@ async function changePortalMonth(delta) {
   if (grid) grid.innerHTML = LOADING_HTML;
   await loadMySchedule();
   animateIn('portal-grid');
+  renderMyPreferences();
 }
 
 async function loadMySchedule() {

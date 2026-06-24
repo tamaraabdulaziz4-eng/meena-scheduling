@@ -576,6 +576,22 @@ def init_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_staff ON scheduling.staff_credentials(staff_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_expiry ON scheduling.staff_credentials(expiry_date);")
 
+            # Staff shift preferences for a month — collected before generation.
+            # kind: 'unavailable' (hard, forced Off) or 'off' (soft, prefer Off).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.shift_preferences (
+                    id SERIAL PRIMARY KEY,
+                    staff_id INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    day INTEGER NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'off',
+                    note TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (staff_id, year, month, day)
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_shift_prefs_month ON scheduling.shift_preferences(year,month);")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -5515,6 +5531,70 @@ def delete_credential(cid: int, user=Depends(require_admin)):
     q("DELETE FROM scheduling.staff_credentials WHERE id=%s", (cid,), exec_only=True)
     return {"ok": True}
 
+_PREF_KINDS = ("off", "unavailable")
+
+@app.get("/api/preferences")
+def list_preferences(request: Request, user=Depends(get_current_user)):
+    """Shift preferences for a month. Staff sees their own; a team lead/manager
+    sees everyone in scope (own branch / all)."""
+    p = request.query_params
+    year = _int_or_400(p.get("year"), "year")
+    month = _int_or_400(p.get("month"), "month")
+    if user["role"] == "staff":
+        sid = user.get("staff_id")
+        if not sid:
+            return {"year": year, "month": month, "preferences": []}
+        rows = q("""SELECT id, staff_id, day, kind, note FROM scheduling.shift_preferences
+                    WHERE staff_id=%s AND year=%s AND month=%s ORDER BY day""", (sid, year, month))
+        return {"year": year, "month": month, "preferences": rows}
+    if user["role"] not in ("admin", "manager", "superadmin"):
+        raise HTTPException(403, "Forbidden")
+    _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    rows = q("""SELECT pr.id, pr.staff_id, pr.day, pr.kind, pr.note, s.name AS staff_name, s.branch_id
+                FROM scheduling.shift_preferences pr
+                JOIN scheduling.staff s ON s.id=pr.staff_id
+                WHERE pr.year=%s AND pr.month=%s AND s.branch_id = ANY(%s)
+                  AND COALESCE(s.active,true)=true
+                ORDER BY s.name, pr.day""", (year, month, branch_ids))
+    return {"year": year, "month": month, "preferences": rows}
+
+@app.put("/api/preferences")
+async def set_preference(request: Request, user=Depends(get_current_user)):
+    """Set or clear one day's preference. Staff edit their own; a lead/manager
+    may edit any staff in scope. kind 'none' clears the day."""
+    body = await request.json()
+    year = _int_or_400(body.get("year"), "year")
+    month = _int_or_400(body.get("month"), "month")
+    day = _int_or_400(body.get("day"), "day")
+    import calendar as _cal
+    if month < 1 or month > 12 or day < 1 or day > _cal.monthrange(year, month)[1]:
+        raise HTTPException(400, "Invalid day for that month")
+    # Resolve the target staff and authorize.
+    if user["role"] == "staff":
+        sid = user.get("staff_id")
+        if not sid:
+            raise HTTPException(400, "No staff record linked to your account")
+        if body.get("staff_id") and int(body["staff_id"]) != int(sid):
+            raise HTTPException(403, "Forbidden")
+    else:
+        sid = _int_or_400(body.get("staff_id"), "staff_id")
+        if not _can_manage_staff(user, sid):
+            raise HTTPException(403, "Forbidden")
+    kind = (body.get("kind") or "off").strip().lower()
+    if kind in ("none", "clear", ""):
+        q("DELETE FROM scheduling.shift_preferences WHERE staff_id=%s AND year=%s AND month=%s AND day=%s",
+          (sid, year, month, day), exec_only=True)
+        return {"ok": True, "cleared": True}
+    if kind not in _PREF_KINDS:
+        raise HTTPException(400, "kind must be 'off', 'unavailable' or 'none'")
+    note = (body.get("note") or "").strip()[:200] or None
+    q("""INSERT INTO scheduling.shift_preferences (staff_id,year,month,day,kind,note)
+         VALUES (%s,%s,%s,%s,%s,%s)
+         ON CONFLICT (staff_id,year,month,day)
+         DO UPDATE SET kind=EXCLUDED.kind, note=EXCLUDED.note""",
+      (sid, year, month, day, kind, note), exec_only=True)
+    return {"ok": True, "kind": kind}
+
 def _send_credential_reminders():
     """Notify staff + their branch lead(s) + reviewers about credentials expiring
     within 30 days (or already expired), once per credential per threshold."""
@@ -6166,6 +6246,23 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     for sk in list(al_schedule.keys()):
         al_schedule[sk] = sorted(set(al_schedule[sk]))
 
+    # Staff shift preferences for this month: 'unavailable' → forced Off (hard),
+    # 'off' → preferred Off (soft). The team lead can drop them with ignore_prefs.
+    unavailable_by_solver = {}
+    pref_off_by_solver = {}
+    if not bool(body.get("ignore_prefs")):
+        pref_rows = q("""SELECT staff_id, day, kind FROM scheduling.shift_preferences
+                         WHERE year=%s AND month=%s AND staff_id = ANY(%s)""",
+                      (year, month, list(staff_by_id.keys())))
+        for pr in pref_rows:
+            sk = solver_key_by_staff_id.get(int(pr["staff_id"]))
+            if not sk:
+                continue
+            if pr["kind"] == "unavailable":
+                unavailable_by_solver.setdefault(sk, []).append(int(pr["day"]))
+            elif pr["kind"] == "off":
+                pref_off_by_solver.setdefault(sk, []).append(int(pr["day"]))
+
     # "Fill blanks only": keep the manager's hand-entered cells and let the solver
     # build the rest of the month around them. We pin every existing non-blank
     # cell (work shifts and explicit O), except leave codes — those are already
@@ -6542,7 +6639,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     if only_section and not any(_section_requested(s) for s in nest_cfg_for_solver["sections"]):
         raise HTTPException(400, f"Section '{only_section}' not found for this branch")
 
-    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed=None):
+    def probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed=None, sec_unavail=None):
         """When a section is infeasible, find WHICH setting is to blame by
         re-solving with one setting relaxed at a time (short time limit). Each
         relaxation that turns the section solvable is reported back as a concrete
@@ -6581,6 +6678,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                     section_limits=seclim2,
                     nest_cfg={"sections": {sec_name: sec2}},
                     fixed_schedule=sec_fixed,
+                    unavailable=sec_unavail,
                 )
             except Exception:
                 continue
@@ -6597,6 +6695,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             ("Locked manual cells", "clear the pinned hand-edited cells for this month", dict(fixed={})),
             ("Per-staff minimum shifts", "the forced ~full-month minimum is too tight — lower it", dict(staff=floor0)),
         ]
+        if sec_unavail:
+            extras.append(("Staff unavailable days", "too many staff marked the same days off — regenerate ignoring preferences", dict(unavail={})))
         for label, change, ov in extras:
             try:
                 res = solver_generate(
@@ -6608,6 +6708,7 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                     section_limits={sec_name: dict(section_limits_for_solver.get(sec_name) or {})},
                     nest_cfg={"sections": {sec_name: dict(sec_cfg)}},
                     fixed_schedule=ov.get("fixed", sec_fixed),
+                    unavailable=ov.get("unavail", sec_unavail),
                 )
             except Exception:
                 continue
@@ -6637,6 +6738,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         sec_prev_tail = {sk: prev_tail_by_solver.get(sk, []) for sk in staff_keys if sk in prev_tail_by_solver}
         sec_staff_limits = {sk: staff_limits.get(sk, {}) for sk in staff_keys}
         sec_fixed = {sk: fixed_by_solver[sk] for sk in staff_keys if sk in fixed_by_solver}
+        sec_unavail = {sk: unavailable_by_solver[sk] for sk in staff_keys if sk in unavailable_by_solver}
+        sec_pref_off = {sk: pref_off_by_solver[sk] for sk in staff_keys if sk in pref_off_by_solver}
         sec_limits = {sec_name: section_limits_for_solver.get(sec_name, {})}
 
         # Pass this section's config straight to the solver (no global mutation).
@@ -6650,13 +6753,15 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             section_limits=sec_limits,
             nest_cfg=sec_nest_cfg,
             fixed_schedule=sec_fixed,
+            unavailable=sec_unavail,
+            pref_off=sec_pref_off,
         )
 
         if sec_result["status"] == "INFEASIBLE" or not sec_result.get("schedule"):
             diag = section_diagnostics(sec_name, sec_cfg, staff_keys)
             # Pinpoint the exact setting(s) at fault by trying them one at a time.
             try:
-                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed)
+                diag["fixes"] = probe_relaxations(sec_name, sec_cfg, sec_al, sec_prev_tail, sec_staff_limits, sec_fixed, sec_unavail)
             except Exception as _pe:
                 print(f"[Generate] relaxation probe failed for {sec_name}: {_pe}")
             section_results[sec_name] = {

@@ -1207,5 +1207,37 @@ check("admin deletes a credential", dele.status_code == 200, dele.text)
 check("credential gone after delete",
       not any(r["id"] == cid for r in admin.get(f"/api/credentials?branch_id={bid}").json()))
 
+print("\n== scenario 24: staff shift preferences ==")
+PY, PM = YEAR, MONTH
+pu = staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 6, "kind": "unavailable"})
+check("staff sets an unavailable day", pu.status_code == 200, pu.text)
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 7, "kind": "unavailable"})
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 8, "kind": "unavailable"})
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 15, "kind": "off"})
+mine = staffB.get(f"/api/preferences?year={PY}&month={PM}").json()
+check("staff sees their own preferences",
+      len([p for p in mine["preferences"] if p["kind"] == "unavailable"]) == 3, mine)
+check("invalid day rejected (400)",
+      staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 99, "kind": "off"}).status_code == 400)
+check("staff can't set another staff's preference (403)",
+      staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 6, "kind": "off", "staff_id": A["id"]}).status_code == 403)
+lp = lead.get(f"/api/preferences?branch_id={bid}&year={PY}&month={PM}").json()
+check("team lead sees branch preferences with staff name",
+      any(p["staff_id"] == B["id"] and p.get("staff_name") for p in lp["preferences"]), lp)
+g = admin.post("/api/generate", json={"branch_id": bid, "year": PY, "month": PM, "confirm": True, "ignore_manual": True})
+if g.status_code == 200:
+    sg = (g.json().get("schedule") or {}).get("id") or sid
+    ents = admin.get(f"/api/schedules/{sg}/entries").json()
+    bdays = {e["date"][8:10]: e["shift_code"] for e in ents if e["staff_id"] == B["id"]}
+    check("unavailable days are never worked (forced off)",
+          all(bdays.get(f"{d:02d}") not in ("M", "N") for d in (6, 7, 8)),
+          {d: bdays.get(f"{d:02d}") for d in (6, 7, 8)})
+    g2 = admin.post("/api/generate", json={"branch_id": bid, "year": PY, "month": PM,
+                                           "confirm": True, "ignore_manual": True, "ignore_prefs": True})
+    check("generation runs with preferences ignored", g2.status_code == 200, g2.text)
+staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 15, "kind": "none"})
+mine2 = staffB.get(f"/api/preferences?year={PY}&month={PM}").json()
+check("clearing a day removes the preference", not any(p["day"] == 15 for p in mine2["preferences"]), mine2)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
