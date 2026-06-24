@@ -886,7 +886,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit
     solver.parameters.log_search_progress = False
-    solver.parameters.num_search_workers  = 8
+    # 4 (not 8) search workers: with 2 gunicorn workers, two concurrent generates
+    # at 8 threads each would oversubscribe a small instance's CPU and stall every
+    # other request. 4 keeps the solver fast while leaving headroom.
+    solver.parameters.num_search_workers  = 4
 
     t0     = time.time()
     status = solver.solve(model)

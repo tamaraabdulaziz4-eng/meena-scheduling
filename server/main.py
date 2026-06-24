@@ -592,6 +592,16 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_shift_prefs_month ON scheduling.shift_preferences(year,month);")
 
+            # Performance indexes for the hottest lookups. The UNIQUE constraints
+            # already cover (schedule_id,staff_id,date), (branch_id,year,month),
+            # (staff_id,date for leaves) and (branch_id,date for cases); these two
+            # cover the access paths those don't:
+            #  · my-schedule / on-duty / cross-month prev-tail scan a staff member
+            #    across ALL schedules → needs staff_id leading.
+            #  · staff listings filter by branch + active on nearly every page.
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sched_entries_staff_date ON scheduling.schedule_entries(staff_id, date);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_branch_active ON scheduling.staff(branch_id, active);")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -6868,19 +6878,23 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                 cur.execute(f"""DELETE FROM scheduling.schedule_entries
                                 WHERE schedule_id=%s AND staff_id = ANY(%s) {_keep_manual}""",
                             (schedule["id"], ok_staff_ids))
-            for e in flat_entries:
-                # Never overwrite a manual cell (the solver already pinned it, so
-                # the value matches anyway — this just protects the is_manual flag).
-                if (e["staff_id"], e["date"]) in manual_cells:
-                    continue
-                cur.execute("""INSERT INTO scheduling.schedule_entries
-                               (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s)
-                               ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
-                               shift_code=%s,cross_branch_id=%s,is_oncall=%s,note=%s""",
-                            (schedule["id"], e["staff_id"], e["date"], e["shift_code"],
-                             e["cross_branch_id"], e["is_oncall"], e["note"],
-                             e["shift_code"], e["cross_branch_id"], e["is_oncall"], e["note"]))
+            # Bulk upsert all generated cells in one round-trip instead of one
+            # INSERT per cell (a 31-day month × N staff was hundreds of queries).
+            # Manual cells are skipped — the solver pinned them, so the value
+            # already matches and we must not clear their is_manual flag.
+            rows = [(schedule["id"], e["staff_id"], e["date"], e["shift_code"],
+                     e["cross_branch_id"], e["is_oncall"], e["note"])
+                    for e in flat_entries if (e["staff_id"], e["date"]) not in manual_cells]
+            if rows:
+                psycopg2.extras.execute_values(cur, """
+                    INSERT INTO scheduling.schedule_entries
+                        (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note)
+                    VALUES %s
+                    ON CONFLICT (schedule_id,staff_id,date) DO UPDATE SET
+                        shift_code=EXCLUDED.shift_code,
+                        cross_branch_id=EXCLUDED.cross_branch_id,
+                        is_oncall=EXCLUDED.is_oncall,
+                        note=EXCLUDED.note""", rows)
         conn.commit()
     except Exception:
         conn.rollback()
