@@ -262,6 +262,21 @@ gbad = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month"
                                          "confirm": True, "section": "Nope"})
 check("unknown section is rejected (400)", gbad.status_code == 400, f"{gbad.status_code} {gbad.text}")
 
+print("\n== scenario 8a3: exclude staff from generation ==")
+gex = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH,
+                                        "confirm": True, "ignore_manual": True,
+                                        "exclude_staff_ids": [A["id"]]})
+check("generate with an excluded staff runs", gex.status_code in (200, 422), gex.text)
+if gex.status_code == 200:
+    sidg = (gex.json().get("schedule") or {}).get("id") or sid
+    eents = admin.get(f"/api/schedules/{sidg}/entries").json()
+    awork = [e for e in eents if e["staff_id"] == A["id"] and e["shift_code"] in ("M", "N")]
+    check("excluded staff gets no work shifts (left off)", len(awork) == 0, awork[:3])
+gall = admin.post("/api/generate", json={"branch_id": bid, "year": YEAR, "month": MONTH,
+                                         "confirm": True, "ignore_manual": True,
+                                         "exclude_staff_ids": [s["id"] for s in admin.get(f"/api/staff?branch_id={bid}").json()]})
+check("excluding everyone is rejected (400)", gall.status_code == 400, gall.text)
+
 print("\n== scenario 8c: cross-branch cover (manager places a floater) ==")
 # A staff member who belongs to a DIFFERENT branch covers a day on NEST3's rota.
 other_branch = next(b for b in branches if b["id"] != bid)

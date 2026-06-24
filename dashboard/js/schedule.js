@@ -1364,7 +1364,32 @@ function openGenerateModal() {
     pick.style.display = 'none';
   }
 
+  renderGenStaffPicker();
   document.getElementById('generate-modal-overlay').classList.add('open');
+}
+
+// Per-generation staff picker: tick who goes into the rota (all ticked by default).
+function renderGenStaffPicker() {
+  const box = document.getElementById('gen-staff-list');
+  if (!box) return;
+  const staff = [...scheduleStaff].sort((a, b) =>
+    (isUSStaff(a) - isUSStaff(b)) || String(a.name).localeCompare(b.name));
+  let lastSec = null, html = '';
+  staff.forEach(s => {
+    const sec = isUSStaff(s) ? 'Ultrasound (US)' : 'General';
+    if (sec !== lastSec) { html += `<div style="font-size:11px;font-weight:700;color:var(--muted);margin:6px 0 3px">${sec}</div>`; lastSec = sec; }
+    html += `<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;font-size:13px">
+        <input type="checkbox" class="gen-staff-cb" value="${s.id}" checked style="width:auto">
+        <span>${escapeHtml(s.name)}</span></label>`;
+  });
+  box.innerHTML = html || '<div style="color:var(--muted);font-size:12px">No staff.</div>';
+}
+function genStaffAll(on) {
+  document.querySelectorAll('#gen-staff-list .gen-staff-cb').forEach(cb => { cb.checked = on; });
+}
+function genExcludedIds() {
+  return Array.from(document.querySelectorAll('#gen-staff-list .gen-staff-cb'))
+    .filter(cb => !cb.checked).map(cb => Number(cb.value));
 }
 
 // Warning text reflects whether we're overwriting everything or only filling blanks.
@@ -1603,6 +1628,7 @@ async function runGenerate() {
           section:   genSectionChoice || undefined,
           preserve_existing: !!document.getElementById('gen-preserve')?.checked,
           ignore_manual: !!document.getElementById('gen-ignore-manual')?.checked,
+          exclude_staff_ids: genExcludedIds(),
         });
         break;
       } catch (err) {
