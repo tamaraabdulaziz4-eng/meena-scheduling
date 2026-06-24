@@ -5297,6 +5297,106 @@ def on_duty(request: Request, user=Depends(get_current_user)):
         })
     return {"date": date, "branches": list(by_branch.values())}
 
+# ── Reports (manager: any branch; team lead: their own) ───────────────────────
+def _report_branch_scope(user, requested_branch_id):
+    """Branch id(s) this user may report on. Returns (branch_id_or_None_for_all,
+    list_of_ids). A team lead is pinned to their branch; a reviewer may pick one
+    branch or see all."""
+    if user["role"] in ("superadmin", "manager"):
+        if requested_branch_id:
+            return _int_or_400(requested_branch_id), [_int_or_400(requested_branch_id)]
+        ids = [b["id"] for b in q("SELECT id FROM scheduling.branches")]
+        return None, ids
+    # admin / others → their own branch only
+    bid = user.get("branch_id")
+    if not bid:
+        raise HTTPException(403, "No branch assigned to this account")
+    return bid, [bid]
+
+@app.get("/api/reports/fairness")
+def report_fairness(request: Request, user=Depends(require_admin)):
+    """Per-staff distribution for a branch/month — shifts, nights, mornings,
+    weekends, on-call — so a lead/manager can balance the load."""
+    p = request.query_params
+    branch_id = p.get("branch_id") or user.get("branch_id")
+    if not branch_id:
+        raise HTTPException(400, "branch_id required")
+    branch_id = _int_or_400(branch_id)
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
+    year = _int_or_400(p.get("year"), "year"); month = _int_or_400(p.get("month"), "month")
+    rows = q("""SELECT s.id, s.name, s.speciality,
+                   COUNT(*) FILTER (WHERE e.shift_code NOT IN ('O','AL','SL','TB','OC')) AS shifts,
+                   COUNT(*) FILTER (WHERE e.shift_code='N') AS nights,
+                   COUNT(*) FILTER (WHERE e.shift_code='M') AS mornings,
+                   COUNT(*) FILTER (WHERE e.shift_code NOT IN ('O','AL','SL','TB','OC')
+                                    AND EXTRACT(DOW FROM e.date) IN (5,6)) AS weekends,
+                   COUNT(*) FILTER (WHERE COALESCE(e.is_oncall,false)) AS oncall,
+                   COUNT(*) FILTER (WHERE e.shift_code IN ('AL','SL')) AS leave_days
+                FROM scheduling.staff s
+                LEFT JOIN scheduling.schedule_entries e
+                  ON e.staff_id=s.id AND e.schedule_id IN (
+                       SELECT id FROM scheduling.schedules
+                       WHERE branch_id=%s AND year=%s AND month=%s)
+                WHERE s.branch_id=%s AND s.active=true
+                GROUP BY s.id, s.name, s.speciality
+                ORDER BY nights DESC, shifts DESC, s.name""",
+             (branch_id, year, month, branch_id))
+    out = [{**{k: r[k] for k in ("id", "name", "shifts", "nights", "mornings", "weekends", "oncall", "leave_days")},
+            "section": _section_of(r.get("speciality"))} for r in rows]
+    return {"branch_id": branch_id, "year": year, "month": month, "staff": out}
+
+@app.get("/api/reports/cases")
+def report_cases(request: Request, user=Depends(require_admin)):
+    """Daily-cases totals + per-day series over a date range. Manager: all branches
+    or one; team lead: their own."""
+    p = request.query_params
+    date_from = p.get("from"); date_to = p.get("to")
+    if not date_from or not date_to:
+        raise HTTPException(400, "from and to dates required")
+    _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    rows = q("""SELECT TO_CHAR(date,'YYYY-MM-DD') AS date, branch_id,
+                       xray,ct,us,mamo,bmd,insert_cd,total_pt,bmd_not_done,mamo_not_done
+                FROM scheduling.daily_cases
+                WHERE date BETWEEN %s AND %s AND branch_id = ANY(%s)
+                ORDER BY date""", (date_from, date_to, branch_ids))
+    mods = ("xray", "ct", "us", "mamo", "bmd", "insert_cd")
+    totals = {m: 0 for m in mods}
+    totals.update({"total_pt": 0, "bmd_not_done": 0, "mamo_not_done": 0, "total_cases": 0})
+    series = {}
+    for r in rows:
+        for m in mods:
+            totals[m] += int(r.get(m) or 0)
+        tc = sum(int(r.get(m) or 0) for m in mods)
+        totals["total_cases"] += tc
+        for f in ("total_pt", "bmd_not_done", "mamo_not_done"):
+            totals[f] += int(r.get(f) or 0)
+        s = series.setdefault(r["date"], {"date": r["date"], "total_cases": 0, "total_pt": 0})
+        s["total_cases"] += tc; s["total_pt"] += int(r.get("total_pt") or 0)
+    return {"from": date_from, "to": date_to, "totals": totals,
+            "series": sorted(series.values(), key=lambda x: x["date"]), "rows": len(rows)}
+
+@app.get("/api/reports/qc-log")
+def report_qc_log(request: Request, user=Depends(require_admin)):
+    """Equipment-check confirmation log over a date range (for accreditation)."""
+    p = request.query_params
+    date_from = p.get("from"); date_to = p.get("to")
+    if not date_from or not date_to:
+        raise HTTPException(400, "from and to dates required")
+    _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    rows = q("""SELECT TO_CHAR(k.date,'YYYY-MM-DD') AS date, k.shift, b.name AS branch_name,
+                       TO_CHAR(k.confirmed_at,'YYYY-MM-DD"T"HH24:MI:SS') AS confirmed_at,
+                       COALESCE(s.name, u.username) AS confirmed_by, k.note
+                FROM scheduling.shift_checks k
+                JOIN scheduling.branches b ON b.id=k.branch_id
+                LEFT JOIN scheduling.users u ON u.id=k.confirmed_by
+                LEFT JOIN scheduling.staff s ON s.id=k.confirmed_by_staff
+                WHERE k.date BETWEEN %s AND %s AND k.branch_id = ANY(%s)
+                ORDER BY k.date DESC, k.shift""", (date_from, date_to, branch_ids))
+    for r in rows:
+        r["shift_label"] = _SHIFT_CHECK_LABELS.get(r["shift"], r["shift"])
+    return {"from": date_from, "to": date_to, "log": rows}
+
 # ── Daily radiology cases report ──────────────────────────────────────────────
 
 _CASE_FIELDS = ("xray", "ct", "us", "mamo", "bmd", "insert_cd",

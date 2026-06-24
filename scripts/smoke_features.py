@@ -1161,5 +1161,19 @@ check("on-duty carries contact + section info", "section" in adet and "phone" in
 odl = lead.get(f"/api/on-duty?date={ODD}").json()
 check("team lead's on-duty is scoped to their branch", all(b["branch_id"] == bid for b in odl["branches"]), odl)
 
+print("\n== scenario 22: reports (fairness / cases / QC log) ==")
+fr = admin.get(f"/api/reports/fairness?branch_id={bid}&year={YEAR}&month={MONTH}").json()
+check("fairness lists staff with distribution counts",
+      any(s["id"] == A["id"] for s in fr["staff"]) and all("nights" in s and "weekends" in s for s in fr["staff"]), fr)
+cf, ct2 = f"{YEAR}-08-01", f"{YEAR}-08-31"
+cr = admin.get(f"/api/reports/cases?from={cf}&to={ct2}&branch_id={bid}").json()
+check("cases report returns totals + series", "total_cases" in (cr.get("totals") or {}) and isinstance(cr.get("series"), list), cr)
+qr = admin.get(f"/api/reports/qc-log?from={cf}&to={ct2}&branch_id={bid}").json()
+check("qc-log returns a log array", isinstance(qr.get("log"), list), qr)
+check("team lead can't report on another branch (403)",
+      lead.get(f"/api/reports/fairness?branch_id=99999&year={YEAR}&month={MONTH}").status_code == 403)
+check("staff are blocked from reports (403)",
+      staffA.get(f"/api/reports/fairness?branch_id={bid}&year={YEAR}&month={MONTH}").status_code == 403)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
