@@ -7,7 +7,7 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260624a">
+<link rel="stylesheet" href="/style.css?v=20260624b">
 </head>
 <body>
 
@@ -755,6 +755,18 @@
           <div style="font-size:11px;color:var(--muted);margin-top:6px">Generating one section leaves the other section's rota untouched.</div>
         </div>
 
+        <div id="gen-staff-pick" style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px">
+            <div style="font-size:12px;font-weight:700;color:var(--text)">Staff to include in the rota</div>
+            <div style="display:flex;gap:6px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="genStaffAll(true)">All</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="genStaffAll(false)">None</button>
+            </div>
+          </div>
+          <div id="gen-staff-list" style="max-height:190px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px"></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Unticked staff are left OFF for the whole month (kept on the grid, not assigned any shift).</div>
+        </div>
+
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:10px;font-size:13px">
           <input type="checkbox" id="gen-preserve" style="width:auto;margin-top:2px" onchange="updateGenWarning()">
           <span>Keep my manual entries — fill <strong>only the blank cells</strong> and build around the days I already set.</span>
@@ -1007,26 +1019,26 @@
 </div>
 
 
-<script src="/js/api.js?v=20260624a"></script>
-<script src="/js/auth.js?v=20260624a"></script>
-<script src="/js/util.js?v=20260624a"></script>
-<script src="/js/branches.js?v=20260624a"></script>
-<script src="/js/users.js?v=20260624a"></script>
-<script src="/js/staff.js?v=20260624a"></script>
-<script src="/js/leaves.js?v=20260624a"></script>
-<script src="/js/swaps.js?v=20260624a"></script>
-<script src="/js/holidays.js?v=20260624a"></script>
-<script src="/js/notifications.js?v=20260624a"></script>
-<script src="/js/portal.js?v=20260624a"></script>
-<script src="/js/cases.js?v=20260624a"></script>
-<script src="/js/tickets.js?v=20260624a"></script>
-<script src="/js/announcements.js?v=20260624a"></script>
-<script src="/js/home.js?v=20260624a"></script>
-<script src="/js/shifts.js?v=20260624a"></script>
-<script src="/js/schedule.js?v=20260624a"></script>
-<script src="/js/review.js?v=20260624a"></script>
-<script src="/js/export.js?v=20260624a"></script>
-<script src="/js/audit.js?v=20260624a"></script>
-<script src="/js/main.js?v=20260624a"></script>
+<script src="/js/api.js?v=20260624b"></script>
+<script src="/js/auth.js?v=20260624b"></script>
+<script src="/js/util.js?v=20260624b"></script>
+<script src="/js/branches.js?v=20260624b"></script>
+<script src="/js/users.js?v=20260624b"></script>
+<script src="/js/staff.js?v=20260624b"></script>
+<script src="/js/leaves.js?v=20260624b"></script>
+<script src="/js/swaps.js?v=20260624b"></script>
+<script src="/js/holidays.js?v=20260624b"></script>
+<script src="/js/notifications.js?v=20260624b"></script>
+<script src="/js/portal.js?v=20260624b"></script>
+<script src="/js/cases.js?v=20260624b"></script>
+<script src="/js/tickets.js?v=20260624b"></script>
+<script src="/js/announcements.js?v=20260624b"></script>
+<script src="/js/home.js?v=20260624b"></script>
+<script src="/js/shifts.js?v=20260624b"></script>
+<script src="/js/schedule.js?v=20260624b"></script>
+<script src="/js/review.js?v=20260624b"></script>
+<script src="/js/export.js?v=20260624b"></script>
+<script src="/js/audit.js?v=20260624b"></script>
+<script src="/js/main.js?v=20260624b"></script>
 </body>
 </html>

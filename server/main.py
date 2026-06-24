@@ -5792,6 +5792,17 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     active_staff = [s for s in staff_list if s.get("active")]
     if not active_staff:
         raise HTTPException(400, "No active staff for this branch")
+    # Optional: build the rota on a CHOSEN subset only. Staff not selected are left
+    # OFF for the whole month (kept on the grid, just not assigned any shift).
+    excluded_ids = set()
+    for x in (body.get("exclude_staff_ids") or []):
+        try: excluded_ids.add(int(x))
+        except (TypeError, ValueError): pass
+    excluded_staff = [s for s in active_staff if int(s["id"]) in excluded_ids]
+    if excluded_ids:
+        active_staff = [s for s in active_staff if int(s["id"]) not in excluded_ids]
+        if not active_staff:
+            raise HTTPException(400, "Select at least one staff member to include in the schedule")
 
     nest_name = branch_to_nest(branch["name"]) if branch else None
     # New branches whose names don't match a known nest still need to generate.
@@ -6406,6 +6417,19 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             "error": "Could not generate a schedule for any section with the current settings.",
             "sections": section_results,
         })
+
+    # Excluded staff: leave them OFF for the month (keep approved leave visible).
+    if excluded_staff:
+        leave_by_staff = {}
+        for lv in leaves:
+            leave_by_staff.setdefault(int(lv["staff_id"]), {})[lv["date"]] = lv["leave_type"]
+        for s in excluded_staff:
+            lvmap = leave_by_staff.get(int(s["id"]), {})
+            for i in range(days_in_month):
+                d = str(_date(year, month, i + 1))
+                flat_entries.append({"staff_id": s["id"], "date": d,
+                                     "shift_code": lvmap.get(d, "O"),
+                                     "cross_branch_id": None, "is_oncall": False, "note": None})
 
     # Persist
     schedule = q("""INSERT INTO scheduling.schedules (branch_id,year,month,status,created_by)
