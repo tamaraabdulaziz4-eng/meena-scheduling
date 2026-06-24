@@ -651,6 +651,9 @@ function renderRotaGrid() {
   if (!wrap) return;
 
   const nDays   = daysInMonth(scheduleYear, scheduleMonth);
+  // Index shift types by code ONCE instead of a linear .find() inside every cell
+  // (was O(staff × days × shiftTypes) on each grid render).
+  const shiftByCode = Object.fromEntries((allShiftTypes || []).map(s => [s.code, s]));
   const _now = new Date();
   const _todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
   const isLocked = !!currentSchedule?.is_locked;
@@ -707,7 +710,7 @@ function renderRotaGrid() {
         const entry   = entryMap[`${s.id}_${dateStr}`];
         const isBlank = !entry;
         const code    = entry?.shift_code || '';
-        const st      = code ? (allShiftTypes.find(x => x.code === code) || { color: '#D0D0D0', is_off: false, is_leave: false }) : null;
+        const st      = code ? (shiftByCode[code] || { color: '#D0D0D0', is_off: false, is_leave: false }) : null;
         const isOC    = entry?.is_oncall;
         const isCross = entry?.cross_branch_id;
         if (st && !st.is_off && !st.is_leave) shiftCount++;
@@ -785,7 +788,7 @@ function visitorRows(nDays) {
       const dateStr = `${scheduleYear}-${String(scheduleMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
       const entry = entryMap[`${sid}_${dateStr}`];
       const code = entry?.shift_code || '';
-      const st = code ? (allShiftTypes.find(x => x.code === code) || { color: '#D0D0D0', is_off: false, is_leave: false }) : null;
+      const st = code ? (shiftByCode[code] || { color: '#D0D0D0', is_off: false, is_leave: false }) : null;
       if (st && !st.is_off && !st.is_leave) shiftCount++;
       const bg = code ? (st?.color || '#D0D0D0') : 'transparent';
       const txt = code ? contrastColor(bg) : 'inherit';
