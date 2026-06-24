@@ -1175,5 +1175,37 @@ check("team lead can't report on another branch (403)",
 check("staff are blocked from reports (403)",
       staffA.get(f"/api/reports/fairness?branch_id={bid}&year={YEAR}&month={MONTH}").status_code == 403)
 
+print("\n== scenario 23: staff credentials / license expiry ==")
+soon = f"{YEAR}-{MONTH:02d}-28"   # expiring this month → should surface in expiring soon
+cc = admin.post("/api/credentials", json={"staff_id": A["id"], "kind": "scfhs",
+                                          "label": "Radiology specialist", "number": "R-123",
+                                          "expiry_date": soon})
+check("admin creates a credential", cc.status_code == 200 and "id" in cc.json(), cc.text)
+cid = cc.json().get("id")
+clist = admin.get(f"/api/credentials?branch_id={bid}").json()
+crow = next((r for r in clist if r["id"] == cid), None)
+check("credential appears in branch list with days_left",
+      crow is not None and "days_left" in crow and crow["staff_id"] == A["id"], clist)
+exp = admin.get("/api/credentials/expiring?days=3650").json()
+check("expiring endpoint surfaces the credential", any(i["id"] == cid for i in exp.get("items", [])), exp)
+own = staffA.get(f"/api/staff/{A['id']}/credentials").json()
+check("staff sees their own credentials", any(r["id"] == cid for r in own), own)
+check("staff can't see another staff's credentials (403)",
+      staffA.get(f"/api/staff/{B['id']}/credentials").status_code == 403)
+check("staff can't create credentials (403)",
+      staffA.post("/api/credentials", json={"staff_id": A["id"], "kind": "bls", "expiry_date": soon}).status_code == 403)
+check("team lead can't manage another branch's staff credential (403)",
+      lead.post("/api/credentials", json={"staff_id": sB["id"], "kind": "bls", "expiry_date": soon}).status_code == 403)
+check("credential requires an expiry date (400)",
+      admin.post("/api/credentials", json={"staff_id": A["id"], "kind": "bls"}).status_code == 400)
+upd = admin.put(f"/api/credentials/{cid}", json={"kind": "scfhs", "label": "Updated", "expiry_date": f"{YEAR}-12-31"})
+check("admin updates a credential", upd.status_code == 200, upd.text)
+check("update reflected in list",
+      next((r for r in admin.get(f"/api/credentials?branch_id={bid}").json() if r["id"] == cid), {}).get("expiry_date") == f"{YEAR}-12-31")
+dele = admin.delete(f"/api/credentials/{cid}")
+check("admin deletes a credential", dele.status_code == 200, dele.text)
+check("credential gone after delete",
+      not any(r["id"] == cid for r in admin.get(f"/api/credentials?branch_id={bid}").json()))
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)

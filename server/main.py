@@ -560,6 +560,22 @@ def init_schema():
                     UNIQUE(branch_id, date, shift)
                 );""")
 
+            # Staff credentials / licenses with expiry (SCFHS, BLS/ACLS, Iqama…) —
+            # so the team lead/manager is alerted before they lapse.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.staff_credentials (
+                    id SERIAL PRIMARY KEY,
+                    staff_id INTEGER NOT NULL REFERENCES scheduling.staff(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL DEFAULT 'other',
+                    label TEXT,
+                    number TEXT,
+                    expiry_date DATE NOT NULL,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_staff ON scheduling.staff_credentials(staff_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_expiry ON scheduling.staff_credentials(expiry_date);")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -5397,6 +5413,132 @@ def report_qc_log(request: Request, user=Depends(require_admin)):
         r["shift_label"] = _SHIFT_CHECK_LABELS.get(r["shift"], r["shift"])
     return {"from": date_from, "to": date_to, "log": rows}
 
+# ── Staff credentials / license expiry ────────────────────────────────────────
+_CREDENTIAL_KINDS = ("scfhs", "bls", "acls", "iqama", "passport", "classification", "other")
+
+def _can_manage_staff(user, staff_id):
+    if user["role"] in ("manager", "superadmin"):
+        return True
+    if user["role"] == "admin":
+        st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+        return bool(st and can_access_branch(user, st["branch_id"]))
+    return False
+
+@app.get("/api/credentials")
+def list_credentials(request: Request, user=Depends(require_admin)):
+    """All staff credentials in scope (team lead: own branch; manager: any/all)."""
+    _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
+    rows = q("""SELECT c.id, c.staff_id, c.kind, c.label, c.number,
+                       TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (c.expiry_date - CURRENT_DATE) AS days_left,
+                       s.name AS staff_name, s.branch_id, b.name AS branch_name
+                FROM scheduling.staff_credentials c
+                JOIN scheduling.staff s ON s.id=c.staff_id
+                LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
+                ORDER BY c.expiry_date""", (branch_ids,))
+    return rows
+
+@app.get("/api/credentials/expiring")
+def expiring_credentials(request: Request, user=Depends(require_admin)):
+    days = request.query_params.get("days") or "60"
+    try: days = max(1, min(365, int(days)))
+    except (TypeError, ValueError): days = 60
+    _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
+    rows = q("""SELECT c.id, c.kind, c.label,
+                       TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (c.expiry_date - CURRENT_DATE) AS days_left,
+                       s.name AS staff_name, b.name AS branch_name
+                FROM scheduling.staff_credentials c
+                JOIN scheduling.staff s ON s.id=c.staff_id
+                LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
+                  AND c.expiry_date <= CURRENT_DATE + %s
+                ORDER BY c.expiry_date""", (branch_ids, days))
+    return {"days": days, "items": rows}
+
+@app.get("/api/staff/{sid}/credentials")
+def staff_credentials(sid: int, user=Depends(get_current_user)):
+    # A staff member may view their own; a lead/manager their branch.
+    if user["role"] == "staff":
+        if user.get("staff_id") != sid:
+            raise HTTPException(403, "Forbidden")
+    elif not _can_manage_staff(user, sid):
+        raise HTTPException(403, "Forbidden")
+    return q("""SELECT id, kind, label, number,
+                       TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (expiry_date - CURRENT_DATE) AS days_left
+                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY expiry_date""", (sid,))
+
+@app.post("/api/credentials")
+async def create_credential(request: Request, user=Depends(require_admin)):
+    body = await request.json()
+    sid = _int_or_400(body.get("staff_id"), "staff_id")
+    if not _can_manage_staff(user, sid):
+        raise HTTPException(403, "Forbidden")
+    kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    expiry = (body.get("expiry_date") or "").strip()
+    if not expiry:
+        raise HTTPException(400, "expiry_date is required")
+    row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,expiry_date,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s)
+               RETURNING id, TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date""",
+            (sid, kind, (body.get("label") or "").strip()[:80] or None,
+             (body.get("number") or "").strip()[:60] or None, expiry, user["id"]), one=True)
+    insert_audit(user, "CREDENTIAL_ADD", f"staff:{sid}", f"{kind} {expiry}")
+    return row
+
+@app.put("/api/credentials/{cid}")
+async def update_credential(cid: int, request: Request, user=Depends(require_admin)):
+    c = q("SELECT staff_id FROM scheduling.staff_credentials WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    if not _can_manage_staff(user, c["staff_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    expiry = (body.get("expiry_date") or "").strip()
+    if not expiry:
+        raise HTTPException(400, "expiry_date is required")
+    q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,expiry_date=%s WHERE id=%s""",
+      (kind, (body.get("label") or "").strip()[:80] or None,
+       (body.get("number") or "").strip()[:60] or None, expiry, cid), exec_only=True)
+    return {"ok": True}
+
+@app.delete("/api/credentials/{cid}")
+def delete_credential(cid: int, user=Depends(require_admin)):
+    c = q("SELECT staff_id FROM scheduling.staff_credentials WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    if not _can_manage_staff(user, c["staff_id"]):
+        raise HTTPException(403, "Forbidden")
+    q("DELETE FROM scheduling.staff_credentials WHERE id=%s", (cid,), exec_only=True)
+    return {"ok": True}
+
+def _send_credential_reminders():
+    """Notify staff + their branch lead(s) + reviewers about credentials expiring
+    within 30 days (or already expired), once per credential per threshold."""
+    rows = q("""SELECT c.id, c.kind, c.label, c.staff_id, s.branch_id,
+                       TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (c.expiry_date - CURRENT_DATE) AS days_left, s.name AS staff_name
+                FROM scheduling.staff_credentials c
+                JOIN scheduling.staff s ON s.id=c.staff_id
+                WHERE COALESCE(s.active,true)=true AND c.expiry_date <= CURRENT_DATE + 30""")
+    for r in rows:
+        dleft = r["days_left"]
+        bucket = "expired" if dleft < 0 else ("7" if dleft <= 7 else "30")
+        key = f"cred_remind:{r['id']}:{bucket}"
+        claimed = q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,'1')
+                       ON CONFLICT (key) DO NOTHING RETURNING key""", (key,), one=True)
+        if not claimed:
+            continue
+        label = (r["label"] or r["kind"].upper())
+        when = "has expired" if dleft < 0 else f"expires in {dleft} day(s) ({r['expiry_date']})"
+        msg = f"{r['staff_name']}'s {label} {when}."
+        notify_staff_member(r["staff_id"], msg, link="myschedule", ntype="reminder")
+        notify_branch_leads(r["branch_id"], msg, link="reports", ntype="reminder")
+        notify_roles(("manager", "superadmin"), msg, link="reports", ntype="reminder")
+
 # ── Daily radiology cases report ──────────────────────────────────────────────
 
 _CASE_FIELDS = ("xray", "ct", "us", "mamo", "bmd", "insert_cd",
@@ -5681,6 +5823,23 @@ def start_scheduler():
     import threading
     threading.Thread(target=_cases_reminder_loop, daemon=True).start()
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
+    threading.Thread(target=_credential_reminder_loop, daemon=True).start()
+
+def _credential_reminder_loop():
+    """Once a day, sweep for credentials expiring within 30 days and alert."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+            claimed = q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+                           ON CONFLICT (key) DO NOTHING RETURNING key""",
+                        (f"cred_sweep:{ksa.strftime('%Y-%m-%d')}", ksa.isoformat()), one=True)
+            if claimed:
+                _send_credential_reminders()
+        except Exception as e:
+            print(f"[cred-reminder] {e}")
+        time.sleep(3600)
 
 @app.put("/api/daily-cases/reopen")
 async def reopen_daily_case(request: Request, user=Depends(require_reviewer)):

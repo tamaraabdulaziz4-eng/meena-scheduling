@@ -45,6 +45,7 @@ async function renderHomePage() {
     <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div id="hm-approvals"></div>
+    <div id="hm-credentials"></div>
     <div id="hm-onduty"></div>
     <div id="hm-shiftcheck"></div>
     <div class="hm-card">
@@ -67,7 +68,7 @@ async function renderHomePage() {
   renderHomeEotm();
   renderHomeOnDuty();
   renderHomeShiftChecks();
-  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) renderHomeApprovals();
+  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) { renderHomeApprovals(); renderHomeCredentials(); }
   renderHomeRecent();
   _bindHomeSearchShortcut();
 }
@@ -142,6 +143,36 @@ async function renderHomeApprovals() {
       ${section('Time-back', tbPending.length, 'leaves', tbRows)}
       ${section('Shift swaps', swapPending.length, 'swaps', swapRows)}
     </div></div>`;
+}
+
+// ── Expiring credentials alert (team lead: own branch · manager: all) ─────────
+async function renderHomeCredentials() {
+  const box = document.getElementById('hm-credentials');
+  if (!box) return;
+  let d;
+  try { d = await API.get('/credentials/expiring?days=60'); } catch (e) { box.innerHTML = ''; return; }
+  const items = (d && d.items) || [];
+  if (!items.length) { box.innerHTML = ''; return; }   // nothing expiring → no clutter
+  const kindLabel = (k) => (typeof _credKindLabel === 'function' ? _credKindLabel(k) : (k || 'Other'));
+  const statusOf = (n) => {
+    n = Number(n);
+    if (n < 0) return [`Expired ${Math.abs(n)}d ago`, '#E25555'];
+    if (n === 0) return ['Expires today', '#E25555'];
+    if (n <= 30) return [`${n}d left`, '#E2933F'];
+    return [`${n}d left`, '#C9A227'];
+  };
+  const rows = items.slice(0, 8).map(r => {
+    const [txt, col] = statusOf(r.days_left);
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px"><b>${escapeHtml(r.staff_name || '')}</b> · ${escapeHtml(kindLabel(r.kind))}${r.label ? ' · ' + escapeHtml(r.label) : ''} <span class="hm-muted">(${escapeHtml(r.expiry_date || '')})</span></div>
+      <div style="font-size:12px;font-weight:700;color:${col}">${txt}</div></div>`;
+  }).join('');
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head">
+      <div class="hm-card-title">Expiring credentials <span class="badge badge-orange">${items.length}</span></div>
+      <button class="action-btn" onclick="showPage('reports')">Manage →</button>
+    </div>
+    <div style="margin-top:6px">${rows}</div></div>`;
 }
 
 async function homeApproveLeave(ids) {
