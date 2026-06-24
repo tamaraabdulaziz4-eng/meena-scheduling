@@ -1677,6 +1677,15 @@ function openGenerateDiagnosticsModal({ title, solver_status, sections, top_erro
       extra.push(`Monthly minimum shifts demand (${diag.required_month_min_shifts}) exceeds capacity (${diag.capacity_month_max_mn}).`);
     }
 
+    // Always show the raw numbers so the cause is visible even with no canned message.
+    const numbersHtml = (diag.staff_count != null)
+      ? `<div style="margin-top:8px;font-size:12px;color:var(--muted)">
+           By the numbers — staff: <b>${esc(diag.staff_count)}</b>
+           · needs ≥ <b>${esc(diag.min_coverage_demand ?? '?')}</b> shifts/mo
+           (${esc(diag.min_m)}×M + ${esc(diag.min_n)}×N × days)
+           · team can supply ≤ <b>${esc(diag.total_max_capacity ?? '?')}</b></div>`
+      : '';
+
     const list = [...extra, ...msgs].filter(Boolean);
     const listHtml = list.length
       ? `<ul style="margin:10px 0 0 18px;color:var(--text);line-height:1.35">${list.map(m => `<li>${esc(m)}</li>`).join('')}</ul>`
@@ -1706,6 +1715,7 @@ function openGenerateDiagnosticsModal({ title, solver_status, sections, top_erro
           <div style="font-weight:700">${esc(name)}</div>
           <div style="font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,0.05);border:1px solid var(--border)">${esc(status)}</div>
         </div>
+        ${numbersHtml}
         ${listHtml}
         ${shortageHtml}
         ${fixesHtml}
