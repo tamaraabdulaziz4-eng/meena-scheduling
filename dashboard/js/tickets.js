@@ -29,6 +29,7 @@ const TICKET_PRIORITY_META = {
 
 let ticketsData = [];
 let ticketsFilter = 'active';
+let ticketsCategory = '';
 
 function ticketStatusBadge(s) {
   const m = TICKET_STATUS_META[s] || { label: s, color: '#9a95ba' };
@@ -55,11 +56,23 @@ function renderTicketsPage() {
         </div>
       </div>
     </div>
-    <div class="seg" id="tickets-filter" style="margin-bottom:14px">
-      <button data-f="active">Active</button>
-      <button data-f="">All</button>
-      <button data-f="resolved">Resolved</button>
-      <button data-f="closed">Closed</button>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <div class="seg" id="tickets-filter">
+        <button data-f="active">Active</button>
+        <button data-f="">All</button>
+        <button data-f="resolved">Resolved</button>
+        <button data-f="closed">Closed</button>
+      </div>
+      <select id="tickets-cat" style="max-width:200px">
+        <option value="">All types</option>
+        <option value="device_fault">Device fault</option>
+        <option value="pacs">PACS / imaging</option>
+        <option value="report_blocked">Blocked report</option>
+        <option value="ovr">OVR / incident</option>
+        <option value="stock">Stock / supplies</option>
+        <option value="request">Request</option>
+        <option value="other">Other</option>
+      </select>
     </div>
     <div id="tickets-list">${LOADING_HTML}</div>`;
   // Wire the segmented filter.
@@ -67,13 +80,18 @@ function renderTicketsPage() {
     b.classList.toggle('on', b.getAttribute('data-f') === ticketsFilter);
     b.onclick = () => { ticketsFilter = b.getAttribute('data-f'); renderTicketsPage(); };
   });
+  const catEl = document.getElementById('tickets-cat');
+  if (catEl) { catEl.value = ticketsCategory; catEl.onchange = () => { ticketsCategory = catEl.value; loadTickets(); }; }
   loadTickets();
 }
 
 async function loadTickets() {
   const list = document.getElementById('tickets-list');
   try {
-    const qs = ticketsFilter ? `?status=${ticketsFilter}` : '';
+    const params = [];
+    if (ticketsFilter) params.push(`status=${ticketsFilter}`);
+    if (ticketsCategory) params.push(`category=${ticketsCategory}`);
+    const qs = params.length ? `?${params.join('&')}` : '';
     ticketsData = await API.get(`/tickets${qs}`) || [];
     renderTicketsList();
   } catch (e) {

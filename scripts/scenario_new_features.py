@@ -97,7 +97,7 @@ check("all-staff circular visible to branch-2 too", any(a["id"] == maid for a in
 check("ack works", staffA.post(f"/api/announcements/{maid}/ack", json={}).status_code == 200)
 check("ack reflected", next((a for a in staffA.get("/api/announcements").json() if a["id"] == maid), {}).get("acked") is True)
 acks = admin.get(f"/api/announcements/{maid}/acks").json()
-check("manager sees acks list", any(r["username"] == f"sa{S}" for r in acks))
+check("manager sees acks list", any(r["username"] == f"sa{S}" for r in acks["acked"]))
 check("staff can't read the acks list", staffA.get(f"/api/announcements/{maid}/acks").status_code == 403)
 check("non-owner staff can't delete", staffA.delete(f"/api/announcements/{maid}").status_code == 403)
 # Broadcast personalisation
@@ -158,6 +158,28 @@ na = [n for n in staffA.get("/api/notifications").json()["notifications"] if key
 nb = [n for n in staffB.get("/api/notifications").json()["notifications"] if key in (n["message"] or "")]
 check("off-duty can_report staff is NOT reminded", len(na) == 0, na)
 check("on-duty night staff IS reminded", len(nb) >= 1, nb)
+
+# ── Completeness: ack tracking (who's pending) + remind; ticket category filter ──
+print("\n== announcement ack tracking + remind pending ==")
+ar = admin.post("/api/announcements", json={"title": "Sign the policy", "body": "Please ack", "kind": "action_required"})
+arid = ar.json()["id"]
+staffA.post(f"/api/announcements/{arid}/ack", json={})   # A acks, B and C don't
+acks = admin.get(f"/api/announcements/{arid}/acks").json()
+check("acks payload reports counts", acks.get("ack_count") == 1 and acks.get("target_count") >= 3, acks)
+check("acked list has A", any(r["username"] == f"sa{S}" for r in acks["acked"]))
+check("pending list has the non-ackers", any(r["username"] == f"sb{S}" for r in acks["pending"]))
+rem = admin.post(f"/api/announcements/{arid}/remind", json={})
+check("remind nudges only the pending", rem.status_code == 200 and rem.json().get("reminded") == acks["target_count"] - 1, rem.text)
+check("a pending staff got the ack reminder",
+      any("acknowledge" in (n["message"] or "").lower() for n in staffB.get("/api/notifications").json()["notifications"]))
+
+print("\n== ticket category filter ==")
+admin.post("/api/tickets", json={"subject": "Gloves low", "category": "stock"})  # by admin (branch b1? admin has no branch → None)
+t_dev = staffA.post("/api/tickets", json={"subject": "CT noise", "category": "device_fault"}).json()["id"]
+t_stk = staffA.post("/api/tickets", json={"subject": "Need contrast", "category": "stock"}).json()["id"]
+stock = staffA.get("/api/tickets?category=stock").json()
+check("category filter returns only that category", all(t["category"] == "stock" for t in stock) and any(t["id"] == t_stk for t in stock), stock)
+check("category filter excludes other categories", not any(t["id"] == t_dev for t in stock))
 
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
