@@ -6165,6 +6165,19 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
                 daily_shortages.append({"day": day, "available_staff": avail, "required_staff": need})
 
         msgs = []
+        # The precise, common cause: the daily MINIMUM coverage over the month needs
+        # more shifts than the whole team can physically work — no arrangement can
+        # cover it. e.g. General Min M=2,Min N=1 over 31 days = 93 shifts, but 5 staff
+        # at 17 each supply only 85.
+        total_max_capacity = sum(int(staff_limits.get(sk, {}).get("max_shifts", 0) or 0) for sk in staff_keys)
+        min_coverage_demand = n_days * (min_m + min_n)
+        if total_max_capacity and min_coverage_demand > total_max_capacity:
+            short = min_coverage_demand - total_max_capacity
+            msgs.append(
+                f"This section needs at least {min_coverage_demand} shifts/month "
+                f"({min_m}×Morning + {min_n}×Night × {n_days} days) but its {len(staff_keys)} "
+                f"staff can work at most {total_max_capacity} together — short by {short}. "
+                f"Add a staff member, or lower Min M / Min N.")
         if required_month > cap_month:
             msgs.append(f"Monthly minimum demand ({required_month}) exceeds capacity ({cap_month}) given max M/N per day.")
         if daily_shortages:
@@ -6204,6 +6217,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             "max_consecutive": k,
             "required_month_min_shifts": required_month,
             "capacity_month_max_mn": cap_month,
+            "min_coverage_demand": min_coverage_demand,
+            "total_max_capacity": total_max_capacity,
             "daily_shortages": daily_shortages[:10],
             "messages": msgs,
         }
