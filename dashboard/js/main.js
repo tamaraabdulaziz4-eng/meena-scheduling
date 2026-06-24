@@ -93,6 +93,9 @@ async function initApp() {
   // Review page for reviewers (manager + full admin)
   const reviewNav = document.getElementById('nav-review');
   if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
+  // Reports for team leads + managers (a lead sees their own branch).
+  const reportsNav = document.getElementById('nav-reports');
+  if (reportsNav) reportsNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
   // Swaps page for everyone except plain viewers (staff request & track theirs).
   const swapsNav = document.getElementById('nav-swaps');
   if (swapsNav) swapsNav.style.display = (role === 'viewer') ? 'none' : 'flex';
@@ -149,6 +152,7 @@ function resolvePage(page) {
   // Branches, shift types, and the audit log are full-admin (superadmin) tools —
   // the backend rejects everyone else, so the route guard must match (a team lead
   // reaching them via a stale link would otherwise see a page that then 403s).
+  if (page === 'reports' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';
@@ -175,6 +179,7 @@ async function renderRoute(page) {
                        break;
     case 'cases':      renderCasesPage(); break;
     case 'tickets':    await renderTicketsPage(); break;
+    case 'reports':    await renderReportsPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
     case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
     case 'shifts':     try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}  renderShiftsPage(); break;
@@ -193,7 +198,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','cases','tickets','announcements','branches','shifts','users','audit']);
+  'leaves','swaps','cases','tickets','announcements','reports','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
