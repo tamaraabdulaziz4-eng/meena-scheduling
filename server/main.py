@@ -1418,32 +1418,39 @@ def backfill_us_sections():
     This re-tags speciality=['US'] for staff whose name is in their nest's US list
     (from seed_nest_sections), only where it isn't already US, and only once."""
     try:
-        if get_setting("us_section_backfill_v1") == "done":
+        if get_setting("us_section_backfill_v2") == "done":
             return
         import json as _json
         us_rows = q("""SELECT nest_key, staff_db_names FROM scheduling.nest_sections
                        WHERE UPPER(section_name) IN ('US', 'ULTRASOUND')""")
-        names_by_nest = {}
+        # Per nest: the set of seeded US member names, each as a token set. We match
+        # leniently — a staff member is US if a seed name's tokens are all present in
+        # their name (e.g. seed "Alma Tolentino" matches "Alma Quenie Tolentino", and
+        # "Manar" matches "Manar Almumtin"). Only ever SETS US; never removes it.
+        def _tokens(name):
+            return {t for t in re.split(r"\s+", str(name or "").strip().lower()) if t}
+        seeds_by_nest = {}
         for r in us_rows:
             raw = r.get("staff_db_names") or {}
             m = raw if isinstance(raw, dict) else _json.loads(raw or "{}")
-            nm = {str(v).strip().lower() for v in m.values() if v}
-            if nm:
-                names_by_nest.setdefault(r["nest_key"], set()).update(nm)
+            toks = [_tokens(v) for v in m.values() if v and _tokens(v)]
+            if toks:
+                seeds_by_nest.setdefault(r["nest_key"], []).extend(toks)
         tagged = 0
-        if names_by_nest:
+        if seeds_by_nest:
             for b in q("SELECT id,name FROM scheduling.branches"):
-                wanted = names_by_nest.get(branch_to_nest(b["name"]))
-                if not wanted:
+                seeds = seeds_by_nest.get(branch_to_nest(b["name"]))
+                if not seeds:
                     continue
                 for s in q("SELECT id,name,speciality FROM scheduling.staff WHERE branch_id=%s", (b["id"],)):
-                    if (s["name"] or "").strip().lower() not in wanted:
+                    stoks = _tokens(s["name"])
+                    if not any(seed and seed.issubset(stoks) for seed in seeds):
                         continue
                     cur = [str(x).strip().upper() for x in (s.get("speciality") or [])]
                     if "US" not in cur and "ULTRASOUND" not in cur:
                         q("UPDATE scheduling.staff SET speciality=%s WHERE id=%s", (["US"], s["id"]), exec_only=True)
                         tagged += 1
-        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('us_section_backfill_v1','done')
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('us_section_backfill_v2','done')
              ON CONFLICT (key) DO UPDATE SET value='done'""", exec_only=True)
         if tagged:
             print(f"[backfill] tagged {tagged} staff as US section from nest config")
