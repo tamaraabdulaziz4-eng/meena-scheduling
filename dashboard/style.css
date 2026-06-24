@@ -1659,6 +1659,13 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
   body.mode-report #print-footer,
   body.mode-report #page-loader { display: none !important; }
   body.mode-report #report-root { display: block !important; min-height: 100vh; }
+  /* Pin the report to the PHYSICAL page width (mm), not the device's screen
+     width — otherwise a phone (narrow viewport) and a desktop (wide viewport)
+     lay the report out differently. mm is relative to the A4 sheet, so both
+     devices now render the same width. */
+  body.mode-report #report-root { box-sizing: border-box; margin: 0 auto; }
+  body.mode-report.mode-report-ls #report-root { width: 297mm; }
+  body.mode-report:not(.mode-report-ls) #report-root { width: 210mm; }
   /* Roster inside the report card: keep the coloured cells, fit the full month. */
   body.mode-report .rep-rota .rota-table { font-size: 7.5px !important; table-layout: fixed; width: 100% !important; }
   body.mode-report .rep-rota .rota-table th,
