@@ -190,7 +190,12 @@ def generate_schedule(nest_name: str, year: int, month: int,
                       nest_cfg: dict = None,
                       fixed_schedule: dict = None,
                       unavailable: dict = None,
-                      pref_off: dict = None) -> dict:
+                      pref_off: dict = None,
+                      dominant_shifts: dict = None) -> dict:
+    # dominant_shifts: accepted for backward-compat with the CLI / older callers.
+    # The dominant-shift logic is now derived internally (see the hard domain
+    # restriction below), so this argument is ignored — it just prevents a
+    # TypeError when a caller still passes it.
     """
     staff_limits: { solver_key: {"min": int, "max": int} } — per-staff shift limits
     max_consecutive: max working days in a row (default 5)
@@ -920,7 +925,13 @@ def generate_schedule(nest_name: str, year: int, month: int,
 
 def diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff):
     """Print likely reasons for infeasibility (all output to stderr)."""
-    nest_cfg = NESTS[nest_name]
+    nest_cfg = NESTS.get(nest_name)
+    if nest_cfg is None:
+        # DB-only branches (e.g. "BRANCH_5") aren't in the static NESTS map. The
+        # server runs its own per-section diagnostics, so just skip the legacy
+        # stderr probe instead of raising a KeyError (which would 500 the request).
+        print(f"  (no static config for {nest_name}; skipping legacy diagnosis)", file=sys.stderr)
+        return
 
     for d in range(n_days):
         day   = d + 1
