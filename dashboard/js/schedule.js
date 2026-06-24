@@ -1,8 +1,10 @@
 // ── Schedule page ─────────────────────────────────────────────────────────────
-// Section check that matches the backend: a staffer is Ultrasound if their
-// speciality contains "US" or "Ultrasound" (the stored value is usually "US",
-// so the old `.includes('Ultrasound')` test silently put them in General).
+// Section check that matches the Staff page exactly. The backend computes a
+// `section` field ('US'/'General') with a lenient rule; honour it first so the
+// schedule splits whenever the Staff page shows US. Fall back to the raw
+// speciality for any older payload that doesn't carry `section`.
 function isUSStaff(s) {
+  if (String(s?.section || '').trim().toUpperCase() === 'US') return true;
   return (s?.speciality || []).some(x => ['US', 'ULTRASOUND'].includes(String(x).trim().toUpperCase()));
 }
 let currentSchedule   = null;
