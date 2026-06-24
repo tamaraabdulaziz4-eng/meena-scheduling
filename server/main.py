@@ -5758,6 +5758,11 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scheduler'))
     from generator import generate_schedule as solver_generate, NESTS as _NESTS_DEFAULT
 
+    # "Fresh generate" escape hatch: ignore the pinned hand-edited (manual) cells
+    # so a stale/conflicting manual edit can't make the section infeasible. The
+    # solver then rebuilds those cells too.
+    ignore_manual = bool(body.get("ignore_manual"))
+
     # Load data
     prev_month = 12 if month == 1 else month - 1
     prev_year  = year - 1 if month == 1 else year
@@ -5862,7 +5867,8 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     # solver builds the rest of the month around them, and they're never deleted
     # or overwritten when persisting (see manual_cells below).
     manual_cells = set()
-    manual_rows = q("""SELECT e.staff_id, TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
+    manual_rows = [] if ignore_manual else q(
+                    """SELECT e.staff_id, TO_CHAR(e.date,'YYYY-MM-DD') AS date, e.shift_code
                        FROM scheduling.schedule_entries e
                        JOIN scheduling.schedules sc ON sc.id=e.schedule_id
                        WHERE sc.branch_id=%s AND sc.year=%s AND sc.month=%s
@@ -6261,12 +6267,39 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
             try:
                 res = solver_generate(
                     nest_name=nest_name, year=year, month=month,
-                    al_schedule=sec_al, prev_tail=sec_prev_tail, time_limit=8,
+                    al_schedule=sec_al, prev_tail=sec_prev_tail, time_limit=15,
                     max_consecutive=(new_k or max_consecutive),
                     staff_limits=sec_staff_limits,
                     section_limits=seclim2,
                     nest_cfg={"sections": {sec_name: sec2}},
                     fixed_schedule=sec_fixed,
+                )
+            except Exception:
+                continue
+            if res.get("status") in ("OPTIMAL", "FEASIBLE") and res.get("schedule"):
+                fixes.append({"setting": label, "change": change})
+
+        # Beyond UI settings — isolate a NON-setting blocker by dropping one input
+        # at a time: the cross-month rest carry-over, the pinned manual cells, and
+        # the per-staff minimum. Whichever one unlocks it points at the real cause
+        # (a conflicting last-month tail, a stale manual edit, or a too-high floor).
+        floor0 = {k: {**(v or {}), "min_shifts": 0} for k, v in (sec_staff_limits or {}).items()}
+        extras = [
+            ("Previous-month rest carry-over", "regenerate last month or ignore its tail", dict(prev_tail={})),
+            ("Locked manual cells", "clear the pinned hand-edited cells for this month", dict(fixed={})),
+            ("Per-staff minimum shifts", "the forced ~full-month minimum is too tight — lower it", dict(staff=floor0)),
+        ]
+        for label, change, ov in extras:
+            try:
+                res = solver_generate(
+                    nest_name=nest_name, year=year, month=month,
+                    al_schedule=sec_al,
+                    prev_tail=ov.get("prev_tail", sec_prev_tail),
+                    time_limit=15, max_consecutive=max_consecutive,
+                    staff_limits=ov.get("staff", sec_staff_limits),
+                    section_limits={sec_name: dict(section_limits_for_solver.get(sec_name) or {})},
+                    nest_cfg={"sections": {sec_name: dict(sec_cfg)}},
+                    fixed_schedule=ov.get("fixed", sec_fixed),
                 )
             except Exception:
                 continue
@@ -6391,11 +6424,11 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     try:
         with conn.cursor() as cur:
             if ok_staff_ids:
-                # Keep manual cells — only the solver-owned (non-manual) cells are
-                # cleared and rewritten.
-                cur.execute("""DELETE FROM scheduling.schedule_entries
-                               WHERE schedule_id=%s AND staff_id = ANY(%s)
-                                 AND COALESCE(is_manual,false)=false""",
+                # Keep manual cells (only solver-owned cells are cleared) — unless
+                # this is a "fresh generate" that deliberately ignores manual edits.
+                _keep_manual = "" if ignore_manual else "AND COALESCE(is_manual,false)=false"
+                cur.execute(f"""DELETE FROM scheduling.schedule_entries
+                                WHERE schedule_id=%s AND staff_id = ANY(%s) {_keep_manual}""",
                             (schedule["id"], ok_staff_ids))
             for e in flat_entries:
                 # Never overwrite a manual cell (the solver already pinned it, so
