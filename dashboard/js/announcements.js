@@ -113,9 +113,22 @@ async function deleteAnnouncement(id) {
 
 async function viewAnnAcks(id) {
   try {
-    const rows = await API.get(`/announcements/${id}/acks`);
-    const names = rows.length ? rows.map(r => `• ${escapeHtml(r.username)}`).join('<br>') : 'No one yet.';
-    await showConfirm(`Acknowledged by ${rows.length}`, names, 'Close', '');
+    const d = await API.get(`/announcements/${id}/acks`);
+    const acked = (d.acked || []).length ? d.acked.map(r => `• ${escapeHtml(r.username)}`).join('<br>') : '—';
+    const pending = (d.pending || []).length ? d.pending.map(r => `• ${escapeHtml(r.username)}`).join('<br>') : 'Everyone acknowledged.';
+    const body = `<div style="text-align:left;max-height:300px;overflow:auto">
+        <b>Acknowledged:</b><br>${acked}
+        <br><br><b style="color:#E25555">Still pending (${(d.pending || []).length}):</b><br>${pending}</div>`;
+    const title = `${d.ack_count || 0} of ${d.target_count || 0} acknowledged`;
+    if ((d.pending || []).length) {
+      const ok = await showConfirm(title, body, 'Remind pending', '');
+      if (ok) {
+        const r = await API.post(`/announcements/${id}/remind`, {});
+        toast(`Reminded ${r.reminded} pending`);
+      }
+    } else {
+      await showConfirm(title, body, 'Close', '');
+    }
   } catch (e) { toast(e.message, 'err'); }
 }
 

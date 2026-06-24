@@ -1069,7 +1069,7 @@ after = staffA.get("/api/announcements").json()
 check("ack is reflected for the staff member",
       next((a for a in after if a["id"] == baid), {}).get("acked") is True, after)
 acks = admin.get(f"/api/announcements/{baid}/acks").json()
-check("manager sees who acknowledged", any(r["username"] == f"zza{sfx}" for r in acks), acks)
+check("manager sees who acknowledged", any(r["username"] == f"zza{sfx}" for r in acks["acked"]), acks)
 # A team lead can post only to their branch; a staff member cannot post at all.
 sp = staffA.post("/api/announcements", json={"title": "x", "body": "y"})
 check("staff can't post announcements", sp.status_code == 403, sp.text)

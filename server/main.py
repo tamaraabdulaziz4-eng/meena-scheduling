@@ -4069,6 +4069,9 @@ def list_tickets(request: Request, user=Depends(get_current_user)):
         conds.append("t.status = ANY(%s)"); vals.append(list(_TICKET_ACTIVE))
     elif status in _TICKET_STATUSES:
         conds.append("t.status=%s"); vals.append(status)
+    category = (p.get("category") or "").strip()
+    if category in _TICKET_CATEGORIES:
+        conds.append("t.category=%s"); vals.append(category)
     rows = q(f"""SELECT t.id,t.category,t.priority,t.subject,t.status,t.branch_id,
                         TO_CHAR(t.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at,
                         TO_CHAR(t.updated_at,'YYYY-MM-DD"T"HH24:MI:SS') AS updated_at,
@@ -4284,14 +4287,45 @@ def ack_announcement(aid: int, user=Depends(get_current_user)):
 
 @app.get("/api/announcements/{aid}/acks")
 def announcement_acks(aid: int, user=Depends(require_admin)):
-    a = q("SELECT created_by,branch_id FROM scheduling.announcements WHERE id=%s", (aid,), one=True)
+    a = q("SELECT created_by,branch_id,audience FROM scheduling.announcements WHERE id=%s", (aid,), one=True)
     if not a:
         raise HTTPException(404, "Announcement not found")
     if user["role"] == "admin" and not (a["created_by"] == user["id"] or can_access_branch(user, a.get("branch_id"))):
         raise HTTPException(403, "Forbidden")
-    return q("""SELECT u.username, TO_CHAR(k.acked_at,'YYYY-MM-DD"T"HH24:MI:SS') AS acked_at
-                FROM scheduling.announcement_acks k JOIN scheduling.users u ON u.id=k.user_id
-                WHERE k.announcement_id=%s ORDER BY k.acked_at""", (aid,))
+    acked = q("""SELECT u.id, u.username, TO_CHAR(k.acked_at,'YYYY-MM-DD"T"HH24:MI:SS') AS acked_at
+                 FROM scheduling.announcement_acks k JOIN scheduling.users u ON u.id=k.user_id
+                 WHERE k.announcement_id=%s ORDER BY k.acked_at""", (aid,))
+    acked_ids = {r["id"] for r in acked}
+    targets = _announcement_targets(a["audience"], a.get("branch_id"))
+    pending = [{"username": t["username"]} for t in targets if t["id"] not in acked_ids]
+    return {"acked": [{"username": r["username"], "acked_at": r["acked_at"]} for r in acked],
+            "pending": pending, "ack_count": len(acked), "target_count": len(targets)}
+
+def _announcement_targets(audience, branch_id):
+    """Staff-role accounts expected to acknowledge a circular (its audience)."""
+    if audience == "branch" and branch_id:
+        return q("""SELECT u.id, u.username FROM scheduling.users u
+                    JOIN scheduling.staff s ON s.id=u.staff_id
+                    WHERE u.role='staff' AND s.branch_id=%s AND COALESCE(s.active,true)=true""", (branch_id,))
+    return q("""SELECT u.id, u.username FROM scheduling.users u
+                JOIN scheduling.staff s ON s.id=u.staff_id
+                WHERE u.role='staff' AND COALESCE(s.active,true)=true""")
+
+@app.post("/api/announcements/{aid}/remind")
+def remind_announcement(aid: int, user=Depends(require_admin)):
+    """Nudge the people who still haven't acknowledged an action-required circular."""
+    a = q("SELECT id,title,branch_id,audience,created_by FROM scheduling.announcements WHERE id=%s", (aid,), one=True)
+    if not a:
+        raise HTTPException(404, "Announcement not found")
+    if user["role"] == "admin" and not (a["created_by"] == user["id"] or can_access_branch(user, a.get("branch_id"))):
+        raise HTTPException(403, "Forbidden")
+    acked_ids = {r["user_id"] for r in q("SELECT user_id FROM scheduling.announcement_acks WHERE announcement_id=%s", (aid,))}
+    n = 0
+    for t in _announcement_targets(a["audience"], a.get("branch_id")):
+        if t["id"] not in acked_ids:
+            notify(t["id"], f"Reminder — please acknowledge: {a['title']}", link="announcements", ntype="reminder")
+            n += 1
+    return {"reminded": n}
 
 @app.delete("/api/announcements/{aid}")
 def delete_announcement(aid: int, user=Depends(get_current_user)):
