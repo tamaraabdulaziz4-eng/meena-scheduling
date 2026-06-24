@@ -17,12 +17,12 @@ async function renderReportsPage() {
   const tabs = [['cases', 'Cases trends'], ['fairness', 'Fairness'], ['qc', 'Equipment QC log'], ['credentials', 'Licenses & expiry']];
   c.innerHTML = `
     ${pageHero('Reports', 'Reports', 'Track cases, balance the load, and keep an audit-ready check log')}
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+    <div class="rep-toolbar">
       <div class="seg" id="rep-tabs">${tabs.map(([v, l]) =>
         `<button data-t="${v}" class="${v === reportsTab ? 'on' : ''}">${l}</button>`).join('')}</div>
-      ${_repIsReviewer() ? `<select id="rep-branch" style="max-width:200px"></select>` : ''}
+      ${_repIsReviewer() ? `<select id="rep-branch" class="rep-select" style="max-width:220px"></select>` : ''}
     </div>
-    <div id="rep-controls" style="margin-bottom:12px"></div>
+    <div id="rep-controls" style="margin-bottom:14px"></div>
     <div id="rep-body">${LOADING_HTML}</div>`;
   c.querySelectorAll('#rep-tabs button').forEach(b =>
     b.onclick = () => { reportsTab = b.getAttribute('data-t'); renderReportsPage(); });
@@ -84,44 +84,68 @@ async function loadCasesReport(body) {
   const qs = `from=${from}&to=${to}${reportsBranch ? `&branch_id=${reportsBranch}` : ''}`;
   const d = await API.get(`/reports/cases?${qs}`);
   const t = d.totals || {};
-  const kpi = (label, val) => `<div style="flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
-      border-radius:12px;padding:12px"><div style="font-size:22px;font-weight:800">${val ?? 0}</div>
-      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">${label}</div></div>`;
-  const maxv = Math.max(1, ...(d.series || []).map(s => s.total_cases));
-  const bars = (d.series || []).map(s => {
-    const h = Math.round((s.total_cases / maxv) * 90);
-    return `<div title="${s.date}: ${s.total_cases} cases" style="flex:1;min-width:6px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center">
-        <div style="width:70%;height:${h}px;background:var(--accent);border-radius:3px 3px 0 0"></div></div>`;
+  const kpi = (label, val, alt) => `<div class="rep-stat${alt ? ' alt' : ''}">
+      <div class="rep-stat-val">${(val ?? 0).toLocaleString()}</div><div class="rep-stat-lbl">${label}</div></div>`;
+  const series = d.series || [];
+  const maxv = Math.max(1, ...series.map(s => s.total_cases));
+  const avg = series.length ? Math.round(series.reduce((a, s) => a + s.total_cases, 0) / series.length) : 0;
+  const showTick = series.length <= 16 ? 1 : (series.length <= 24 ? 5 : 7);
+  const bars = series.map(s => {
+    const h = Math.round((s.total_cases / maxv) * 100);
+    const day = Number(String(s.date).slice(8, 10));
+    const dow = new Date(s.date).getDay();          // 5 = Friday (KSA weekend)
+    const wknd = (dow === 5 || dow === 6) ? ' wknd' : '';
+    return `<div class="rep-bar-col" title="${s.date} · ${s.total_cases} cases">
+        <div class="rep-bar${wknd}" style="height:${h}%"></div></div>`;
+  }).join('');
+  const ticks = series.map((s, i) => {
+    const day = Number(String(s.date).slice(8, 10));
+    return `<div class="rep-xtick">${(i % showTick === 0) ? day : ''}</div>`;
   }).join('');
   body.innerHTML = `
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+    <div class="rep-stat-grid">
       ${kpi('Total cases', t.total_cases)}${kpi('Patients', t.total_pt)}
-      ${kpi('X-Ray', t.xray)}${kpi('CT', t.ct)}${kpi('US', t.us)}${kpi('MAMO', t.mamo)}${kpi('BMD', t.bmd)}${kpi('CD', t.insert_cd)}
+      ${kpi('X-Ray', t.xray)}${kpi('CT', t.ct)}${kpi('Ultrasound', t.us)}${kpi('Mammo', t.mamo)}${kpi('BMD', t.bmd)}${kpi('CDs burned', t.insert_cd, true)}
     </div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px">
-      <div style="font-weight:700;font-size:13px;margin-bottom:10px">Daily cases — ${monthLabel(reportsYear, reportsMonth)}</div>
-      <div style="display:flex;gap:2px;align-items:flex-end;height:100px">${bars || '<div style="color:var(--muted);font-size:13px">No data for this month.</div>'}</div>
+    <div class="rep-card">
+      <div class="rep-card-head">
+        <div class="rep-card-title">Daily cases — ${monthLabel(reportsYear, reportsMonth)}</div>
+        <div style="font-size:12px;color:var(--muted)">Peak <b style="color:var(--primary)">${maxv}</b> · Avg <b style="color:var(--primary)">${avg}</b>/day</div>
+      </div>
+      ${series.length ? `<div class="rep-chart">${bars}</div><div class="rep-xaxis">${ticks}</div>
+        <div class="rep-chart-foot"><span>Purple = weekday · light = weekend</span><span>${d.rows || 0} days with data</span></div>`
+        : `<div class="rep-empty">No cases recorded this month.</div>`}
     </div>
-    <div style="font-size:12px;color:var(--muted);margin-top:10px">BMD not done: <b>${t.bmd_not_done || 0}</b> · MAMO not done: <b>${t.mamo_not_done || 0}</b> · days with data: <b>${d.rows || 0}</b></div>`;
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+      <span class="rep-pill rep-pill-amber">BMD not done: ${t.bmd_not_done || 0}</span>
+      <span class="rep-pill rep-pill-amber">Mammo not done: ${t.mamo_not_done || 0}</span>
+    </div>`;
 }
 
 // ── Fairness ──────────────────────────────────────────────────────────────────
 async function loadFairnessReport(body) {
-  if (!reportsBranch) { body.innerHTML = `<div class="empty"><p>Pick a branch.</p></div>`; return; }
+  if (!reportsBranch) { body.innerHTML = `<div class="rep-card"><div class="rep-empty">Pick a branch to see its load distribution.</div></div>`; return; }
   const d = await API.get(`/reports/fairness?branch_id=${reportsBranch}&year=${reportsYear}&month=${reportsMonth}`);
   const rows = d.staff || [];
-  if (!rows.length) { body.innerHTML = `<div class="empty"><p>No staff.</p></div>`; return; }
+  if (!rows.length) { body.innerHTML = `<div class="rep-card"><div class="rep-empty">No staff in this branch yet.</div></div>`; return; }
   const maxN = Math.max(1, ...rows.map(r => r.nights));
-  body.innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th>Name</th><th>Section</th><th>Shifts</th><th>Nights</th><th>Mornings</th><th>Weekends</th><th>On-call</th><th>Leave</th></tr></thead>
-    <tbody>${rows.map(r => `<tr>
+  const maxShifts = Math.max(1, ...rows.map(r => r.shifts));
+  const loadBar = (val, max, hot) => `<div class="rep-load">
+      <span class="rep-num">${val}</span>
+      <div class="rep-load-track"><div class="rep-load-fill${hot ? ' hot' : ''}" style="width:${Math.round((val / max) * 100)}%"></div></div></div>`;
+  body.innerHTML = `<div class="rep-card" style="padding:0;overflow:hidden">
+    <div class="table-wrap" style="box-shadow:none;border:none;border-radius:0;background:transparent"><table>
+    <thead><tr><th>Name</th><th>Section</th><th style="min-width:130px">Shifts</th><th style="min-width:130px">Nights</th><th>Mornings</th><th>Weekends</th><th>On-call</th><th>Leave</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const hottest = r.nights >= maxN && maxN > 0;
+      return `<tr>
       <td style="font-weight:600">${escapeHtml(r.name)}</td>
-      <td><span style="font-size:11px;color:var(--muted)">${r.section === 'US' ? 'Ultrasound' : 'General'}</span></td>
-      <td>${r.shifts}</td>
-      <td><b style="color:${r.nights >= maxN && maxN > 0 ? '#E25555' : 'inherit'}">${r.nights}</b></td>
+      <td><span class="rep-pill rep-pill-muted">${r.section === 'US' ? 'Ultrasound' : 'General'}</span></td>
+      <td>${loadBar(r.shifts, maxShifts, false)}</td>
+      <td>${loadBar(r.nights, maxN, hottest)}</td>
       <td>${r.mornings}</td><td>${r.weekends}</td><td>${r.oncall}</td><td>${r.leave_days}</td>
-    </tr>`).join('')}</tbody></table></div>
-    <div style="font-size:12px;color:var(--muted);margin-top:10px">Red = the most nights this month. Use it to balance the load next month.</div>`;
+    </tr>`; }).join('')}</tbody></table></div></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:12px">The red bar marks whoever carries the most nights this month — use it to rebalance next month.</div>`;
 }
 
 // ── Licenses & expiry ─────────────────────────────────────────────────────────
@@ -132,47 +156,58 @@ const _CRED_KINDS = [
 ];
 function _credKindLabel(k) { const f = _CRED_KINDS.find(x => x[0] === k); return f ? f[1] : (k || 'Other'); }
 function _credStatus(d) {
-  if (d === null || d === undefined) return ['No date', 'var(--muted)'];
+  // → [text, pill-class]
+  if (d === null || d === undefined) return ['No date', 'rep-pill-muted'];
   d = Number(d);
-  if (d < 0) return [`Expired ${Math.abs(d)}d ago`, '#E25555'];
-  if (d === 0) return ['Expires today', '#E25555'];
-  if (d <= 30) return [`${d}d left`, '#E2933F'];
-  if (d <= 60) return [`${d}d left`, '#C9A227'];
-  return [`${d}d left`, 'var(--muted)'];
+  if (d < 0) return [`Expired ${Math.abs(d)}d ago`, 'rep-pill-red'];
+  if (d === 0) return ['Expires today', 'rep-pill-red'];
+  if (d <= 30) return [`${d}d left`, 'rep-pill-amber'];
+  if (d <= 60) return [`${d}d left`, 'rep-pill-gold'];
+  return [`${d}d left`, 'rep-pill-ok'];
 }
+
+let _credRows = [];   // last-loaded credentials, so Edit can look up by id (no unsafe inline JSON)
 
 async function loadCredentialsReport(body) {
   const qs = reportsBranch ? `?branch_id=${reportsBranch}` : '';
   const rows = await API.get(`/credentials${qs}`);
+  _credRows = rows;
   const showBranch = _repIsReviewer() && !reportsBranch;
+  const cols = showBranch ? 8 : 7;
   body.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-      <div style="font-size:12px;color:var(--muted)">Track licenses, classifications and IDs. Staff and their branch lead are reminded as expiry nears.</div>
-      <button class="btn btn-sm btn-primary" onclick="openCredentialModal()">Add credential</button>
-    </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Staff</th>${showBranch ? '<th>Branch</th>' : ''}<th>Type</th><th>Label</th><th>Number</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows.length ? rows.map(r => {
-        const [txt, col] = _credStatus(r.days_left);
-        return `<tr>
-          <td style="font-weight:600">${escapeHtml(r.staff_name || '')}</td>
-          ${showBranch ? `<td><span style="font-size:11px;color:var(--muted)">${escapeHtml(r.branch_name || '')}</span></td>` : ''}
-          <td>${escapeHtml(_credKindLabel(r.kind))}</td>
-          <td>${escapeHtml(r.label || '—')}</td>
-          <td>${escapeHtml(r.number || '—')}</td>
-          <td>${escapeHtml(r.expiry_date || '—')}</td>
-          <td><b style="color:${col}">${txt}</b></td>
-          <td style="white-space:nowrap;text-align:right">
-            <button class="btn btn-xs btn-ghost" onclick='openCredentialModal(${JSON.stringify(r)})'>Edit</button>
-            <button class="btn btn-xs btn-ghost" style="color:#E25555" onclick="deleteCredential(${r.id})">Delete</button>
-          </td>
-        </tr>`;
-      }).join('') : `<tr><td colspan="${showBranch ? 8 : 7}" style="text-align:center;color:var(--muted);padding:20px">No credentials yet. Add one to start tracking expiry.</td></tr>`}</tbody>
-    </table></div>`;
+    <div class="rep-card">
+      <div class="rep-card-head">
+        <div>
+          <div class="rep-card-title">Licenses &amp; expiry</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px">Staff and their branch lead are reminded automatically as expiry nears.</div>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="openCredentialModal()">+ Add credential</button>
+      </div>
+      <div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
+        <thead><tr><th>Staff</th>${showBranch ? '<th>Branch</th>' : ''}<th>Type</th><th>Label</th><th>Number</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows.length ? rows.map(r => {
+          const [txt, cls] = _credStatus(r.days_left);
+          return `<tr>
+            <td style="font-weight:600">${escapeHtml(r.staff_name || '')}</td>
+            ${showBranch ? `<td><span style="font-size:11px;color:var(--muted)">${escapeHtml(r.branch_name || '')}</span></td>` : ''}
+            <td>${escapeHtml(_credKindLabel(r.kind))}</td>
+            <td>${escapeHtml(r.label || '—')}</td>
+            <td>${escapeHtml(r.number || '—')}</td>
+            <td>${escapeHtml(r.expiry_date || '—')}</td>
+            <td><span class="rep-pill ${cls}">${txt}</span></td>
+            <td style="white-space:nowrap;text-align:right">
+              <button class="btn btn-xs btn-ghost" onclick="openCredentialModal(${r.id})">Edit</button>
+              <button class="btn btn-xs btn-ghost" style="color:#E25555;margin-left:4px" onclick="deleteCredential(${r.id})">Delete</button>
+            </td>
+          </tr>`;
+        }).join('') : `<tr><td colspan="${cols}"><div class="rep-empty">No credentials yet. Add one to start tracking expiry.</div></td></tr>`}</tbody>
+      </table></div>
+    </div>`;
 }
 
-async function openCredentialModal(cred) {
-  cred = cred || null;
+async function openCredentialModal(credId) {
+  // Add → no id; Edit → look the row up by id (avoids unsafe inline JSON in onclick).
+  const cred = (credId != null) ? (_credRows.find(r => r.id === credId) || null) : null;
   // Staff list scoped to the selected branch (manager) or the lead's branch.
   try { if (!allStaff || !allStaff.length) await loadStaff(); } catch (e) {}
   const branchId = reportsBranch ? Number(reportsBranch) : null;
@@ -245,13 +280,19 @@ async function loadQcReport(body) {
   const d = await API.get(`/reports/qc-log?${qs}`);
   const log = d.log || [];
   body.innerHTML = `
-    <div style="margin-bottom:10px"><button class="btn btn-sm btn-ghost" onclick="window.print()">🖨 Print / PDF</button></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Date</th><th>Shift</th><th>Branch</th><th>Confirmed by</th><th>Time</th></tr></thead>
-      <tbody>${log.length ? log.map(r => `<tr>
-        <td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.shift_label)}</td>
-        <td>${escapeHtml(r.branch_name)}</td><td>${escapeHtml(r.confirmed_by || '—')}</td>
-        <td>${r.confirmed_at ? new Date(r.confirmed_at).toLocaleString('en-GB') : ''}</td>
-      </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No checks logged for this month.</td></tr>`}</tbody>
-    </table></div>`;
+    <div class="rep-card">
+      <div class="rep-card-head">
+        <div class="rep-card-title">Equipment check log — ${monthLabel(reportsYear, reportsMonth)}</div>
+        <button class="btn btn-sm btn-ghost" onclick="window.print()">Print / PDF</button>
+      </div>
+      <div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
+        <thead><tr><th>Date</th><th>Shift</th><th>Branch</th><th>Confirmed by</th><th>Time</th></tr></thead>
+        <tbody>${log.length ? log.map(r => `<tr>
+          <td style="font-weight:600">${escapeHtml(r.date)}</td><td><span class="rep-pill rep-pill-muted">${escapeHtml(r.shift_label)}</span></td>
+          <td>${escapeHtml(r.branch_name)}</td>
+          <td>${r.confirmed_by ? escapeHtml(r.confirmed_by) : '<span class="rep-pill rep-pill-amber">not confirmed</span>'}</td>
+          <td>${r.confirmed_at ? new Date(r.confirmed_at).toLocaleString('en-GB') : '—'}</td>
+        </tr>`).join('') : `<tr><td colspan="5"><div class="rep-empty">No checks logged for this month.</div></td></tr>`}</tbody>
+      </table></div>
+    </div>`;
 }

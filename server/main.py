@@ -5432,12 +5432,24 @@ def report_qc_log(request: Request, user=Depends(require_admin)):
 # ── Staff credentials / license expiry ────────────────────────────────────────
 _CREDENTIAL_KINDS = ("scfhs", "bls", "acls", "iqama", "passport", "classification", "other")
 
+def _valid_iso_date(s):
+    """Return a YYYY-MM-DD string if valid, else None — guards the DB from a
+    malformed date raising a 500 at INSERT time."""
+    s = (s or "").strip()
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+        return s
+    except (ValueError, TypeError):
+        return None
+
 def _can_manage_staff(user, staff_id):
+    st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
+    if not st:
+        return False   # unknown staff → never manageable (avoids a FK 500 on insert)
     if user["role"] in ("manager", "superadmin"):
         return True
     if user["role"] == "admin":
-        st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (staff_id,), one=True)
-        return bool(st and can_access_branch(user, st["branch_id"]))
+        return can_access_branch(user, st["branch_id"])
     return False
 
 @app.get("/api/credentials")
@@ -5493,9 +5505,9 @@ async def create_credential(request: Request, user=Depends(require_admin)):
     if not _can_manage_staff(user, sid):
         raise HTTPException(403, "Forbidden")
     kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
-    expiry = (body.get("expiry_date") or "").strip()
+    expiry = _valid_iso_date(body.get("expiry_date"))
     if not expiry:
-        raise HTTPException(400, "expiry_date is required")
+        raise HTTPException(400, "A valid expiry_date (YYYY-MM-DD) is required")
     row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,expiry_date,created_by)
                VALUES (%s,%s,%s,%s,%s,%s)
                RETURNING id, TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date""",
@@ -5513,9 +5525,9 @@ async def update_credential(cid: int, request: Request, user=Depends(require_adm
         raise HTTPException(403, "Forbidden")
     body = await request.json()
     kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
-    expiry = (body.get("expiry_date") or "").strip()
+    expiry = _valid_iso_date(body.get("expiry_date"))
     if not expiry:
-        raise HTTPException(400, "expiry_date is required")
+        raise HTTPException(400, "A valid expiry_date (YYYY-MM-DD) is required")
     q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,expiry_date=%s WHERE id=%s""",
       (kind, (body.get("label") or "").strip()[:80] or None,
        (body.get("number") or "").strip()[:60] or None, expiry, cid), exec_only=True)

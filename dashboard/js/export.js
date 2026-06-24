@@ -88,6 +88,25 @@ function loadScript(src) {
   });
 }
 
+// ── Colour helpers: soften the vivid shift colours for a calm, printed look ──
+function _parseColor(s) {
+  s = (s || '').trim();
+  if (s.startsWith('#')) {
+    let h = s.slice(1);
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const m = s.match(/rgba?\(([^)]+)\)/);
+  if (m) { const p = m[1].split(',').map(Number); return [p[0], p[1], p[2]]; }
+  return [208, 208, 208];
+}
+function _mixRgb(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+function _rgbCss(a) { return `rgb(${a.map(x => Math.round(x)).join(',')})`; }
+// Soft pastel fill + a readable dark-of-hue text, so cells are "shaded" not loud.
+function _muteFill(color) { return _rgbCss(_mixRgb(_parseColor(color), [255, 255, 255], 0.76)); }
+function _muteText(color) { return _rgbCss(_mixRgb(_parseColor(color), [40, 30, 70], 0.55)); }
+
 // ── PDF Export (exact snapshot of the on-screen rota) ─────────────────────────
 async function exportPDF() {
   if (!currentSchedule || !scheduleStaff.length) { toast('No schedule loaded', 'err'); return; }
@@ -121,25 +140,47 @@ async function exportPDF() {
       width:     rota.style.width,
     };
 
-    const isDark = document.body.classList.contains('dark');
-
-    // Snapshot the table exactly as rendered. The expand/restore is wrapped so
-    // the on-screen table always returns to normal even if capture throws.
+    // Snapshot the table. Three fixes vs. the old capture:
+    //  1. Expand the wrap to the table's FULL width so no days are cut off.
+    //  2. Drop sticky positioning (pdf-capture class) so the name column and
+    //     headers don't overlap the day cells in the rendered image.
+    //  3. Soften the vivid shift colours to calm pastels with dark text.
+    // Everything is restored in finally, even if capture throws.
+    const muted = [];
     let canvas;
+    // Always export on a light sheet — a dark-mode rota prints as dark blocks.
+    const wasDark = document.body.classList.contains('dark');
     try {
+      if (wasDark) document.body.classList.remove('dark');
       rota.style.maxHeight = 'none';
       rota.style.overflow  = 'visible';
+      rota.classList.add('pdf-capture');
+      // Widen so the whole month is laid out (no horizontal clipping).
+      const fullW = rota.scrollWidth;
+      rota.style.width = fullW + 'px';
+      // Soften coloured cells: pastel fill + dark legible text.
+      rota.querySelectorAll('.rota-cell:not(.blank-cell)').forEach(td => {
+        const bg = td.style.background;
+        if (!bg || bg === 'transparent') return;
+        const chip = td.querySelector('.shift-chip');
+        muted.push([td, bg, chip, chip ? chip.style.color : null]);
+        td.style.background = _muteFill(bg);
+        if (chip) chip.style.color = _muteText(bg);
+      });
       canvas = await html2canvas(rota, {
         scale: 2,                                   // crisp on retina / print
-        backgroundColor: isDark ? '#1c1a35' : '#ffffff',
+        backgroundColor: '#ffffff',
         useCORS: true,
-        windowWidth: rota.scrollWidth,
-        windowHeight: rota.scrollHeight,
+        windowWidth: fullW + 40,
+        windowHeight: rota.scrollHeight + 40,
       });
     } finally {
+      rota.classList.remove('pdf-capture');
+      muted.forEach(([td, bg, chip, col]) => { td.style.background = bg; if (chip) chip.style.color = col; });
       rota.style.maxHeight = prev.maxHeight;
       rota.style.overflow  = prev.overflow;
       rota.style.width     = prev.width;
+      if (wasDark) document.body.classList.add('dark');
     }
 
     const { jsPDF } = window.jspdf;
