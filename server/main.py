@@ -5999,10 +5999,13 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     for sec in nest_sections:
         mn = nest_cfg_for_solver["sections"].get(sec["section_name"], {})
         slots_per_day = mn.get("min_m", 1) + mn.get("min_n", 1)
+        max_slots_per_day = mn.get("max_m", 2) + mn.get("max_n", 2)
         staff_keys = mn.get("staff") or []
         staff_count   = len(staff_keys)
         for sk in staff_keys:
-            sk_to_mn[sk] = {"slots_per_day": slots_per_day, "staff_count": staff_count}
+            sk_to_mn[sk] = {"slots_per_day": slots_per_day,
+                            "max_slots_per_day": max_slots_per_day,
+                            "staff_count": staff_count}
 
     def calc_staff_limits(solver_key, max_consec, db_min_shifts, db_max_shifts):
         # ── Hours-based target ────────────────────────────────────────────────
@@ -6076,6 +6079,20 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
         # If an explicit DB min is set, honour it but keep it within the ceiling.
         eff_min = min(max(floor, eff_target), ceiling)
         eff_min = max(0, eff_min)
+
+        # Section-capacity cap: a small section only offers so many slots a month
+        # (n_days × (max_m+max_n)) shared among its staff. If we force each person
+        # to a full-month target (~17) but the section can only give ~12 each, the
+        # floors sum past the available slots and the section is INFEASIBLE. Cap the
+        # forced minimum at the section's per-person share so generation succeeds
+        # (people simply work fewer shifts in a thin section).
+        _mn = sk_to_mn.get(solver_key) or {}
+        _sc = int(_mn.get("staff_count") or 0)
+        _maxslots = int(_mn.get("max_slots_per_day") or 0)
+        if _sc > 0 and _maxslots > 0:
+            section_share = (n_days_in_month * _maxslots) // _sc
+            if section_share >= 1:
+                eff_min = min(eff_min, section_share)
 
         # Give the solver a small upward tolerance (+1) so it can balance fairness
         # and coverage, but never exceed the ceiling. NOT for someone who took
