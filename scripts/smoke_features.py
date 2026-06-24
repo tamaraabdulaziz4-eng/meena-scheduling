@@ -1147,5 +1147,19 @@ ments = admin.get(f"/api/schedules/{sid}/entries").json()
 mcell = next((e for e in ments if e["staff_id"] == A["id"] and e["date"] == f"{YEAR}-08-17"), None)
 check("entries list surfaces the manual flag", bool(mcell) and mcell.get("is_manual") is True, mcell)
 
+print("\n== scenario 21: on-duty roster ==")
+ODD = f"{YEAR}-08-19"
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": ODD, "shift_code": "M"})
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": B["id"], "date": ODD, "shift_code": "O"})
+od = admin.get(f"/api/on-duty?date={ODD}").json()
+allon = [s for b in od["branches"] for s in b["staff"]]
+check("on-duty includes a working staff member with their shift",
+      any(s["staff_id"] == A["id"] and s["shift_code"] == "M" for s in allon), od)
+check("on-duty excludes off/leave staff", not any(s["staff_id"] == B["id"] for s in allon), allon)
+adet = next((s for s in allon if s["staff_id"] == A["id"]), {})
+check("on-duty carries contact + section info", "section" in adet and "phone" in adet, adet)
+odl = lead.get(f"/api/on-duty?date={ODD}").json()
+check("team lead's on-duty is scoped to their branch", all(b["branch_id"] == bid for b in odl["branches"]), odl)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
