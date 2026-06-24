@@ -141,9 +141,12 @@ function _credStatus(d) {
   return [`${d}d left`, 'var(--muted)'];
 }
 
+let _credRows = [];   // last-loaded credentials, so Edit can look up by id (no unsafe inline JSON)
+
 async function loadCredentialsReport(body) {
   const qs = reportsBranch ? `?branch_id=${reportsBranch}` : '';
   const rows = await API.get(`/credentials${qs}`);
+  _credRows = rows;
   const showBranch = _repIsReviewer() && !reportsBranch;
   body.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
@@ -163,7 +166,7 @@ async function loadCredentialsReport(body) {
           <td>${escapeHtml(r.expiry_date || '—')}</td>
           <td><b style="color:${col}">${txt}</b></td>
           <td style="white-space:nowrap;text-align:right">
-            <button class="btn btn-xs btn-ghost" onclick='openCredentialModal(${JSON.stringify(r)})'>Edit</button>
+            <button class="btn btn-xs btn-ghost" onclick="openCredentialModal(${r.id})">Edit</button>
             <button class="btn btn-xs btn-ghost" style="color:#E25555" onclick="deleteCredential(${r.id})">Delete</button>
           </td>
         </tr>`;
@@ -171,8 +174,9 @@ async function loadCredentialsReport(body) {
     </table></div>`;
 }
 
-async function openCredentialModal(cred) {
-  cred = cred || null;
+async function openCredentialModal(credId) {
+  // Add → no id; Edit → look the row up by id (avoids unsafe inline JSON in onclick).
+  const cred = (credId != null) ? (_credRows.find(r => r.id === credId) || null) : null;
   // Staff list scoped to the selected branch (manager) or the lead's branch.
   try { if (!allStaff || !allStaff.length) await loadStaff(); } catch (e) {}
   const branchId = reportsBranch ? Number(reportsBranch) : null;
