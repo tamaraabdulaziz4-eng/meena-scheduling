@@ -1602,6 +1602,7 @@ async function runGenerate() {
           confirm:   confirmGen,
           section:   genSectionChoice || undefined,
           preserve_existing: !!document.getElementById('gen-preserve')?.checked,
+          ignore_manual: !!document.getElementById('gen-ignore-manual')?.checked,
         });
         break;
       } catch (err) {
