@@ -84,8 +84,8 @@ async function loadCasesReport(body) {
   const qs = `from=${from}&to=${to}${reportsBranch ? `&branch_id=${reportsBranch}` : ''}`;
   const d = await API.get(`/reports/cases?${qs}`);
   const t = d.totals || {};
-  const kpi = (label, val, alt) => `<div class="rep-kpi${alt ? ' alt' : ''}">
-      <div class="rep-kpi-val">${(val ?? 0).toLocaleString()}</div><div class="rep-kpi-lbl">${label}</div></div>`;
+  const kpi = (label, val, alt) => `<div class="rep-stat${alt ? ' alt' : ''}">
+      <div class="rep-stat-val">${(val ?? 0).toLocaleString()}</div><div class="rep-stat-lbl">${label}</div></div>`;
   const series = d.series || [];
   const maxv = Math.max(1, ...series.map(s => s.total_cases));
   const avg = series.length ? Math.round(series.reduce((a, s) => a + s.total_cases, 0) / series.length) : 0;
@@ -103,7 +103,7 @@ async function loadCasesReport(body) {
     return `<div class="rep-xtick">${(i % showTick === 0) ? day : ''}</div>`;
   }).join('');
   body.innerHTML = `
-    <div class="rep-kpi-grid">
+    <div class="rep-stat-grid">
       ${kpi('Total cases', t.total_cases)}${kpi('Patients', t.total_pt)}
       ${kpi('X-Ray', t.xray)}${kpi('CT', t.ct)}${kpi('Ultrasound', t.us)}${kpi('Mammo', t.mamo)}${kpi('BMD', t.bmd)}${kpi('CDs burned', t.insert_cd, true)}
     </div>

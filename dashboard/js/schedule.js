@@ -190,7 +190,21 @@ function buildScheduleReport() {
   const sc = currentSchedule || {};
   const cap = v => v ? String(v).charAt(0).toUpperCase() + String(v).slice(1) : '—';
   const wrap = document.getElementById('rota-wrap');
-  const rotaHtml = wrap ? wrap.innerHTML : '';
+  let rotaHtml = wrap ? wrap.innerHTML : '';
+  // Soften the vivid shift colours to calm pastels for the printed sheet — same
+  // treatment as the PDF export (operates on a detached clone, not the live grid).
+  if (rotaHtml && typeof _muteFill === 'function') {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = rotaHtml;
+    tmp.querySelectorAll('.rota-cell:not(.blank-cell)').forEach(td => {
+      const bg = td.style.background;
+      if (!bg || bg === 'transparent') return;
+      td.style.background = _muteFill(bg);
+      const chip = td.querySelector('.shift-chip');
+      if (chip) chip.style.color = _muteText(bg);
+    });
+    rotaHtml = tmp.innerHTML;
+  }
   const legend = document.querySelector('.legend');
   const legendHtml = legend ? legend.outerHTML : '';
   const staffCount = wrap ? wrap.querySelectorAll('.rota-table tbody tr').length : 0;

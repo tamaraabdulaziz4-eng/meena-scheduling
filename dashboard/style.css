@@ -1769,18 +1769,19 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
 .rep-card-title { font-size: 13px; font-weight: 800; color: var(--primary);
   text-transform: uppercase; letter-spacing: .5px; }
 
-/* KPI cards with an accent top stripe — distinct from the plain home KPIs */
-.rep-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px,1fr));
+/* KPI cards with an accent top stripe (named .rep-stat to avoid clashing with
+   the print-report's own .rep-kpi cards). */
+.rep-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px,1fr));
   gap: 12px; margin-bottom: 18px; }
-.rep-kpi { position: relative; background: var(--card-alt); border: 1px solid var(--border);
+.rep-stat { position: relative; background: var(--card-alt); border: 1px solid var(--border);
   border-radius: 16px; padding: 16px 16px 14px; overflow: hidden;
   box-shadow: 0 6px 18px rgba(43,36,88,.06); transition: transform .18s, box-shadow .18s; }
-.rep-kpi:hover { transform: translateY(-3px); box-shadow: 0 14px 32px rgba(43,36,88,.13); }
-.rep-kpi::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+.rep-stat:hover { transform: translateY(-3px); box-shadow: 0 14px 32px rgba(43,36,88,.13); }
+.rep-stat::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
   background: linear-gradient(90deg, var(--accent2), var(--accent)); }
-.rep-kpi.alt::before { background: linear-gradient(90deg, #00C896, #00A87D); }
-.rep-kpi-val { font-size: 25px; font-weight: 800; color: var(--primary); line-height: 1.05; }
-.rep-kpi-lbl { font-size: 10.5px; color: var(--muted); margin-top: 6px; font-weight: 600;
+.rep-stat.alt::before { background: linear-gradient(90deg, #00C896, #00A87D); }
+.rep-stat-val { font-size: 25px; font-weight: 800; color: var(--primary); line-height: 1.05; }
+.rep-stat-lbl { font-size: 10.5px; color: var(--muted); margin-top: 6px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .5px; }
 
 /* Bar chart */
@@ -1826,3 +1827,9 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
 .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(107,78,255,.12); }
 .input:disabled { background: var(--card); color: var(--muted); cursor: not-allowed; }
 label.input-label, .input-label { font-size: 12px; font-weight: 600; color: var(--text); }
+
+/* While exporting the rota to PDF (html2canvas): drop sticky positioning so the
+   name column and headers don't overlap the day cells in the captured image. */
+.rota-wrap.pdf-capture .rota-name-col,
+.rota-wrap.pdf-capture .rota-table thead th { position: static !important; }
+.rota-wrap.pdf-capture { overflow: visible !important; box-shadow: none !important; }
