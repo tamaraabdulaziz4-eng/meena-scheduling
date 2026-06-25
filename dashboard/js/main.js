@@ -105,6 +105,9 @@ async function initApp() {
   // Daily Cases: managers/leads view; staff (night/eligible) fill.
   const casesNav = document.getElementById('nav-cases');
   if (casesNav) casesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
+  // Downtime registration: every working staff member can log a patient.
+  const downtimeNav = document.getElementById('nav-downtime');
+  if (downtimeNav) downtimeNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
   // Auto sign-out after a stretch of inactivity.
@@ -178,6 +181,7 @@ async function renderRoute(page) {
                        if (!allStaff || !allStaff.length) loadStaff().catch(()=>{});
                        break;
     case 'cases':      renderCasesPage(); break;
+    case 'downtime':   await renderDowntimePage(); break;
     case 'tickets':    await renderTicketsPage(); break;
     case 'reports':    await renderReportsPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
@@ -198,7 +202,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','cases','tickets','announcements','reports','branches','shifts','users','audit']);
+  'leaves','swaps','cases','downtime','tickets','announcements','reports','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
