@@ -5765,7 +5765,7 @@ def list_downtime(request: Request, user=Depends(get_current_user)):
         cond.append("d.created_at < (%s::date + 1)"); vals.append(p.get("to"))
     rows = q(f"""SELECT d.id, d.accession, d.patient_name, d.patient_id, d.modality, d.procedure_name,
                        d.indication, d.ward, d.status, d.branch_id, b.name AS branch_name,
-                       d.specialist_id, d.source,
+                       d.specialist_id, d.source, d.created_by AS created_by_uid,
                        COALESCE(s.name, u.username,
                                 CASE WHEN d.specialist_id IS NOT NULL THEN 'Public · ' || d.specialist_id END) AS created_by_name,
                        TO_CHAR(d.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
@@ -5775,6 +5775,11 @@ def list_downtime(request: Request, user=Depends(get_current_user)):
                 LEFT JOIN scheduling.staff s ON s.id=d.created_by_staff
                 WHERE {' AND '.join(cond)}
                 ORDER BY d.created_at DESC LIMIT 500""", tuple(vals))
+    # A lead/manager may delete any entry in scope; a staff member only their own.
+    is_admin = user["role"] in ("admin", "manager", "superadmin")
+    for r in rows:
+        r["can_delete"] = bool(is_admin or (r.get("created_by_uid") and r["created_by_uid"] == user.get("id")))
+        r.pop("created_by_uid", None)
     return {"studies": rows, "modalities": list(_DOWNTIME_MODALITIES)}
 
 @app.put("/api/downtime/{did}/status")
@@ -5796,6 +5801,28 @@ async def downtime_status(did: int, request: Request, user=Depends(require_admin
         q("""UPDATE scheduling.downtime_studies SET status='pending',
               reconciled_by=NULL, reconciled_at=NULL WHERE id=%s""", (did,), exec_only=True)
     return {"ok": True, "status": status}
+
+@app.delete("/api/downtime/{did}")
+def delete_downtime(did: int, user=Depends(get_current_user)):
+    """Remove a mistaken downtime entry. A lead/manager may delete any entry in
+    their branch scope; a staff member may delete only their OWN entry. (The
+    minted accession number is simply retired — gaps in the sequence are fine.)"""
+    d = q("SELECT branch_id, created_by, accession FROM scheduling.downtime_studies WHERE id=%s", (did,), one=True)
+    if not d:
+        raise HTTPException(404, "Not found")
+    is_admin = user["role"] in ("admin", "manager", "superadmin")
+    if is_admin:
+        if not can_access_branch(user, d["branch_id"]):
+            raise HTTPException(403, "Forbidden")
+    elif user["role"] == "staff":
+        # Staff can only delete an entry they created, in their own branch.
+        if d.get("created_by") != user.get("id") or not can_access_branch(user, d["branch_id"]):
+            raise HTTPException(403, "You can only delete your own entry — ask your team lead.")
+    else:
+        raise HTTPException(403, "Forbidden")
+    q("DELETE FROM scheduling.downtime_studies WHERE id=%s", (did,), exec_only=True)
+    insert_audit(user, "DOWNTIME_DELETE", f"branch:{d['branch_id']}", d.get("accession"))
+    return {"ok": True}
 
 # ── Public downtime link (no login) ───────────────────────────────────────────
 # A shareable, unguessable link (sent in a staff WhatsApp group) lets someone who
