@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meena Radiology — Downtime</title>
+<link rel="icon" href="/meena_logo.png" type="image/png">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --primary:#261E4F; --accent:#6B4EFF; --accent2:#8358FD; --muted:#8585A8;
+          --border:#E0DCF5; --card:#ffffff; --bg:#f4f2fc; --ok:#00A87D; --red:#E25555; }
+  * { box-sizing:border-box; }
+  body { font-family:'Poppins',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary);
+         -webkit-text-size-adjust:100%; }
+  .wrap { max-width:520px; margin:0 auto; padding:18px 16px 40px; }
+  .head { display:flex; align-items:center; gap:12px; margin:8px 0 18px; }
+  .head img { height:38px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.16); }
+  .head .t { font-size:18px; font-weight:800; }
+  .head .s { font-size:12px; color:var(--muted); font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
+          box-shadow:0 12px 34px rgba(43,36,88,.09); margin-bottom:14px; }
+  label { display:block; font-size:13px; font-weight:600; margin:12px 0 4px; }
+  .req::after { content:" *"; color:var(--red); }
+  input, select { width:100%; padding:11px 13px; font-size:15px; font-family:inherit; color:var(--primary);
+         border:1.5px solid var(--border); border-radius:11px; background:#fff; outline:none; }
+  input:focus, select:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(107,78,255,.12); }
+  .btn { width:100%; padding:13px; font-size:16px; font-weight:700; font-family:inherit; color:#fff; border:none;
+         border-radius:12px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
+         box-shadow:0 8px 20px rgba(107,78,255,.32); margin-top:18px; }
+  .btn:disabled { opacity:.6; }
+  .btn.ghost { background:#fff; color:var(--accent); border:1.5px solid var(--border); box-shadow:none; }
+  .hint { font-size:12px; color:var(--muted); margin-top:4px; }
+  .msg { font-size:13px; padding:10px 12px; border-radius:10px; margin-top:12px; display:none; }
+  .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
+  .acc { font-size:26px; font-weight:800; letter-spacing:.5px; color:var(--primary); }
+  pre { white-space:pre-wrap; font-family:inherit; font-size:14px; background:var(--bg); border:1px solid var(--border);
+        border-radius:12px; padding:14px; margin:12px 0 0; }
+  .pill { display:inline-block; background:rgba(0,200,150,.14); color:var(--ok); font-weight:700; font-size:12px;
+          padding:4px 12px; border-radius:999px; }
+  .center { text-align:center; }
+  .loading { text-align:center; color:var(--muted); padding:30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="/meena_logo.png" alt="Meena">
+    <div><div class="t">Radiology Downtime</div><div class="s">System-down patient registration</div></div>
+  </div>
+
+  <div id="gate" class="loading">Loading…</div>
+
+  <!-- Form -->
+  <div id="form-card" class="card" style="display:none">
+    <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Fill the patient details — you'll get an Accession Number and a ready message to send.</div>
+    <label class="req">Branch</label>
+    <select id="f-branch"></select>
+    <label class="req">Patient name</label>
+    <input id="f-name" maxlength="120" autocomplete="off">
+    <label class="req">National ID / Iqama</label>
+    <input id="f-pid" inputmode="numeric" maxlength="20" autocomplete="off">
+    <label class="req">Specialist ID <span style="font-weight:400;color:var(--muted)">(yours)</span></label>
+    <input id="f-spec" maxlength="40" autocomplete="off">
+    <label class="req">Exam / Modality</label>
+    <select id="f-modality"></select>
+    <label>Procedure</label>
+    <input id="f-procedure" maxlength="120" placeholder="e.g. CT Brain" autocomplete="off">
+    <label>Indication</label>
+    <input id="f-indication" maxlength="200" autocomplete="off">
+    <label>Ward / Area</label>
+    <input id="f-ward" maxlength="80" autocomplete="off">
+    <div id="form-msg" class="msg"></div>
+    <button class="btn" id="submit-btn" onclick="submitForm()">Register &amp; get Accession</button>
+  </div>
+
+  <!-- Result -->
+  <div id="result-card" class="card" style="display:none">
+    <div class="center">
+      <span class="pill">Registered</span>
+      <div style="font-size:12px;color:var(--muted);margin:12px 0 2px;text-transform:uppercase;letter-spacing:.5px">Accession Number</div>
+      <div class="acc" id="r-acc"></div>
+    </div>
+    <pre id="r-msg"></pre>
+    <button class="btn" onclick="copyMsg()">Copy message</button>
+    <div class="hint center">Send this to the reporting company.</div>
+    <button class="btn ghost" onclick="resetForm()">Register another patient</button>
+  </div>
+</div>
+
+<script>
+  var TOKEN = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.search).get('token') || '';
+  var LAST_MSG = '';
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  async function api(path, opts){
+    var r = await fetch(path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts));
+    var data = null; try { data = await r.json(); } catch(e){}
+    if(!r.ok){ throw new Error((data && (data.detail||data.message)) || ('Error '+r.status)); }
+    return data;
+  }
+
+  async function init(){
+    if(!TOKEN){ el('gate').innerHTML = '<div class="card center" style="color:#c0392b">This link is missing its code. Ask your team lead for the link.</div>'; return; }
+    try {
+      var info = await api('/api/public/downtime/info?token='+encodeURIComponent(TOKEN));
+      el('f-branch').innerHTML = (info.branches||[]).map(function(b){ return '<option value="'+b.id+'">'+esc(b.name)+'</option>'; }).join('');
+      el('f-modality').innerHTML = (info.modalities||['X-Ray','CT','US','MAMO','BMD','Other']).map(function(m){ return '<option>'+esc(m)+'</option>'; }).join('');
+      el('gate').style.display = 'none';
+      el('form-card').style.display = 'block';
+    } catch(e){
+      el('gate').innerHTML = '<div class="card center" style="color:#c0392b">'+esc(e.message)+'</div>';
+    }
+  }
+
+  async function submitForm(){
+    var msg = el('form-msg'); msg.className = 'msg'; msg.textContent = '';
+    var payload = {
+      branch_id: Number(el('f-branch').value),
+      patient_name: el('f-name').value.trim(),
+      patient_id: el('f-pid').value.trim(),
+      specialist_id: el('f-spec').value.trim(),
+      modality: el('f-modality').value,
+      procedure: el('f-procedure').value.trim(),
+      indication: el('f-indication').value.trim(),
+      ward: el('f-ward').value.trim()
+    };
+    if(!payload.patient_name || !payload.patient_id || !payload.specialist_id){
+      msg.className = 'msg err'; msg.textContent = 'Patient name, national ID and your specialist ID are required.'; return;
+    }
+    var btn = el('submit-btn'); btn.disabled = true; btn.textContent = 'Registering…';
+    try {
+      var r = await api('/api/public/downtime?token='+encodeURIComponent(TOKEN), { method:'POST', body: JSON.stringify(payload) });
+      LAST_MSG = r.message || '';
+      el('r-acc').textContent = (r.study||{}).accession || '';
+      el('r-msg').textContent = r.message || '';
+      el('form-card').style.display = 'none';
+      el('result-card').style.display = 'block';
+      window.scrollTo(0,0);
+    } catch(e){
+      msg.className = 'msg err'; msg.textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Register & get Accession';
+    }
+  }
+
+  async function copyMsg(){
+    try { await navigator.clipboard.writeText(LAST_MSG); alert('Copied — paste it to the reporting company.'); }
+    catch(e){
+      var pre = el('r-msg'); var rng = document.createRange(); rng.selectNode(pre);
+      getSelection().removeAllRanges(); getSelection().addRange(rng);
+      try { document.execCommand('copy'); alert('Copied'); } catch(_){ alert('Select the text and copy it manually.'); }
+    }
+  }
+
+  function resetForm(){
+    ['f-name','f-pid','f-procedure','f-indication','f-ward'].forEach(function(id){ el(id).value=''; });
+    el('result-card').style.display = 'none';
+    el('form-card').style.display = 'block';
+    window.scrollTo(0,0);
+  }
+
+  init();
+</script>
+</body>
+</html>

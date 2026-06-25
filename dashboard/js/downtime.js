@@ -4,14 +4,17 @@
 // it's back, and returns a ready-to-forward message (also WhatsApp'd to the staff).
 
 let _dtModalities = ['X-Ray', 'CT', 'US', 'MAMO', 'BMD', 'Other'];
+let _dtStudies = [];
 window._dtLastMessage = '';
 
 async function renderDowntimePage() {
   setTopbar('Downtime', 'Log patients while the system is down');
   const c = document.getElementById('content');
   const canPickBranch = ['manager', 'superadmin'].includes(currentUser?.role);
+  const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
   c.innerHTML = `
     ${pageHero('Downtime', 'Downtime', 'System down? Register the patient — we mint a unique Accession Number')}
+    ${isReviewer ? `<div id="dt-link-card"></div>` : ''}
     <div class="rep-card" style="margin-bottom:16px">
       <div class="rep-card-head"><div class="rep-card-title">Register a patient</div></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
@@ -38,7 +41,7 @@ async function renderDowntimePage() {
     <div class="rep-card" style="padding:0;overflow:hidden">
       <div class="rep-card-head" style="padding:18px 20px 0">
         <div class="rep-card-title">Downtime log</div>
-        <button class="btn btn-sm btn-ghost" onclick="window.print()">Print / PDF</button>
+        <button class="btn btn-sm btn-ghost" onclick="printDowntimeLog()">Print / PDF</button>
       </div>
       <div id="dt-log" style="padding:14px 18px 18px">${LOADING_HTML}</div>
     </div>`;
@@ -47,7 +50,59 @@ async function renderDowntimePage() {
     const sel = document.getElementById('dt-branch');
     if (sel) sel.innerHTML = allBranches.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
   }
+  if (isReviewer) renderDowntimeLink();
   loadDowntimeLog();
+}
+
+// ── Public no-login link (managers/superadmin) ────────────────────────────────
+async function renderDowntimeLink() {
+  const box = document.getElementById('dt-link-card');
+  if (!box) return;
+  let d;
+  try { d = await API.get('/downtime/public-link'); } catch (e) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="rep-card" style="margin-bottom:16px">
+    <div class="rep-card-head"><div class="rep-card-title">Public link (no login)</div></div>
+    <div style="font-size:12px;color:var(--muted);margin:-6px 0 10px">Share this in the staff group. Anyone can open it, pick a branch, fill the data and get an Accession — no account needed.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input id="dt-link-input" class="input" readonly value="${escapeHtml(d.url || '')}" style="flex:1;min-width:200px;font-size:12px">
+      <button class="btn btn-sm btn-primary" onclick="copyDowntimeLink()">Copy link</button>
+      <button class="btn btn-sm btn-ghost" onclick="regenDowntimeLink()">Regenerate</button>
+    </div></div>`;
+}
+
+async function copyDowntimeLink() {
+  const inp = document.getElementById('dt-link-input');
+  if (!inp) return;
+  try { await navigator.clipboard.writeText(inp.value); toast('Link copied'); }
+  catch (e) { inp.select(); try { document.execCommand('copy'); toast('Link copied'); } catch (_) { toast('Copy failed', 'err'); } }
+}
+
+async function regenDowntimeLink() {
+  if (!confirm('Regenerate the link? The old link will stop working immediately.')) return;
+  try { await API.post('/downtime/public-link/regenerate'); toast('New link generated'); renderDowntimeLink(); }
+  catch (e) { toast(e.message || 'Failed', 'err'); }
+}
+
+// ── Branded printable log (instead of printing the whole app page) ────────────
+function printDowntimeLog() {
+  if (typeof openReport !== 'function') { window.print(); return; }
+  const rows = _dtStudies || [];
+  const body = rows.length ? rows.map(s => {
+    const exam = escapeHtml(s.modality) + (s.procedure_name ? ' / ' + escapeHtml(s.procedure_name) : '');
+    return `<tr>
+      <td style="font-weight:700">${escapeHtml(s.accession)}</td>
+      <td>${escapeHtml(s.patient_name)}</td><td>${escapeHtml(s.patient_id)}</td>
+      <td>${exam}</td><td>${escapeHtml(s.indication || '—')}</td>
+      <td>${escapeHtml(s.created_by_name || '')}</td>
+      <td>${s.created_at ? new Date(s.created_at).toLocaleString('en-GB') : ''}</td>
+      <td>${s.status === 'reconciled' ? 'Reconciled' : 'Pending'}</td></tr>`;
+  }).join('') : `<tr><td colspan="8" style="text-align:center;color:#888;padding:20px">No downtime studies.</td></tr>`;
+  const html = `
+    ${reportHeader('Radiology Downtime Log', `Meena Health · ${new Date().toLocaleDateString('en-GB')}`)}
+    <div class="rep-card rep-rota"><div class="table-wrap"><table>
+      <thead><tr><th>Accession</th><th>Patient</th><th>ID</th><th>Exam</th><th>Indication</th><th>By</th><th>Time</th><th>Status</th></tr></thead>
+      <tbody>${body}</tbody></table></div></div>`;
+  openReport(html, true);   // landscape
 }
 
 async function submitDowntime() {
@@ -114,6 +169,7 @@ async function loadDowntimeLog() {
   try { d = await API.get('/downtime'); }
   catch (e) { box.innerHTML = `<div class="rep-empty">${escapeHtml(e.message || 'Failed to load')}</div>`; return; }
   const rows = d.studies || [];
+  _dtStudies = rows;
   const isAdmin = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
   if (!rows.length) { box.innerHTML = `<div class="rep-empty">No downtime studies logged yet.</div>`; return; }
   box.innerHTML = `<div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
