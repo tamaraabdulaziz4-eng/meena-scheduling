@@ -592,6 +592,36 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_shift_prefs_month ON scheduling.shift_preferences(year,month);")
 
+            # ── Downtime registration (نموذج تعطّل النظام) ───────────────────────
+            # When the radiology system (RIS/PACS) is down, staff log the patient
+            # here and the system mints a unique Accession Number so images route
+            # correctly once it's back. patient_id = national ID / iqama.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.downtime_studies (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    accession TEXT NOT NULL UNIQUE,
+                    patient_name TEXT NOT NULL,
+                    patient_id TEXT NOT NULL,
+                    modality TEXT NOT NULL,
+                    procedure_name TEXT,
+                    indication TEXT,
+                    ward TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_by_staff INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    reconciled_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    reconciled_at TIMESTAMPTZ
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_downtime_branch ON scheduling.downtime_studies(branch_id, created_at);")
+            # Atomic per-(code,day) sequence so concurrent registrations never collide.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.downtime_counters (
+                    code TEXT NOT NULL, ymd TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (code, ymd)
+                );""")
+
             # Performance indexes for the hottest lookups. The UNIQUE constraints
             # already cover (schedule_id,staff_id,date), (branch_id,year,month),
             # (staff_id,date for leaves) and (branch_id,date for cases); these two
@@ -5618,6 +5648,133 @@ async def set_preference(request: Request, user=Depends(get_current_user)):
          DO UPDATE SET kind=EXCLUDED.kind, note=EXCLUDED.note""",
       (sid, year, month, day, kind, note), exec_only=True)
     return {"ok": True, "kind": kind}
+
+# ── Downtime registration (system-down patient log + Accession Number) ─────────
+_DOWNTIME_MODALITIES = ("X-Ray", "CT", "US", "MAMO", "BMD", "Other")
+
+def _branch_code(name):
+    """Short branch code for the accession, e.g. 'NEST 3' → 'N3'. Capped at 3
+    chars so the whole accession stays within DICOM's 16-char SH limit."""
+    s = (name or "").upper()
+    letters = "".join(c for c in s if c.isalpha())
+    digits  = "".join(c for c in s if c.isdigit())
+    return ((letters[:1] or "B") + digits)[:3] or "B"
+
+def _next_accession(code, ymd):
+    """Atomic per-(code, day) running number → a unique, DICOM-safe accession.
+    The counter upsert serialises on the row, so concurrent registrations from
+    two staff never get the same number."""
+    row = q("""INSERT INTO scheduling.downtime_counters (code, ymd, n) VALUES (%s,%s,1)
+               ON CONFLICT (code, ymd) DO UPDATE SET n = scheduling.downtime_counters.n + 1
+               RETURNING n""", (code, ymd), one=True)
+    return f"DT{code}-{ymd}-{int(row['n']):03d}"   # e.g. DTN3-260625-012 (≤16 chars)
+
+def _downtime_message(row, branch_name):
+    """The ready-to-forward text the staff sends to the reporting company."""
+    exam = row["modality"] + (f" / {row['procedure_name']}" if row.get("procedure_name") else "")
+    lines = [
+        "Meena Radiology — Downtime study",
+        f"Patient: {row['patient_name']}",
+        f"ID: {row['patient_id']}",
+        f"Exam: {exam}",
+        f"Accession: {row['accession']}",
+    ]
+    if row.get("indication"):
+        lines.append(f"Indication: {row['indication']}")
+    lines.append(f"Branch: {branch_name}")
+    return "\n".join(lines)
+
+@app.post("/api/downtime")
+async def create_downtime(request: Request, user=Depends(get_current_user)):
+    """Log a patient while the radiology system is down and mint a unique
+    Accession Number. Any logged-in staff member may register for their branch."""
+    body = await request.json()
+    branch_id = user.get("branch_id") if user["role"] == "staff" else (body.get("branch_id") or user.get("branch_id"))
+    branch_id = _int_or_400(branch_id, "branch_id")
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
+    name = (body.get("patient_name") or "").strip()
+    pid  = (body.get("patient_id") or "").strip()
+    modality = (body.get("modality") or "").strip()
+    if not name or not pid or not modality:
+        raise HTTPException(400, "patient_name, patient_id and modality are required")
+    branch = q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True)
+    if not branch:
+        raise HTTPException(404, "Branch not found")
+    from datetime import datetime, timezone, timedelta
+    ymd = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%y%m%d")
+    accession = _next_accession(_branch_code(branch["name"]), ymd)
+    row = q("""INSERT INTO scheduling.downtime_studies
+               (branch_id, accession, patient_name, patient_id, modality, procedure_name,
+                indication, ward, created_by, created_by_staff)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id, accession, patient_name, patient_id, modality, procedure_name,
+                         indication, ward, status,
+                         TO_CHAR(created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at""",
+            (branch_id, accession, name, pid, modality[:40],
+             (body.get("procedure") or "").strip()[:120] or None,
+             (body.get("indication") or "").strip()[:200] or None,
+             (body.get("ward") or "").strip()[:80] or None,
+             user["id"], user.get("staff_id")), one=True)
+    insert_audit(user, "DOWNTIME_ADD", f"branch:{branch_id}", accession)
+    msg = _downtime_message(row, branch["name"])
+    # Best-effort: WhatsApp the message to the registering staff so they can forward
+    # it to the reporting company. force=True so it isn't dropped by the type filter.
+    try:
+        if user.get("staff_id"):
+            st = q("SELECT phone FROM scheduling.staff WHERE id=%s", (user["staff_id"],), one=True)
+            if st and st.get("phone"):
+                send_whatsapp(st["phone"], msg, ntype="downtime", link="downtime", force=True)
+    except Exception:
+        pass
+    return {"study": row, "message": msg, "branch_name": branch["name"]}
+
+@app.get("/api/downtime")
+def list_downtime(request: Request, user=Depends(get_current_user)):
+    """Downtime log. Staff see their own branch; a lead/manager their scope."""
+    p = request.query_params
+    if user["role"] == "staff":
+        if not user.get("branch_id"):
+            return {"studies": []}
+        branch_ids = [user["branch_id"]]
+    else:
+        _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    cond, vals = ["d.branch_id = ANY(%s)"], [branch_ids]
+    if p.get("from"):
+        cond.append("d.created_at >= %s"); vals.append(p.get("from"))
+    if p.get("to"):
+        cond.append("d.created_at < (%s::date + 1)"); vals.append(p.get("to"))
+    rows = q(f"""SELECT d.id, d.accession, d.patient_name, d.patient_id, d.modality, d.procedure_name,
+                       d.indication, d.ward, d.status, d.branch_id, b.name AS branch_name,
+                       COALESCE(s.name, u.username) AS created_by_name,
+                       TO_CHAR(d.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
+                FROM scheduling.downtime_studies d
+                JOIN scheduling.branches b ON b.id=d.branch_id
+                LEFT JOIN scheduling.users u ON u.id=d.created_by
+                LEFT JOIN scheduling.staff s ON s.id=d.created_by_staff
+                WHERE {' AND '.join(cond)}
+                ORDER BY d.created_at DESC LIMIT 500""", tuple(vals))
+    return {"studies": rows, "modalities": list(_DOWNTIME_MODALITIES)}
+
+@app.put("/api/downtime/{did}/status")
+async def downtime_status(did: int, request: Request, user=Depends(require_admin)):
+    """Mark a downtime study reconciled (entered into the main system) — lead/manager."""
+    body = await request.json()
+    status = (body.get("status") or "").strip()
+    if status not in ("pending", "reconciled"):
+        raise HTTPException(400, "status must be 'pending' or 'reconciled'")
+    d = q("SELECT branch_id FROM scheduling.downtime_studies WHERE id=%s", (did,), one=True)
+    if not d:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, d["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    if status == "reconciled":
+        q("""UPDATE scheduling.downtime_studies SET status='reconciled',
+              reconciled_by=%s, reconciled_at=NOW() WHERE id=%s""", (user["id"], did), exec_only=True)
+    else:
+        q("""UPDATE scheduling.downtime_studies SET status='pending',
+              reconciled_by=NULL, reconciled_at=NULL WHERE id=%s""", (did,), exec_only=True)
+    return {"ok": True, "status": status}
 
 def _send_credential_reminders():
     """Notify staff + their branch lead(s) + reviewers about credentials expiring

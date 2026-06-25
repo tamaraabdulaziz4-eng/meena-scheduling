@@ -1239,5 +1239,35 @@ staffB.put("/api/preferences", json={"year": PY, "month": PM, "day": 15, "kind":
 mine2 = staffB.get(f"/api/preferences?year={PY}&month={PM}").json()
 check("clearing a day removes the preference", not any(p["day"] == 15 for p in mine2["preferences"]), mine2)
 
+print("\n== scenario 25: downtime registration (system-down patient log) ==")
+dt = staffA.post("/api/downtime", json={"patient_name": "Patient One", "patient_id": "1098765432",
+                                        "modality": "CT", "procedure": "CT Brain", "indication": "Headache",
+                                        "ward": "ER"})
+check("staff registers a downtime study", dt.status_code == 200, dt.text)
+dj = dt.json()
+acc = (dj.get("study") or {}).get("accession", "")
+check("accession is minted, DT-prefixed and DICOM-safe (<=16 chars)",
+      acc.startswith("DT") and 0 < len(acc) <= 16, acc)
+check("copy message carries accession + patient ID + exam",
+      acc in dj["message"] and "1098765432" in dj["message"] and "CT" in dj["message"], dj["message"])
+dt2 = staffA.post("/api/downtime", json={"patient_name": "Patient Two", "patient_id": "1055555555", "modality": "US"})
+acc2 = (dt2.json().get("study") or {}).get("accession", "")
+check("a second registration gets a different accession", acc2 and acc2 != acc, [acc, acc2])
+check("missing required field is rejected (400)",
+      staffA.post("/api/downtime", json={"patient_name": "X", "modality": "CT"}).status_code == 400)
+lst = staffA.get("/api/downtime").json()["studies"]
+check("staff sees their branch's downtime log", any(s["accession"] == acc for s in lst), lst[:2])
+check("downtime studies start as pending", all(s["status"] == "pending" for s in lst if s["accession"] in (acc, acc2)))
+# A study on ANOTHER branch is not visible to this branch's staff.
+oacc = admin.post("/api/downtime", json={"branch_id": bidB, "patient_name": "Other", "patient_id": "1011111111",
+                                         "modality": "X-Ray"}).json().get("study", {}).get("accession")
+check("staff don't see another branch's downtime studies", not any(s["accession"] == oacc for s in lst))
+did = (dj.get("study") or {}).get("id")
+check("staff can't reconcile (403)", staffA.put(f"/api/downtime/{did}/status", json={"status": "reconciled"}).status_code in (401, 403))
+rec = lead.put(f"/api/downtime/{did}/status", json={"status": "reconciled"})
+check("team lead reconciles a study", rec.status_code == 200, rec.text)
+check("reconciled status reflected in the log",
+      next((s for s in lead.get(f"/api/downtime?branch_id={bid}").json()["studies"] if s["id"] == did), {}).get("status") == "reconciled")
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
