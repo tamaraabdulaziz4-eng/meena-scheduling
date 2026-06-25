@@ -159,6 +159,26 @@ nb = [n for n in staffB.get("/api/notifications").json()["notifications"] if key
 check("off-duty can_report staff is NOT reminded", len(na) == 0, na)
 check("on-duty night staff IS reminded", len(nb) >= 1, nb)
 
+# A day-shift can_report person who worked that day still gets the reminder, but
+# IN-APP ONLY — no WhatsApp buzzing their phone at night (the reported bug).
+# Enable WhatsApp capture locally (a prior block popped it) so we can assert the
+# per-channel split directly.
+os.environ["WHATSAPP_CAPTURE"] = "1"; os.environ.pop("WHATSAPP_ONLY_TYPES", None)
+D3 = f"{YEAR}-09-21"
+# Distinctive digits that survive phone normalization (leading 0 → 966 prefix).
+M.q("UPDATE scheduling.staff SET phone='0511111111' WHERE id=%s", (A["id"],), exec_only=True)
+M.q("UPDATE scheduling.staff SET phone='0522222222' WHERE id=%s", (B["id"],), exec_only=True)
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": A["id"], "date": D3, "shift_code": "M"})  # A: morning
+admin.put(f"/api/schedules/{sid}/entries", json={"staff_id": B["id"], "date": D3, "shift_code": "N"})  # B: night
+M._whatsapp_outbox.clear()
+admin.post(f"/api/daily-cases/remind?date={D3}&force=1", json={})
+na3 = [n for n in staffA.get("/api/notifications").json()["notifications"] if key in (n["message"] or "")]
+check("day-shift can_report staff still gets an in-app reminder", len(na3) >= 1, na3)
+wa_to = " ".join(w["to"] for w in M._whatsapp_outbox)
+check("morning staff is NOT WhatsApp'd at night", "511111111" not in wa_to, wa_to)
+check("night staff IS WhatsApp'd", "522222222" in wa_to, wa_to)
+os.environ.pop("WHATSAPP_CAPTURE", None)
+
 # ── Completeness: ack tracking (who's pending) + remind; ticket category filter ──
 print("\n== announcement ack tracking + remind pending ==")
 ar = admin.post("/api/announcements", json={"title": "Sign the policy", "body": "Please ack", "kind": "action_required"})
