@@ -57,7 +57,17 @@ async function renderHomePage() {
       <div id="hm-cases-list" class="hm-branch-list">${LOADING_HTML}</div>
     </div>`;
 
-  // Action counters (compact) + per-branch cases in parallel.
+  // Fire EVERY card's fetch at once — don't make the side cards wait behind the
+  // KPIs/cases call (that serialization is what made on-duty / approvals pop in
+  // late). Each renders itself as soon as its own request lands.
+  renderHomeEotm();
+  renderHomeOnDuty();
+  renderHomeShiftChecks();
+  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) { renderHomeApprovals(); renderHomeCredentials(); }
+  renderHomeRecent();
+  _bindHomeSearchShortcut();
+
+  // KPIs + per-branch cases (their own two calls, in parallel).
   const [dash, ov] = await Promise.all([
     API.get('/dashboard').catch(() => null),
     API.get(`/daily-cases/overview?date=${date}`).catch(() => null),
@@ -65,13 +75,13 @@ async function renderHomePage() {
   renderHomeKpis(dash, ov);
   renderHomeActions(dash);
   renderHomeCases(ov);
-  renderHomeEotm();
-  renderHomeOnDuty();
-  renderHomeShiftChecks();
-  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) { renderHomeApprovals(); renderHomeCredentials(); }
-  renderHomeRecent();
-  _bindHomeSearchShortcut();
 }
+
+// Shimmer placeholder so a card shows a stable loading state instead of staying
+// empty and then popping in.
+const HOME_CARD_SKELETON = `<div class="hm-card">
+  <div class="skel skel-line" style="width:42%;height:14px;margin-bottom:14px"></div>
+  <div class="skel" style="height:52px;border-radius:12px"></div></div>`;
 
 // Press "/" anywhere on Home to jump straight into the search box.
 let _hmShortcutBound = false;
@@ -92,6 +102,7 @@ function _bindHomeSearchShortcut() {
 async function renderHomeApprovals() {
   const box = document.getElementById('hm-approvals');
   if (!box) return;
+  box.innerHTML = HOME_CARD_SKELETON;
   const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
   let leaves = [], tbs = [], swaps = [];
   try {
@@ -100,7 +111,7 @@ async function renderHomeApprovals() {
       API.get('/timeback').catch(() => []),
       API.get('/swaps').catch(() => []),
     ]);
-  } catch (e) { return; }
+  } catch (e) { box.innerHTML = ''; return; }
 
   // Leave ranges awaiting THIS user's action.
   const groups = (typeof groupLeaveRanges === 'function' ? groupLeaveRanges(leaves) : leaves)
@@ -516,6 +527,7 @@ async function renderHomeShiftChecks() {
 async function renderHomeOnDuty() {
   const box = document.getElementById('hm-onduty');
   if (!box) return;
+  box.innerHTML = HOME_CARD_SKELETON;
   let d;
   try { d = await API.get('/on-duty'); } catch (e) { box.innerHTML = ''; return; }
   const branches = (d && d.branches) || [];
