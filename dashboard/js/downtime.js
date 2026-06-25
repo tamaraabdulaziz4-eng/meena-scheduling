@@ -171,14 +171,21 @@ async function loadDowntimeLog() {
   const rows = d.studies || [];
   _dtStudies = rows;
   const isAdmin = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
+  const hasActions = isAdmin || rows.some(s => s.can_delete);
   if (!rows.length) { box.innerHTML = `<div class="rep-empty">No downtime studies logged yet.</div>`; return; }
   box.innerHTML = `<div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
-    <thead><tr><th>Accession</th><th>Patient</th><th>ID</th><th>Exam</th><th>Indication</th><th>By</th><th>Time</th><th>Status</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
+    <thead><tr><th>Accession</th><th>Patient</th><th>ID</th><th>Exam</th><th>Indication</th><th>By</th><th>Time</th><th>Status</th>${hasActions ? '<th></th>' : ''}</tr></thead>
     <tbody>${rows.map(s => {
       const exam = escapeHtml(s.modality) + (s.procedure_name ? ' / ' + escapeHtml(s.procedure_name) : '');
       const pill = s.status === 'reconciled'
         ? '<span class="rep-pill rep-pill-ok">Reconciled</span>'
         : '<span class="rep-pill rep-pill-amber">Pending</span>';
+      const actions = (isAdmin
+          ? (s.status === 'reconciled'
+              ? `<button class="btn btn-xs btn-ghost" onclick="reconcileDowntime(${s.id},'pending')">Undo</button>`
+              : `<button class="btn btn-xs btn-ghost" onclick="reconcileDowntime(${s.id},'reconciled')">Mark done</button>`)
+          : '')
+        + (s.can_delete ? `<button class="btn btn-xs btn-ghost" style="color:#E25555;margin-left:4px" onclick="deleteDowntime(${s.id})">Delete</button>` : '');
       return `<tr>
         <td style="font-weight:700">${escapeHtml(s.accession)}</td>
         <td>${escapeHtml(s.patient_name)}</td>
@@ -188,11 +195,18 @@ async function loadDowntimeLog() {
         <td>${escapeHtml(s.created_by_name || '')}</td>
         <td>${s.created_at ? new Date(s.created_at).toLocaleString('en-GB') : ''}</td>
         <td>${pill}</td>
-        ${isAdmin ? `<td style="text-align:right;white-space:nowrap">${s.status === 'reconciled'
-          ? `<button class="btn btn-xs btn-ghost" onclick="reconcileDowntime(${s.id},'pending')">Undo</button>`
-          : `<button class="btn btn-xs btn-ghost" onclick="reconcileDowntime(${s.id},'reconciled')">Mark done</button>`}</td>` : ''}
+        ${hasActions ? `<td style="text-align:right;white-space:nowrap">${actions}</td>` : ''}
       </tr>`;
     }).join('')}</tbody></table></div>`;
+}
+
+async function deleteDowntime(id) {
+  if (!confirm('Delete this downtime entry? This removes it from the log (the accession number is retired).')) return;
+  try {
+    await API.delete(`/downtime/${id}`);
+    toast('Entry deleted');
+    loadDowntimeLog();
+  } catch (e) { toast(e.message || 'Failed to delete', 'err'); }
 }
 
 async function reconcileDowntime(id, status) {

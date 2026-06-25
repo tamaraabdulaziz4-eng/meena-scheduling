@@ -180,5 +180,31 @@ check("regenerate returns a different token", newtok and newtok != tok, [tok, ne
 check("the OLD token no longer works (403)", pub.get(f"/api/public/downtime/info?token={tok}").status_code == 403)
 check("the NEW token works", pub.get(f"/api/public/downtime/info?token={newtok}").status_code == 200)
 
+# ── Delete a wrong entry ──────────────────────────────────────────────────────
+print("\n== delete a mistaken entry ==")
+mine = staffA.post("/api/downtime", json={"patient_name": "To Delete", "patient_id": "1000000009", "modality": "US"}).json()["study"]["id"]
+mlist = staffA.get("/api/downtime").json()["studies"]
+check("staff sees can_delete=true on their OWN entry",
+      next((s for s in mlist if s["id"] == mine), {}).get("can_delete") is True)
+check("staff deletes their own entry (200)", staffA.delete(f"/api/downtime/{mine}").status_code == 200)
+check("the entry is gone after delete", not any(s["id"] == mine for s in staffA.get("/api/downtime").json()["studies"]))
+# An entry the staff did NOT create (made by the manager on branch A).
+other = admin.post("/api/downtime", json={"branch_id": bidA, "patient_name": "Mgr Entry", "patient_id": "1000000010", "modality": "CT"}).json()["study"]["id"]
+mlist2 = staffA.get("/api/downtime").json()["studies"]
+check("staff sees can_delete=false on someone else's entry",
+      next((s for s in mlist2 if s["id"] == other), {}).get("can_delete") is False)
+check("staff can't delete an entry they didn't create (403)",
+      staffA.delete(f"/api/downtime/{other}").status_code in (401, 403))
+pubrow = next((s for s in mlist2 if s.get("source") == "public"), None)
+check("a public (no-account) entry is not staff-deletable",
+      pubrow is not None and staffA.delete(f"/api/downtime/{pubrow['id']}").status_code in (401, 403), pubrow)
+check("team lead of ANOTHER branch can't delete (403)",
+      leadB.delete(f"/api/downtime/{other}").status_code == 403)
+check("delete a non-existent entry (404)", leadA.delete("/api/downtime/99999999").status_code == 404)
+check("team lead deletes any entry in their branch (200)",
+      leadA.delete(f"/api/downtime/{other}").status_code == 200)
+check("team lead can delete a public entry too (200)",
+      leadA.delete(f"/api/downtime/{pubrow['id']}").status_code == 200)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
