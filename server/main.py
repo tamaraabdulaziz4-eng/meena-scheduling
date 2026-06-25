@@ -5667,7 +5667,11 @@ def _next_accession(code, ymd):
     row = q("""INSERT INTO scheduling.downtime_counters (code, ymd, n) VALUES (%s,%s,1)
                ON CONFLICT (code, ymd) DO UPDATE SET n = scheduling.downtime_counters.n + 1
                RETURNING n""", (code, ymd), one=True)
-    return f"DT{code}-{ymd}-{int(row['n']):03d}"   # e.g. DTN3-260625-012 (≤16 chars)
+    n = int(row["n"])
+    acc = f"DT{code}-{ymd}-{n:03d}"           # e.g. DTN3-260625-012
+    if len(acc) > 16:                          # DICOM SH cap — drop separators if a
+        acc = f"DT{code}{ymd}{n}"              # huge same-day count would overflow
+    return acc
 
 def _downtime_message(row, branch_name):
     """The ready-to-forward text the staff sends to the reporting company."""
@@ -5693,8 +5697,8 @@ async def create_downtime(request: Request, user=Depends(get_current_user)):
     branch_id = _int_or_400(branch_id, "branch_id")
     if not can_access_branch(user, branch_id):
         raise HTTPException(403, "Forbidden")
-    name = (body.get("patient_name") or "").strip()
-    pid  = (body.get("patient_id") or "").strip()
+    name = (body.get("patient_name") or "").strip()[:120]
+    pid  = (body.get("patient_id") or "").strip()[:40]
     modality = (body.get("modality") or "").strip()
     if not name or not pid or not modality:
         raise HTTPException(400, "patient_name, patient_id and modality are required")
@@ -5740,9 +5744,9 @@ def list_downtime(request: Request, user=Depends(get_current_user)):
     else:
         _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
     cond, vals = ["d.branch_id = ANY(%s)"], [branch_ids]
-    if p.get("from"):
+    if _valid_iso_date(p.get("from")):   # ignore malformed dates instead of 500-ing
         cond.append("d.created_at >= %s"); vals.append(p.get("from"))
-    if p.get("to"):
+    if _valid_iso_date(p.get("to")):
         cond.append("d.created_at < (%s::date + 1)"); vals.append(p.get("to"))
     rows = q(f"""SELECT d.id, d.accession, d.patient_name, d.patient_id, d.modality, d.procedure_name,
                        d.indication, d.ward, d.status, d.branch_id, b.name AS branch_name,
