@@ -1170,9 +1170,11 @@ def send_whatsapp(to, message, *, ntype="info", link=None, force=False):
     import threading
     threading.Thread(target=_worker, daemon=True).start()
 
-def notify(user_id, message, link=None, ntype="info"):
+def notify(user_id, message, link=None, ntype="info", whatsapp=True):
     """Create one in-app notification, and email/WhatsApp it when configured.
-    Best-effort: never break the caller."""
+    Best-effort: never break the caller. Pass whatsapp=False to create the in-app
+    (and email) record WITHOUT pinging the phone — used to avoid WhatsApp-ing
+    someone who is off-shift at the time (e.g. a night reminder to day staff)."""
     if not user_id:
         return
     try:
@@ -1189,7 +1191,7 @@ def notify(user_id, message, link=None, ntype="info"):
                  WHERE u.id=%s""", (user_id,), one=True)
         if u and u.get("email") and u.get("en"):
             send_email(u["email"], "Meena Scheduling", message)
-        if u and u.get("staff_phone"):
+        if u and u.get("staff_phone") and whatsapp:
             send_whatsapp(u["staff_phone"], message, ntype=ntype, link=link)
     except Exception:
         pass
@@ -5686,14 +5688,28 @@ def _operational_date_server():
     return ksa.strftime("%Y-%m-%d")
 
 def _cases_remind_targets(branch_id, date):
-    """User accounts that should fill a branch's daily report on THIS day: its team
-    lead(s), and staff who are actually on duty that day (scheduled a working shift)
-    and either flagged can_report or scheduled Night. We deliberately don't ping a
-    can_report person who is off / on leave that day."""
-    ids = set()
+    """Who to nudge about a branch's daily report on THIS day, split by channel:
+
+      push  → in-app + WhatsApp: the branch lead(s) and staff who are on the NIGHT
+              shift (i.e. actually on duty when this night reminder fires).
+      inapp → in-app only (NO WhatsApp): can_report staff who worked that day but
+              are NOT on the night shift — the morning/day crew already went home,
+              so we leave them a silent in-app nudge instead of buzzing their phone
+              at night.
+
+    Returns (push:set, inapp:set), with push winning any overlap."""
+    push, inapp = set(), set()
+    # Branch lead(s) — responsible for the report; they get the full ping.
     for r in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (branch_id,)):
-        ids.add(r["id"])
-    # can_report staff who are actually working that day (not off / on leave).
+        push.add(r["id"])
+    # Staff on the night shift that day → on duty now → full ping.
+    for r in q("""SELECT u.id FROM scheduling.users u
+                  JOIN scheduling.schedule_entries e ON e.staff_id=u.staff_id
+                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
+                  WHERE u.role='staff' AND sc.branch_id=%s AND e.date=%s AND e.shift_code='N'""",
+               (branch_id, date)):
+        push.add(r["id"])
+    # can_report staff who worked that day on a non-night shift → in-app only.
     for r in q("""SELECT DISTINCT u.id FROM scheduling.users u
                   JOIN scheduling.staff s ON s.id=u.staff_id
                   JOIN scheduling.schedule_entries e ON e.staff_id=s.id
@@ -5703,14 +5719,9 @@ def _cases_remind_targets(branch_id, date):
                     AND sc.branch_id=%s AND e.date=%s
                     AND e.shift_code NOT IN ('O','AL','SL','TB','OC')""",
                (branch_id, branch_id, date)):
-        ids.add(r["id"])
-    for r in q("""SELECT u.id FROM scheduling.users u
-                  JOIN scheduling.schedule_entries e ON e.staff_id=u.staff_id
-                  JOIN scheduling.schedules sc ON sc.id=e.schedule_id
-                  WHERE u.role='staff' AND sc.branch_id=%s AND e.date=%s AND e.shift_code='N'""",
-               (branch_id, date)):
-        ids.add(r["id"])
-    return ids
+        if r["id"] not in push:
+            inapp.add(r["id"])
+    return push, inapp
 
 @app.get("/api/daily-cases")
 def get_daily_case(request: Request, user=Depends(get_current_user)):
@@ -5837,14 +5848,16 @@ def _send_cases_reminders(date):
                    ORDER BY b.name""", (date,))
     reminded = []
     for b in pending:
-        targets = _cases_remind_targets(b["id"], date)
-        if not targets:
+        push, inapp = _cases_remind_targets(b["id"], date)
+        if not push and not inapp:
             continue
         msg = (f"Reminder: please enter {b['name']}'s daily case numbers in the platform "
                f"now (Daily Cases page). The numbers for {date} will be finalized in "
                f"20 minutes — please complete your entry before then.")
-        for uid in targets:
-            notify(uid, msg, link="cases", ntype="reminder")
+        for uid in push:
+            notify(uid, msg, link="cases", ntype="reminder")               # in-app + WhatsApp
+        for uid in inapp:
+            notify(uid, msg, link="cases", ntype="reminder", whatsapp=False)  # in-app only (off-shift)
         reminded.append(b["name"])
     return reminded
 
