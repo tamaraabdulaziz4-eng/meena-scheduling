@@ -614,6 +614,10 @@ def init_schema():
                     reconciled_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
                     reconciled_at TIMESTAMPTZ
                 );""")
+            # specialist_id: the radiologist/tech ID typed on the public (no-login)
+            # link, where there's no logged-in user to attribute the study to.
+            cur.execute("ALTER TABLE scheduling.downtime_studies ADD COLUMN IF NOT EXISTS specialist_id TEXT;")
+            cur.execute("ALTER TABLE scheduling.downtime_studies ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'app';")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_downtime_branch ON scheduling.downtime_studies(branch_id, created_at);")
             # Atomic per-(code,day) sequence so concurrent registrations never collide.
             cur.execute("""
@@ -1551,6 +1555,15 @@ def serve_css():
     return FileResponse(
         os.path.join(DASHBOARD, "style.css"),
         media_type="text/css",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+@app.get("/dt")
+def serve_downtime_public():
+    """Public, no-login downtime form (opened from the shared link)."""
+    return FileResponse(
+        os.path.join(DASHBOARD, "downtime-public.html"),
+        media_type="text/html",
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
@@ -5685,6 +5698,8 @@ def _downtime_message(row, branch_name):
     ]
     if row.get("indication"):
         lines.append(f"Indication: {row['indication']}")
+    if row.get("specialist_id"):
+        lines.append(f"Specialist ID: {row['specialist_id']}")
     lines.append(f"Branch: {branch_name}")
     return "\n".join(lines)
 
@@ -5750,7 +5765,9 @@ def list_downtime(request: Request, user=Depends(get_current_user)):
         cond.append("d.created_at < (%s::date + 1)"); vals.append(p.get("to"))
     rows = q(f"""SELECT d.id, d.accession, d.patient_name, d.patient_id, d.modality, d.procedure_name,
                        d.indication, d.ward, d.status, d.branch_id, b.name AS branch_name,
-                       COALESCE(s.name, u.username) AS created_by_name,
+                       d.specialist_id, d.source,
+                       COALESCE(s.name, u.username,
+                                CASE WHEN d.specialist_id IS NOT NULL THEN 'Public · ' || d.specialist_id END) AS created_by_name,
                        TO_CHAR(d.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
                 FROM scheduling.downtime_studies d
                 JOIN scheduling.branches b ON b.id=d.branch_id
@@ -5779,6 +5796,98 @@ async def downtime_status(did: int, request: Request, user=Depends(require_admin
         q("""UPDATE scheduling.downtime_studies SET status='pending',
               reconciled_by=NULL, reconciled_at=NULL WHERE id=%s""", (did,), exec_only=True)
     return {"ok": True, "status": status}
+
+# ── Public downtime link (no login) ───────────────────────────────────────────
+# A shareable, unguessable link (sent in a staff WhatsApp group) lets someone who
+# has NO platform account log a downtime patient: they pick the branch, fill the
+# data, type the specialist's ID, and get the Accession + message. The secret
+# token in the link is the gate — only people who have the link can use it.
+def _downtime_token():
+    import secrets
+    t = get_setting("downtime_public_token")
+    if not t:
+        t = secrets.token_urlsafe(24)
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('downtime_public_token',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    return t
+
+def _downtime_public_url():
+    base = (os.environ.get("APP_URL", "").strip().rstrip("/"))
+    return f"{base}/dt?t={_downtime_token()}"
+
+# Light global throttle so a leaked link can't be used to flood the table.
+_downtime_pub_hits: list = []
+def _downtime_throttle():
+    import time as _t
+    now = _t.time()
+    _downtime_pub_hits[:] = [h for h in _downtime_pub_hits if now - h < 60]
+    if len(_downtime_pub_hits) >= 60:        # max 60 public submissions / minute
+        raise HTTPException(429, "Too many submissions, please wait a moment.")
+    _downtime_pub_hits.append(now)
+
+def _check_downtime_token(token):
+    if not token or token != _downtime_token():
+        raise HTTPException(403, "Invalid or expired link. Ask your team lead for a new one.")
+
+@app.get("/api/public/downtime/info")
+def public_downtime_info(request: Request):
+    """Branch list for the public form. Gated by the link token (no login)."""
+    _check_downtime_token(request.query_params.get("token") or request.query_params.get("t"))
+    branches = q("SELECT id, name FROM scheduling.branches ORDER BY name")
+    return {"ok": True, "branches": branches, "modalities": list(_DOWNTIME_MODALITIES)}
+
+@app.post("/api/public/downtime")
+async def public_create_downtime(request: Request):
+    """Create a downtime study from the public link — no account needed. The
+    performer is captured as a free-text specialist ID instead of a user id."""
+    _check_downtime_token(request.query_params.get("token") or request.query_params.get("t"))
+    _downtime_throttle()
+    body = await request.json()
+    branch_id = _int_or_400(body.get("branch_id"), "branch_id")
+    branch = q("SELECT name FROM scheduling.branches WHERE id=%s", (branch_id,), one=True)
+    if not branch:
+        raise HTTPException(404, "Branch not found")
+    name = (body.get("patient_name") or "").strip()[:120]
+    pid  = (body.get("patient_id") or "").strip()[:40]
+    modality = (body.get("modality") or "").strip()
+    specialist = (body.get("specialist_id") or "").strip()[:40]
+    if not name or not pid or not modality:
+        raise HTTPException(400, "patient_name, patient_id and modality are required")
+    if not specialist:
+        raise HTTPException(400, "specialist_id is required")
+    from datetime import datetime, timezone, timedelta
+    ymd = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%y%m%d")
+    accession = _next_accession(_branch_code(branch["name"]), ymd)
+    row = q("""INSERT INTO scheduling.downtime_studies
+               (branch_id, accession, patient_name, patient_id, modality, procedure_name,
+                indication, ward, specialist_id, source)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'public')
+               RETURNING id, accession, patient_name, patient_id, modality, procedure_name,
+                         indication, ward, specialist_id, status,
+                         TO_CHAR(created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at""",
+            (branch_id, accession, name, pid, modality[:40],
+             (body.get("procedure") or "").strip()[:120] or None,
+             (body.get("indication") or "").strip()[:200] or None,
+             (body.get("ward") or "").strip()[:80] or None,
+             specialist), one=True)
+    insert_audit({"id": None, "username": f"public-link:{specialist}", "role": "public",
+                  "branch_name": branch["name"]}, "DOWNTIME_ADD_PUBLIC", f"branch:{branch_id}", accession)
+    return {"study": row, "message": _downtime_message(row, branch["name"]), "branch_name": branch["name"]}
+
+@app.get("/api/downtime/public-link")
+def get_downtime_link(user=Depends(require_reviewer)):
+    """The shareable public link (manager/superadmin)."""
+    return {"url": _downtime_public_url(), "token": _downtime_token()}
+
+@app.post("/api/downtime/public-link/regenerate")
+def regen_downtime_link(user=Depends(require_reviewer)):
+    """Rotate the token — old links stop working immediately."""
+    import secrets
+    t = secrets.token_urlsafe(24)
+    q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('downtime_public_token',%s)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    insert_audit(user, "DOWNTIME_LINK_REGEN")
+    return {"url": _downtime_public_url(), "token": t}
 
 def _send_credential_reminders():
     """Notify staff + their branch lead(s) + reviewers about credentials expiring

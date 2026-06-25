@@ -146,5 +146,39 @@ check("malformed date filter is ignored, not a 500",
 check("the log endpoint advertises the modality list",
       isinstance(staffA.get("/api/downtime").json().get("modalities"), list))
 
+# ── Public no-login link ──────────────────────────────────────────────────────
+print("\n== public no-login link ==")
+check("staff can't fetch the public link (403)", staffA.get("/api/downtime/public-link").status_code == 403)
+linkj = admin.get("/api/downtime/public-link").json()
+tok = linkj.get("token")
+check("manager gets a public link with a token", bool(tok) and "/dt?t=" in (linkj.get("url") or ""), linkj)
+pub = TestClient(app)   # no login at all
+check("public info without a token is blocked (403)", pub.get("/api/public/downtime/info").status_code == 403)
+check("public info with a bad token is blocked (403)", pub.get("/api/public/downtime/info?token=nope").status_code == 403)
+info = pub.get(f"/api/public/downtime/info?token={tok}")
+check("public info with the token returns branches", info.status_code == 200 and any(b["id"] == bidA for b in info.json()["branches"]), info.text)
+check("public submit without a token is blocked (403)",
+      pub.post("/api/public/downtime", json={"branch_id": bidA, "patient_name": "X", "patient_id": "1", "modality": "CT", "specialist_id": "S1"}).status_code == 403)
+ps = pub.post(f"/api/public/downtime?token={tok}", json={"branch_id": bidA, "patient_name": "Public Patient",
+                "patient_id": "1077777777", "modality": "CT", "procedure": "CT Chest", "specialist_id": "SPEC-99"})
+check("public submit with the token works", ps.status_code == 200, ps.text)
+pacc = ps.json()["study"]["accession"]
+check("public accession is unique + DICOM-safe", pacc.startswith("DTZ-") and len(pacc) <= 16 and pacc not in allA, pacc)
+check("public message carries the specialist ID", "SPEC-99" in ps.json()["message"], ps.json()["message"])
+check("public submit requires a specialist ID (400)",
+      pub.post(f"/api/public/downtime?token={tok}", json={"branch_id": bidA, "patient_name": "X", "patient_id": "1", "modality": "CT"}).status_code == 400)
+check("public submit still validates patient fields (400)",
+      pub.post(f"/api/public/downtime?token={tok}", json={"branch_id": bidA, "specialist_id": "S", "modality": "CT"}).status_code == 400)
+# The public study shows in the branch log, attributed to the specialist.
+plog = next((s for s in leadA.get("/api/downtime").json()["studies"] if s["accession"] == pacc), {})
+check("public study appears in the log as a public entry",
+      plog.get("source") == "public" and plog.get("specialist_id") == "SPEC-99"
+      and "Public" in (plog.get("created_by_name") or ""), plog)
+# Regenerate rotates the token; the old one stops working.
+newtok = admin.post("/api/downtime/public-link/regenerate").json()["token"]
+check("regenerate returns a different token", newtok and newtok != tok, [tok, newtok])
+check("the OLD token no longer works (403)", pub.get(f"/api/public/downtime/info?token={tok}").status_code == 403)
+check("the NEW token works", pub.get(f"/api/public/downtime/info?token={newtok}").status_code == 200)
+
 print(f"\n=== RESULT: {PASS} passed, {FAIL} failed ===")
 sys.exit(1 if FAIL else 0)
