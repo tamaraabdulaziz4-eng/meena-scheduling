@@ -19,9 +19,10 @@ async function renderMessagesPage() {
         <div class="rep-card-head"><div class="rep-card-title">Message</div>
           ${_msgIsManager() ? `<select id="msg-branch" class="rep-select" style="max-width:200px"></select>` : ''}
         </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Channels — tap to turn on/off (✓ = will be sent):</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" id="msg-channels">
-          ${[['whatsapp', 'WhatsApp'], ['email', 'Email'], ['app', 'In-app']].map(([v, l]) =>
-            `<button type="button" class="seg-chip" data-ch="${v}" onclick="msgToggleChannel('${v}')">${l}</button>`).join('')}
+          ${[['whatsapp', 'WhatsApp'], ['email', 'Email'], ['app', 'In-app + push 🔔']].map(([v, l]) =>
+            `<button type="button" class="seg-chip" data-ch="${v}" data-label="${l}" onclick="msgToggleChannel('${v}')">${l}</button>`).join('')}
         </div>
         <div id="msg-subject-wrap" style="display:none;margin-bottom:10px">
           <input id="msg-subject" class="input" maxlength="120" placeholder="Email subject" style="width:100%"></div>
@@ -53,8 +54,7 @@ async function renderMessagesPage() {
         <button class="btn btn-primary" id="msg-send" onclick="sendMessage()">Send</button>
       </div>
     </div>`;
-  document.querySelectorAll('#msg-channels .seg-chip').forEach(b =>
-    b.classList.toggle('on', _msgChannels.has(b.getAttribute('data-ch'))));
+  document.querySelectorAll('#msg-channels .seg-chip').forEach(_msgPaintChip);
   _msgSubjectVisibility();
   if (_msgIsManager()) {
     try { if (!allBranches.length) await loadBranches(); } catch (e) {}
@@ -72,10 +72,16 @@ function _msgSubjectVisibility() {
   const w = document.getElementById('msg-subject-wrap');
   if (w) w.style.display = _msgChannels.has('email') ? 'block' : 'none';
 }
+function _msgPaintChip(b) {
+  const ch = b.getAttribute('data-ch');
+  const on = _msgChannels.has(ch);
+  b.classList.toggle('on', on);
+  b.textContent = (on ? '✓ ' : '') + (b.getAttribute('data-label') || '');
+}
 function msgToggleChannel(ch) {
   if (_msgChannels.has(ch)) _msgChannels.delete(ch); else _msgChannels.add(ch);
   const b = document.querySelector(`#msg-channels .seg-chip[data-ch="${ch}"]`);
-  if (b) b.classList.toggle('on', _msgChannels.has(ch));
+  if (b) _msgPaintChip(b);
   _msgSubjectVisibility();
 }
 
@@ -100,7 +106,7 @@ function renderMsgList() {
   if (!rows.length) { box.innerHTML = `<div class="rep-empty">No staff match.</div>`; }
   else box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">${rows.map(r => {
     const on = _msgSelected.has(r.id);
-    const ch = [r.has_phone ? 'WA' : '', r.has_email ? '@' : '', r.has_login ? 'app' : ''].filter(Boolean).join(' · ');
+    const ch = [r.has_phone ? 'WA' : '', r.has_email ? '@' : '', r.has_push ? '🔔 push' : (r.has_login ? 'app' : '')].filter(Boolean).join(' · ');
     return `<label style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};border-radius:11px;cursor:pointer;background:${on ? 'rgba(107,78,255,.06)' : 'var(--card-alt)'}">
       <input type="checkbox" ${on ? 'checked' : ''} onchange="msgToggle(${r.id})" style="width:auto">
       <div style="min-width:0">
