@@ -141,7 +141,7 @@ async function saveEmailWebhook(clear) {
     document.getElementById('email-webhook-url').value = '';
     msg.style.color = 'var(--green)';
     msg.textContent = clear ? '✅ Cleared.' : '✅ Saved. Use “Send test email” below to verify.';
-    loadEmailWebhook();
+    loadEmailConfig();   // refresh both the webhook status and the Provider line
   } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
 

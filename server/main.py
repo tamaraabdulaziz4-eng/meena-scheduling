@@ -5396,7 +5396,12 @@ async def email_test(request: Request, user=Depends(require_superadmin)):
         # 502 + the provider's own message → shows up directly in the UI.
         raise HTTPException(502, f"Send failed: {e}")
     insert_audit(user, "EMAIL_TEST", to)
-    return {"ok": True, "sent_to": to, "from": _email_from()}
+    # Report the source truthfully: a webhook (Power Automate) sends from the
+    # work mailbox and ignores _email_from(), so don't show the Resend address.
+    if _email_webhook_url():
+        return {"ok": True, "sent_to": to, "from": "your work mailbox (Power Automate)",
+                "via": "power automate"}
+    return {"ok": True, "sent_to": to, "from": _email_from(), "via": "resend"}
 
 @app.get("/api/whatsapp-config")
 def whatsapp_config(user=Depends(require_superadmin)):
