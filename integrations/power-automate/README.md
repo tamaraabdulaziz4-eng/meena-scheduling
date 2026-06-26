@@ -56,20 +56,36 @@ the mail from your mailbox.
 
 ## Connect it to Meena Health
 
-Set this environment variable on the platform (the same place other secrets
-live) and redeploy:
+### Easiest — paste it in the app (no redeploy)
+
+Sign in as a **superadmin** → open **Leaves → ⚙️ Settings** → under **Send email
+from your work mailbox (Power Automate)** paste the **full** HTTP POST URL (it
+must include `&sig=`) → **Save**. You should see 🟢 **Active**, then use **Send
+test email** to verify it arrives from your work address.
+
+> In the flow, set the trigger's **"Who can trigger the flow?"** to **Anyone**,
+> otherwise the platform gets a `DirectApiAuthorizationRequired` error.
+
+### Alternative — environment variable
+
+Instead of the in-app field you can set this on the platform (the same place
+other secrets live) and redeploy:
 
 ```
 EMAIL_WEBHOOK_URL = <the HTTP POST URL you copied>
 ```
 
+The env var **takes precedence** over the value saved in Settings (the UI shows
+"set by environment variable" when it's in effect).
+
 Optional shared-secret check (if you add an `Authorization` condition in the
 flow): `EMAIL_WEBHOOK_TOKEN = <your secret>` → the platform sends it as
-`Authorization: Bearer <secret>`.
+`Authorization: Bearer <secret>`. This token is env-only; there is no in-app
+field for it.
 
-When `EMAIL_WEBHOOK_URL` is set it takes priority over Resend/SMTP, so every
-Meena email (schedule approvals, leave decisions, custom messages, reminders…)
-goes out from your work mailbox.
+When a webhook URL is set (in-app or env) it takes priority over Resend/SMTP, so
+every Meena email (schedule approvals, leave decisions, custom messages,
+reminders…) goes out from your work mailbox.
 
 ### Payload the flow receives
 ```json
@@ -77,6 +93,6 @@ goes out from your work mailbox.
 ```
 
 ### Test it
-After setting the variable, trigger any email (e.g. send a custom message with
-the **Email** channel to yourself) and confirm it arrives **from your work
-address**.
+Use **Send test email** in Settings, or trigger any email (e.g. send a custom
+message with the **Email** channel to yourself) and confirm it arrives **from
+your work address**.
