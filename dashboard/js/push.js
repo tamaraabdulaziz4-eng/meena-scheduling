@@ -54,9 +54,25 @@ function _renderPushRow(state) {
     return;
   }
   btn.style.display = '';
+  const testBtn = document.getElementById('notif-push-test');
+  if (testBtn) testBtn.style.display = (state === 'on') ? '' : 'none';
   if (state === 'on')      { btn.textContent = 'On';      btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost'); sub.textContent = 'You’ll get alerts on this device.'; }
   else if (state === 'denied') { btn.textContent = 'Blocked'; btn.disabled = true; sub.textContent = 'Notifications are blocked in your browser settings.'; }
   else                     { btn.textContent = 'Enable';  btn.classList.add('btn-primary'); btn.classList.remove('btn-ghost'); sub.textContent = 'Get alerts even when the app is closed.'; }
+}
+
+async function sendTestPush() {
+  try {
+    const r = await API.post('/push/test', {});
+    if (!r.count) { if (typeof toast === 'function') toast(r.hint || 'No device registered', 'err'); return; }
+    const ok = r.ok || 0;
+    if (ok > 0) { if (typeof toast === 'function') toast('Test sent — check your notifications'); }
+    else {
+      const first = (r.results && r.results[0]) || {};
+      if (typeof toast === 'function') toast('Push rejected (' + (first.status || '?') + '). ' + (first.detail || ''), 'err');
+    }
+    if (typeof loadNotifications === 'function') loadNotifications();
+  } catch (e) { if (typeof toast === 'function') toast(e.message || 'Test failed', 'err'); }
 }
 
 async function togglePush() {
