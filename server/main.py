@@ -1379,6 +1379,8 @@ def _broadcast_to_staff(staff_rows, message, link, ntype):
             try:
                 q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
                      VALUES (%s,%s,%s,%s)""", (u["id"], msg, link, ntype), exec_only=True)
+                try: send_web_push_to_user(u["id"], msg, link=link, title="Meena Health")
+                except Exception: pass
                 reached = True
             except Exception:
                 pass
