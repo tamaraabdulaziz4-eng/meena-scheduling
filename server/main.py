@@ -1179,18 +1179,42 @@ def _smtp_send(to, subject, body):
         srv.login(user, pwd or "")
     srv.send_message(msg); srv.quit()
 
+def _webhook_email_send(to, subject, body):
+    """Send via an HTTP webhook — e.g. a Microsoft Power Automate flow whose
+    'When an HTTP request is received' trigger forwards to Office 365 'Send an
+    email (V2)', so mail goes out from the work mailbox. POSTs JSON the flow
+    expects: {to, subject, body(html), text}."""
+    import urllib.request, urllib.error
+    url = (os.environ.get("EMAIL_WEBHOOK_URL") or "").strip()
+    payload = {"to": to, "subject": subject or "Meena Health",
+               "body": _email_html(body), "text": str(body or "")}
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)"}
+    tok = (os.environ.get("EMAIL_WEBHOOK_TOKEN") or "").strip()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Email webhook {e.code}: {e.read().decode('utf-8','replace')[:160]}") from None
+
 def _deliver_email(to, subject, body):
-    """Actually send (raises on failure). Resend preferred, SMTP fallback."""
+    """Actually send (raises on failure). Power Automate webhook → Resend → SMTP."""
     if os.environ.get("SMTP_CAPTURE"):
         _email_outbox.append({"to": to, "subject": subject, "body": body,
                               "html": _email_html(body)})
         return
-    if os.environ.get("RESEND_API_KEY"):
+    if os.environ.get("EMAIL_WEBHOOK_URL"):
+        _webhook_email_send(to, subject, body)
+    elif os.environ.get("RESEND_API_KEY"):
         _resend_send(to, subject, body)
     elif os.environ.get("SMTP_HOST"):
         _smtp_send(to, subject, body)
     else:
-        raise RuntimeError("No email provider configured (set RESEND_API_KEY or SMTP_HOST)")
+        raise RuntimeError("No email provider configured (set EMAIL_WEBHOOK_URL, RESEND_API_KEY or SMTP_HOST)")
 
 def send_email(to, subject, body):
     if not to:
@@ -1199,7 +1223,7 @@ def send_email(to, subject, body):
         _email_outbox.append({"to": to, "subject": subject, "body": body,
                               "html": _email_html(body)})
         return
-    if not (os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
+    if not (os.environ.get("EMAIL_WEBHOOK_URL") or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
         return  # email not configured → in-app only
     def _worker():
         try:
