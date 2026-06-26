@@ -1179,13 +1179,18 @@ def _smtp_send(to, subject, body):
         srv.login(user, pwd or "")
     srv.send_message(msg); srv.quit()
 
+def _email_webhook_url():
+    """Resolve the Power Automate / webhook email URL: env var first, else the
+    value saved from the Settings page (app_settings)."""
+    return (os.environ.get("EMAIL_WEBHOOK_URL") or get_setting("email_webhook_url") or "").strip()
+
 def _webhook_email_send(to, subject, body):
     """Send via an HTTP webhook — e.g. a Microsoft Power Automate flow whose
     'When an HTTP request is received' trigger forwards to Office 365 'Send an
     email (V2)', so mail goes out from the work mailbox. POSTs JSON the flow
     expects: {to, subject, body(html), text}."""
     import urllib.request, urllib.error
-    url = (os.environ.get("EMAIL_WEBHOOK_URL") or "").strip()
+    url = _email_webhook_url()
     payload = {"to": to, "subject": subject or "Meena Health",
                "body": _email_html(body), "text": str(body or "")}
     data = json.dumps(payload).encode("utf-8")
@@ -1207,7 +1212,7 @@ def _deliver_email(to, subject, body):
         _email_outbox.append({"to": to, "subject": subject, "body": body,
                               "html": _email_html(body)})
         return
-    if os.environ.get("EMAIL_WEBHOOK_URL"):
+    if _email_webhook_url():
         _webhook_email_send(to, subject, body)
     elif os.environ.get("RESEND_API_KEY"):
         _resend_send(to, subject, body)
@@ -1223,7 +1228,7 @@ def send_email(to, subject, body):
         _email_outbox.append({"to": to, "subject": subject, "body": body,
                               "html": _email_html(body)})
         return
-    if not (os.environ.get("EMAIL_WEBHOOK_URL") or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
+    if not (_email_webhook_url() or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
         return  # email not configured → in-app only
     def _worker():
         try:
@@ -5229,8 +5234,18 @@ def read_settings(user=Depends(get_current_user)):
            "cases_remind_hour": get_setting("cases_remind_hour", "0"),
            "shift_check_m_hour": get_setting("shift_check_m_hour", "8"),
            "shift_check_n_hour": get_setting("shift_check_n_hour", "20")}
-    # Only a superadmin sees the registration links/code.
+    # Only a superadmin sees the registration links/code + email setup.
     if user["role"] == "superadmin":
+        wb = _email_webhook_url()
+        out["email_webhook_set"] = bool(wb)
+        out["email_webhook_via_env"] = bool(os.environ.get("EMAIL_WEBHOOK_URL"))
+        # Show only the host, never the secret signature in the URL.
+        if wb:
+            try:
+                from urllib.parse import urlparse
+                out["email_webhook_host"] = urlparse(wb).netloc
+            except Exception:
+                out["email_webhook_host"] = None
         is_open = _registration_open()
         code = _registration_code()
         app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
@@ -5287,6 +5302,13 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
             q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
                  ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (_sk, str(hv)), exec_only=True)
             insert_audit(user, "SET_" + _sk.upper(), str(hv))
+    if "email_webhook_url" in body:
+        raw = (body.get("email_webhook_url") or "").strip()
+        if raw and not raw.lower().startswith("https://"):
+            raise HTTPException(400, "The email webhook URL must start with https://")
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('email_webhook_url',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (raw,), exec_only=True)
+        insert_audit(user, "SET_EMAIL_WEBHOOK", "set" if raw else "cleared")
     if "registration" in body:
         # "on" → open onboarding (no code needed), "off" → close it.
         action = body["registration"]
@@ -5304,7 +5326,8 @@ async def write_settings(request: Request, user=Depends(require_superadmin)):
 def email_config(user=Depends(require_superadmin)):
     """Diagnostics for the email setup (no secrets leaked) so a misconfiguration
     is visible from the UI."""
-    provider = ("resend" if os.environ.get("RESEND_API_KEY")
+    provider = ("power automate" if _email_webhook_url()
+                else "resend" if os.environ.get("RESEND_API_KEY")
                 else "smtp" if os.environ.get("SMTP_HOST") else "none")
     return {
         "provider": provider,
@@ -5363,9 +5386,9 @@ async def email_test(request: Request, user=Depends(require_superadmin)):
     to = (body.get("to") or user.get("email") or _sig_email() or "").strip()
     if not to:
         raise HTTPException(400, "No recipient — pass {\"to\": \"you@example.com\"}")
-    if not (os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")
+    if not (_email_webhook_url() or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")
             or os.environ.get("SMTP_CAPTURE")):
-        raise HTTPException(400, "No email provider configured. Set RESEND_API_KEY in your environment.")
+        raise HTTPException(400, "No email provider configured. Paste a Power Automate URL above, or set RESEND_API_KEY.")
     try:
         _deliver_email(to, "Meena Scheduling — test email",
                        "This is a test message confirming email delivery is working.")

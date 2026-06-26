@@ -15,7 +15,7 @@
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f0d1e">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css?v=20260624z">
+<link rel="stylesheet" href="/style.css?v=20260625a">
 </head>
 <body>
 
@@ -689,6 +689,17 @@
           <div class="msg" id="reg-link-msg" style="margin-top:6px"></div>
         </div>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
+          <label>Send email from your work mailbox (Power Automate)</label>
+          <div id="email-webhook-status" style="font-size:11px;color:var(--muted);margin-bottom:6px"></div>
+          <input type="url" id="email-webhook-url" placeholder="https://…powerplatform.com/…/invoke?…&sig=…" style="width:100%">
+          <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+            <button class="btn btn-sm" onclick="saveEmailWebhook()">Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="saveEmailWebhook(true)">Clear</button>
+          </div>
+          <span style="font-size:11px;color:var(--muted);display:block;margin-top:6px">Paste the flow's <b>full</b> HTTP URL (it must include <code>&sig=</code>). In the flow, set the trigger's “Who can trigger the flow?” to <b>Anyone</b>. Leave empty to use the default provider.</span>
+          <div class="msg" id="email-webhook-msg" style="margin-top:6px"></div>
+        </div>
+        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
           <label>Email notifications</label>
           <div id="email-config-info" style="font-size:11px;color:var(--muted);margin-bottom:6px">Loading…</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1060,32 +1071,32 @@
 </div>
 
 
-<script src="/js/api.js?v=20260624z"></script>
-<script src="/js/auth.js?v=20260624z"></script>
-<script src="/js/util.js?v=20260624z"></script>
-<script src="/js/branches.js?v=20260624z"></script>
-<script src="/js/users.js?v=20260624z"></script>
-<script src="/js/staff.js?v=20260624z"></script>
-<script src="/js/leaves.js?v=20260624z"></script>
-<script src="/js/swaps.js?v=20260624z"></script>
-<script src="/js/holidays.js?v=20260624z"></script>
-<script src="/js/notifications.js?v=20260624z"></script>
-<script src="/js/push.js?v=20260624z"></script>
-<script src="/js/portal.js?v=20260624z"></script>
-<script src="/js/cases.js?v=20260624z"></script>
-<script src="/js/downtime.js?v=20260624z"></script>
-<script src="/js/inventory.js?v=20260624z"></script>
-<script src="/js/equipment.js?v=20260624z"></script>
-<script src="/js/messages.js?v=20260624z"></script>
-<script src="/js/tickets.js?v=20260624z"></script>
-<script src="/js/reports.js?v=20260624z"></script>
-<script src="/js/announcements.js?v=20260624z"></script>
-<script src="/js/home.js?v=20260624z"></script>
-<script src="/js/shifts.js?v=20260624z"></script>
-<script src="/js/schedule.js?v=20260624z"></script>
-<script src="/js/review.js?v=20260624z"></script>
-<script src="/js/export.js?v=20260624z"></script>
-<script src="/js/audit.js?v=20260624z"></script>
-<script src="/js/main.js?v=20260624z"></script>
+<script src="/js/api.js?v=20260625a"></script>
+<script src="/js/auth.js?v=20260625a"></script>
+<script src="/js/util.js?v=20260625a"></script>
+<script src="/js/branches.js?v=20260625a"></script>
+<script src="/js/users.js?v=20260625a"></script>
+<script src="/js/staff.js?v=20260625a"></script>
+<script src="/js/leaves.js?v=20260625a"></script>
+<script src="/js/swaps.js?v=20260625a"></script>
+<script src="/js/holidays.js?v=20260625a"></script>
+<script src="/js/notifications.js?v=20260625a"></script>
+<script src="/js/push.js?v=20260625a"></script>
+<script src="/js/portal.js?v=20260625a"></script>
+<script src="/js/cases.js?v=20260625a"></script>
+<script src="/js/downtime.js?v=20260625a"></script>
+<script src="/js/inventory.js?v=20260625a"></script>
+<script src="/js/equipment.js?v=20260625a"></script>
+<script src="/js/messages.js?v=20260625a"></script>
+<script src="/js/tickets.js?v=20260625a"></script>
+<script src="/js/reports.js?v=20260625a"></script>
+<script src="/js/announcements.js?v=20260625a"></script>
+<script src="/js/home.js?v=20260625a"></script>
+<script src="/js/shifts.js?v=20260625a"></script>
+<script src="/js/schedule.js?v=20260625a"></script>
+<script src="/js/review.js?v=20260625a"></script>
+<script src="/js/export.js?v=20260625a"></script>
+<script src="/js/audit.js?v=20260625a"></script>
+<script src="/js/main.js?v=20260625a"></script>
 </body>
 </html>

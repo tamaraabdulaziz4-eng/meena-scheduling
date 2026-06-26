@@ -113,6 +113,36 @@ async function loadEmailConfig() {
     const t = document.getElementById('email-test-to');
     if (t && !t.value && currentUser?.email) t.value = currentUser.email;
   } catch (e) { info.textContent = ''; }
+  loadEmailWebhook();
+}
+
+async function loadEmailWebhook() {
+  const st = document.getElementById('email-webhook-status');
+  if (!st) return;
+  try {
+    const s = await API.get('/settings');
+    if (s.email_webhook_set) {
+      st.innerHTML = `🟢 <b>Active</b> — emails go out via your flow (${escapeHtml(s.email_webhook_host || 'webhook')})` +
+        (s.email_webhook_via_env ? ' · set by environment variable' : '');
+    } else {
+      st.innerHTML = '⚪ Not set — paste your Power Automate flow URL to send from your work mailbox.';
+    }
+  } catch (e) { st.textContent = ''; }
+}
+
+async function saveEmailWebhook(clear) {
+  const msg = document.getElementById('email-webhook-msg');
+  const url = clear ? '' : (document.getElementById('email-webhook-url').value || '').trim();
+  if (!clear && url && url.toLowerCase().indexOf('sig=') === -1 &&
+      !confirm('This URL has no "sig=" signature — Power Automate flows usually need it. Save anyway?')) return;
+  msg.className = 'msg'; msg.style.color = ''; msg.textContent = 'Saving…';
+  try {
+    await API.put('/settings', { email_webhook_url: url });
+    document.getElementById('email-webhook-url').value = '';
+    msg.style.color = 'var(--green)';
+    msg.textContent = clear ? '✅ Cleared.' : '✅ Saved. Use “Send test email” below to verify.';
+    loadEmailWebhook();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
 
 async function sendTestEmail() {
