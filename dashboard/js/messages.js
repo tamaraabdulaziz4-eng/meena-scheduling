@@ -159,6 +159,11 @@ async function sendMessage() {
       else if (r.push_targeted) status += ' · device push sent but not confirmed';
       else status += ' · no recipient has device notifications on yet';
     }
+    if (_msgChannels.has('whatsapp') && r.wa_attempted && !r.whatsapp) {
+      status += ` · WhatsApp failed${r.wa_error ? ': ' + r.wa_error : ''}`;
+    } else if (_msgChannels.has('whatsapp') && r.whatsapp) {
+      status += ` · ${r.whatsapp} WhatsApp sent ✅`;
+    }
     document.getElementById('msg-status').textContent = status + '.';
   } catch (e) { toast(e.message || 'Failed to send', 'err'); }
   finally { btn.disabled = false; btn.textContent = 'Send'; }

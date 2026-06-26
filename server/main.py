@@ -1255,37 +1255,60 @@ def _whatsapp_send_now(to_normalized, message):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"Bridge {e.code}: {e.read().decode('utf-8', 'replace')}") from None
 
-def send_whatsapp(to, message, *, ntype="info", link=None, force=False):
+def _post_whatsapp(url, payload, token, timeout=40):
+    """POST one message to the bridge. Returns (ok, detail). ok is True only when
+    the bridge replies 2xx AND doesn't report a failure in its JSON body."""
+    import urllib.request, urllib.error
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", "replace")
+        try:
+            j = json.loads(body)
+            # Bridges commonly signal failure with ok:false / success:false / an error field.
+            if isinstance(j, dict) and (j.get("ok") is False or j.get("success") is False or j.get("error")):
+                return False, str(j.get("error") or j.get("message") or body)[:200]
+        except Exception:
+            pass
+        return True, body[:200]
+    except urllib.error.HTTPError as e:
+        return False, f"bridge {e.code}: {e.read().decode('utf-8','replace')[:160]}"
+    except Exception as e:
+        return False, str(e)[:200]
+
+def send_whatsapp(to, message, *, ntype="info", link=None, force=False, sync=False):
     # force=True bypasses the WHATSAPP_ONLY_TYPES filter — used for manager
     # broadcasts / required-action circulars that must reach WhatsApp regardless.
+    # sync=True sends inline and returns {"ok","detail"} so the caller can show
+    # the real bridge result (used by the interactive message-send).
     url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
     capture = os.environ.get("WHATSAPP_CAPTURE")
     if not (url or capture) or not to or not message:
-        return
+        return {"ok": False, "detail": "WhatsApp not configured"} if sync else None
     if not force and not _whatsapp_notify_enabled_for(ntype):
-        return
+        return {"ok": False, "detail": "filtered"} if sync else None
     to = _normalize_whatsapp_number(to)
     if not to:
-        return
+        return {"ok": False, "detail": "invalid number"} if sync else None
     if capture:
         _whatsapp_outbox.append({"to": to, "message": message, "type": ntype})
-        return
+        return {"ok": True, "detail": "captured"} if sync else None
     payload = {"to": to, "message": message, "type": ntype, "link": link}
     token = (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
+    if sync:
+        ok, detail = _post_whatsapp(url, payload, token)
+        if not ok:
+            print(f"[whatsapp] failed to {to}: {detail}")
+        return {"ok": ok, "detail": detail}
     def _worker():
-        try:
-            import urllib.request
-            data = json.dumps(payload).encode("utf-8")
-            headers = {"Content-Type": "application/json", "Accept": "application/json",
-                       "User-Agent": "MeenaScheduling/1.0 (+https://meena-health.com)"}
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            req = urllib.request.Request(url, data=data, method="POST", headers=headers)
-            with urllib.request.urlopen(req, timeout=40) as resp:
-                resp.read()
-        except Exception as e:
-            print(f"[whatsapp] failed to {to}: {e}")
-    import threading
+        ok, detail = _post_whatsapp(url, payload, token)
+        if not ok:
+            print(f"[whatsapp] failed to {to}: {detail}")
     threading.Thread(target=_worker, daemon=True).start()
 
 def notify(user_id, message, link=None, ntype="info", whatsapp=True):
@@ -6552,7 +6575,8 @@ def _send_custom(staff_rows, message, subject, channels):
     # bulk sends stay non-blocking (fire-and-forget) to avoid stalling the worker.
     sync_push = len(staff_rows) <= 10
     out = {"delivered": 0, "whatsapp": 0, "email": 0, "app": 0,
-           "push": 0, "push_targeted": 0, "no_login": 0, "push_error": None}
+           "push": 0, "push_targeted": 0, "no_login": 0, "push_error": None,
+           "wa_attempted": 0, "wa_error": None}
     for st in staff_rows:
         msg = _personalize(message, st.get("name"))
         reached = False
@@ -6580,7 +6604,16 @@ def _send_custom(staff_rows, message, subject, channels):
             else:
                 out["no_login"] += 1   # staff has no account → no in-app/push possible
         if want_wa and st.get("phone"):
-            send_whatsapp(st["phone"], msg, ntype="message", force=True); out["whatsapp"] += 1; reached = True
+            out["wa_attempted"] = out.get("wa_attempted", 0) + 1
+            if sync_push:
+                res = send_whatsapp(st["phone"], msg, ntype="message", force=True, sync=True)
+                if res and res.get("ok"):
+                    out["whatsapp"] += 1; reached = True
+                elif res and not out.get("wa_error"):
+                    out["wa_error"] = res.get("detail")
+            else:
+                send_whatsapp(st["phone"], msg, ntype="message", force=True)
+                out["whatsapp"] += 1; reached = True
         if want_em and st.get("email"):
             send_email(st["email"], subject or "Meena Health", msg); out["email"] += 1; reached = True
         if reached:
