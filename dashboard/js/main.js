@@ -108,6 +108,8 @@ async function initApp() {
   // Downtime registration: every working staff member can log a patient.
   const downtimeNav = document.getElementById('nav-downtime');
   if (downtimeNav) downtimeNav.style.display = (role === 'viewer') ? 'none' : 'flex';
+  const inventoryNav = document.getElementById('nav-inventory');
+  if (inventoryNav) inventoryNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
   // Auto sign-out after a stretch of inactivity.
@@ -181,6 +183,7 @@ async function renderRoute(page) {
                        if (!allStaff || !allStaff.length) loadStaff().catch(()=>{});
                        break;
     case 'cases':      renderCasesPage(); break;
+    case 'inventory':  await renderInventoryPage(); break;
     case 'downtime':   await renderDowntimePage(); break;
     case 'tickets':    await renderTicketsPage(); break;
     case 'reports':    await renderReportsPage(); break;
@@ -202,7 +205,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','cases','downtime','tickets','announcements','reports','branches','shifts','users','audit']);
+  'leaves','swaps','cases','downtime','inventory','tickets','announcements','reports','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
