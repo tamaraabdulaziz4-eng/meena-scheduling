@@ -6445,6 +6445,42 @@ async def push_unsubscribe(request: Request, user=Depends(get_current_user)):
              WHERE endpoint=%s AND user_id=%s""", (endpoint, user["id"]), exec_only=True)
     return {"ok": True}
 
+@app.post("/api/push/test")
+def push_test(user=Depends(get_current_user)):
+    """Send a test push to the caller's own devices, synchronously, and report
+    the real per-device result so delivery problems can be diagnosed."""
+    subs = q("""SELECT id, endpoint, p256dh, auth FROM scheduling.push_subscriptions
+                WHERE user_id=%s""", (user["id"],))
+    if not subs:
+        return {"count": 0, "results": [],
+                "hint": "No device is registered. Tap Enable in the bell panel first."}
+    # Also drop an in-app notification so the bell reflects the test.
+    try:
+        q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
+             VALUES (%s,%s,%s,%s)""",
+          (user["id"], "Test notification — push is working ✅", "home", "info"), exec_only=True)
+    except Exception:
+        pass
+    payload = {"title": "Meena Health", "body": "Test notification — push is working ✅", "link": "home"}
+    if os.environ.get("WEBPUSH_CAPTURE"):
+        for s in subs:
+            _webpush_outbox.append({"user_id": user["id"], "endpoint": s["endpoint"], **payload})
+        return {"count": len(subs), "results": [{"status": 201} for _ in subs]}
+    priv, pub = _vapid_keys()
+    subj = _vapid_subject()
+    results = []
+    for s in subs:
+        host = (s["endpoint"].split("/")[2] if "/" in s["endpoint"] else s["endpoint"])[:40]
+        try:
+            code = _webpush.send(s, payload, vapid_private=priv, vapid_public=pub, subject=subj)
+            if code in (404, 410):
+                q("DELETE FROM scheduling.push_subscriptions WHERE id=%s", (s["id"],), exec_only=True)
+            results.append({"host": host, "status": code})
+        except Exception as e:
+            results.append({"host": host, "status": "error", "detail": str(e)[:200]})
+    ok = sum(1 for r in results if r.get("status") in (200, 201))
+    return {"count": len(subs), "ok": ok, "results": results}
+
 # ── Direct messaging (custom WhatsApp / email to chosen staff) ────────────────
 _MSG_CHANNELS = ("app", "whatsapp", "email")
 
