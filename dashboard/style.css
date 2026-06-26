@@ -1840,3 +1840,11 @@ label.input-label, .input-label { font-size: 12px; font-weight: 600; color: var(
 .rota-wrap.pdf-capture .rota-name-col,
 .rota-wrap.pdf-capture .rota-table thead th { position: static !important; }
 .rota-wrap.pdf-capture { overflow: visible !important; box-shadow: none !important; }
+
+/* Toggle chips (e.g. message channels) */
+.seg-chip { border: 1.5px solid var(--border); background: var(--card-alt); color: var(--muted);
+  border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  font-family: inherit; transition: all .15s; }
+.seg-chip:hover { border-color: var(--accent); color: var(--text); }
+.seg-chip.on { background: linear-gradient(135deg, var(--accent2), var(--accent)); color: #fff;
+  border-color: transparent; box-shadow: 0 6px 16px rgba(107,78,255,.32); }

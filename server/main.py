@@ -6306,6 +6306,80 @@ def _maintenance_reminder_loop():
             print(f"[maintenance] {e}")
         time.sleep(3600)
 
+# ── Direct messaging (custom WhatsApp / email to chosen staff) ────────────────
+_MSG_CHANNELS = ("app", "whatsapp", "email")
+
+@app.get("/api/messages/recipients")
+def message_recipients(request: Request, user=Depends(require_admin)):
+    """Selectable staff in scope, with which channels each can receive."""
+    _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
+    rows = q("""SELECT s.id, s.name, s.speciality, s.branch_id, b.name AS branch_name,
+                       (s.phone IS NOT NULL AND s.phone <> '') AS has_phone,
+                       (s.email IS NOT NULL AND s.email <> '') AS has_email,
+                       EXISTS(SELECT 1 FROM scheduling.users u WHERE u.staff_id=s.id) AS has_login
+                FROM scheduling.staff s
+                JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
+                ORDER BY s.name""", (branch_ids,))
+    for r in rows:
+        vals = [str(x or "").strip().upper() for x in (r.get("speciality") or [])]
+        r["section"] = "US" if ("US" in vals or "ULTRASOUND" in vals) else "General"
+        r.pop("speciality", None)
+    return {"recipients": rows}
+
+def _send_custom(staff_rows, message, subject, channels):
+    want_app = "app" in channels
+    want_wa = "whatsapp" in channels
+    want_em = "email" in channels
+    out = {"delivered": 0, "whatsapp": 0, "email": 0, "app": 0}
+    for st in staff_rows:
+        msg = _personalize(message, st.get("name"))
+        reached = False
+        if want_app:
+            u = q("SELECT id FROM scheduling.users WHERE staff_id=%s", (st["id"],), one=True)
+            if u:
+                try:
+                    q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
+                         VALUES (%s,%s,%s,%s)""", (u["id"], msg, "home", "message"), exec_only=True)
+                    out["app"] += 1; reached = True
+                except Exception:
+                    pass
+        if want_wa and st.get("phone"):
+            send_whatsapp(st["phone"], msg, ntype="message", force=True); out["whatsapp"] += 1; reached = True
+        if want_em and st.get("email"):
+            send_email(st["email"], subject or "Meena Health", msg); out["email"] += 1; reached = True
+        if reached:
+            out["delivered"] += 1
+    return out
+
+@app.post("/api/messages/send")
+async def send_custom_message(request: Request, user=Depends(require_admin)):
+    """Send a custom message to one or more chosen staff over the selected
+    channels (in-app / WhatsApp / email). {name} is personalised per recipient."""
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+    channels = [c for c in (body.get("channels") or []) if c in _MSG_CHANNELS]
+    if not channels:
+        raise HTTPException(400, "pick at least one channel")
+    subject = (body.get("subject") or "Meena Health").strip()[:120]
+    ids = body.get("staff_ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "pick at least one recipient")
+    try:
+        ids = [int(x) for x in ids][:500]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid staff_ids")
+    rows = q("""SELECT id, name, phone, email, branch_id FROM scheduling.staff
+                WHERE id = ANY(%s) AND COALESCE(active,true)=true""", (ids,))
+    rows = [r for r in rows if can_access_branch(user, r["branch_id"])]
+    if not rows:
+        raise HTTPException(400, "No reachable recipients in your scope")
+    res = _send_custom(rows, message, subject, channels)
+    insert_audit(user, "MESSAGE_SEND", f"{len(rows)} staff", ",".join(channels))
+    return res
+
 def _send_credential_reminders():
     """Notify staff + their branch lead(s) + reviewers about credentials expiring
     within 30 days (or already expired), once per credential per threshold."""
