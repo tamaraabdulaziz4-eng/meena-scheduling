@@ -19,11 +19,15 @@ async function renderMessagesPage() {
         <div class="rep-card-head"><div class="rep-card-title">Message</div>
           ${_msgIsManager() ? `<select id="msg-branch" class="rep-select" style="max-width:200px"></select>` : ''}
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Channels — tap to turn on/off (✓ = will be sent):</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" id="msg-channels">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:12px;color:var(--muted)">Channels — tap to turn on/off (✓ = will be sent):</div>
+          <button type="button" class="btn btn-xs btn-ghost" onclick="checkWhatsApp(this)">Check WhatsApp connection</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px" id="msg-channels">
           ${[['whatsapp', 'WhatsApp'], ['email', 'Email'], ['app', 'In-app + push 🔔']].map(([v, l]) =>
             `<button type="button" class="seg-chip" data-ch="${v}" data-label="${l}" onclick="msgToggleChannel('${v}')">${l}</button>`).join('')}
         </div>
+        <div id="msg-wa-status" style="font-size:12px;margin-bottom:10px"></div>
         <div id="msg-subject-wrap" style="display:none;margin-bottom:10px">
           <input id="msg-subject" class="input" maxlength="120" placeholder="Email subject" style="width:100%"></div>
         <textarea id="msg-body" class="input" rows="5" style="width:100%;resize:vertical" placeholder="Type your message…  Use {name} to personalise (e.g. Hi {name}, …)"></textarea>
@@ -83,6 +87,22 @@ function msgToggleChannel(ch) {
   const b = document.querySelector(`#msg-channels .seg-chip[data-ch="${ch}"]`);
   if (b) _msgPaintChip(b);
   _msgSubjectVisibility();
+}
+
+async function checkWhatsApp(btn) {
+  const box = document.getElementById('msg-wa-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  if (box) box.innerHTML = '<span style="color:var(--muted)">Checking the bridge from the server…</span>';
+  try {
+    const d = await API.get('/whatsapp/diagnose');
+    let html, ok = false;
+    if (!d.configured) html = '⚠️ ' + (d.message || 'WhatsApp bridge not configured on the server.');
+    else if (d.error) html = `❌ ${escapeHtml(d.error)}`;
+    else { ok = true; html = `✅ Server reached the bridge (${escapeHtml(d.url_host)}:${d.port}, ${d.http_status || 'open'}, ${d.latency_ms}ms). ${escapeHtml(d.message || '')}`; }
+    if (box) box.innerHTML = `<span style="color:${ok ? 'var(--green,#0a0)' : '#E25555'}">${html}</span>`;
+  } catch (e) {
+    if (box) box.innerHTML = `<span style="color:#E25555">Couldn't run the check: ${escapeHtml(e.message || '')}</span>`;
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Check WhatsApp connection'; } }
 }
 
 async function loadMsgRecipients() {

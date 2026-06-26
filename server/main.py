@@ -1301,7 +1301,7 @@ def send_whatsapp(to, message, *, ntype="info", link=None, force=False, sync=Fal
     payload = {"to": to, "message": message, "type": ntype, "link": link}
     token = (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
     if sync:
-        ok, detail = _post_whatsapp(url, payload, token)
+        ok, detail = _post_whatsapp(url, payload, token, timeout=20)
         if not ok:
             print(f"[whatsapp] failed to {to}: {detail}")
         return {"ok": ok, "detail": detail}
@@ -6542,6 +6542,56 @@ def push_test(user=Depends(get_current_user)):
             results.append({"host": host, "status": "error", "detail": str(e)[:200]})
     ok = sum(1 for r in results if r.get("status") in (200, 201))
     return {"count": len(subs), "ok": ok, "results": results}
+
+@app.get("/api/whatsapp/diagnose")
+def whatsapp_diagnose(user=Depends(require_admin)):
+    """Check whether THIS SERVER can reach the WhatsApp bridge — independent of
+    whatever the bridge's own status page shows in the admin's browser. Reports
+    DNS, TCP connect, and (best-effort) an HTTP response, with latencies."""
+    import socket, time as _t
+    from urllib.parse import urlparse
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    if not url:
+        return {"configured": False, "message": "WHATSAPP_NOTIFY_URL is not set on the server."}
+    u = urlparse(url)
+    host = u.hostname or ""
+    port = u.port or (443 if u.scheme == "https" else 80)
+    out = {"configured": True, "url_host": host, "port": port,
+           "dns": None, "tcp_connect": None, "http_status": None,
+           "latency_ms": None, "error": None}
+    # Private/loopback host the hosted server can never reach from the cloud.
+    if host in ("localhost", "127.0.0.1", "::1") or host.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.")):
+        out["error"] = (f"The bridge URL points to a private/local address ({host}). "
+                        "A hosted server can't reach that — the bridge must be on a public URL.")
+    try:
+        ip = socket.gethostbyname(host); out["dns"] = ip
+    except Exception as e:
+        out["error"] = f"DNS lookup failed for {host}: {e}"; return out
+    t0 = _t.time()
+    try:
+        with socket.create_connection((host, port), timeout=6):
+            out["tcp_connect"] = True
+    except Exception as e:
+        out["tcp_connect"] = False
+        out["latency_ms"] = round((_t.time() - t0) * 1000)
+        out["error"] = out["error"] or f"Can't open a connection to {host}:{port} — {e}. The bridge is unreachable from the server (down, wrong port, or blocked by a firewall)."
+        return out
+    # TCP is open; try a quick HTTP GET on the base URL to confirm it answers.
+    import urllib.request, urllib.error
+    try:
+        base = f"{u.scheme}://{u.netloc}/"
+        req = urllib.request.Request(base, method="GET", headers={"User-Agent": "MeenaScheduling/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            out["http_status"] = resp.status
+    except urllib.error.HTTPError as e:
+        out["http_status"] = e.code           # answered (even 404 means it's alive)
+    except Exception as e:
+        out["error"] = (f"Connected to {host}:{port} but it never sent an HTTP reply ({e}). "
+                        "The bridge process is hung or not serving HTTP on this port.")
+    out["latency_ms"] = round((_t.time() - t0) * 1000)
+    if not out["error"]:
+        out["message"] = "The server can reach the bridge. If sends still time out, the bridge accepts connections but its send handler hangs (often an unregistered number or a stuck WhatsApp session)."
+    return out
 
 # ── Direct messaging (custom WhatsApp / email to chosen staff) ────────────────
 _MSG_CHANNELS = ("app", "whatsapp", "email")
