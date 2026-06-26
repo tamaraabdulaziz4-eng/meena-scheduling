@@ -658,6 +658,40 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_inventory_mov_item ON scheduling.inventory_movements(item_id, created_at);")
 
+            # ── Equipment maintenance ────────────────────────────────────────────
+            # Devices per branch with a next preventive-maintenance due date, plus a
+            # log of every service. The lead is reminded before the PM is due.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.equipment (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    model TEXT,
+                    serial TEXT,
+                    vendor TEXT,
+                    next_pm_date DATE,
+                    active BOOLEAN NOT NULL DEFAULT true,
+                    pm_notified TEXT,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_equipment_branch ON scheduling.equipment(branch_id, active);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_equipment_pm ON scheduling.equipment(next_pm_date);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.maintenance_records (
+                    id SERIAL PRIMARY KEY,
+                    equipment_id INTEGER NOT NULL REFERENCES scheduling.equipment(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL DEFAULT 'preventive',
+                    service_date DATE NOT NULL,
+                    next_due DATE,
+                    vendor TEXT,
+                    cost NUMERIC,
+                    note TEXT,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_maint_equip ON scheduling.maintenance_records(equipment_id, service_date);")
+
             # Performance indexes for the hottest lookups. The UNIQUE constraints
             # already cover (schedule_id,staff_id,date), (branch_id,year,month),
             # (staff_id,date for leaves) and (branch_id,date for cases); these two
@@ -6118,6 +6152,160 @@ def inventory_movements(iid: int, user=Depends(require_admin)):
                 WHERE m.item_id=%s ORDER BY m.created_at DESC LIMIT 100""", (iid,))
     return {"movements": rows}
 
+# ── Equipment maintenance ─────────────────────────────────────────────────────
+_MAINT_KINDS = ("preventive", "corrective", "calibration", "inspection", "other")
+
+@app.get("/api/equipment")
+def list_equipment(request: Request, user=Depends(get_current_user)):
+    """Devices in scope with the next preventive-maintenance due date + days left."""
+    p = request.query_params
+    if user["role"] == "staff":
+        if not user.get("branch_id"):
+            return {"equipment": []}
+        branch_ids = [user["branch_id"]]
+    else:
+        _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    rows = q("""SELECT e.id, e.branch_id, b.name AS branch_name, e.name, e.model, e.serial, e.vendor,
+                       TO_CHAR(e.next_pm_date,'YYYY-MM-DD') AS next_pm_date,
+                       (e.next_pm_date - CURRENT_DATE) AS days_left
+                FROM scheduling.equipment e
+                JOIN scheduling.branches b ON b.id=e.branch_id
+                WHERE e.branch_id = ANY(%s) AND COALESCE(e.active,true)=true
+                ORDER BY e.next_pm_date NULLS LAST, e.name""", (branch_ids,))
+    is_admin = user["role"] in ("admin", "manager", "superadmin")
+    for r in rows:
+        r["can_manage"] = is_admin
+    return {"equipment": rows, "kinds": list(_MAINT_KINDS)}
+
+@app.post("/api/equipment")
+async def create_equipment(request: Request, user=Depends(require_admin)):
+    body = await request.json()
+    branch_id = body.get("branch_id") or user.get("branch_id")
+    branch_id = _int_or_400(branch_id, "branch_id")
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
+    name = (body.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "name is required")
+    next_pm = _valid_iso_date(body.get("next_pm_date")) if body.get("next_pm_date") else None
+    row = q("""INSERT INTO scheduling.equipment (branch_id,name,model,serial,vendor,next_pm_date,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (branch_id, name, (body.get("model") or "").strip()[:80] or None,
+             (body.get("serial") or "").strip()[:80] or None,
+             (body.get("vendor") or "").strip()[:80] or None, next_pm, user["id"]), one=True)
+    insert_audit(user, "EQUIPMENT_ADD", f"branch:{branch_id}", name)
+    return {"id": row["id"]}
+
+@app.put("/api/equipment/{eid}")
+async def update_equipment(eid: int, request: Request, user=Depends(require_admin)):
+    e = q("SELECT branch_id FROM scheduling.equipment WHERE id=%s", (eid,), one=True)
+    if not e:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, e["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    name = (body.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "name is required")
+    next_pm = _valid_iso_date(body.get("next_pm_date")) if body.get("next_pm_date") else None
+    q("""UPDATE scheduling.equipment SET name=%s, model=%s, serial=%s, vendor=%s, next_pm_date=%s,
+         pm_notified=NULL WHERE id=%s""",
+      (name, (body.get("model") or "").strip()[:80] or None, (body.get("serial") or "").strip()[:80] or None,
+       (body.get("vendor") or "").strip()[:80] or None, next_pm, eid), exec_only=True)
+    return {"ok": True}
+
+@app.delete("/api/equipment/{eid}")
+def delete_equipment(eid: int, user=Depends(require_admin)):
+    e = q("SELECT branch_id, name FROM scheduling.equipment WHERE id=%s", (eid,), one=True)
+    if not e:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, e["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    q("DELETE FROM scheduling.equipment WHERE id=%s", (eid,), exec_only=True)
+    insert_audit(user, "EQUIPMENT_DELETE", f"branch:{e['branch_id']}", e["name"])
+    return {"ok": True}
+
+@app.get("/api/equipment/{eid}/maintenance")
+def list_maintenance(eid: int, user=Depends(get_current_user)):
+    e = q("SELECT branch_id FROM scheduling.equipment WHERE id=%s", (eid,), one=True)
+    if not e:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, e["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    rows = q("""SELECT m.id, m.kind, TO_CHAR(m.service_date,'YYYY-MM-DD') AS service_date,
+                       TO_CHAR(m.next_due,'YYYY-MM-DD') AS next_due, m.vendor, m.cost, m.note,
+                       u.username AS by_name
+                FROM scheduling.maintenance_records m
+                LEFT JOIN scheduling.users u ON u.id=m.created_by
+                WHERE m.equipment_id=%s ORDER BY m.service_date DESC LIMIT 100""", (eid,))
+    return {"records": rows}
+
+@app.post("/api/equipment/{eid}/maintenance")
+async def log_maintenance(eid: int, request: Request, user=Depends(require_admin)):
+    """Log a service event; if a next-due date is given it becomes the device's
+    next preventive-maintenance reminder."""
+    e = q("SELECT branch_id FROM scheduling.equipment WHERE id=%s", (eid,), one=True)
+    if not e:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, e["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    kind = body.get("kind") if body.get("kind") in _MAINT_KINDS else "preventive"
+    service_date = _valid_iso_date(body.get("service_date"))
+    if not service_date:
+        raise HTTPException(400, "A valid service_date (YYYY-MM-DD) is required")
+    next_due = _valid_iso_date(body.get("next_due")) if body.get("next_due") else None
+    cost = None
+    if body.get("cost") not in (None, ""):
+        try: cost = float(body.get("cost"))
+        except (TypeError, ValueError): raise HTTPException(400, "Invalid cost")
+    q("""INSERT INTO scheduling.maintenance_records (equipment_id,kind,service_date,next_due,vendor,cost,note,created_by)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+      (eid, kind, service_date, next_due, (body.get("vendor") or "").strip()[:80] or None,
+       cost, (body.get("note") or "").strip()[:200] or None, user["id"]), exec_only=True)
+    if next_due:
+        q("UPDATE scheduling.equipment SET next_pm_date=%s, pm_notified=NULL WHERE id=%s", (next_due, eid), exec_only=True)
+    insert_audit(user, "MAINTENANCE_LOG", f"equip:{eid}", f"{kind} {service_date}")
+    return {"ok": True}
+
+def _send_maintenance_reminders():
+    """Remind branch leads about preventive maintenance due soon (or overdue),
+    once per device per threshold (overdue / 7d / 30d)."""
+    rows = q("""SELECT e.id, e.branch_id, e.name, e.pm_notified,
+                       (e.next_pm_date - CURRENT_DATE) AS days_left
+                FROM scheduling.equipment e
+                WHERE COALESCE(e.active,true)=true AND e.next_pm_date IS NOT NULL
+                  AND e.next_pm_date <= CURRENT_DATE + 30""")
+    for r in rows:
+        d = r["days_left"]
+        bucket = "overdue" if d < 0 else ("7" if d <= 7 else "30")
+        if r["pm_notified"] == bucket:
+            continue
+        when = (f"is overdue by {abs(d)} day(s)" if d < 0 else
+                ("is due today" if d == 0 else f"is due in {d} day(s)"))
+        msg = f"Preventive maintenance: {r['name']} {when}. Please schedule the service."
+        for u in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (r["branch_id"],)):
+            notify(u["id"], msg, link="equipment", ntype="reminder")
+        for u in q("SELECT id FROM scheduling.users WHERE role IN ('manager','superadmin')"):
+            notify(u["id"], msg, link="equipment", ntype="reminder", whatsapp=False)
+        q("UPDATE scheduling.equipment SET pm_notified=%s WHERE id=%s", (bucket, r["id"]), exec_only=True)
+    return len(rows)
+
+def _maintenance_reminder_loop():
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+            claimed = q("""INSERT INTO scheduling.app_settings (key,value)
+                           VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
+                        (f"maint_sweep:{ksa.strftime('%Y-%m-%d')}", ksa.isoformat()), one=True)
+            if claimed:
+                _send_maintenance_reminders()
+        except Exception as e:
+            print(f"[maintenance] {e}")
+        time.sleep(3600)
+
 def _send_credential_reminders():
     """Notify staff + their branch lead(s) + reviewers about credentials expiring
     within 30 days (or already expired), once per credential per threshold."""
@@ -6438,6 +6626,7 @@ def start_scheduler():
     threading.Thread(target=_cases_reminder_loop, daemon=True).start()
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()
+    threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
 
 def _credential_reminder_loop():
     """Once a day, sweep for credentials expiring within 30 days and alert."""
