@@ -1,0 +1,16 @@
+{
+  "name": "Meena Health",
+  "short_name": "Meena",
+  "description": "Radiology staff scheduling & operations",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0e0f1a",
+  "theme_color": "#0e0f1a",
+  "lang": "ar",
+  "dir": "auto",
+  "icons": [
+    { "src": "/meena_logo_transparent.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/meena_logo_transparent.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
