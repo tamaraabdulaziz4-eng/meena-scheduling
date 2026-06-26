@@ -6406,21 +6406,22 @@ def _vapid_subject():
 
 def send_web_push_to_user(user_id, message, link=None, title="Meena Health"):
     """Fan a browser push out to all of a user's registered devices. Best-effort:
-    prunes subscriptions the push service reports as gone (404/410)."""
+    prunes subscriptions the push service reports as gone (404/410). Returns the
+    number of devices targeted (0 if the user has none registered)."""
     if not user_id:
-        return
+        return 0
     try:
         subs = q("""SELECT id, endpoint, p256dh, auth FROM scheduling.push_subscriptions
                     WHERE user_id=%s""", (user_id,))
     except Exception:
-        return
+        return 0
     if not subs:
-        return
+        return 0
     payload = {"title": title, "body": message, "link": link or "home"}
     if os.environ.get("WEBPUSH_CAPTURE"):
         for s in subs:
             _webpush_outbox.append({"user_id": user_id, "endpoint": s["endpoint"], **payload})
-        return
+        return len(subs)
     priv, pub = _vapid_keys()
     subj = _vapid_subject()
     def _worker():
@@ -6432,6 +6433,7 @@ def send_web_push_to_user(user_id, message, link=None, title="Meena Health"):
             except Exception as e:
                 print(f"[webpush] {s['endpoint'][:40]}…: {e}")
     threading.Thread(target=_worker, daemon=True).start()
+    return len(subs)
 
 @app.get("/api/push/vapid")
 def push_vapid(user=Depends(get_current_user)):
@@ -6533,7 +6535,7 @@ def _send_custom(staff_rows, message, subject, channels):
     want_app = "app" in channels
     want_wa = "whatsapp" in channels
     want_em = "email" in channels
-    out = {"delivered": 0, "whatsapp": 0, "email": 0, "app": 0}
+    out = {"delivered": 0, "whatsapp": 0, "email": 0, "app": 0, "push": 0, "no_login": 0}
     for st in staff_rows:
         msg = _personalize(message, st.get("name"))
         reached = False
@@ -6543,11 +6545,13 @@ def _send_custom(staff_rows, message, subject, channels):
                 try:
                     q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
                          VALUES (%s,%s,%s,%s)""", (u["id"], msg, "home", "message"), exec_only=True)
-                    try: send_web_push_to_user(u["id"], msg, link="home")
+                    try: out["push"] += (send_web_push_to_user(u["id"], msg, link="home") or 0)
                     except Exception: pass
                     out["app"] += 1; reached = True
                 except Exception:
                     pass
+            else:
+                out["no_login"] += 1   # staff has no account → no in-app/push possible
         if want_wa and st.get("phone"):
             send_whatsapp(st["phone"], msg, ntype="message", force=True); out["whatsapp"] += 1; reached = True
         if want_em and st.get("email"):
