@@ -6493,7 +6493,10 @@ def message_recipients(request: Request, user=Depends(require_admin)):
     rows = q("""SELECT s.id, s.name, s.speciality, s.branch_id, b.name AS branch_name,
                        (s.phone IS NOT NULL AND s.phone <> '') AS has_phone,
                        (s.email IS NOT NULL AND s.email <> '') AS has_email,
-                       EXISTS(SELECT 1 FROM scheduling.users u WHERE u.staff_id=s.id) AS has_login
+                       EXISTS(SELECT 1 FROM scheduling.users u WHERE u.staff_id=s.id) AS has_login,
+                       EXISTS(SELECT 1 FROM scheduling.push_subscriptions ps
+                              JOIN scheduling.users u2 ON u2.id=ps.user_id
+                              WHERE u2.staff_id=s.id) AS has_push
                 FROM scheduling.staff s
                 JOIN scheduling.branches b ON b.id=s.branch_id
                 WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
