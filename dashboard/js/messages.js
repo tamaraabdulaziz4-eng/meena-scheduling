@@ -149,8 +149,13 @@ async function sendMessage() {
     if (r.whatsapp) parts.push(`${r.whatsapp} WhatsApp`);
     if (r.email) parts.push(`${r.email} email`);
     if (r.app) parts.push(`${r.app} in-app`);
+    if (r.push) parts.push(`${r.push} device 🔔`);
     toast(`Sent to ${r.delivered} staff${parts.length ? ' (' + parts.join(', ') + ')' : ''}`);
-    document.getElementById('msg-status').textContent = `Last send: ${r.delivered} reached.`;
+    // Make the "no device notification" case obvious so it's clear why a phone stayed silent.
+    let status = `Last send: ${r.delivered} reached`;
+    if (_msgChannels.has('app') && !r.push) status += ' · no recipient has device notifications on yet';
+    else if (r.push) status += ` · ${r.push} device${r.push > 1 ? 's' : ''} pinged`;
+    document.getElementById('msg-status').textContent = status + '.';
   } catch (e) { toast(e.message || 'Failed to send', 'err'); }
   finally { btn.disabled = false; btn.textContent = 'Send'; }
 }
