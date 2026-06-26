@@ -12,7 +12,6 @@ async function renderHomePage() {
   setTopbar('Home', 'Your overview at a glance');
   const today = new Date();
   const greg = today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  const date = (typeof operationalDate === 'function') ? operationalDate() : fmtDate(today);
 
   document.getElementById('content').innerHTML = `
     <div class="phero">
@@ -42,20 +41,11 @@ async function renderHomePage() {
       <div id="hm-staff-results" class="hm-results"></div>
     </div>
     <div id="hm-eotm"></div>
-    <div id="hm-kpis" class="rep-kpis screen-kpis"></div>
     <div id="hm-actions" class="hm-actions"></div>
     <div id="hm-approvals"></div>
     <div id="hm-credentials"></div>
     <div id="hm-onduty"></div>
-    <div id="hm-shiftcheck"></div>
-    <div class="hm-card">
-      <div class="hm-card-head">
-        <div class="hm-card-title">Today's cases</div>
-        <div class="hm-card-meta" id="hm-cases-meta"></div>
-      </div>
-      <div class="home-bar"><div class="home-bar-fill" id="hm-bar" style="width:0%"></div></div>
-      <div id="hm-cases-list" class="hm-branch-list">${LOADING_HTML}</div>
-    </div>`;
+    <div id="hm-shiftcheck"></div>`;
 
   // Fire EVERY card's fetch at once — don't make the side cards wait behind the
   // KPIs/cases call (that serialization is what made on-duty / approvals pop in
@@ -67,14 +57,11 @@ async function renderHomePage() {
   renderHomeRecent();
   _bindHomeSearchShortcut();
 
-  // KPIs + per-branch cases (their own two calls, in parallel).
-  const [dash, ov] = await Promise.all([
-    API.get('/dashboard').catch(() => null),
-    API.get(`/daily-cases/overview?date=${date}`).catch(() => null),
-  ]);
-  renderHomeKpis(dash, ov);
+  // Pending-action shortcuts (one fast call). The daily-cases overview used to
+  // load here too, but it was slow and held up the admin Home — cases now live
+  // only on the Cases page.
+  const dash = await API.get('/dashboard').catch(() => null);
   renderHomeActions(dash);
-  renderHomeCases(ov);
 }
 
 // Shimmer placeholder so a card shows a stable loading state instead of staying
@@ -199,26 +186,6 @@ async function homeApproveTimeback(id) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
-function renderHomeKpis(d, ov) {
-  const box = document.getElementById('hm-kpis');
-  if (!box) return;
-  const s = (ov && ov.summary) || {};
-  const branches = (ov && ov.branches) || [];
-  const submitted = branches.filter(b => b.case && b.case.locked).length;
-  const pending = d ? ((d.pending_reviews || 0) + (d.pending_leaves || 0) + (d.pending_swaps || 0) + (d.pending_registrations || 0)) : 0;
-  const kpi = (cls, label, value, sub) => `
-    <div class="rep-kpi">
-      <div class="rep-kpi-top"><span class="rep-dot ${cls}"></span><span class="rep-kpi-label">${label}</span></div>
-      <div class="rep-kpi-num">${value}</div>
-      <div class="rep-kpi-sub">${escapeHtml(sub)}</div>
-    </div>`;
-  box.innerHTML =
-    kpi('v', "Today's Cases", s.total_cases || 0, 'All branches') +
-    kpi('v', 'Patients', s.total_pt || 0, 'Registered today') +
-    kpi('v', 'Submitted', `${submitted}/${branches.length || 0}`, 'Branches reported') +
-    kpi(pending ? 'r' : 'v', 'Pending', pending, 'Awaiting you');
-}
-
 function renderHomeActions(d) {
   const box = document.getElementById('hm-actions');
   if (!box || !d) { if (box) box.innerHTML = ''; return; }
@@ -234,32 +201,6 @@ function renderHomeActions(d) {
       <span class="hm-chip-n">${n}</span>
       <span class="hm-chip-l">${label}</span>
     </button>`).join('');
-}
-
-function renderHomeCases(ov) {
-  const list = document.getElementById('hm-cases-list');
-  const meta = document.getElementById('hm-cases-meta');
-  const bar  = document.getElementById('hm-bar');
-  if (!ov || !list) { if (list) list.innerHTML = `<div class="hm-muted">Couldn't load today's cases.</div>`; return; }
-  const branches = ov.branches || [];
-  const s = ov.summary || {};
-  const total = branches.length;
-  const submitted = branches.filter(b => b.case && b.case.locked).length;
-  const pct = total ? Math.round((submitted / total) * 100) : 0;
-  if (bar) { bar.style.width = pct + '%'; bar.classList.toggle('done', total && submitted >= total); }
-  if (meta) meta.innerHTML = `<b>${submitted}/${total}</b> submitted · ${s.total_cases || 0} cases · ${s.total_pt || 0} patients`;
-  if (!total) { list.innerHTML = `<div class="hm-muted">No branches yet.</div>`; return; }
-  list.innerHTML = branches.map(b => {
-    const c = b.case, done = c && c.locked;
-    return `<div class="hm-branch" onclick="showPage('cases')">
-      <span class="hm-branch-name">${escapeHtml(b.branch_name)}</span>
-      ${done
-        ? `<span class="hm-branch-cases">${c.total_cases} cases · ${c.total_pt || 0} pt</span>
-           <span class="hm-pill ok">Submitted</span>`
-        : `<span class="hm-branch-cases hm-muted">—</span>
-           <span class="hm-pill wait">Pending</span>`}
-    </div>`;
-  }).join('');
 }
 
 // ── Manager home: live staff lookup by name / employee ID ─────────────────────

@@ -60,6 +60,34 @@ body {
   font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg); color: var(--text); font-size: 14px;
   transition: background 0.2s, color 0.2s;
+  /* No grey flash on tap and no rubber-band overscroll — feels native. */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+html { overscroll-behavior-y: none; background: var(--bg); }
+/* Don't let users accidentally select the navigation chrome / buttons, but keep
+   real data in the content area copyable (accession numbers, phones, IDs…). */
+.sidebar, .topbar, .nav-item, .seg, .seg-chip, .hm-chip, .hm-fchip,
+.btn, .action-btn, button, .rep-pill {
+  -webkit-user-select: none; user-select: none;
+}
+.content, .notif-panel { -webkit-user-select: text; user-select: text; }
+.content button, .content .btn, .content .action-btn, .content .seg-chip,
+.content .hm-chip, .content .hm-fchip {
+  -webkit-user-select: none; user-select: none;
+}
+
+/* ── Installed-app (standalone) polish: respect the notch / home indicator ──
+   Only applies when launched from the Home Screen, so normal browser tabs are
+   untouched. viewport-fit=cover (in <head>) exposes the safe-area insets. */
+@media (display-mode: standalone) {
+  .topbar { padding-top: calc(14px + env(safe-area-inset-top)); }
+  .content { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .sidebar { padding-top: env(safe-area-inset-top); }
+  .sidebar-bottom { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  .sidebar-toggle { top: calc(14px + env(safe-area-inset-top)) !important; }
+  /* Bottom-pinned overlays clear the home indicator. */
+  #toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
 }
 
 /* ── Layout ── */
