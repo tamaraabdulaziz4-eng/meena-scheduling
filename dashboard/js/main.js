@@ -116,6 +116,8 @@ async function initApp() {
   if (equipmentNav) equipmentNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
+  // Register the service worker + reflect device-notification state in the bell.
+  if (typeof initPush === 'function') initPush();
   // Auto sign-out after a stretch of inactivity.
   if (typeof startIdleWatch === 'function') startIdleWatch();
   // Load org settings (leave cutoff day) so the leave UI can warn early.
@@ -145,7 +147,9 @@ async function initApp() {
   // Await the first page render so the welcome splash — shown by doLogin — stays
   // up until the page is on screen. Honour a deep-link hash (e.g. after a
   // refresh or a shared link) when it points to a page this user may see.
-  await showPage(pageFromHash() || window._defaultPage || 'schedule');
+  // A notification tap can open the app at /?p=<page>.
+  const deepLink = new URLSearchParams(location.search).get('p');
+  await showPage(deepLink || pageFromHash() || window._defaultPage || 'schedule');
 }
 
 // Resolve role-based redirects up front so a blocked route animates ONCE to its

@@ -6,7 +6,7 @@ Run:
     python -m uvicorn server.main:app --port 3002 --reload
 """
 
-import os, sys, json, math, re, uuid, calendar as _cal
+import os, sys, json, math, re, uuid, threading, calendar as _cal
 
 # Load .env from project root
 _env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -28,6 +28,12 @@ from fastapi import FastAPI, Request, Response, HTTPException, Depends, Cookie
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+
+try:                                   # local module, same package
+    from server import webpush as _webpush
+except Exception:                      # standalone / script import fallback
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import webpush as _webpush
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -312,6 +318,18 @@ def init_schema():
                 );
                 CREATE INDEX IF NOT EXISTS notifications_user_unread
                     ON scheduling.notifications (user_id, is_read);
+
+                CREATE TABLE IF NOT EXISTS scheduling.push_subscriptions (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES scheduling.users(id) ON DELETE CASCADE,
+                    endpoint TEXT NOT NULL UNIQUE,
+                    p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL,
+                    user_agent TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS push_subscriptions_user
+                    ON scheduling.push_subscriptions (user_id);
 
                 CREATE TABLE IF NOT EXISTS scheduling.shift_swaps (
                     id SERIAL PRIMARY KEY,
@@ -1295,6 +1313,13 @@ def notify(user_id, message, link=None, ntype="info", whatsapp=True):
             send_whatsapp(u["staff_phone"], message, ntype=ntype, link=link)
     except Exception:
         pass
+    # Browser push to the user's registered devices. Gated on the same `whatsapp`
+    # flag so an off-shift night reminder doesn't buzz their phone either.
+    if whatsapp:
+        try:
+            send_web_push_to_user(user_id, message, link=link)
+        except Exception:
+            pass
 
 def notify_roles(roles, message, link=None, ntype="info", exclude_user=None):
     """Notify every user holding one of `roles` (used to alert reviewers)."""
@@ -1630,6 +1655,24 @@ def serve_downtime_public():
     return FileResponse(
         os.path.join(DASHBOARD, "downtime-public.html"),
         media_type="text/html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+@app.get("/sw.js")
+def serve_service_worker():
+    """Served from root so the service worker controls the whole app scope."""
+    return FileResponse(
+        os.path.join(DASHBOARD, "sw.js"),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache, must-revalidate",
+                 "Service-Worker-Allowed": "/"},
+    )
+
+@app.get("/manifest.json")
+def serve_manifest():
+    return FileResponse(
+        os.path.join(DASHBOARD, "manifest.json"),
+        media_type="application/manifest+json",
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
@@ -6306,6 +6349,102 @@ def _maintenance_reminder_loop():
             print(f"[maintenance] {e}")
         time.sleep(3600)
 
+# ── Web Push (browser notifications, incl. when the app is closed) ────────────
+_webpush_outbox = []          # populated when WEBPUSH_CAPTURE is set (tests)
+_vapid_cache = None           # (private_b64, public_b64) once resolved
+
+def _vapid_keys():
+    """Resolve the VAPID keypair: env override first, else generate once and
+    persist in app_settings so every worker shares the same identity."""
+    global _vapid_cache
+    if _vapid_cache:
+        return _vapid_cache
+    env_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip()
+    env_pub = (os.environ.get("VAPID_PUBLIC_KEY") or "").strip()
+    if env_priv and env_pub:
+        _vapid_cache = (env_priv, env_pub)
+        return _vapid_cache
+    priv = get_setting("vapid_private")
+    pub = get_setting("vapid_public")
+    if not (priv and pub):
+        priv, pub = _webpush.generate_vapid_keys()
+        # Race-safe: first writer wins, then re-read the stored pair.
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('vapid_private',%s)
+             ON CONFLICT (key) DO NOTHING""", (priv,), exec_only=True)
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('vapid_public',%s)
+             ON CONFLICT (key) DO NOTHING""", (pub,), exec_only=True)
+        priv = get_setting("vapid_private"); pub = get_setting("vapid_public")
+    _vapid_cache = (priv, pub)
+    return _vapid_cache
+
+def _vapid_subject():
+    return (os.environ.get("VAPID_SUBJECT") or "mailto:notifications@meena-health.com").strip()
+
+def send_web_push_to_user(user_id, message, link=None, title="Meena Health"):
+    """Fan a browser push out to all of a user's registered devices. Best-effort:
+    prunes subscriptions the push service reports as gone (404/410)."""
+    if not user_id:
+        return
+    try:
+        subs = q("""SELECT id, endpoint, p256dh, auth FROM scheduling.push_subscriptions
+                    WHERE user_id=%s""", (user_id,))
+    except Exception:
+        return
+    if not subs:
+        return
+    payload = {"title": title, "body": message, "link": link or "home"}
+    if os.environ.get("WEBPUSH_CAPTURE"):
+        for s in subs:
+            _webpush_outbox.append({"user_id": user_id, "endpoint": s["endpoint"], **payload})
+        return
+    priv, pub = _vapid_keys()
+    subj = _vapid_subject()
+    def _worker():
+        for s in subs:
+            try:
+                code = _webpush.send(s, payload, vapid_private=priv, vapid_public=pub, subject=subj)
+                if code in (404, 410):
+                    q("DELETE FROM scheduling.push_subscriptions WHERE id=%s", (s["id"],), exec_only=True)
+            except Exception as e:
+                print(f"[webpush] {s['endpoint'][:40]}…: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+
+@app.get("/api/push/vapid")
+def push_vapid(user=Depends(get_current_user)):
+    """Public VAPID key the browser needs to create a subscription."""
+    try:
+        _, pub = _vapid_keys()
+        return {"public_key": pub}
+    except Exception:
+        raise HTTPException(503, "Push not available")
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    endpoint = (body.get("endpoint") or "").strip()
+    keys = body.get("keys") or {}
+    p256dh = (keys.get("p256dh") or body.get("p256dh") or "").strip()
+    auth = (keys.get("auth") or body.get("auth") or "").strip()
+    if not (endpoint and p256dh and auth):
+        raise HTTPException(400, "Invalid subscription")
+    ua = (request.headers.get("user-agent") or "")[:300]
+    q("""INSERT INTO scheduling.push_subscriptions (user_id,endpoint,p256dh,auth,user_agent)
+         VALUES (%s,%s,%s,%s,%s)
+         ON CONFLICT (endpoint) DO UPDATE
+           SET user_id=EXCLUDED.user_id, p256dh=EXCLUDED.p256dh,
+               auth=EXCLUDED.auth, user_agent=EXCLUDED.user_agent""",
+      (user["id"], endpoint, p256dh, auth, ua), exec_only=True)
+    return {"ok": True}
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    endpoint = (body.get("endpoint") or "").strip()
+    if endpoint:
+        q("""DELETE FROM scheduling.push_subscriptions
+             WHERE endpoint=%s AND user_id=%s""", (endpoint, user["id"]), exec_only=True)
+    return {"ok": True}
+
 # ── Direct messaging (custom WhatsApp / email to chosen staff) ────────────────
 _MSG_CHANNELS = ("app", "whatsapp", "email")
 
@@ -6341,6 +6480,8 @@ def _send_custom(staff_rows, message, subject, channels):
                 try:
                     q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
                          VALUES (%s,%s,%s,%s)""", (u["id"], msg, "home", "message"), exec_only=True)
+                    try: send_web_push_to_user(u["id"], msg, link="home")
+                    except Exception: pass
                     out["app"] += 1; reached = True
                 except Exception:
                     pass
