@@ -626,6 +626,38 @@ def init_schema():
                     PRIMARY KEY (code, ymd)
                 );""")
 
+            # ── Consumables inventory ────────────────────────────────────────────
+            # Each branch tracks stock items. Staff log what they take → qty drops;
+            # when it reaches the reorder level (default half of full) the lead is
+            # alerted to reorder. Every movement is logged for accountability.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.inventory_items (
+                    id SERIAL PRIMARY KEY,
+                    branch_id INTEGER NOT NULL REFERENCES scheduling.branches(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    unit TEXT,
+                    full_qty NUMERIC NOT NULL DEFAULT 0,
+                    qty NUMERIC NOT NULL DEFAULT 0,
+                    reorder_level NUMERIC NOT NULL DEFAULT 0,
+                    low_notified BOOLEAN NOT NULL DEFAULT false,
+                    active BOOLEAN NOT NULL DEFAULT true,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inventory_branch ON scheduling.inventory_items(branch_id, active);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.inventory_movements (
+                    id SERIAL PRIMARY KEY,
+                    item_id INTEGER NOT NULL REFERENCES scheduling.inventory_items(id) ON DELETE CASCADE,
+                    delta NUMERIC NOT NULL,
+                    reason TEXT,
+                    by_user INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    by_staff INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inventory_mov_item ON scheduling.inventory_movements(item_id, created_at);")
+
             # Performance indexes for the hottest lookups. The UNIQUE constraints
             # already cover (schedule_id,staff_id,date), (branch_id,year,month),
             # (staff_id,date for leaves) and (branch_id,date for cases); these two
@@ -5915,6 +5947,176 @@ def regen_downtime_link(user=Depends(require_reviewer)):
          ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
     insert_audit(user, "DOWNTIME_LINK_REGEN")
     return {"url": _downtime_public_url(), "token": t}
+
+# ── Consumables inventory ─────────────────────────────────────────────────────
+def _inv_num(v, name, default=None):
+    """Parse a non-negative number (qty can be fractional, e.g. 2.5 boxes)."""
+    if v is None or v == "":
+        if default is not None:
+            return default
+        raise HTTPException(400, f"{name} is required")
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Invalid {name}")
+    if n < 0:
+        raise HTTPException(400, f"{name} can't be negative")
+    return n
+
+def _inv_decorate(rows, user):
+    is_admin = user["role"] in ("admin", "manager", "superadmin")
+    for r in rows:
+        full = float(r.get("full_qty") or 0)
+        qty = float(r.get("qty") or 0)
+        r["qty"] = round(qty, 2)
+        r["full_qty"] = round(full, 2)
+        r["reorder_level"] = round(float(r.get("reorder_level") or 0), 2)
+        r["pct"] = round((qty / full) * 100) if full > 0 else 0
+        r["low"] = bool(qty <= r["reorder_level"])
+        r["can_manage"] = is_admin
+    return rows
+
+@app.get("/api/inventory")
+def list_inventory(request: Request, user=Depends(get_current_user)):
+    """Stock items in scope. Staff: own branch; lead/manager: their scope."""
+    p = request.query_params
+    if user["role"] == "staff":
+        if not user.get("branch_id"):
+            return {"items": []}
+        branch_ids = [user["branch_id"]]
+    else:
+        _, branch_ids = _report_branch_scope(user, p.get("branch_id"))
+    rows = q("""SELECT i.id, i.branch_id, b.name AS branch_name, i.name, i.unit,
+                       i.full_qty, i.qty, i.reorder_level
+                FROM scheduling.inventory_items i
+                JOIN scheduling.branches b ON b.id=i.branch_id
+                WHERE i.branch_id = ANY(%s) AND COALESCE(i.active,true)=true
+                ORDER BY (i.qty <= i.reorder_level) DESC, i.name""", (branch_ids,))
+    return {"items": _inv_decorate(rows, user)}
+
+@app.post("/api/inventory")
+async def create_inventory_item(request: Request, user=Depends(require_admin)):
+    """Add a stock item (team lead / manager). reorder_level defaults to half."""
+    body = await request.json()
+    branch_id = body.get("branch_id") or user.get("branch_id")
+    branch_id = _int_or_400(branch_id, "branch_id")
+    if not can_access_branch(user, branch_id):
+        raise HTTPException(403, "Forbidden")
+    name = (body.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "name is required")
+    full = _inv_num(body.get("full_qty") if body.get("full_qty") not in (None, "") else body.get("qty"), "full_qty")
+    qty = _inv_num(body.get("qty"), "qty", default=full)
+    reorder = _inv_num(body.get("reorder_level"), "reorder_level", default=round(full / 2, 2))
+    row = q("""INSERT INTO scheduling.inventory_items (branch_id,name,unit,full_qty,qty,reorder_level,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (branch_id, name, (body.get("unit") or "").strip()[:20] or None, full, qty, reorder, user["id"]), one=True)
+    insert_audit(user, "INVENTORY_ADD", f"branch:{branch_id}", name)
+    return q("""SELECT i.id, i.branch_id, i.name, i.unit, i.full_qty, i.qty, i.reorder_level
+                FROM scheduling.inventory_items i WHERE i.id=%s""", (row["id"],), one=True)
+
+@app.put("/api/inventory/{iid}")
+async def update_inventory_item(iid: int, request: Request, user=Depends(require_admin)):
+    it = q("SELECT branch_id FROM scheduling.inventory_items WHERE id=%s", (iid,), one=True)
+    if not it:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, it["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    name = (body.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "name is required")
+    full = _inv_num(body.get("full_qty"), "full_qty")
+    reorder = _inv_num(body.get("reorder_level"), "reorder_level", default=round(full / 2, 2))
+    q("""UPDATE scheduling.inventory_items SET name=%s, unit=%s, full_qty=%s, reorder_level=%s, updated_at=NOW()
+         WHERE id=%s""", (name, (body.get("unit") or "").strip()[:20] or None, full, reorder, iid), exec_only=True)
+    return {"ok": True}
+
+@app.delete("/api/inventory/{iid}")
+def delete_inventory_item(iid: int, user=Depends(require_admin)):
+    it = q("SELECT branch_id, name FROM scheduling.inventory_items WHERE id=%s", (iid,), one=True)
+    if not it:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, it["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    q("DELETE FROM scheduling.inventory_items WHERE id=%s", (iid,), exec_only=True)
+    insert_audit(user, "INVENTORY_DELETE", f"branch:{it['branch_id']}", it["name"])
+    return {"ok": True}
+
+def _inventory_apply(iid, delta, reason, user):
+    """Apply a stock movement atomically; alert the lead when it crosses low."""
+    it = q("""UPDATE scheduling.inventory_items
+              SET qty = GREATEST(0, qty + %s), updated_at=NOW()
+              WHERE id=%s RETURNING id, branch_id, name, unit, qty, full_qty, reorder_level, low_notified""",
+           (delta, iid), one=True)
+    if not it:
+        raise HTTPException(404, "Not found")
+    q("""INSERT INTO scheduling.inventory_movements (item_id,delta,reason,by_user,by_staff)
+         VALUES (%s,%s,%s,%s,%s)""",
+      (iid, delta, (reason or "").strip()[:120] or None, user.get("id"), user.get("staff_id")), exec_only=True)
+    qty = float(it["qty"]); reorder = float(it["reorder_level"])
+    if qty <= reorder and not it["low_notified"]:
+        msg = (f"Low stock: {it['name']} at {branch_name_of(it['branch_id'])} is down to "
+               f"{_fmt_qty(qty)}{(' ' + it['unit']) if it['unit'] else ''} — time to reorder.")
+        for u in q("SELECT id FROM scheduling.users WHERE role='admin' AND branch_id=%s", (it["branch_id"],)):
+            notify(u["id"], msg, link="inventory", ntype="reminder")
+        q("UPDATE scheduling.inventory_items SET low_notified=true WHERE id=%s", (iid,), exec_only=True)
+    elif qty > reorder and it["low_notified"]:
+        q("UPDATE scheduling.inventory_items SET low_notified=false WHERE id=%s", (iid,), exec_only=True)
+    return it
+
+def _fmt_qty(n):
+    n = float(n)
+    return str(int(n)) if n == int(n) else f"{n:.2f}".rstrip("0").rstrip(".")
+
+def branch_name_of(bid):
+    r = q("SELECT name FROM scheduling.branches WHERE id=%s", (bid,), one=True)
+    return r["name"] if r else f"Branch {bid}"
+
+@app.post("/api/inventory/{iid}/take")
+async def take_inventory(iid: int, request: Request, user=Depends(get_current_user)):
+    """A staff member records taking some quantity → stock drops. Any branch staff."""
+    it = q("SELECT branch_id FROM scheduling.inventory_items WHERE id=%s", (iid,), one=True)
+    if not it:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, it["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    amount = _inv_num(body.get("amount"), "amount")
+    if amount <= 0:
+        raise HTTPException(400, "amount must be greater than 0")
+    res = _inventory_apply(iid, -amount, body.get("reason"), user)
+    return {"ok": True, "qty": round(float(res["qty"]), 2)}
+
+@app.post("/api/inventory/{iid}/restock")
+async def restock_inventory(iid: int, request: Request, user=Depends(require_admin)):
+    """Reorder arrived — add quantity back (team lead / manager)."""
+    it = q("SELECT branch_id FROM scheduling.inventory_items WHERE id=%s", (iid,), one=True)
+    if not it:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, it["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    body = await request.json()
+    amount = _inv_num(body.get("amount"), "amount")
+    if amount <= 0:
+        raise HTTPException(400, "amount must be greater than 0")
+    res = _inventory_apply(iid, amount, "restock", user)
+    return {"ok": True, "qty": round(float(res["qty"]), 2)}
+
+@app.get("/api/inventory/{iid}/movements")
+def inventory_movements(iid: int, user=Depends(require_admin)):
+    it = q("SELECT branch_id FROM scheduling.inventory_items WHERE id=%s", (iid,), one=True)
+    if not it:
+        raise HTTPException(404, "Not found")
+    if not can_access_branch(user, it["branch_id"]):
+        raise HTTPException(403, "Forbidden")
+    rows = q("""SELECT m.delta, m.reason, COALESCE(s.name,u.username) AS by_name,
+                       TO_CHAR(m.created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
+                FROM scheduling.inventory_movements m
+                LEFT JOIN scheduling.users u ON u.id=m.by_user
+                LEFT JOIN scheduling.staff s ON s.id=m.by_staff
+                WHERE m.item_id=%s ORDER BY m.created_at DESC LIMIT 100""", (iid,))
+    return {"movements": rows}
 
 def _send_credential_reminders():
     """Notify staff + their branch lead(s) + reviewers about credentials expiring
