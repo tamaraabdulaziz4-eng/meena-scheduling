@@ -151,10 +151,14 @@ async function sendMessage() {
     if (r.app) parts.push(`${r.app} in-app`);
     if (r.push) parts.push(`${r.push} device 🔔`);
     toast(`Sent to ${r.delivered} staff${parts.length ? ' (' + parts.join(', ') + ')' : ''}`);
-    // Make the "no device notification" case obvious so it's clear why a phone stayed silent.
+    // Make device-push delivery explicit so it's clear why a phone did/didn't buzz.
     let status = `Last send: ${r.delivered} reached`;
-    if (_msgChannels.has('app') && !r.push) status += ' · no recipient has device notifications on yet';
-    else if (r.push) status += ` · ${r.push} device${r.push > 1 ? 's' : ''} pinged`;
+    if (_msgChannels.has('app')) {
+      if (r.push) status += ` · ${r.push} device${r.push > 1 ? 's' : ''} delivered ✅`;
+      else if (r.push_targeted && r.push_error) status += ` · device push failed: ${r.push_error}`;
+      else if (r.push_targeted) status += ' · device push sent but not confirmed';
+      else status += ' · no recipient has device notifications on yet';
+    }
     document.getElementById('msg-status').textContent = status + '.';
   } catch (e) { toast(e.message || 'Failed to send', 'err'); }
   finally { btn.disabled = false; btn.textContent = 'Send'; }

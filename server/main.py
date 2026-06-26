@@ -6404,35 +6404,48 @@ def _vapid_keys():
 def _vapid_subject():
     return (os.environ.get("VAPID_SUBJECT") or "mailto:notifications@meena-health.com").strip()
 
-def send_web_push_to_user(user_id, message, link=None, title="Meena Health"):
+def send_web_push_to_user(user_id, message, link=None, title="Meena Health", sync=False):
     """Fan a browser push out to all of a user's registered devices. Best-effort:
-    prunes subscriptions the push service reports as gone (404/410). Returns the
-    number of devices targeted (0 if the user has none registered)."""
+    prunes subscriptions the push service reports as gone (404/410).
+
+    Default (sync=False): fire in a background thread, return the number of
+    devices targeted. sync=True: send inline and return a dict
+    {targeted, delivered, results:[{status|error}]} — used by the interactive
+    message-send so the real per-device outcome can be shown to the sender."""
     if not user_id:
-        return 0
+        return {"targeted": 0, "delivered": 0, "results": []} if sync else 0
     try:
         subs = q("""SELECT id, endpoint, p256dh, auth FROM scheduling.push_subscriptions
                     WHERE user_id=%s""", (user_id,))
     except Exception:
-        return 0
+        return {"targeted": 0, "delivered": 0, "results": []} if sync else 0
     if not subs:
-        return 0
+        return {"targeted": 0, "delivered": 0, "results": []} if sync else 0
     payload = {"title": title, "body": message, "link": link or "home"}
     if os.environ.get("WEBPUSH_CAPTURE"):
         for s in subs:
             _webpush_outbox.append({"user_id": user_id, "endpoint": s["endpoint"], **payload})
-        return len(subs)
+        return {"targeted": len(subs), "delivered": len(subs),
+                "results": [{"status": 201} for _ in subs]} if sync else len(subs)
     priv, pub = _vapid_keys()
     subj = _vapid_subject()
-    def _worker():
-        for s in subs:
-            try:
-                code = _webpush.send(s, payload, vapid_private=priv, vapid_public=pub, subject=subj)
-                if code in (404, 410):
-                    q("DELETE FROM scheduling.push_subscriptions WHERE id=%s", (s["id"],), exec_only=True)
-            except Exception as e:
-                print(f"[webpush] {s['endpoint'][:40]}…: {e}")
-    threading.Thread(target=_worker, daemon=True).start()
+
+    def _send_one(s):
+        try:
+            code = _webpush.send(s, payload, vapid_private=priv, vapid_public=pub, subject=subj)
+            if code in (404, 410):
+                q("DELETE FROM scheduling.push_subscriptions WHERE id=%s", (s["id"],), exec_only=True)
+            return {"status": code}
+        except Exception as e:
+            print(f"[webpush] {s['endpoint'][:40]}…: {e}")
+            return {"error": str(e)[:200]}
+
+    if sync:
+        results = [_send_one(s) for s in subs]
+        delivered = sum(1 for r in results if r.get("status") in (200, 201))
+        return {"targeted": len(subs), "delivered": delivered, "results": results}
+
+    threading.Thread(target=lambda: [_send_one(s) for s in subs], daemon=True).start()
     return len(subs)
 
 @app.get("/api/push/vapid")
@@ -6535,7 +6548,11 @@ def _send_custom(staff_rows, message, subject, channels):
     want_app = "app" in channels
     want_wa = "whatsapp" in channels
     want_em = "email" in channels
-    out = {"delivered": 0, "whatsapp": 0, "email": 0, "app": 0, "push": 0, "no_login": 0}
+    # Small interactive sends push synchronously so the sender sees real delivery;
+    # bulk sends stay non-blocking (fire-and-forget) to avoid stalling the worker.
+    sync_push = len(staff_rows) <= 10
+    out = {"delivered": 0, "whatsapp": 0, "email": 0, "app": 0,
+           "push": 0, "push_targeted": 0, "no_login": 0, "push_error": None}
     for st in staff_rows:
         msg = _personalize(message, st.get("name"))
         reached = False
@@ -6545,8 +6562,18 @@ def _send_custom(staff_rows, message, subject, channels):
                 try:
                     q("""INSERT INTO scheduling.notifications (user_id,message,link,type)
                          VALUES (%s,%s,%s,%s)""", (u["id"], msg, "home", "message"), exec_only=True)
-                    try: out["push"] += (send_web_push_to_user(u["id"], msg, link="home") or 0)
-                    except Exception: pass
+                    try:
+                        pr = send_web_push_to_user(u["id"], msg, link="home", sync=sync_push)
+                        if sync_push:
+                            out["push"] += pr["delivered"]
+                            out["push_targeted"] += pr["targeted"]
+                            for r in pr["results"]:
+                                if r.get("error") and not out["push_error"]:
+                                    out["push_error"] = r["error"]
+                        else:
+                            out["push_targeted"] += (pr or 0)
+                    except Exception:
+                        pass
                     out["app"] += 1; reached = True
                 except Exception:
                     pass
