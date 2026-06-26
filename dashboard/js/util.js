@@ -1,5 +1,8 @@
 // ── Shared helpers ────────────────────────────────────────────────────────────
-function escapeHtml(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escapeHtml(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// For values dropped into a single-quoted onclick JS string: escape the JS
+// string itself (backslash + quotes + the HTML), so a name like O'Brien is safe.
+function jsAttr(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 
 // Animated success checkmark overlay. Auto-dismisses after ~1.6s.
 function showSuccess(msg = 'Done') {

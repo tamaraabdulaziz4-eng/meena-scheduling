@@ -43,8 +43,8 @@ function renderBranchesList() {
       <td>${b.created_at ? new Date(b.created_at).toLocaleDateString('en-GB') : '—'}</td>
       ${currentUser?.role === 'superadmin' ? `
       <td>
-        <button class="action-btn" onclick="openBranchModal(${b.id},'${b.name.replace(/'/g,"\\'")}')">Edit</button>
-        <button class="action-btn danger" onclick="deleteBranchConfirm(${b.id},'${b.name.replace(/'/g,"\\'")}')">Delete</button>
+        <button class="action-btn" onclick="openBranchModal(${b.id},'${jsAttr(b.name)}')">Edit</button>
+        <button class="action-btn danger" onclick="deleteBranchConfirm(${b.id},'${jsAttr(b.name)}')">Delete</button>
       </td>` : ''}
     </tr>`).join('');
   revealTable('branches-wrap');

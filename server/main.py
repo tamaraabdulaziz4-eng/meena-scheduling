@@ -1678,6 +1678,22 @@ def serve_manifest():
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
+@app.get("/icon-192.png")
+def serve_icon_192():
+    return FileResponse(os.path.join(DASHBOARD, "icon-192.png"), media_type="image/png")
+
+@app.get("/icon-512.png")
+def serve_icon_512():
+    return FileResponse(os.path.join(DASHBOARD, "icon-512.png"), media_type="image/png")
+
+@app.get("/icon-maskable-512.png")
+def serve_icon_maskable():
+    return FileResponse(os.path.join(DASHBOARD, "icon-maskable-512.png"), media_type="image/png")
+
+@app.get("/apple-touch-icon.png")
+def serve_apple_touch_icon():
+    return FileResponse(os.path.join(DASHBOARD, "apple-touch-icon.png"), media_type="image/png")
+
 @app.get("/meena_logo_transparent.png")
 def serve_logo():
     return FileResponse(os.path.join(DASHBOARD, "meena_logo_transparent.png"))
@@ -2726,7 +2742,9 @@ async def create_staff(request: Request, user=Depends(require_admin)):
     body = await request.json()
     name = (body.get("name") or "").strip()
     if not name: raise HTTPException(400, "Name required")
-    branch_id = body.get("branch_id")
+    branch_id = _int_or_400(body.get("branch_id"), "branch_id")
+    if not q("SELECT 1 FROM scheduling.branches WHERE id=%s", (branch_id,), one=True):
+        raise HTTPException(400, "Unknown branch")
     if not can_access_branch(user, branch_id): raise HTTPException(403, "Forbidden")
     try:
         row = q("""INSERT INTO scheduling.staff (name,phone,branch_id,speciality,is_cross_branch,can_report,employee_id,email)
@@ -3102,7 +3120,11 @@ def review_overview(request: Request, user=Depends(require_reviewer)):
 @app.post("/api/schedules/open")
 async def open_schedule(request: Request, user=Depends(require_admin)):
     body = await request.json()
-    branch_id, year, month = body.get("branch_id"), body.get("year"), body.get("month")
+    branch_id = _int_or_400(body.get("branch_id"), "branch_id")
+    year = _int_or_400(body.get("year"), "year")
+    month = _int_or_400(body.get("month"), "month")
+    if not (2000 <= year <= 2100 and 1 <= month <= 12):
+        raise HTTPException(400, "Invalid year/month")
     if not can_access_branch(user, branch_id): raise HTTPException(403, "Forbidden")
     schedule = q("""INSERT INTO scheduling.schedules (branch_id,year,month,status,created_by)
                     VALUES (%s,%s,%s,'draft',%s)
@@ -3840,7 +3862,7 @@ def cover_candidates_for_branch(request: Request, user=Depends(require_reviewer)
     except (TypeError, ValueError):
         raise HTTPException(400, "branch_id required")
     date = qp.get("date") or ""
-    if len(date) < 7:
+    if not _valid_iso_date(date):
         raise HTTPException(400, "date required (YYYY-MM-DD)")
     want = _section_of([qp.get("section")]) if qp.get("section") else None
     y, m = int(date[:4]), int(date[5:7])

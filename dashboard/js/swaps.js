@@ -32,7 +32,7 @@ function renderSwapsPage() {
         <option value="approved">Approved</option>
         <option value="rejected">Rejected</option>
       </select>
-      ${crossBranch ? `<select id="swap-filter-branch" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
+      ${crossBranch ? `<select id="swap-filter-branch" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select>` : ''}
     </div>
     <div class="table-wrap">
       <table>
