@@ -232,17 +232,23 @@ function showTypedConfirm(title, body, requiredText, okLabel = 'Delete') {
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 function initTheme() {
-  if (localStorage.getItem('theme') === 'dark') applyDark();
+  if (localStorage.getItem('theme') === 'dark') applyDark(); else applyLight();
+}
+function _setThemeColor(c) {
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', c);
 }
 function applyDark() {
   document.body.classList.add('dark');
-  document.getElementById('theme-icon').textContent = '☀️';
-  document.getElementById('theme-label').textContent = 'Light Mode';
+  const i = document.getElementById('theme-icon'); if (i) i.textContent = '☀️';
+  const l = document.getElementById('theme-label'); if (l) l.textContent = 'Light Mode';
+  _setThemeColor('#0f0d1e');
 }
 function applyLight() {
   document.body.classList.remove('dark');
-  document.getElementById('theme-icon').textContent = '🌙';
-  document.getElementById('theme-label').textContent = 'Dark Mode';
+  const i = document.getElementById('theme-icon'); if (i) i.textContent = '🌙';
+  const l = document.getElementById('theme-label'); if (l) l.textContent = 'Dark Mode';
+  _setThemeColor('#f4f2fc');
 }
 function toggleTheme() {
   if (document.body.classList.contains('dark')) {
