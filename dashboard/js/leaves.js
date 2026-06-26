@@ -33,7 +33,7 @@ async function renderLeavesPage() {
         <option value="">All months</option>
         ${MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('')}
       </select>
-      ${currentUser?.role==='superadmin' ? `<select id="leave-filter-branch" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select>` : ''}
+      ${currentUser?.role==='superadmin' ? `<select id="leave-filter-branch" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select>` : ''}
       ${canEdit ? `<button class="btn btn-ghost btn-sm" id="leave-approve-all" onclick="approveAllPendingLeaves()" style="margin-left:auto" title="Approve every request currently awaiting you">✅ Approve all pending</button>` : ''}
     </div>
     <div class="table-wrap">
@@ -128,14 +128,14 @@ function renderLeavesList() {
     }
     return `<tr>
       <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
-      <td style="font-weight:600">${g.staff_name}</td>
-      <td style="font-size:12px;color:var(--muted)">${g.branch_name || '—'}</td>
+      <td style="font-weight:600">${escapeHtml(g.staff_name)}</td>
+      <td style="font-size:12px;color:var(--muted)">${escapeHtml(g.branch_name || '—')}</td>
       <td>${fromStr}</td>
       <td>${toStr}</td>
       <td style="text-align:center;font-weight:600">${days}</td>
-      <td><span class="badge ${badge}">${g.leave_type}</span> <span style="font-size:11px;color:var(--muted)">${LEAVE_LABELS[g.leave_type]||''}</span></td>
-      <td><span class="badge ${(LEAVE_STATUS[st]||['',''])[1]||'badge-gray'}">${(LEAVE_STATUS[st]||[st])[0]}</span></td>
-      <td style="font-size:12px;color:var(--muted)">${g.note || '—'}</td>
+      <td><span class="badge ${badge}">${escapeHtml(g.leave_type)}</span> <span style="font-size:11px;color:var(--muted)">${escapeHtml(LEAVE_LABELS[g.leave_type]||'')}</span></td>
+      <td><span class="badge ${(LEAVE_STATUS[st]||['',''])[1]||'badge-gray'}">${escapeHtml((LEAVE_STATUS[st]||[st])[0])}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${escapeHtml(g.note || '—')}</td>
       ${actions}
     </tr>`;
   }).join('');

@@ -56,7 +56,7 @@ function renderUsersList() {
       <td>
         <button class="action-btn" onclick="openUserModal(${u.id})">Edit</button>
         ${u.id !== currentUser?.id
-          ? `<button class="action-btn danger" onclick="deleteUserConfirm(${u.id},'${u.username.replace(/'/g,"\\'")}')">Delete</button>`
+          ? `<button class="action-btn danger" onclick="deleteUserConfirm(${u.id},'${jsAttr(u.username)}')">Delete</button>`
           : '<span style="font-size:11px;color:var(--muted)">(you)</span>'}
       </td>
     </tr>`).join('');

@@ -92,7 +92,7 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 
 /* ── Layout ── */
 .layout {
-  display: flex; height: 100vh; overflow: hidden;
+  display: flex; height: 100vh; height: 100dvh; overflow: hidden;
   gap: 16px; padding: 16px;
   background: linear-gradient(160deg, #f7f6fc 0%, #f0eef9 100%);
 }
@@ -764,7 +764,8 @@ tr:hover td { background: var(--table-row-hover); }
 .modal-overlay.open { opacity: 1; visibility: visible; }
 .modal {
   background: var(--card-alt); border-radius: 18px;
-  width: 540px; max-width: 95vw; max-height: 88vh;
+  /* dvh so the footer (Save/Cancel) isn't pushed under the mobile toolbar/keyboard */
+  width: 540px; max-width: 95vw; max-height: 88vh; max-height: 88dvh;
   display: flex; flex-direction: column;
   box-shadow: 0 24px 80px rgba(43,36,88,0.22);
   opacity: 0; transform: translateY(14px) scale(.97);
@@ -772,7 +773,7 @@ tr:hover td { background: var(--table-row-hover); }
 }
 .modal-overlay.open .modal { opacity: 1; transform: none; }
 .modal.modal-lg  { width: 780px; }
-.modal.modal-xl  { width: 1100px; max-height: 92vh; }
+.modal.modal-xl  { width: 1100px; max-height: 92vh; max-height: 92dvh; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0;
@@ -781,7 +782,7 @@ tr:hover td { background: var(--table-row-hover); }
 .modal-close {
   background: var(--card); border: none; font-size: 16px;
   cursor: pointer; color: var(--muted);
-  width: 30px; height: 30px; border-radius: 50%;
+  width: 34px; height: 34px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
 }
 .modal-close:hover { background: var(--border); color: var(--text); }
@@ -1260,6 +1261,36 @@ body.dark .nav-item:hover { color: #fff; background: rgba(139,118,255,.16); }
 body.dark .nav-item.active { color: #fff; background: rgba(139,118,255,.20); }
 body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
 
+/* Surfaces that hardcode white/near-white backgrounds — make them readable in
+   dark mode instead of glaring bright cards. */
+body.dark .phero,
+body.dark .hm-hero,
+body.dark .hm-card,
+body.dark .hm-chip,
+body.dark .hm-searchbar,
+body.dark .hm-sres,
+body.dark .hm-rchip,
+body.dark .case-card,
+body.dark .rep-card,
+body.dark .rep-kpi,
+body.dark .notif-panel,
+body.dark .notif-push-row,
+body.dark .modal {
+  background: rgba(28,26,53,.86) !important;
+  border-color: rgba(255,255,255,.08) !important;
+  color: #e9e6f7;
+}
+body.dark .hm-chip, body.dark .hm-rchip { color: #e9e6f7; }
+body.dark .hm-searchbar input, body.dark .hm-searchbar input::placeholder { color: #cfc9ec; }
+body.dark .cs-pill, body.dark .hm-pill, body.dark .hm-spill, body.dark .hm-chip2 {
+  background: rgba(139,118,255,.16); color: #d6cdff; border-color: rgba(255,255,255,.08);
+}
+body.dark .input, body.dark textarea.input, body.dark .rep-select, body.dark select {
+  background: rgba(20,18,40,.9); color: #e9e6f7; border-color: rgba(255,255,255,.12);
+}
+body.dark .seg-chip { color: #cfc9ec; border-color: rgba(255,255,255,.12); }
+body.dark .seg-chip.on { color: #fff; }
+
 /* ══════════════════════════════════════════════════════════
    WELCOME SPLASH + cycling loader
    ══════════════════════════════════════════════════════════ */
@@ -1436,8 +1467,21 @@ body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
   .topbar-title { font-size: 15px; }
   .modal { width: 94vw; max-width: 94vw; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  /* Comfortable tap targets */
-  .btn, .action-btn { min-height: 38px; }
+  /* Comfortable tap targets (≥44px is the iOS/Android guideline) */
+  .btn, .action-btn { min-height: 40px; }
+  .sidebar-toggle { width: 44px; height: 44px; }
+  .modal-close { width: 40px; height: 40px; font-size: 18px; }
+
+  /* Notification panel: a full-width sheet pinned below the topbar so it can't
+     run off the right edge of a narrow screen. */
+  .notif-panel {
+    position: fixed; top: 56px; left: 8px; right: 8px; width: auto;
+    max-height: calc(100dvh - 72px);
+  }
+  #notif-push-sub { white-space: normal; }
+
+  /* Toasts never overflow the screen. */
+  #toast { left: 16px; right: 16px; max-width: none; }
 }
 
 @media (max-width: 640px) {

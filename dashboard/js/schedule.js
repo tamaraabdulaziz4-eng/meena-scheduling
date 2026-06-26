@@ -66,7 +66,7 @@ async function renderSchedulePage() {
     <div class="schedule-toolbar">
       ${['superadmin','manager'].includes(currentUser.role) ? `
         <select id="sched-branch-select" onchange="onBranchChange()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;background:var(--card-alt);color:var(--text);font-family:inherit;outline:none;cursor:pointer">
-          ${allBranches.map(b => `<option value="${b.id}" ${b.id === currentBranchId ? 'selected' : ''}>${b.name}</option>`).join('')}
+          ${allBranches.map(b => `<option value="${b.id}" ${b.id === currentBranchId ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}
         </select>` : `<span style="font-size:14px;font-weight:700;color:var(--primary)">${currentUser.branch_name || 'My Branch'}</span>`}
 
       <div class="month-nav">
@@ -479,7 +479,7 @@ function checkScheduleIssues() {
       if (!e) blanks++; else if (isWork(e.shift_code)) worked++;
     }
     const max = staffMonthSettings[s.id]?.max_shifts;
-    if (max && worked > max) issues.push(`${s.name}: ${worked} shifts — over the ${max} monthly max`);
+    if (max && worked > max) issues.push(`${escapeHtml(s.name)}: ${worked} shifts — over the ${max} monthly max`);
     s._blanks = blanks;
   });
 
@@ -555,7 +555,7 @@ function renderScheduleStatusBar() {
         ${s.is_locked ? '🔒 Locked' : ''}
       </span>`}
     ${(isReviewer && s.is_locked) ? `<span style="font-size:11px;font-weight:600;color:var(--accent)">✎ You can edit this as a manager</span>` : ''}
-    ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${s.created_by_name}</strong></span>` : ''}
+    ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${escapeHtml(s.created_by_name)}</strong></span>` : ''}
   `;
 }
 
@@ -726,7 +726,7 @@ function renderRotaGrid() {
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
           onclick="${cellReadonly?'':'cellClick(this)'}"
           style="background:${bgColor};${weekend?`outline:1px solid rgba(107,78,255,0.15);`:''}"
-          title="${s.name} — ${dateStr}${code ? ': '+code : ' (blank)'}${isOC?' + OC':''}${isCross?' (cross)':''}">
+          title="${escapeHtml(s.name)} — ${dateStr}${code ? ': '+code : ' (blank)'}${isOC?' + OC':''}${isCross?' (cross)':''}">
           <div class="shift-chip${isOC?' has-oc':''}${isCross?' cross':''}" style="color:${txtColor}">
             ${isBlank ? '—' : code}${isCross?'<sup style="font-size:7px">↗</sup>':''}
           </div>
@@ -734,7 +734,7 @@ function renderRotaGrid() {
       }).join('');
       rows += `<tr>
         <td class="rota-name-col" style="padding:4px 8px !important;white-space:nowrap">
-          <span style="font-weight:600;font-size:12px">${s.name}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</span>
+          <span style="font-weight:600;font-size:12px">${escapeHtml(s.name)}${s.is_cross_branch?'<sup title="Cross-branch">↗</sup>':''}</span>
         </td>
         ${cells}
         <td style="text-align:center;font-weight:700;font-size:12px;color:var(--primary)">${shiftCount}</td>
@@ -1127,7 +1127,7 @@ async function openStaffSettingsModal(tab) {
     const maxC = ms.max_consecutive ?? 4;
     if (canEdit) {
       return `<tr>
-        <td style="padding:8px 10px;font-weight:600;font-size:13px">${s.name}</td>
+        <td style="padding:8px 10px;font-weight:600;font-size:13px">${escapeHtml(s.name)}</td>
         <td style="padding:8px 6px;text-align:center">
           <input type="number" min="0" max="31" value="${minS}" style="${inputStyle}" data-field="min_shifts"
             onchange="saveStaffMonthSetting(${s.id}, 'min_shifts', this.value, this)">
@@ -1143,7 +1143,7 @@ async function openStaffSettingsModal(tab) {
       </tr>`;
     } else {
       return `<tr>
-        <td style="padding:8px 10px;font-weight:600;font-size:13px">${s.name}</td>
+        <td style="padding:8px 10px;font-weight:600;font-size:13px">${escapeHtml(s.name)}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${minS}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${maxS}</td>
         <td style="padding:8px 6px;text-align:center;color:var(--muted)">${maxC}</td>
@@ -1548,7 +1548,7 @@ async function loadCoverCandidates() {
           <div style="font-weight:600;font-size:13px">${escapeHtml(c.name)}</div>
           <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.branch_name || '')} · ${escapeHtml(c.section)} · ${c.shifts_month} shifts this month</div>
         </div>
-        <button class="btn btn-sm" onclick="submitCover(${c.staff_id}, '${escapeHtml(c.name)}')">Assign</button>
+        <button class="btn btn-sm" onclick="submitCover(${c.staff_id}, '${jsAttr(c.name)}')">Assign</button>
       </div>`).join('');
   } catch (e) {
     box.innerHTML = `<div style="color:var(--danger,#e74c3c);padding:12px;text-align:center">${escapeHtml(e.message)}</div>`;

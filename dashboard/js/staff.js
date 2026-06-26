@@ -75,7 +75,7 @@ function renderStaffPage() {
               })()}</td>
               ${canEdit ? `<td>
                 <button class="action-btn" onclick="openStaffModal(${s.id})">Edit</button>
-                <button class="action-btn danger" onclick="deleteStaffConfirm(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
+                <button class="action-btn danger" onclick="deleteStaffConfirm(${s.id},'${jsAttr(s.name)}')">Delete</button>
               </td>` : ''}
             </tr>`).join('')}
           </tbody>

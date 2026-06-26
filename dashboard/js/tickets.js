@@ -136,7 +136,7 @@ function openCreateTicketModal() {
   ensureTicketModal();
   document.getElementById('tk-subject').value = '';
   document.getElementById('tk-desc').value = '';
-  document.getElementById('tk-category').value = 'issue';
+  document.getElementById('tk-category').value = 'device_fault';
   document.getElementById('tk-priority').value = 'normal';
   document.getElementById('tk-msg').textContent = '';
   document.getElementById('ticket-create-overlay').classList.add('open');
