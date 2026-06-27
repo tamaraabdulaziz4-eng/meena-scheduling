@@ -51,23 +51,30 @@ let reconnectAttempts = 0;     // drives exponential backoff; reset on 'ready'
 let badChecks = 0;             // consecutive watchdog failures
 let sendFails = 0;             // consecutive /send failures (stuck-session signal)
 
-// WhatsApp's "LID" (hidden-number) rollout breaks older WhatsApp Web builds with
-// "Lid is missing in chat table" on send. Pin a recent known-good build; bump it
-// via WA_WEB_VERSION when it ages out (list: github.com/wppconnect-team/wa-version).
-const WA_WEB_VERSION = process.env.WA_WEB_VERSION || '2.3000.1042229403-alpha';
+// Pinning a specific WhatsApp Web build via webVersionCache can DESACTIVATE init:
+// if the forced HTML doesn't match the library's injection code, the page reloads
+// in a loop ("Execution context was destroyed") and never even reaches the QR.
+// So DEFAULT to letting whatsapp-web.js pick the build its inject code was written
+// for (most compatible). Only pin when WA_WEB_VERSION is explicitly set — e.g. to
+// work around the "Lid is missing in chat table" send error on an aged build
+// (list: github.com/wppconnect-team/wa-version).
+const WA_WEB_VERSION = (process.env.WA_WEB_VERSION || '').trim();
 
 function buildClient() {
-  const c = new Client({
+  const opts = {
     authStrategy: new LocalAuth({ clientId: SESSION_NAME, dataPath: DATA_PATH }),
-    webVersionCache: {
-      type: 'remote',
-      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_WEB_VERSION}.html`,
-    },
     puppeteer: {
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
-  });
+  };
+  if (WA_WEB_VERSION) {
+    opts.webVersionCache = {
+      type: 'remote',
+      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_WEB_VERSION}.html`,
+    };
+  }
+  const c = new Client(opts);
 
   c.on('qr', (qr) => {
     latestQr = qr; isReady = false; lastState = 'qr';
