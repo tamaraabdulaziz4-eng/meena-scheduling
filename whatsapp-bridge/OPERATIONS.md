@@ -25,6 +25,27 @@ The bridge checks `Authorization: Bearer $BRIDGE_API_TOKEN`.
 | VPS bridge | `BRIDGE_API_TOKEN` | `meena_bridge_2025_wa_secret_991` (same as above) |
 | VPS bridge | `BRIDGE_HOST` | `127.0.0.1` (hardened) or `0.0.0.0` (direct IP) |
 | VPS bridge | `PORT` | `3003` |
+| VPS bridge | `WHATSAPP_DATA_PATH` | (optional) where the linked session is stored; defaults to `whatsapp-bridge/.wwebjs_auth` next to `server.js` |
+| VPS bridge | `HEALTH_CHECK_MS` | (optional) watchdog interval, default `60000` |
+| VPS bridge | `MAX_BAD_CHECKS` | (optional) bad reads before a forced rebuild, default `3` |
+
+## Staying linked (no more repeated QR re-scans)
+
+The bridge keeps itself healthy automatically:
+
+- **Health watchdog** — every `HEALTH_CHECK_MS` it reads `getState()`. WhatsApp Web
+  can go *silently* stuck (the page detaches, `/send` times out, but **no
+  `disconnected` event fires**). After `MAX_BAD_CHECKS` bad reads the bridge
+  rebuilds the client and reconnects from the **saved session — no QR needed**.
+- **Send-timeout trip** — two `/send` timeouts in a row also force an immediate
+  rebuild instead of waiting for the next watchdog tick.
+- **Stable session path** — the linked session is stored next to `server.js`
+  (`WHATSAPP_DATA_PATH`), so it survives restarts regardless of the working
+  directory systemd launches from. **Do not delete `.wwebjs_auth/`** — that is the
+  one thing that forces a fresh QR.
+
+A QR re-scan is now only needed if WhatsApp itself logs the device out
+(`/health` → `state:"qr"`). Re-link via `https://<bridge>/qr?token=<BRIDGE_API_TOKEN>`.
 
 ## Everyday commands
 
@@ -111,6 +132,26 @@ WHATSAPP_NOTIFY_URL=https://wa.example.com/send
 No domain? Cheapest safe alternative: keep `:3003` but firewall it to Railway's
 egress only. Railway egress is not a fixed IP on the hobby plan, so a domain +
 nginx + TLS is the reliable option.
+
+## Stuck at `state:"starting"` with a puppeteer/`Client.inject` stack trace
+
+WhatsApp moved its web build forward and the pinned `WA_WEB_VERSION` aged out, so
+the Store injection fails on (re)start — no QR, no `ready`. Fix = bump the pin to
+the current build (list: github.com/wppconnect-team/wa-version → `versions.json`,
+field `currentVersion`):
+
+```bash
+mkdir -p /etc/systemd/system/meena-whatsapp.service.d
+cat > /etc/systemd/system/meena-whatsapp.service.d/waversion.conf <<'EOF'
+[Service]
+Environment=WA_WEB_VERSION=2.3000.1042229403-alpha
+EOF
+systemctl daemon-reload && systemctl restart meena-whatsapp
+journalctl -u meena-whatsapp -f
+```
+
+The env var overrides the default baked into `server.js`. A linked session
+survives the bump (no QR needed). The code default is also kept current in git.
 
 ## Notes
 

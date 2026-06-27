@@ -1189,7 +1189,7 @@ def _webhook_email_send(to, subject, body):
     'When an HTTP request is received' trigger forwards to Office 365 'Send an
     email (V2)', so mail goes out from the work mailbox. POSTs JSON the flow
     expects: {to, subject, body(html), text}."""
-    import urllib.request, urllib.error
+    import urllib.request, urllib.error, socket
     url = _email_webhook_url()
     payload = {"to": to, "subject": subject or "Meena Health",
                "body": _email_html(body), "text": str(body or "")}
@@ -1205,6 +1205,10 @@ def _webhook_email_send(to, subject, body):
             resp.read()
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"Email webhook {e.code}: {e.read().decode('utf-8','replace')[:160]}") from None
+    except (urllib.error.URLError, socket.timeout) as e:
+        # DNS/timeout/connection-refused/TLS — surface a clean message, not a raw stack.
+        reason = getattr(e, "reason", e)
+        raise RuntimeError(f"Email webhook unreachable: {reason}") from None
 
 def _deliver_email(to, subject, body):
     """Actually send (raises on failure). Power Automate webhook → Resend → SMTP."""
@@ -2202,7 +2206,9 @@ async def register_send_code(request: Request):
        (datetime.now(timezone.utc) - prev["created_at"]).total_seconds() < 45:
         raise HTTPException(429, "A code was just sent — please wait a moment before requesting another.")
     # No provider configured (and not in test capture) → don't pretend we sent it.
-    if not (os.environ.get("SMTP_CAPTURE") or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
+    # A Power Automate webhook counts as a provider, same as Resend/SMTP.
+    if not (_email_webhook_url() or os.environ.get("SMTP_CAPTURE")
+            or os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_HOST")):
         raise HTTPException(503, "Email isn't set up on the server yet, so codes can't be sent. Ask your admin.")
     code = f"{_secrets_mod.randbelow(900000) + 100000}"
     q("""INSERT INTO scheduling.email_verifications (email, code, expires_at, attempts, created_at)
@@ -5396,7 +5402,12 @@ async def email_test(request: Request, user=Depends(require_superadmin)):
         # 502 + the provider's own message → shows up directly in the UI.
         raise HTTPException(502, f"Send failed: {e}")
     insert_audit(user, "EMAIL_TEST", to)
-    return {"ok": True, "sent_to": to, "from": _email_from()}
+    # Report the source truthfully: a webhook (Power Automate) sends from the
+    # work mailbox and ignores _email_from(), so don't show the Resend address.
+    if _email_webhook_url():
+        return {"ok": True, "sent_to": to, "from": "your work mailbox (Power Automate)",
+                "via": "power automate"}
+    return {"ok": True, "sent_to": to, "from": _email_from(), "via": "resend"}
 
 @app.get("/api/whatsapp-config")
 def whatsapp_config(user=Depends(require_superadmin)):

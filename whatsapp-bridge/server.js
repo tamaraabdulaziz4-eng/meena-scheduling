@@ -1,10 +1,15 @@
 const express = require('express');
 const qrcode = require('qrcode-terminal');
+const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 
 const PORT = Number(process.env.PORT || 3003);
 const API_TOKEN = process.env.BRIDGE_API_TOKEN || '';
 const SESSION_NAME = process.env.WHATSAPP_SESSION_NAME || 'meena-whatsapp';
+// Session files live next to this file by default (NOT process.cwd()), so the
+// linked session survives no matter which directory systemd launches us from.
+// Override with WHATSAPP_DATA_PATH to point at a mounted/persistent volume.
+const DATA_PATH = process.env.WHATSAPP_DATA_PATH || path.join(__dirname, '.wwebjs_auth');
 // Defaults to all interfaces to preserve the current direct-IP setup. For the
 // hardened setup, set BRIDGE_HOST=127.0.0.1 and front it with nginx + TLS
 // (see OPERATIONS.md) so the raw port isn't exposed to the internet.
@@ -42,24 +47,34 @@ let latestQr = null;
 let isReady = false;
 let lastState = 'starting';
 let reconnectTimer = null;
+let reconnectAttempts = 0;     // drives exponential backoff; reset on 'ready'
+let badChecks = 0;             // consecutive watchdog failures
+let sendFails = 0;             // consecutive /send failures (stuck-session signal)
 
-// WhatsApp's "LID" (hidden-number) rollout breaks older WhatsApp Web builds with
-// "Lid is missing in chat table" on send. Pin a recent known-good build; bump it
-// via WA_WEB_VERSION when it ages out (list: github.com/wppconnect-team/wa-version).
-const WA_WEB_VERSION = process.env.WA_WEB_VERSION || '2.3000.1041951580-alpha';
+// Pinning a specific WhatsApp Web build via webVersionCache can DESACTIVATE init:
+// if the forced HTML doesn't match the library's injection code, the page reloads
+// in a loop ("Execution context was destroyed") and never even reaches the QR.
+// So DEFAULT to letting whatsapp-web.js pick the build its inject code was written
+// for (most compatible). Only pin when WA_WEB_VERSION is explicitly set — e.g. to
+// work around the "Lid is missing in chat table" send error on an aged build
+// (list: github.com/wppconnect-team/wa-version).
+const WA_WEB_VERSION = (process.env.WA_WEB_VERSION || '').trim();
 
 function buildClient() {
-  const c = new Client({
-    authStrategy: new LocalAuth({ clientId: SESSION_NAME }),
-    webVersionCache: {
-      type: 'remote',
-      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_WEB_VERSION}.html`,
-    },
+  const opts = {
+    authStrategy: new LocalAuth({ clientId: SESSION_NAME, dataPath: DATA_PATH }),
     puppeteer: {
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
-  });
+  };
+  if (WA_WEB_VERSION) {
+    opts.webVersionCache = {
+      type: 'remote',
+      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_WEB_VERSION}.html`,
+    };
+  }
+  const c = new Client(opts);
 
   c.on('qr', (qr) => {
     latestQr = qr; isReady = false; lastState = 'qr';
@@ -67,7 +82,11 @@ function buildClient() {
     qrcode.generate(qr, { small: true });
     console.log('===================\n');
   });
-  c.on('ready', () => { latestQr = null; isReady = true; lastState = 'ready'; console.log('WhatsApp client is ready'); });
+  c.on('ready', () => {
+    latestQr = null; isReady = true; lastState = 'ready';
+    reconnectAttempts = 0; badChecks = 0; sendFails = 0;
+    console.log('WhatsApp client is ready');
+  });
   c.on('authenticated', () => { lastState = 'authenticated'; console.log('WhatsApp authenticated'); });
   c.on('auth_failure', (msg) => { isReady = false; lastState = 'auth_failure'; console.error('WhatsApp auth failure:', msg); });
   c.on('disconnected', (reason) => {
@@ -79,21 +98,60 @@ function buildClient() {
 }
 
 // Rebuild the client from scratch on disconnect — reusing a destroyed context is
-// what caused the "Attempted to use detached Frame" errors. A fresh Client avoids it.
+// what caused the "Attempted to use detached Frame" errors. A fresh Client avoids
+// it. The LocalAuth session on disk persists, so this reconnects WITHOUT a new QR
+// unless WhatsApp actually logged the device out. Backs off 5s→10s→20s→…→max 60s.
 function scheduleReconnect(reason) {
   if (reconnectTimer) return;
-  console.warn(`Scheduling WhatsApp reconnect in 5s (${reason})…`);
+  isReady = false;
+  const delay = Math.min(5000 * Math.pow(2, reconnectAttempts), 60000);
+  reconnectAttempts += 1;
+  console.warn(`Scheduling WhatsApp reconnect in ${delay}ms (attempt ${reconnectAttempts}, ${reason})…`);
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
+    lastState = 'reconnecting';
     try { if (client) await client.destroy(); } catch (e) { console.warn('destroy failed:', e.message); }
     client = buildClient();
-    lastState = 'reconnecting';
     client.initialize().catch((e) => {
       console.error('re-init failed:', e.message);
       scheduleReconnect('reinit-failed');
     });
-  }, 5000);
+  }, delay);
 }
+
+// ── Health watchdog ─────────────────────────────────────────────────────────
+// whatsapp-web.js' worst failure is SILENT: the page detaches or the session
+// goes stale, /send hangs and times out, but no 'disconnected' event ever fires —
+// so the bridge sits "ready" but broken until a human restarts it. We actively
+// poll getState(); after a few consecutive bad reads we force a rebuild, which
+// self-heals the stuck state without a manual QR re-scan.
+const HEALTH_CHECK_MS = Number(process.env.HEALTH_CHECK_MS || 60000);
+const MAX_BAD_CHECKS = Number(process.env.MAX_BAD_CHECKS || 3);
+const STATE_TIMEOUT_MS = Number(process.env.STATE_TIMEOUT_MS || 10000);
+
+async function checkHealth() {
+  // Skip while we're already (re)connecting or waiting for a QR scan.
+  if (reconnectTimer || !client || ['qr', 'reconnecting', 'starting'].includes(lastState)) return;
+  let state = null;
+  try {
+    state = await withTimeout(client.getState(), STATE_TIMEOUT_MS, 'getState');
+  } catch (e) {
+    state = null;  // a throw/timeout here means the page is detached → unhealthy
+  }
+  if (state === 'CONNECTED') {
+    badChecks = 0;
+    if (!isReady) { isReady = true; lastState = 'ready'; }  // recovered on its own
+    return;
+  }
+  badChecks += 1;
+  console.warn(`Health check ${badChecks}/${MAX_BAD_CHECKS}: state=${state || 'unreachable'}`);
+  if (badChecks >= MAX_BAD_CHECKS) {
+    badChecks = 0;
+    isReady = false;
+    scheduleReconnect(`watchdog: stuck (state=${state || 'unreachable'})`);
+  }
+}
+setInterval(() => { checkHealth().catch(() => {}); }, HEALTH_CHECK_MS).unref();
 
 const crypto = require('crypto');
 function requireAuth(req, res, next) {
@@ -161,8 +219,11 @@ function withTimeout(promise, ms, label) {
   });
   return Promise.race([promise, guard]).finally(() => clearTimeout(t));
 }
-const LOOKUP_TIMEOUT_MS = Number(process.env.LOOKUP_TIMEOUT_MS || 8000);
-const SEND_TIMEOUT_MS   = Number(process.env.SEND_TIMEOUT_MS   || 30000);
+// Keep lookup + send UNDER the app's HTTP timeout (≈20s) so the bridge returns a
+// clean JSON error within the window instead of the app reporting a blind "timed
+// out". Worst case here is 6s + 12s = 18s < 20s. Tune via the env vars.
+const LOOKUP_TIMEOUT_MS = Number(process.env.LOOKUP_TIMEOUT_MS || 6000);
+const SEND_TIMEOUT_MS   = Number(process.env.SEND_TIMEOUT_MS   || 12000);
 
 app.post('/send', requireAuth, async (req, res) => {
   try {
@@ -186,10 +247,15 @@ app.post('/send', requireAuth, async (req, res) => {
     }
 
     const result = await withTimeout(client.sendMessage(chatId, message), SEND_TIMEOUT_MS, 'sendMessage');
+    sendFails = 0;  // a real send proves the session is alive
     return res.json({ ok: true, id: (result.id && result.id._serialized) || null, to: chatId });
   } catch (err) {
     const msg = err.message || 'Send failed';
-    const code = /timed out/i.test(msg) ? 504 : 400;
+    const timedOut = /timed out/i.test(msg);
+    // A run of timed-out sends means the session is stuck even though no
+    // 'disconnected' fired — kick a rebuild now instead of waiting for the watchdog.
+    if (timedOut && ++sendFails >= 2) { sendFails = 0; scheduleReconnect('repeated send timeouts'); }
+    const code = timedOut ? 504 : 400;
     return res.status(code).json({ ok: false, error: msg });
   }
 });
@@ -209,6 +275,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 app.listen(PORT, HOST, () => {
   console.log(`WhatsApp bridge listening on ${HOST}:${PORT}`);
+  console.log(`Session store: ${DATA_PATH} (clientId=${SESSION_NAME})`);
 });
 
 client = buildClient();
