@@ -54,7 +54,7 @@ let sendFails = 0;             // consecutive /send failures (stuck-session sign
 // WhatsApp's "LID" (hidden-number) rollout breaks older WhatsApp Web builds with
 // "Lid is missing in chat table" on send. Pin a recent known-good build; bump it
 // via WA_WEB_VERSION when it ages out (list: github.com/wppconnect-team/wa-version).
-const WA_WEB_VERSION = process.env.WA_WEB_VERSION || '2.3000.1041951580-alpha';
+const WA_WEB_VERSION = process.env.WA_WEB_VERSION || '2.3000.1042229403-alpha';
 
 function buildClient() {
   const c = new Client({

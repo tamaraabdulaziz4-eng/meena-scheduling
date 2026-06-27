@@ -133,6 +133,26 @@ No domain? Cheapest safe alternative: keep `:3003` but firewall it to Railway's
 egress only. Railway egress is not a fixed IP on the hobby plan, so a domain +
 nginx + TLS is the reliable option.
 
+## Stuck at `state:"starting"` with a puppeteer/`Client.inject` stack trace
+
+WhatsApp moved its web build forward and the pinned `WA_WEB_VERSION` aged out, so
+the Store injection fails on (re)start — no QR, no `ready`. Fix = bump the pin to
+the current build (list: github.com/wppconnect-team/wa-version → `versions.json`,
+field `currentVersion`):
+
+```bash
+mkdir -p /etc/systemd/system/meena-whatsapp.service.d
+cat > /etc/systemd/system/meena-whatsapp.service.d/waversion.conf <<'EOF'
+[Service]
+Environment=WA_WEB_VERSION=2.3000.1042229403-alpha
+EOF
+systemctl daemon-reload && systemctl restart meena-whatsapp
+journalctl -u meena-whatsapp -f
+```
+
+The env var overrides the default baked into `server.js`. A linked session
+survives the bump (no QR needed). The code default is also kept current in git.
+
 ## Notes
 
 - The bridge auto-reconnects (rebuilds a fresh client) on disconnect, and survives
