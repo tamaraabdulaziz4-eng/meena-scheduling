@@ -1476,6 +1476,18 @@ body.dark .seg-chip.on { color: #fff; }
 
   /* Toasts never overflow the screen. */
   #toast { left: 16px; right: 16px; max-width: none; }
+
+  /* iOS zooms the WHOLE page when a focused field's font-size is < 16px, which
+     makes the installed app look "zoomed in" / misaligned after login. Force
+     16px on phones so focusing search / login / any form never triggers it. */
+  input, textarea, select,
+  .input, .rep-select, .hm-searchbar input { font-size: 16px !important; }
+
+  /* Tab strips (e.g. Reports: Cases trends · Fairness · QC · Licenses) scroll
+     sideways instead of being clipped off the right edge. */
+  .seg { max-width: 100%; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }
 }
 
 @media (max-width: 640px) {
