@@ -208,8 +208,13 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
     ]);
     const rad = radR.status === 'fulfilled' ? radR.value : null;
     const pat = patR.status === 'fulfilled' ? patR.value : null;
-    if (!rad && !pat) throw new Error(radR.reason?.message || 'HIS unreachable');
-    const orders = ((rad && rad.json && rad.json.data) || []).map(normalizeOrder);
+    // The radiology call MUST cleanly succeed, otherwise surface an error — never
+    // report "no orders" for a transient failure (that misleads staff into
+    // thinking the patient has no order when HIS was just unreachable/logging in).
+    if (!rad || (rad.status && rad.status >= 400) || rad.json == null) {
+      throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
+    }
+    const orders = (rad.json.data || []).map(normalizeOrder);
     const patient = normalizePatient(((pat && pat.json && pat.json.data) || [])[0]);
     return res.json({ ok: true, file, patient, orders, count: orders.length, fetchedAt: new Date().toISOString() });
   } catch (e) {

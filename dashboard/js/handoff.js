@@ -115,14 +115,6 @@ async function handoffLookup() {
   }
 }
 
-// Paid flag: prefer an explicit order field if the connector supplies one, else
-// fall back to the patient billing flag. (Confirmed against a live paid file.)
-function handoffPaid(o, patient) {
-  if (o && typeof o.paid === 'boolean') return o.paid;
-  if (patient && typeof patient.isBilled === 'boolean') return patient.isBilled;
-  return null;   // unknown
-}
-
 function renderHandoffPatient() {
   const d = handoff.lookup || {};
   const p = d.patient;
@@ -143,19 +135,17 @@ function renderHandoffPatient() {
   } else {
     block = `<div class="ho-lbl" style="margin-top:14px">Radiology order${orders.length > 1 ? 's — pick the one you imaged' : ''}</div>` +
       orders.map((o, i) => {
-        const paid = handoffPaid(o, p);
-        const paidChip = paid === true
-          ? `<span class="badge badge-green">مدفوع · PAID</span>`
-          : paid === false
-            ? `<span class="badge badge-red">غير مدفوع · NOT PAID</span>`
-            : (o.status ? `<span class="badge badge-purple">${escapeHtml(o.status)}</span>` : '');
+        const imaged = o.imaged || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
+        const chip = imaged
+          ? `<span class="badge badge-green">✅ تم التصوير · Imaged</span>`
+          : `<span class="badge badge-orange">⏳ بانتظار التصوير · Not imaged</span>`;
         return `<label class="ho-row ${i === handoff.order ? 'sel' : ''}">
           <input type="radio" name="ho-order" ${i === handoff.order ? 'checked' : ''} onchange="handoffPickOrder(${i})">
           <div class="ho-row-main">
             <div class="ho-row-title">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:500">(${escapeHtml(o.modality || '')})</span></div>
             <div class="ho-row-sub">🏥 ${escapeHtml(o.branch || '—')}${o.orderedDate ? ' · ' + escapeHtml(o.orderedDate) : ''}</div>
           </div>
-          <div class="ho-badges">${paidChip}</div>
+          <div class="ho-badges">${chip}</div>
         </label>`;
       }).join('');
   }
