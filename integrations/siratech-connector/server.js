@@ -200,12 +200,17 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   try {
-    const [rad, pat] = await Promise.all([
+    // Independent calls — a hiccup in patient-search must not lose the orders
+    // (and vice-versa), so settle both and use whatever came back.
+    const [radR, patR] = await Promise.allSettled([
       hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }),
       hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: file } }),
     ]);
-    const orders = ((rad.json && rad.json.data) || []).map(normalizeOrder);
-    const patient = normalizePatient(((pat.json && pat.json.data) || [])[0]);
+    const rad = radR.status === 'fulfilled' ? radR.value : null;
+    const pat = patR.status === 'fulfilled' ? patR.value : null;
+    if (!rad && !pat) throw new Error(radR.reason?.message || 'HIS unreachable');
+    const orders = ((rad && rad.json && rad.json.data) || []).map(normalizeOrder);
+    const patient = normalizePatient(((pat && pat.json && pat.json.data) || [])[0]);
     return res.json({ ok: true, file, patient, orders, count: orders.length, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
