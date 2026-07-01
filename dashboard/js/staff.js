@@ -34,6 +34,8 @@ function renderStaffPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Radiology team directory', 'Staff', `<b>${allStaff.length}</b> member${allStaff.length !== 1 ? 's' : ''}`)}
+    ${canEdit ? `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button class="btn btn-sm" onclick="exportStaffCsv()">⬇️ Export CSV (name · email · phone)</button></div>` : ''}
     <div id="staff-pending"></div>
     <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
 
@@ -224,4 +226,24 @@ async function deleteStaffConfirm(id, name) {
     toast('Staff removed');
   } catch (err) { toast(err.message, 'err'); }
   finally { hideLoader(); }
+}
+
+// Export the full staff directory (name, ID, email, phone, branch, section) as a
+// CSV. Uses the already-loaded list — no backend call. BOM keeps Arabic readable
+// in Excel.
+function exportStaffCsv() {
+  if (!allStaff || !allStaff.length) { toast('No staff to export', 'err'); return; }
+  const esc = v => { const s = (v == null ? '' : String(v)).replace(/"/g, '""'); return /[",\n]/.test(s) ? `"${s}"` : s; };
+  const rows = [['Name', 'Employee ID', 'Email', 'Phone', 'Branch', 'Section', 'Active']];
+  allStaff.forEach(s => {
+    const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
+    const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
+    rows.push([s.name, s.employee_id, s.email, s.phone, (s.branch_name || s.branch || ''), sec, s.active === false ? 'No' : 'Yes']);
+  });
+  const csv = '﻿' + rows.map(r => r.map(esc).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `radiology_staff_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  toast(`Exported ${allStaff.length} staff`);
 }
