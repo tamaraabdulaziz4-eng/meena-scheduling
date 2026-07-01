@@ -1941,5 +1941,30 @@ label.input-label, .input-label { font-size: 12px; font-weight: 600; color: var(
 .seg-chip.on { background: linear-gradient(135deg, var(--accent2), var(--accent)); color: #fff;
   border-color: transparent; box-shadow: 0 6px 16px rgba(107,78,255,.32); }
 
-/* Radiology handoff */
-.ho-lbl { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; }
+/* ── Radiology handoff ─────────────────────────────────────────────────────── */
+.ho-lbl { display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:6px; letter-spacing:.2px; }
+.ho-step-title { font-size:15px; font-weight:800; color:var(--primary); display:flex; align-items:center; gap:9px; }
+.ho-step-num { display:inline-flex; align-items:center; justify-content:center; width:23px; height:23px; border-radius:50%;
+  background:linear-gradient(135deg,var(--accent2),var(--accent)); color:#fff; font-size:12px; font-weight:800; flex-shrink:0; }
+.ho-step-num.done { background:linear-gradient(135deg,#00C896,#00A87D); }
+.ho-step-num.idle { background:var(--border); color:var(--muted); }
+.ho-step-sub { font-size:12.5px; color:var(--muted); margin:6px 0 14px 32px; }
+.ho-row { display:flex; gap:11px; align-items:center; padding:10px 13px; border:1.5px solid var(--border); border-radius:14px;
+  margin-bottom:8px; cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s; flex-wrap:wrap; background:var(--card-alt); }
+.ho-row:hover { border-color:var(--accent); background:var(--table-row-hover); }
+.ho-row.sel { border-color:var(--accent); background:var(--table-row-hover); box-shadow:0 0 0 3px rgba(107,78,255,.10); }
+.ho-row input[type=radio] { accent-color:var(--accent); width:17px; height:17px; flex-shrink:0; }
+.ho-row-main { flex:1; min-width:150px; }
+.ho-row-title { font-weight:700; color:var(--text); font-size:13.5px; }
+.ho-row-sub { font-size:12px; color:var(--muted); margin-top:2px; }
+.ho-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.ho-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px; }
+@media (max-width:560px){ .ho-grid{ grid-template-columns:1fr; } }
+.ho-patient-name { font-size:17px; font-weight:800; color:var(--primary); }
+.ho-patient-meta { display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:12.5px; align-items:center; margin-top:3px; }
+.ho-de-box { padding:12px 14px; border-radius:14px; border:1.5px solid var(--border); background:var(--card-alt); }
+.ho-de-box.ok { border-color:#a9e2bf; background:rgba(0,200,150,.06); }
+.ho-note { font-size:12px; color:#c9880a; margin-top:6px; }
+.ho-actions { margin-top:14px; display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
+textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border-box; }
+.ho-msg-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
