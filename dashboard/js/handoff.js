@@ -42,7 +42,7 @@ async function handoffLookup() {
   const file = (document.getElementById('ho-file').value || '').trim();
   if (!file) return;
   handoffStopPolling();
-  handoff = { ...handoff, file, lookup: null, order: 0, studies: null, matched: null, studyId: '', candidates: null };
+  handoff = { ...handoff, file, lookup: null, order: 0, studies: null, matched: null, studyId: '', candidates: null, baseline: null };
   const pane = document.getElementById('ho-patient');
   pane.innerHTML = LOADING_HTML;
   document.getElementById('ho-form').innerHTML = '';
@@ -93,7 +93,7 @@ function renderHandoffPatient() {
 
 function handoffPickOrder(i) {
   handoffStopPolling();
-  handoff.order = i; handoff.matched = null; handoff.studyId = ''; handoff.candidates = null;
+  handoff.order = i; handoff.matched = null; handoff.studyId = ''; handoff.candidates = null; handoff.baseline = null;
   const o = handoffOrder();
   handoff.priority = o && o.priority ? 'emergency' : 'routine';
   renderHandoffForm();
@@ -154,12 +154,12 @@ function renderHandoffDE() {
   const o = handoffOrder();
   if (handoff.matched) {
     const s = handoff.matched;
-    const ok = studyMatchesOrder(s, o);
     box.innerHTML = `
-      <div style="padding:10px;border:1px solid ${ok ? '#bfe6cd' : '#f2c9c0'};background:${ok ? '#f3fbf5' : '#fef4f2'};border-radius:10px">
-        <div style="font-weight:600">${ok ? '✅' : '⚠️'} ${escapeHtml(s.modality || '')} · ${escapeHtml(s.study_date || '')}${s.study_desc ? ' · ' + escapeHtml(s.study_desc) : ''}</div>
-        <div style="font-size:12px;color:var(--muted)">study #${escapeHtml(String(s.study_id))} · ${escapeHtml(s.status || '')}${ok ? '' : ' — modality does NOT match the order (' + escapeHtml(o.modality || '') + ')'}</div>
+      <div style="padding:10px;border:1px solid #bfe6cd;background:#f3fbf5;border-radius:10px">
+        <div style="font-weight:600">🖼️ ${escapeHtml(s.modality || '')} · ${escapeHtml((s.study_date || '').slice(0, 16).replace('T', ' '))}${s.study_desc ? ' · ' + escapeHtml(s.study_desc) : ''}</div>
+        <div style="font-size:12px;color:var(--muted)">study #${escapeHtml(String(s.study_id))} · ${escapeHtml(s.status || '')} · order is <b>${escapeHtml(o.service || '')}</b> (${escapeHtml(o.modality || '')})</div>
         <div style="font-size:12px;color:var(--muted);margin-top:4px">Current history: ${escapeHtml(s.history || '—')}</div>
+        <div style="font-size:12px;color:#8a5a00;margin-top:4px">Verify this is the exam you just sent before writing.</div>
       </div>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="handoffWrite()">Write indication to DePACS</button>
@@ -168,7 +168,7 @@ function renderHandoffDE() {
     return;
   }
   if (handoff.candidates && handoff.candidates.length > 1) {
-    box.innerHTML = `<div style="font-size:13px;color:#8a5a00;margin-bottom:8px">⚠️ More than one ${escapeHtml(o.modality || '')} study — pick the exact one to avoid writing to the wrong exam:</div>
+    box.innerHTML = `<div style="font-size:13px;color:#8a5a00;margin-bottom:8px">⚠️ More than one recent study — pick the exact exam you sent (order: <b>${escapeHtml(o.service || '')}</b> ${escapeHtml(o.modality || '')}):</div>
       ${handoff.candidates.map(s => `
         <label style="display:flex;gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--border,#e5e5ef);border-radius:10px;margin-bottom:6px;cursor:pointer">
           <input type="radio" name="ho-cand" onchange="handoffChoose(${s.study_id})">
@@ -186,16 +186,25 @@ function renderHandoffDE() {
        <button class="btn btn-sm" style="margin-left:8px" onclick="handoffStartPolling()">It's already there</button>`;
 }
 
-function studyMatchesOrder(s, o) {
-  const om = (o.modality || '').toUpperCase().trim();
-  const sm = (s.modality || '').toUpperCase().trim();
-  return !!om && om === sm;
-}
-
 async function handoffStartPolling() {
   handoff.polling = true; handoff.pollN = 0; handoff.candidates = null; handoff.matched = null;
   renderHandoffDE();
+  // Baseline = studies already in DePACS at this moment. The one that appears
+  // AFTER this is the exam we just sent — far more reliable than matching the
+  // modality string across two systems (Siratech "XR" vs DePACS "DX", etc.).
+  if (!handoff.baseline) {
+    try {
+      const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
+      handoff.baseline = new Set((r.studies || []).map(s => String(s.study_id)));
+    } catch (e) { handoff.baseline = new Set(); }
+  }
   handoffPollTick();
+}
+
+function _isToday(d) {
+  if (!d) return false;
+  const t = new Date(); const ds = String(d).slice(0, 10);
+  return ds === `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 }
 
 function handoffStopPolling(rerender) {
@@ -207,31 +216,35 @@ function handoffStopPolling(rerender) {
 async function handoffPollTick() {
   if (!handoff.polling) return;
   handoff.pollN += 1;
-  const o = handoffOrder();
   try {
     const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
     handoff.studies = r.studies || [];
-    const cands = handoff.studies.filter(s => studyMatchesOrder(s, o));
-    if (cands.length === 1) {
-      handoff.matched = cands[0]; handoff.studyId = String(cands[0].study_id);
-      handoffStopPolling(); renderHandoffDE(); return;
-    }
-    if (cands.length > 1) {
-      // Narrow by study description vs the order's exam name; else ask the user.
-      const exam = (handoffOrder().service || '').toUpperCase();
-      const narrowed = cands.filter(s => (s.study_desc || '').toUpperCase() && exam.includes((s.study_desc || '').toUpperCase().split(' ')[0]));
-      if (narrowed.length === 1) { handoff.matched = narrowed[0]; handoff.studyId = String(narrowed[0].study_id); handoffStopPolling(); renderHandoffDE(); return; }
-      handoff.candidates = cands; handoffStopPolling(); renderHandoffDE(); return;
-    }
+    // The freshly-sent exam = a study that wasn't there at baseline. Fall back to
+    // studies dated today if none is strictly new (PACS may have beaten our baseline).
+    let pool = handoff.studies.filter(s => !handoff.baseline.has(String(s.study_id)));
+    if (!pool.length) pool = handoff.studies.filter(s => _isToday(s.study_date));
+    if (pool.length === 1) { handoff.matched = pool[0]; handoff.studyId = String(pool[0].study_id); handoffStopPolling(); renderHandoffDE(); return; }
+    if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
   if (handoff.pollN >= HO_POLL_MAX) {
     handoff.polling = false;
     const box = document.getElementById('ho-de');
-    if (box) box.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:8px">No matching ${escapeHtml(o.modality || '')} study in DePACS yet — the images may still be on the way.</div>
-      <button class="btn btn-primary" onclick="handoffStartPolling()">Check again</button>`;
+    if (box) box.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:8px">No new study in DePACS yet — the images may still be on the way.</div>
+      <button class="btn btn-primary" onclick="handoffStartPolling()">Check again</button>
+      <button class="btn btn-sm" style="margin-left:8px" onclick="handoffPickAny()">Pick from all studies</button>`;
     return;
   }
   handoff.pollTimer = setTimeout(handoffPollTick, HO_POLL_EVERY_MS);
+  renderHandoffDE();
+}
+
+// Fallback: let the tech pick from every study on the file (e.g. the exam landed
+// before baseline, or a re-send).
+function handoffPickAny() {
+  const all = (handoff.studies || []).slice();
+  if (!all.length) { handoffStartPolling(); return; }
+  if (all.length === 1) { handoff.matched = all[0]; handoff.studyId = String(all[0].study_id); handoff.candidates = null; }
+  else { handoff.candidates = all; }
   renderHandoffDE();
 }
 
@@ -251,8 +264,8 @@ async function handoffWrite() {
   const res = document.getElementById('ho-result');
   if (!handoff.studyId) { res.innerHTML = `<div class="empty"><p>Find/select the DePACS study first.</p></div>`; return; }
   if (!history) { res.innerHTML = `<div class="empty"><p>Add the clinical indication first.</p></div>`; return; }
-  if (handoff.matched && !studyMatchesOrder(handoff.matched, o)
-      && !confirm(`The selected study is ${handoff.matched.modality || '?'} but the order is ${o.modality || '?'}. Write anyway?`)) return;
+  const s = handoff.matched || {};
+  if (!confirm(`Write the indication into this DePACS study?\n\n${s.modality || ''} · ${(s.study_date || '').slice(0,16).replace('T',' ')}${s.study_desc ? ' · ' + s.study_desc : ''}\nstudy #${handoff.studyId}\n\nOrder: ${o.service || ''} (${o.modality || ''})`)) return;
   const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
   btn.disabled = true; btn.textContent = 'Writing…';
   try {
