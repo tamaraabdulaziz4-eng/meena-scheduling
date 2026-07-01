@@ -1,0 +1,14 @@
+{
+  "name": "meena-siratech-connector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reads radiology orders from Siratech HIS for Meena (headless login + cached JWT).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer": "^22.0.0"
+  }
+}

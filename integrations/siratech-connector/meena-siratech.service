@@ -1,0 +1,17 @@
+[Unit]
+Description=Meena Siratech HIS connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/meena-scheduling/integrations/siratech-connector
+EnvironmentFile=/opt/meena-scheduling/integrations/siratech-connector/.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+# Reuse the Chromium that whatsapp-bridge already downloaded.
+Environment=PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
+
+[Install]
+WantedBy=multi-user.target
