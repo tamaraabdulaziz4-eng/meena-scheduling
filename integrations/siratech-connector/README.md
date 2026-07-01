@@ -38,16 +38,18 @@ All but `/health` require `Authorization: Bearer $CONNECTOR_TOKEN`.
     "priority": 0, "priorityText": "Routine",
     "billNo": "CR03000245126", "accessionNumber": null,
     "orderedDate": "07/01/2026 12:11:51",
-    "status": "Pending", "paid": false, "pacsId": "P1", "hasReport": false
+    "status": "Pending", "imaged": false, "pacsId": "P1", "hasReport": false
   }],
   "count": 1
 }
 ```
 
-**Note on `accessionNumber` / paid:** HIS assigns the accession number (and the
-internal order id) only **after the order is billed/paid**. Until then
-`accessionNumber` is `null`, `status` is `"Pending"`, and the clinical indication
-(`GetEmrOrderDetails`) is not retrievable for that order.
+**Note on `accessionNumber` / `imaged`:** HIS assigns the accession number only
+**after the study is performed / lands in PACS** — NOT at payment (a paid-but-not-
+yet-imaged order still has `accessionNumber: null`). So `imaged` reflects
+performed/in-PACS, not payment. The true payment flag isn't in this response;
+`status` is the order's own HIS status. The clinical indication
+(`GetEmrOrderDetails`) needs the order id, which HIS only populates later too.
 
 ## Deploy (on the VPS)
 
