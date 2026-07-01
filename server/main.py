@@ -6055,6 +6055,18 @@ def radiology_lookup(file_no: str, user=Depends(require_admin)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no), timeout=90)
 
+@app.get("/api/radiology/results/match/{file_no}")
+def radiology_results_match(file_no: str, user=Depends(require_admin)):
+    """Reverse handoff: match a patient's radiology order(s)/test(s) to the
+    VERIFIED DePACS study that holds the report — the strict, no-guess gate.
+    Read-only (never writes). Each test resolves to `unique` / `none` /
+    `ambiguous`; an order is auto-fileable only when every test is `unique`."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/results/match/" + urllib.parse.quote(file_no), timeout=120)
+
 # ---- Butterfly (DePACS) write clinical history into a study ------------------
 def _elite_put(path, body):
     try:

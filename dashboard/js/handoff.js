@@ -371,12 +371,83 @@ function hoStep4(b) {
       </div>
       <textarea id="ho-message" class="input" rows="6" oninput="handoffMsgInput(this)"></textarea>
       <div style="font-size:12px;color:var(--muted);margin-top:6px">Copy this and paste it into the radiology WhatsApp group.</div>
+      <div class="ho-results-sec">
+        <div class="ho-msg-head" style="margin-top:4px">
+          <div class="ho-lbl" style="margin:0">🔬 Radiology report — is it back yet?</div>
+          <button class="btn btn-sm" onclick="handoffCheckResults(this)">Check report</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin:2px 0 8px">
+          Matches the finished DePACS report to the correct order/exam — never guesses. Ready ones can be filed in Siratech.</div>
+        <div id="ho-results"></div>
+      </div>
       <div class="ho-nav">
         <button class="btn btn-ghost" onclick="handoffBack()">← Back</button>
         <button class="btn btn-primary" onclick="handoffReset()">Done · new patient</button>
       </div>
     </div>`;
   handoffSyncMsg(true);
+}
+
+// ── Reverse flow · match the finished report to the right order/exam ──────────
+async function handoffCheckResults(btn) {
+  const box = document.getElementById('ho-results');
+  if (!handoff.file) { box.innerHTML = `<div class="ho-note">Look up a patient first.</div>`; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  box.innerHTML = LOADING_HTML;
+  try {
+    const d = await API.get(`/radiology/results/match/${encodeURIComponent(handoff.file)}`);
+    renderHandoffResults(d);
+  } catch (e) {
+    box.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div>
+      <p>${escapeHtml(e.message || 'Result match failed')}</p></div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check report'; }
+  }
+}
+
+function renderHandoffResults(d) {
+  const box = document.getElementById('ho-results');
+  const orders = (d && d.orders) || [];
+  if (!orders.length) {
+    box.innerHTML = `<div class="ho-note">No radiology order awaiting a result for this file.</div>`;
+    return;
+  }
+  const testCard = (t) => {
+    const s = t.study || {};
+    const rep = t.report || {};
+    if (t.decision === 'unique') {
+      return `<div class="ho-de-box ok" style="display:block">
+        <div><b>✅ ${escapeHtml(t.test.serviceName || '')}</b> — report ready</div>
+        <div style="font-size:12px;color:var(--muted);margin:3px 0">
+          matched: ${escapeHtml(s.modality || '')} · ${escapeHtml(s.desc || '')} ·
+          ${escapeHtml(String(s.studyDate || '').slice(0,16).replace('T',' '))} · study #${escapeHtml(String(s.studyId))}
+          ${rep.pdfOk ? ' · 📄 PDF' : ''}</div>
+        ${rep.preview ? `<textarea class="input" rows="4" readonly style="font-size:12px">${escapeHtml(rep.preview)}${rep.preview.length >= 590 ? '…' : ''}</textarea>
+        <button class="btn btn-sm" style="margin-top:6px" onclick="handoffCopyText(this)">📋 Copy report</button>` : ''}
+      </div>`;
+    }
+    const cands = (t.candidates || []).filter(c => c.bodyMatch && c.bodyMatch.length);
+    return `<div class="ho-de-box" style="display:block;border-color:var(--warn,#b7791f)">
+      <div><b>⚠️ ${escapeHtml(t.test.serviceName || '')}</b> — needs manual review</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(t.reason || t.decision)}.
+      ${cands.length ? 'Possible: ' + escapeHtml(cands.map(c => `${c.desc} (#${c.studyId})`).join(', ')) : 'No confident match — do not file automatically.'}</div>
+    </div>`;
+  };
+  box.innerHTML = orders.map(o => {
+    const tests = (o.tests || []).map(testCard).join('');
+    return `<div style="margin-bottom:10px">
+      <div class="ho-lbl" style="margin:6px 0 4px">Order ${escapeHtml(o.order.billNo || '')}
+        ${o.allUnique ? '<span class="badge badge-green">all matched</span>' : '<span class="badge badge-red">review needed</span>'}</div>
+      ${tests}</div>`;
+  }).join('');
+}
+
+function handoffCopyText(btn) {
+  const ta = btn.previousElementSibling;
+  if (!ta) return;
+  const done = () => { const t = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = t; }, 1400); };
+  try { navigator.clipboard.writeText(ta.value).then(done, () => { ta.select(); document.execCommand('copy'); done(); }); }
+  catch (e) { ta.select(); try { document.execCommand('copy'); done(); } catch (_e) {} }
 }
 function handoffReset() {
   handoffStopPolling();
