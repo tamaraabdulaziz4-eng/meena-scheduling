@@ -593,6 +593,10 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_staff ON scheduling.staff_credentials(staff_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_expiry ON scheduling.staff_credentials(expiry_date);")
+            # Employee-file documents: some (CV, transcript, diploma) have no expiry,
+            # and we record an issue date. Relax the original NOT-NULL expiry.
+            cur.execute("ALTER TABLE scheduling.staff_credentials ADD COLUMN IF NOT EXISTS issue_date DATE;")
+            cur.execute("ALTER TABLE scheduling.staff_credentials ALTER COLUMN expiry_date DROP NOT NULL;")
 
             # Staff shift preferences for a month — collected before generation.
             # kind: 'unavailable' (hard, forced Off) or 'off' (soft, prefer Off).
@@ -5698,8 +5702,14 @@ def report_qc_log(request: Request, user=Depends(require_admin)):
         r["shift_label"] = _SHIFT_CHECK_LABELS.get(r["shift"], r["shift"])
     return {"from": date_from, "to": date_to, "log": rows}
 
-# ── Staff credentials / license expiry ────────────────────────────────────────
-_CREDENTIAL_KINDS = ("scfhs", "bls", "acls", "iqama", "passport", "classification", "other")
+# ── Staff credentials / employee-file documents ───────────────────────────────
+# The employee file (CBAHI RD.1.2 / SCFHS): one slot per document type. Some carry
+# an expiry that drives reminders; the rest (CV, transcript, diploma) are one-off.
+_CREDENTIAL_KINDS = ("cv", "moh_license", "scfhs", "classification", "transcript",
+                     "diploma", "bls", "acls", "national_id", "iqama", "passport",
+                     "malpractice", "other")
+_EXPIRING_KINDS = {"moh_license", "scfhs", "classification", "bls", "acls",
+                   "national_id", "iqama", "passport", "malpractice"}
 
 def _valid_iso_date(s):
     """Return a YYYY-MM-DD string if valid, else None — guards the DB from a
@@ -5726,6 +5736,7 @@ def list_credentials(request: Request, user=Depends(require_admin)):
     """All staff credentials in scope (team lead: own branch; manager: any/all)."""
     _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
     rows = q("""SELECT c.id, c.staff_id, c.kind, c.label, c.number,
+                       TO_CHAR(c.issue_date,'YYYY-MM-DD')  AS issue_date,
                        TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
                        (c.expiry_date - CURRENT_DATE) AS days_left,
                        s.name AS staff_name, s.branch_id, b.name AS branch_name
@@ -5733,7 +5744,7 @@ def list_credentials(request: Request, user=Depends(require_admin)):
                 JOIN scheduling.staff s ON s.id=c.staff_id
                 LEFT JOIN scheduling.branches b ON b.id=s.branch_id
                 WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
-                ORDER BY c.expiry_date""", (branch_ids,))
+                ORDER BY c.expiry_date NULLS LAST""", (branch_ids,))
     return rows
 
 @app.get("/api/credentials/expiring")
@@ -5763,9 +5774,10 @@ def staff_credentials(sid: int, user=Depends(get_current_user)):
     elif not _can_manage_staff(user, sid):
         raise HTTPException(403, "Forbidden")
     return q("""SELECT id, kind, label, number,
+                       TO_CHAR(issue_date,'YYYY-MM-DD')  AS issue_date,
                        TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date,
                        (expiry_date - CURRENT_DATE) AS days_left
-                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY expiry_date""", (sid,))
+                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY kind""", (sid,))
 
 @app.post("/api/credentials")
 async def create_credential(request: Request, user=Depends(require_admin)):
@@ -5774,15 +5786,16 @@ async def create_credential(request: Request, user=Depends(require_admin)):
     if not _can_manage_staff(user, sid):
         raise HTTPException(403, "Forbidden")
     kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    issue = _valid_iso_date(body.get("issue_date"))
     expiry = _valid_iso_date(body.get("expiry_date"))
-    if not expiry:
-        raise HTTPException(400, "A valid expiry_date (YYYY-MM-DD) is required")
-    row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,expiry_date,created_by)
-               VALUES (%s,%s,%s,%s,%s,%s)
+    if kind in _EXPIRING_KINDS and not expiry:
+        raise HTTPException(400, "This document needs a valid expiry_date (YYYY-MM-DD)")
+    row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,issue_date,expiry_date,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
                RETURNING id, TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date""",
             (sid, kind, (body.get("label") or "").strip()[:80] or None,
-             (body.get("number") or "").strip()[:60] or None, expiry, user["id"]), one=True)
-    insert_audit(user, "CREDENTIAL_ADD", f"staff:{sid}", f"{kind} {expiry}")
+             (body.get("number") or "").strip()[:60] or None, issue, expiry, user["id"]), one=True)
+    insert_audit(user, "CREDENTIAL_ADD", f"staff:{sid}", f"{kind} {expiry or '—'}")
     return row
 
 @app.put("/api/credentials/{cid}")
@@ -5794,12 +5807,13 @@ async def update_credential(cid: int, request: Request, user=Depends(require_adm
         raise HTTPException(403, "Forbidden")
     body = await request.json()
     kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    issue = _valid_iso_date(body.get("issue_date"))
     expiry = _valid_iso_date(body.get("expiry_date"))
-    if not expiry:
-        raise HTTPException(400, "A valid expiry_date (YYYY-MM-DD) is required")
-    q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,expiry_date=%s WHERE id=%s""",
+    if kind in _EXPIRING_KINDS and not expiry:
+        raise HTTPException(400, "This document needs a valid expiry_date (YYYY-MM-DD)")
+    q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,issue_date=%s,expiry_date=%s WHERE id=%s""",
       (kind, (body.get("label") or "").strip()[:80] or None,
-       (body.get("number") or "").strip()[:60] or None, expiry, cid), exec_only=True)
+       (body.get("number") or "").strip()[:60] or None, issue, expiry, cid), exec_only=True)
     return {"ok": True}
 
 @app.delete("/api/credentials/{cid}")
@@ -5810,6 +5824,57 @@ def delete_credential(cid: int, user=Depends(require_admin)):
     if not _can_manage_staff(user, c["staff_id"]):
         raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.staff_credentials WHERE id=%s", (cid,), exec_only=True)
+    return {"ok": True}
+
+# ── Staff self-service: fill your own employee-file document dates ─────────────
+@app.get("/api/my-credentials")
+def my_credentials(user=Depends(get_current_user)):
+    """The signed-in staff member's own document slots (for the employee file)."""
+    sid = user.get("staff_id")
+    if not sid:
+        return []
+    return q("""SELECT id, kind, label, number,
+                       TO_CHAR(issue_date,'YYYY-MM-DD')  AS issue_date,
+                       TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (expiry_date - CURRENT_DATE) AS days_left
+                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY kind""", (sid,))
+
+@app.put("/api/my-credentials")
+async def upsert_my_credential(request: Request, user=Depends(get_current_user)):
+    """Staff fills the dates/number of one of their own file documents. One slot
+    per document type — upserts by (staff_id, kind)."""
+    sid = user.get("staff_id")
+    if not sid:
+        raise HTTPException(400, "Your account isn't linked to a staff profile.")
+    body = await request.json()
+    kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else None
+    if not kind:
+        raise HTTPException(400, "Unknown document type")
+    issue = _valid_iso_date(body.get("issue_date"))
+    expiry = _valid_iso_date(body.get("expiry_date"))
+    if kind in _EXPIRING_KINDS and not expiry:
+        raise HTTPException(400, "This document needs an expiry date (YYYY-MM-DD)")
+    number = (body.get("number") or "").strip()[:60] or None
+    existing = q("SELECT id FROM scheduling.staff_credentials WHERE staff_id=%s AND kind=%s ORDER BY id LIMIT 1",
+                 (sid, kind), one=True)
+    if existing:
+        q("UPDATE scheduling.staff_credentials SET number=%s, issue_date=%s, expiry_date=%s WHERE id=%s",
+          (number, issue, expiry, existing["id"]), exec_only=True)
+        cid = existing["id"]
+    else:
+        row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,number,issue_date,expiry_date,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (sid, kind, number, issue, expiry, user["id"]), one=True)
+        cid = row["id"]
+    return {"ok": True, "id": cid}
+
+@app.delete("/api/my-credentials/{kind}")
+def delete_my_credential(kind: str, user=Depends(get_current_user)):
+    """Staff clears one of their own document slots."""
+    sid = user.get("staff_id")
+    if not sid:
+        raise HTTPException(400, "Your account isn't linked to a staff profile.")
+    q("DELETE FROM scheduling.staff_credentials WHERE staff_id=%s AND kind=%s", (sid, kind), exec_only=True)
     return {"ok": True}
 
 _PREF_KINDS = ("off", "unavailable")

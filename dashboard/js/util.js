@@ -438,3 +438,89 @@ function contrastColor(hex) {
   const b = parseInt(hex.slice(5,7),16);
   return (r*299 + g*587 + b*114) / 1000 > 128 ? '#2B2458' : '#ffffff';
 }
+
+// ── Employee file: document slots + printable file ────────────────────────────
+// The canonical checklist every staff file must carry (CBAHI RD.1.2 / SCFHS).
+// `exp:true` documents drive expiry reminders; the rest are one-off records.
+const DOC_TYPES = [
+  { kind: 'cv',           en: 'Updated CV',              ar: 'السيرة الذاتية',            exp: false },
+  { kind: 'moh_license',  en: 'MOH License',             ar: 'رخصة وزارة الصحة',          exp: true  },
+  { kind: 'scfhs',        en: 'Saudi Council Card',      ar: 'تصنيف هيئة التخصصات',      exp: true  },
+  { kind: 'transcript',   en: 'Transcript of Records',   ar: 'كشف الدرجات',              exp: false },
+  { kind: 'diploma',      en: 'Diploma',                 ar: 'الشهادة الجامعية',          exp: false },
+  { kind: 'bls',          en: 'BLS Certificate',         ar: 'شهادة الإنعاش (BLS)',       exp: true  },
+  { kind: 'national_id',  en: 'National ID / Iqama',     ar: 'الهوية / الإقامة',          exp: true  },
+  { kind: 'malpractice',  en: 'Malpractice Insurance',   ar: 'تأمين الأخطاء الطبية',      exp: true  },
+  { kind: 'other',        en: 'Other Certificate',       ar: 'شهادات أخرى',              exp: false },
+];
+
+// Status of one document slot given its saved record (or undefined if missing).
+// → { code:'ok'|'soon'|'expired'|'missing'|'nodate', color, label }
+function docStatus(def, rec) {
+  if (!rec || (!rec.expiry_date && !rec.issue_date && !rec.number)) {
+    return { code: 'missing', color: '#E25555', label: 'Missing' };
+  }
+  if (!def.exp) return { code: 'ok', color: '#2BAE66', label: 'On file' };
+  if (!rec.expiry_date) return { code: 'nodate', color: '#E2933F', label: 'No expiry' };
+  const days = (rec.days_left != null)
+    ? rec.days_left
+    : Math.round((new Date(rec.expiry_date) - new Date()) / 86400000);
+  if (days < 0)  return { code: 'expired', color: '#E25555', label: 'Expired' };
+  if (days <= 60) return { code: 'soon', color: '#E2933F', label: `${days}d left` };
+  return { code: 'ok', color: '#2BAE66', label: 'Valid' };
+}
+
+// Build a tidy, print-ready A4 employee-file document and open the print dialog.
+// `staff` = { name, branch_name, speciality, employee_id }, `docs` = credential rows.
+function printEmployeeFile(staff, docs) {
+  const byKind = {};
+  (docs || []).forEach(d => { if (!byKind[d.kind]) byKind[d.kind] = d; });
+  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const rows = DOC_TYPES.map(def => {
+    const rec = byKind[def.kind];
+    const st  = docStatus(def, rec);
+    const fmt = v => v ? fmtDateDisplay(v) : '—';
+    return `<tr>
+      <td class="doc">${escapeHtml(def.en)}<span class="ar">${escapeHtml(def.ar)}</span></td>
+      <td>${rec && rec.number ? escapeHtml(rec.number) : '—'}</td>
+      <td>${rec ? fmt(rec.issue_date) : '—'}</td>
+      <td>${def.exp ? (rec ? fmt(rec.expiry_date) : '—') : '<span class="na">N/A</span>'}</td>
+      <td><span class="pill" style="color:${st.color};border-color:${st.color}">${st.label}</span></td>
+    </tr>`;
+  }).join('');
+  const w = window.open('', '_blank');
+  if (!w) { toast('Allow pop-ups to print the file', 'err'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8">
+    <title>Employee File — ${escapeHtml(staff.name || '')}</title>
+    <style>
+      *{box-sizing:border-box} body{font-family:'Poppins',system-ui,Arial,sans-serif;color:#2B2458;margin:0;padding:32px 34px}
+      .hd{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #6B4EFF;padding-bottom:14px;margin-bottom:18px}
+      .hd img{height:38px} .hd .t{text-align:right} .hd .t b{font-size:18px} .hd .t div{font-size:11px;color:#8585A8}
+      h1{font-size:20px;margin:6px 0 2px} .sub{color:#8585A8;font-size:12px;margin-bottom:18px}
+      .meta{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:18px}
+      .meta div span{display:block;font-size:10px;color:#8585A8;text-transform:uppercase;letter-spacing:.5px}
+      .meta div b{font-size:14px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th{background:#f4f1fb;color:#5b5b78;text-align:left;padding:9px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+      td{padding:9px 10px;border-bottom:1px solid #eee;vertical-align:middle}
+      td.doc{font-weight:600} td.doc .ar{display:block;font-size:10px;color:#8585A8;font-weight:400}
+      .pill{border:1px solid;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;white-space:nowrap}
+      .na{color:#b9b6cf} .foot{margin-top:22px;font-size:10px;color:#9a95ba;text-align:center;border-top:1px solid #eee;padding-top:10px}
+      @media print{body{padding:0}}
+    </style></head><body>
+    <div class="hd"><img src="/meena_logo.png" alt="Meena" onerror="this.style.display='none'">
+      <div class="t"><b>Employee File</b><div>ملف الموظف · Radiology</div></div></div>
+    <h1>${escapeHtml(staff.name || '')}</h1>
+    <div class="sub">${escapeHtml(staff.speciality || staff.role || '')}</div>
+    <div class="meta">
+      ${staff.employee_id ? `<div><span>Employee ID</span><b>${escapeHtml(String(staff.employee_id))}</b></div>` : ''}
+      ${staff.branch_name ? `<div><span>Branch</span><b>${escapeHtml(staff.branch_name)}</b></div>` : ''}
+      <div><span>Generated</span><b>${today}</b></div>
+    </div>
+    <table><thead><tr><th>Document</th><th>Number</th><th>Issue</th><th>Expiry</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    <div class="foot">Generated by Meena Health · This file reflects documents recorded in the system as of ${today}.</div>
+    <script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script>
+    </body></html>`);
+  w.document.close();
+}

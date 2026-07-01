@@ -21,12 +21,71 @@ async function renderMySchedulePage() {
     <div id="portal-grid">${LOADING_HTML}</div>
     <div id="portal-legend" style="margin-top:16px"></div>
     <div id="ms-prefs" style="margin-top:20px"></div>
+    <div id="ms-docs" style="margin-top:20px"></div>
     <div id="portal-requests" style="margin-top:20px"></div>`;
   await loadMySchedule();
   loadMyRequests();   // "everything that's mine" — open requests + their stage
   if (typeof renderHomeEotm === 'function') renderHomeEotm('ms-eotm');   // celebrate EOTM for staff too
   renderMyShiftChecks();   // equipment-check confirmation for the shift they're on
   renderMyPreferences();   // day-off / unavailable wishes for the rota generator
+  renderMyDocuments();     // employee-file documents — fill dates + print the file
+}
+
+// ── My documents (employee file) ──────────────────────────────────────────────
+let _myDocs = {};   // kind → saved record
+
+async function renderMyDocuments() {
+  const box = document.getElementById('ms-docs');
+  if (!box) return;
+  let docs = [];
+  try { docs = await API.get('/my-credentials'); } catch (e) { box.innerHTML = ''; return; }
+  _myDocs = {};
+  (docs || []).forEach(d => { if (!_myDocs[d.kind]) _myDocs[d.kind] = d; });
+
+  const rows = DOC_TYPES.map(def => {
+    const rec = _myDocs[def.kind] || {};
+    const st  = docStatus(def, _myDocs[def.kind]);
+    return `<div class="doc-row" style="display:grid;grid-template-columns:1.4fr 1fr auto;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <div style="font-weight:600;font-size:13px">${escapeHtml(def.en)}
+          <span class="badge" style="color:${st.color};border:1px solid ${st.color}55;background:${st.color}14;font-size:10px;margin-inline-start:6px">${st.label}</span></div>
+        <div style="font-size:11px;color:var(--muted)">${escapeHtml(def.ar)}</div>
+        <input class="input" id="doc-num-${def.kind}" placeholder="Number (optional)" value="${escapeHtml(rec.number || '')}" style="margin-top:6px;width:100%;font-size:12px">
+      </div>
+      <div style="display:flex;gap:8px">
+        <label style="flex:1;font-size:10px;color:var(--muted)">Issue
+          <input type="date" class="input" id="doc-iss-${def.kind}" value="${rec.issue_date || ''}" style="width:100%;font-size:12px"></label>
+        ${def.exp ? `<label style="flex:1;font-size:10px;color:var(--muted)">Expiry
+          <input type="date" class="input" id="doc-exp-${def.kind}" value="${rec.expiry_date || ''}" style="width:100%;font-size:12px"></label>` : ''}
+      </div>
+      <button class="btn btn-sm" onclick="saveMyDoc('${def.kind}',${def.exp})">Save</button>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="hm-card-title">My documents (employee file)</div>
+      <button class="btn btn-sm btn-primary" onclick="printMyFile()">🖨️ Print my file</button>
+    </div>
+    <div class="hm-muted" style="font-size:12px;margin:4px 0 8px">Fill in your document dates (license, BLS, ID…). You'll be reminded before anything expires.</div>
+    ${rows}</div>`;
+}
+
+async function saveMyDoc(kind, expires) {
+  const num = (document.getElementById('doc-num-' + kind)?.value || '').trim();
+  const iss = document.getElementById('doc-iss-' + kind)?.value || '';
+  const exp = expires ? (document.getElementById('doc-exp-' + kind)?.value || '') : '';
+  if (expires && !exp) { toast('Add the expiry date', 'err'); return; }
+  try {
+    await API.put('/my-credentials', { kind, number: num, issue_date: iss, expiry_date: exp });
+    toast('Saved');
+    renderMyDocuments();
+  } catch (e) { toast(e.message || 'Could not save', 'err'); }
+}
+
+function printMyFile() {
+  const s = (myScheduleData && myScheduleData.staff) || { name: currentUser?.username };
+  printEmployeeFile(s, Object.values(_myDocs));
 }
 
 // ── My preferences (prefer-off / unavailable days before the rota is built) ───

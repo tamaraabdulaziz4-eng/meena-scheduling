@@ -150,11 +150,21 @@ async function loadFairnessReport(body) {
 
 // ── Licenses & expiry ─────────────────────────────────────────────────────────
 const _CRED_KINDS = [
-  ['scfhs', 'SCFHS registration'], ['classification', 'Classification'],
-  ['bls', 'BLS'], ['acls', 'ACLS'], ['iqama', 'Iqama'],
-  ['passport', 'Passport'], ['other', 'Other'],
+  ['moh_license', 'MOH License'], ['scfhs', 'Saudi Council'], ['classification', 'Classification'],
+  ['bls', 'BLS'], ['acls', 'ACLS'], ['national_id', 'National ID / Iqama'], ['iqama', 'Iqama'],
+  ['passport', 'Passport'], ['malpractice', 'Malpractice Insurance'],
+  ['cv', 'CV'], ['transcript', 'Transcript'], ['diploma', 'Diploma'], ['other', 'Other'],
 ];
+// Kinds that carry an expiry (must match the server's _EXPIRING_KINDS).
+const _CRED_EXP_KINDS = new Set(['moh_license', 'scfhs', 'classification', 'bls', 'acls',
+  'national_id', 'iqama', 'passport', 'malpractice']);
 function _credKindLabel(k) { const f = _CRED_KINDS.find(x => x[0] === k); return f ? f[1] : (k || 'Other'); }
+// Print one staff member's full employee file (all their document rows).
+function printStaffFile(staffId) {
+  const rows = _credRows.filter(r => r.staff_id === staffId);
+  if (!rows.length) { toast('No documents on file yet', 'err'); return; }
+  printEmployeeFile({ name: rows[0].staff_name, branch_name: rows[0].branch_name }, rows);
+}
 function _credStatus(d) {
   // → [text, pill-class]
   if (d === null || d === undefined) return ['No date', 'rep-pill-muted'];
@@ -183,6 +193,14 @@ async function loadCredentialsReport(body) {
         </div>
         <button class="btn btn-sm btn-primary" onclick="openCredentialModal()">+ Add credential</button>
       </div>
+      ${(() => {
+        const byStaff = {};
+        rows.forEach(r => { if (!byStaff[r.staff_id]) byStaff[r.staff_id] = { id: r.staff_id, name: r.staff_name }; });
+        const chips = Object.values(byStaff).map(s =>
+          `<button class="btn btn-xs btn-ghost" onclick="printStaffFile(${s.id})">🖨️ ${escapeHtml(s.name)}</button>`).join('');
+        return chips ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:10px;border:1px dashed var(--border);border-radius:10px">
+          <span style="font-size:12px;color:var(--muted);align-self:center;margin-inline-end:4px">Print employee file:</span>${chips}</div>` : '';
+      })()}
       <div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
         <thead><tr><th>Staff</th>${showBranch ? '<th>Branch</th>' : ''}<th>Type</th><th>Label</th><th>Number</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
         <tbody>${rows.length ? rows.map(r => {
@@ -237,7 +255,10 @@ async function openCredentialModal(credId) {
       <label style="font-size:13px">Number (optional)
         <input id="cred-number" class="input" maxlength="60" value="${cred ? escapeHtml(cred.number || '') : ''}" style="width:100%;margin-top:4px">
       </label>
-      <label style="font-size:13px">Expiry date
+      <label style="font-size:13px">Issue date (optional)
+        <input id="cred-issue" type="date" class="input" value="${cred ? (cred.issue_date || '') : ''}" style="width:100%;margin-top:4px">
+      </label>
+      <label style="font-size:13px">Expiry date <span style="color:var(--muted);font-weight:400">(required for licenses/IDs)</span>
         <input id="cred-expiry" type="date" class="input" value="${cred ? (cred.expiry_date || '') : ''}" style="width:100%;margin-top:4px">
       </label>
     </div>
@@ -254,10 +275,13 @@ async function saveCredential() {
     kind: document.getElementById('cred-kind').value,
     label: document.getElementById('cred-label').value.trim(),
     number: document.getElementById('cred-number').value.trim(),
+    issue_date: document.getElementById('cred-issue').value,
     expiry_date: document.getElementById('cred-expiry').value,
   };
   if (!payload.staff_id) { toast('Pick a staff member', 'err'); return; }
-  if (!payload.expiry_date) { toast('Expiry date is required', 'err'); return; }
+  if (_CRED_EXP_KINDS.has(payload.kind) && !payload.expiry_date) {
+    toast('This document needs an expiry date', 'err'); return;
+  }
   try {
     if (id) await API.put(`/credentials/${id}`, payload);
     else await API.post('/credentials', payload);
