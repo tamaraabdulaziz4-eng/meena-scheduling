@@ -34,8 +34,9 @@ function renderStaffPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Radiology team directory', 'Staff', `<b>${allStaff.length}</b> member${allStaff.length !== 1 ? 's' : ''}`)}
-    ${canEdit ? `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-      <button class="btn btn-sm" onclick="exportStaffCsv()">⬇️ Export CSV (name · email · phone)</button></div>` : ''}
+    ${canEdit ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
+      <button class="btn btn-sm" onclick="printStaffDirectory()">🖨️ PDF</button>
+      <button class="btn btn-sm" onclick="exportStaffCsv()">⬇️ Export CSV</button></div>` : ''}
     <div id="staff-pending"></div>
     <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
 
@@ -246,4 +247,39 @@ function exportStaffCsv() {
   a.download = `radiology_staff_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   toast(`Exported ${allStaff.length} staff`);
+}
+
+// Printable PDF of the whole staff directory (name, ID, email, phone, section),
+// grouped by branch, with a letterhead. Opens the print dialog → Save as PDF.
+function printStaffDirectory() {
+  if (!allStaff || !allStaff.length) { toast('No staff to export', 'err'); return; }
+  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const sectionOf = s => { const sp = (s.speciality || []).map(x => String(x || '').toUpperCase()); return (sp.includes('US') || sp.includes('ULTRASOUND')) ? 'US' : 'General'; };
+  const byBranch = {};
+  allStaff.forEach(s => { const k = s.branch_name || 'Unassigned'; (byBranch[k] = byBranch[k] || []).push(s); });
+  let body = '';
+  Object.entries(byBranch).forEach(([branch, staff]) => {
+    body += `<h2>${escapeHtml(branch)} <span class="cnt">${staff.length}</span></h2>
+      <table><thead><tr><th>#</th><th>Name</th><th>ID</th><th>Email</th><th>Phone</th><th>Section</th></tr></thead><tbody>` +
+      staff.map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.name || '')}</td><td>${escapeHtml(s.employee_id || '')}</td><td>${escapeHtml(s.email || '')}</td><td>${escapeHtml(s.phone || '')}</td><td>${sectionOf(s)}</td></tr>`).join('') +
+      `</tbody></table>`;
+  });
+  const w = window.open('', '_blank');
+  if (!w) { toast('Allow pop-ups to export the PDF', 'err'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Radiology Staff — ${today}</title>
+    <style>*{box-sizing:border-box}body{font-family:'Poppins',system-ui,Arial,sans-serif;color:#2B2458;margin:0;padding:28px 30px}
+    .hd{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #6B4EFF;padding-bottom:12px;margin-bottom:16px}
+    .hd img{height:34px}.hd .t{text-align:right}.hd .t b{font-size:16px}.hd .t div{font-size:11px;color:#8585A8}
+    h1{font-size:18px;margin:4px 0}.sub{color:#8585A8;font-size:12px;margin-bottom:16px}
+    h2{font-size:13px;margin:16px 0 6px;color:#6B4EFF}h2 .cnt{background:#efeafe;color:#6B4EFF;border-radius:10px;padding:1px 8px;font-size:10px;margin-inline-start:6px}
+    table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px}
+    th{background:#f4f1fb;color:#5b5b78;text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase}
+    td{padding:6px 8px;border-bottom:1px solid #eee}tr:nth-child(even) td{background:#fafafe}
+    .foot{margin-top:18px;font-size:10px;color:#9a95ba;text-align:center;border-top:1px solid #eee;padding-top:8px}
+    @media print{body{padding:0}}</style></head><body>
+    <div class="hd"><img src="/meena_logo.png" onerror="this.style.display='none'"><div class="t"><b>Radiology Staff Directory</b><div>دليل موظفي الأشعة</div></div></div>
+    <h1>Staff Directory</h1><div class="sub">${allStaff.length} members · Generated ${today}</div>
+    ${body}<div class="foot">Meena Health · ${today}</div>
+    <script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script></body></html>`);
+  w.document.close();
 }
