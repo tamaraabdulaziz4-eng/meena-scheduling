@@ -75,7 +75,10 @@ function renderHandoffPatient() {
   const orderRows = orders.length ? orders.map((o, i) => {
     const statusChip = o.status
       ? `<span class="badge" style="background:#eeeef7;color:#3b3b6d">${escapeHtml(o.status)}</span>` : '';
-    const imagedChip = o.imaged
+    // Derive "in PACS" from the accession number directly, so this is right
+    // regardless of the connector version deployed on the VPS.
+    const isImaged = o.imaged || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
+    const imagedChip = isImaged
       ? `<span class="badge" style="background:#e7f7ec;color:#1a7f43">In PACS</span>`
       : `<span class="badge" style="background:#fdeecf;color:#8a5a00">Not imaged yet</span>`;
     return `<label style="display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border,#e5e5ef);border-radius:10px;margin-bottom:6px;cursor:pointer;flex-wrap:wrap">
