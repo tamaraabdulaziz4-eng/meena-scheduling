@@ -22,6 +22,32 @@ and then makes plain REST calls.
 | GET | `/health` | liveness + token age |
 | GET | `/patient/:file` | radiology orders + patient for a file (MRN) number |
 | GET | `/search?q=` | partial name/MRN search → patient rows |
+| GET | `/results/match/:file` | match pending radiology order(s) → the VERIFIED DePACS study holding the report (read-only, no-guess gate) |
+| POST | `/results/match` | `{file, billNo}` — match one specific order |
+
+### Radiology result linking (`/results/match`)
+
+The reverse of the handoff: once the radiologist VERIFIES a report in DePACS, we
+find which Siratech radiology order it belongs to — **without ever landing a
+report on the wrong patient/exam**. The matcher is deliberately strict:
+
+- **Primary key — accession number.** If the order has a generated accession and a
+  DePACS study carries the same `accession_number` (or its `study_iuid` ends with
+  it), that is a deterministic 1:1 link. (Today accession is rarely populated, so
+  the fallback usually runs.)
+- **Fallback — MRN + modality (DX/CR→XR) + body-part + tight time window.** The
+  DePACS `study_desc` body-part tokens must overlap the Siratech `serviceName`, and
+  the study must fall in a window around the order date. **Exactly one** candidate
+  must survive; zero or several ⇒ `decision:"none"|"ambiguous"` and the caller must
+  route it to manual review. Never guesses.
+
+Response `decision` is `"unique" | "none" | "ambiguous"`; on `unique` it includes
+the matched `study` and a `report` preview (+ whether the PDF is fetchable). It
+does **not** write anything — filing the report into Result Entry is a separate,
+guarded step.
+
+Requires `DEPACS_USER` / `DEPACS_PASS` (Butterfly) and `RESULT_SITE` (the
+logged-in user's site — the Result-Entry worklist is site-scoped; default `1`).
 
 All but `/health` require `Authorization: Bearer $CONNECTOR_TOKEN`.
 

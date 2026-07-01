@@ -19,6 +19,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const puppeteer = require('puppeteer');
+const results = require('./results');
 
 const PORT = Number(process.env.PORT || 3005);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -31,6 +32,9 @@ const HIS_PASS = process.env.HIS_PASS || '';
 // is fine; override with HIS_SITE (matched case-insensitively against the option).
 const HIS_SITE = (process.env.HIS_SITE || '').trim();
 const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 55 * 60 * 1000);
+// The Result-Entry worklist is scoped to the logged-in user's site (not the
+// order's original siteId), so result lookups use this site. Default 1 (proven).
+const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
 
 if (!API_TOKEN) {
   console.warn('⚠  CONNECTOR_TOKEN is not set — /patient is UNAUTHENTICATED. Set it in production.');
@@ -231,6 +235,16 @@ function normalizePatient(p) {
   };
 }
 
+// The result-entry payloads need the logged-in employee id (empId). It lives in
+// the JWT `nameid` claim captured at login — decode it from the cached token.
+function currentEmpId() {
+  try {
+    const jwt = String(cache.auth || '').replace(/^Bearer\s+/i, '');
+    const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString('utf8'));
+    return payload.nameid || payload.sub || payload.UserId || null;
+  } catch (_e) { return null; }
+}
+
 // ── HTTP ──────────────────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
   if (!API_TOKEN) return next();
@@ -273,6 +287,67 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
+});
+
+// ── Radiology result linking ─────────────────────────────────────────────────
+// Match a patient's Siratech radiology order(s) to the VERIFIED DePACS study that
+// holds the report — the strict, no-guess gate. READ-ONLY: it never writes.
+// GET /results/match/:file            → match every pending order for the file
+// POST /results/match {file, billNo}  → match one specific order (by bill no)
+async function buildMatch(file, wantBillNo) {
+  await getToken();                                    // ensure logged in (empId)
+  const empId = currentEmpId();
+  if (!empId) throw new Error('no empId (not logged in?)');
+
+  // 1) the patient's radiology orders that are awaiting a result (filterResult 0)
+  const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+    body: results.radiologySearchBody({ mrno: file, hospitalId: RESULT_SITE, empId }),
+  });
+  const rows = (sr.json && sr.json.data) || [];
+  const orderRows = wantBillNo ? rows.filter((r) => r.billNo === wantBillNo) : rows;
+
+  // 2) the patient's VERIFIED DePACS studies (once)
+  const studies = await results.depacsStudies(file);
+
+  const out = [];
+  for (const row of orderRows) {
+    // pull the service name + accession from the result-entry template
+    const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+      body: results.radiologyDetailsBody(row, { hospitalId: RESULT_SITE, empId }),
+    });
+    const det = (dr.json && dr.json.data) || [];
+    const svc = det[0] || {};
+    const order = {
+      mrno: row.mrno, billNo: row.billNo, serviceName: svc.serviceName || row.serviceName || null,
+      categoryName: svc.categoryName || null, orderDate: row.billDate || row.visitDate || null,
+      accession: svc.accessionNo || row.accessionNo || null,
+      genPatBillingId: row.genPatBillingId, invMastserviceId: svc.inv_mast_service_id || row.invMastserviceId,
+      orderId: svc.emR_PAT_DTLS_INV_ORDER_ID || null,
+    };
+    const m = results.matchStudy(order, studies);
+    let report = null;
+    if (m.decision === 'unique') {
+      const rep = await results.depacsReport(m.study.studyId);
+      report = { studyId: m.study.studyId, desc: m.study.desc, studyDate: m.study.studyDate,
+        reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes,
+        preview: rep.reportText.slice(0, 600) };
+    }
+    out.push({ order, decision: m.decision, matchKey: m.key, reason: m.reason,
+      study: m.study ? { studyId: m.study.studyId, desc: m.study.desc, modality: m.study.modality, studyDate: m.study.studyDate, accession: m.study.accession } : null,
+      candidates: m.candidates, report });
+  }
+  return { file, empId, site: RESULT_SITE, studiesFound: studies.length, orders: out, count: out.length };
+}
+
+app.get('/results/match/:file', requireAuth, async (req, res) => {
+  try { return res.json({ ok: true, ...(await buildMatch(String(req.params.file || '').trim(), null)) }); }
+  catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+app.post('/results/match', requireAuth, async (req, res) => {
+  const { file, billNo } = req.body || {};
+  if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
+  try { return res.json({ ok: true, ...(await buildMatch(String(file).trim(), billNo || null)) }); }
+  catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
 // Name search (partial) — returns light patient rows for a picker.
