@@ -5877,6 +5877,135 @@ def delete_my_credential(kind: str, user=Depends(get_current_user)):
     q("DELETE FROM scheduling.staff_credentials WHERE staff_id=%s AND kind=%s", (sid, kind), exec_only=True)
     return {"ok": True}
 
+# ── Elite / Butterfly (DePACS) radiology reports ──────────────────────────────
+# Pull this clinic's own radiology reports from the DePACS "Butterfly" portal so
+# staff can search by patient file number and view/download the report inside
+# Meena. Contract discovered from the portal's own API:
+#   POST /auth/signin {identifier,password,device_id,platform} -> {access_token}
+#   GET  /study/get_studies?...&patient_id=<file>        -> studies list
+#   GET  /report/get_study_report_info/<study_id>        -> report_content (HTML)
+#   GET  /report/open_report_pdf/<study_id>?style=<1|2>  -> PDF
+_ELITE_API_DEFAULT = "https://test-api.diagnosticselite.net:10443/api/v1"
+_elite_token_cache = {"token": None, "exp": 0.0}
+
+def _elite_cfg():
+    return {"base": (get_setting("elite_api_base") or _ELITE_API_DEFAULT).rstrip("/"),
+            "username": get_setting("elite_username") or "",
+            "password": get_setting("elite_password") or ""}
+
+def _elite_ssl_ctx():
+    # The vendor API serves a self-signed cert on a non-standard port; skip
+    # verification for these calls only (mirrors the browser / curl -k needed).
+    import ssl
+    c = ssl.create_default_context(); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
+    return c
+
+def _elite_request(method, path, token=None, body=None, want="json", timeout=30):
+    import urllib.request, urllib.error
+    url = _elite_cfg()["base"] + path
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {"Accept": "*/*"}
+    if body is not None: headers["Content-Type"] = "application/json"
+    if token: headers["Authorization"] = "Token " + token
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_elite_ssl_ctx()) as resp:
+            raw = resp.read()
+            return (resp.getheader("Content-Type", ""), raw) if want == "raw" \
+                else json.loads(raw.decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        raise HTTPException(502, f"Reports service {e.code}: {e.read().decode('utf-8','replace')[:200]}")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't reach the reports service: {e}")
+
+def _elite_login():
+    import time
+    c = _elite_cfg()
+    if not (c["username"] and c["password"]):
+        raise HTTPException(400, "Reports lookup isn't set up. Add the Butterfly account in Settings.")
+    r = _elite_request("POST", "/auth/signin", body={
+        "identifier": c["username"], "password": c["password"],
+        "device_id": f"{c['username']}_meena", "platform": "web"})
+    tok = (r.get("body") or {}).get("access_token") if isinstance(r, dict) else None
+    if not (isinstance(r, dict) and r.get("success") and tok):
+        raise HTTPException(502, f"Reports login failed: {(isinstance(r, dict) and r.get('error')) or 'check the username/password'}")
+    _elite_token_cache.update(token=tok, exp=time.time() + 3 * 3600)
+    return tok
+
+def _elite_token():
+    import time
+    if _elite_token_cache["token"] and _elite_token_cache["exp"] > time.time() + 60:
+        return _elite_token_cache["token"]
+    return _elite_login()
+
+def _elite_get(path, want="json"):
+    try:
+        return _elite_request("GET", path, token=_elite_token(), want=want)
+    except HTTPException as e:
+        if getattr(e, "status_code", 0) == 502 and ("401" in str(e.detail) or "403" in str(e.detail)):
+            _elite_token_cache["token"] = None
+            return _elite_request("GET", path, token=_elite_login(), want=want)
+        raise
+
+def _elite_name(n):
+    return (n or "").replace("^", " ").replace("  ", " ").strip()
+
+@app.get("/api/reports/config")
+def reports_config(user=Depends(require_superadmin)):
+    c = _elite_cfg()
+    return {"configured": bool(c["username"] and c["password"]), "base": c["base"], "username": c["username"]}
+
+@app.put("/api/reports/config")
+async def reports_config_save(request: Request, user=Depends(require_superadmin)):
+    b = await request.json()
+    def _save(col, val):
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (col, val), exec_only=True)
+    if "base" in b:     _save("elite_api_base", (b.get("base") or "").strip() or _ELITE_API_DEFAULT)
+    if "username" in b: _save("elite_username", (b.get("username") or "").strip())
+    if (b.get("password") or "").strip(): _save("elite_password", b["password"].strip())
+    _elite_token_cache["token"] = None
+    insert_audit(user, "REPORTS_CONFIG", "butterfly")
+    return {"ok": True}
+
+@app.get("/api/reports/search")
+def reports_search(request: Request, user=Depends(require_admin)):
+    import urllib.parse, datetime
+    file_no = (request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    end = datetime.date.today().isoformat()
+    r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end}"
+                   f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(file_no)}")
+    rows = ((r.get("body") or {}).get("data")) or []
+    return {"file_no": file_no, "count": len(rows), "studies": [{
+        "study_id": s.get("study_id"), "pat_id": s.get("pat_id"),
+        "pat_name": _elite_name(s.get("pat_name")), "pat_sex": s.get("pat_sex"),
+        "modality": s.get("modality"), "study_date": s.get("study_date"),
+        "status": s.get("study_status"), "history": s.get("clinical_history"),
+        "category": s.get("category"),
+    } for s in rows]}
+
+@app.get("/api/reports/study/{study_id}")
+def reports_study(study_id: int, user=Depends(require_admin)):
+    b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
+    return {"study_id": b.get("study_id"), "report_id": b.get("report_id"),
+            "pat_name": _elite_name(b.get("pat_name")), "pat_id": b.get("pat_id"),
+            "pat_age": b.get("pat_age"), "pat_sex": b.get("pat_sex"),
+            "modality": b.get("modality"), "study_date": b.get("study_date"),
+            "history": b.get("history_symptoms"), "report_html": b.get("report_content") or ""}
+
+@app.get("/api/reports/study/{study_id}/pdf")
+def reports_study_pdf(study_id: int, request: Request, user=Depends(require_admin)):
+    from fastapi import Response
+    try: style = max(1, min(3, int(request.query_params.get("style") or "2")))
+    except (TypeError, ValueError): style = 2
+    ct, data = _elite_get(f"/report/open_report_pdf/{study_id}?style={style}", want="raw")
+    if "pdf" not in (ct or "").lower():
+        raise HTTPException(404, "No PDF report is available for this study yet")
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="report_{study_id}.pdf"'})
+
 _PREF_KINDS = ("off", "unavailable")
 
 @app.get("/api/preferences")
