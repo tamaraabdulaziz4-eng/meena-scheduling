@@ -70,3 +70,32 @@ Later: auto-pull clinical history + branch from Siratech (replaces the manual pa
 - This Claude Code env's **network egress is now "All domains"** → a NEW session can browse the vendor sites
   directly (this session was still on the old policy, so it couldn't).
 - Branch: `claude/withdraw-generation-bug-jw81dz` (ongoing feature work); `main` has the merged features.
+
+---
+## Siratech — LIVE findings (verified via a GPT agent, 2026-07-01)
+**Working lookup endpoint (PROVEN with a real request):**
+```
+POST https://his.meena-health.com/emr-api/api/v1/EMR/FetchRadiologyDetails
+body: {"mrno":"<file>"}   headers: Authorization: Bearer <JWT>, hospitalid: <siteId>
+```
+Returns the patient's radiology order(s). Fields seen live (file 25052903 = US Obstetric, Al Rawdah):
+`serviceName`, `modality`, `siteId`, `site`, `billNo`, `orderedDate`, `accessionNumber`,
+`invPatTestResultId`, `radioReportStatus`, `hasRadiologyRepot`, `radioImageStatus`, `imageStatus`,
+`pacsId`, `pacsType`, `cpacsUrl`, `cpacsDocpath`, `cpoeStatusDescription`.
+- **NO fan-out needed** — the branch (siteId/site) is inside the response; the same call returns the
+  order regardless of the hospitalid header.
+- `POST /emr-api/api/v1/EMR/FetchRadiologyReport {mrno}` and `FetchRadiologyImage {mrno}` also work.
+- Auth: SignIn body is ENCRYPTED (text/plain) → must log in via headless browser to get the JWT,
+  then plain REST with `Authorization: Bearer` + `hospitalid` header.
+
+**Clinical indication (STILL the one gap):** NOT in FetchRadiologyDetails. Source (found in bundle, not yet live):
+`GET /billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=<id>` → `clinicalIndication`,
+`reasonForOrder`, `remarks`. Need the order id from the FetchRadiologyDetails row (field name to confirm:
+`emrPatDtlsInvOrderId` / `invPatOrderId` / `emrPatInvOrderId`). Alt path `POST /investigation-api/api/v1/
+ResultEntryRadiology/RadiologyDetails` returns it but its `RadiologySearch` prerequisite fails live (needs
+UI context; `visiType` must be Int32; then 500).
+
+**Lifecycle:** order → billed (`billNo`) → `accessionNumber` → worklist/PACS → report (`invPatTestResultId`).
+**Test file with an order:** 25052903.
+**Build:** VPS connector (like whatsapp-bridge) — headless browser login → cache JWT → `FetchRadiologyDetails`
+→ parse; add clinical indication via GetEmrOrderDetails once the order-id field is confirmed live.
