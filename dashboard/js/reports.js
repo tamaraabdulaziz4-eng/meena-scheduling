@@ -14,7 +14,7 @@ async function renderReportsPage() {
   // A team lead is pinned to their branch; a manager can pick.
   if (!_repIsReviewer()) reportsBranch = String(currentUser?.branch_id || '');
   const c = document.getElementById('content');
-  const tabs = [['cases', 'Cases trends'], ['fairness', 'Fairness'], ['qc', 'Equipment QC log'], ['credentials', 'Licenses & expiry']];
+  const tabs = [['lookup', 'Patient report'], ['cases', 'Cases trends'], ['fairness', 'Fairness'], ['qc', 'Equipment QC log'], ['credentials', 'Licenses & expiry']];
   c.innerHTML = `
     ${pageHero('Reports', 'Reports', 'Track cases, balance the load, and keep an audit-ready check log')}
     <div class="rep-toolbar">
@@ -69,6 +69,7 @@ async function loadReportBody() {
   if (ctrl) ctrl.innerHTML = (reportsTab === 'cases' || reportsTab === 'qc') ? _repMonthNav() : '';
   body.innerHTML = LOADING_HTML;
   try {
+    if (reportsTab === 'lookup') return await loadReportLookup(body);
     if (reportsTab === 'cases') return await loadCasesReport(body);
     if (reportsTab === 'fairness') return await loadFairnessReport(body);
     if (reportsTab === 'qc') return await loadQcReport(body);
@@ -150,11 +151,21 @@ async function loadFairnessReport(body) {
 
 // ── Licenses & expiry ─────────────────────────────────────────────────────────
 const _CRED_KINDS = [
-  ['scfhs', 'SCFHS registration'], ['classification', 'Classification'],
-  ['bls', 'BLS'], ['acls', 'ACLS'], ['iqama', 'Iqama'],
-  ['passport', 'Passport'], ['other', 'Other'],
+  ['moh_license', 'MOH License'], ['scfhs', 'Saudi Council'], ['classification', 'Classification'],
+  ['bls', 'BLS'], ['acls', 'ACLS'], ['national_id', 'National ID / Iqama'], ['iqama', 'Iqama'],
+  ['passport', 'Passport'], ['malpractice', 'Malpractice Insurance'],
+  ['cv', 'CV'], ['transcript', 'Transcript'], ['diploma', 'Diploma'], ['other', 'Other'],
 ];
+// Kinds that carry an expiry (must match the server's _EXPIRING_KINDS).
+const _CRED_EXP_KINDS = new Set(['moh_license', 'scfhs', 'classification', 'bls', 'acls',
+  'national_id', 'iqama', 'passport', 'malpractice']);
 function _credKindLabel(k) { const f = _CRED_KINDS.find(x => x[0] === k); return f ? f[1] : (k || 'Other'); }
+// Print one staff member's full employee file (all their document rows).
+function printStaffFile(staffId) {
+  const rows = _credRows.filter(r => r.staff_id === staffId);
+  if (!rows.length) { toast('No documents on file yet', 'err'); return; }
+  printEmployeeFile({ name: rows[0].staff_name, branch_name: rows[0].branch_name }, rows);
+}
 function _credStatus(d) {
   // → [text, pill-class]
   if (d === null || d === undefined) return ['No date', 'rep-pill-muted'];
@@ -183,6 +194,14 @@ async function loadCredentialsReport(body) {
         </div>
         <button class="btn btn-sm btn-primary" onclick="openCredentialModal()">+ Add credential</button>
       </div>
+      ${(() => {
+        const byStaff = {};
+        rows.forEach(r => { if (!byStaff[r.staff_id]) byStaff[r.staff_id] = { id: r.staff_id, name: r.staff_name }; });
+        const chips = Object.values(byStaff).map(s =>
+          `<button class="btn btn-xs btn-ghost" onclick="printStaffFile(${s.id})">🖨️ ${escapeHtml(s.name)}</button>`).join('');
+        return chips ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:10px;border:1px dashed var(--border);border-radius:10px">
+          <span style="font-size:12px;color:var(--muted);align-self:center;margin-inline-end:4px">Print employee file:</span>${chips}</div>` : '';
+      })()}
       <div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
         <thead><tr><th>Staff</th>${showBranch ? '<th>Branch</th>' : ''}<th>Type</th><th>Label</th><th>Number</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
         <tbody>${rows.length ? rows.map(r => {
@@ -237,7 +256,10 @@ async function openCredentialModal(credId) {
       <label style="font-size:13px">Number (optional)
         <input id="cred-number" class="input" maxlength="60" value="${cred ? escapeHtml(cred.number || '') : ''}" style="width:100%;margin-top:4px">
       </label>
-      <label style="font-size:13px">Expiry date
+      <label style="font-size:13px">Issue date (optional)
+        <input id="cred-issue" type="date" class="input" value="${cred ? (cred.issue_date || '') : ''}" style="width:100%;margin-top:4px">
+      </label>
+      <label style="font-size:13px">Expiry date <span style="color:var(--muted);font-weight:400">(required for licenses/IDs)</span>
         <input id="cred-expiry" type="date" class="input" value="${cred ? (cred.expiry_date || '') : ''}" style="width:100%;margin-top:4px">
       </label>
     </div>
@@ -254,10 +276,13 @@ async function saveCredential() {
     kind: document.getElementById('cred-kind').value,
     label: document.getElementById('cred-label').value.trim(),
     number: document.getElementById('cred-number').value.trim(),
+    issue_date: document.getElementById('cred-issue').value,
     expiry_date: document.getElementById('cred-expiry').value,
   };
   if (!payload.staff_id) { toast('Pick a staff member', 'err'); return; }
-  if (!payload.expiry_date) { toast('Expiry date is required', 'err'); return; }
+  if (_CRED_EXP_KINDS.has(payload.kind) && !payload.expiry_date) {
+    toast('This document needs an expiry date', 'err'); return;
+  }
   try {
     if (id) await API.put(`/credentials/${id}`, payload);
     else await API.post('/credentials', payload);
@@ -295,4 +320,91 @@ async function loadQcReport(body) {
         </tr>`).join('') : `<tr><td colspan="5"><div class="rep-empty">No checks logged for this month.</div></td></tr>`}</tbody>
       </table></div>
     </div>`;
+}
+
+// ── Patient report lookup (Butterfly / DePACS) ────────────────────────────────
+async function loadReportLookup(body) {
+  let cfg = null;
+  if (currentUser?.role === 'superadmin') { try { cfg = await API.get('/reports/config'); } catch (e) {} }
+  body.innerHTML = `
+    ${cfg ? `<div class="rep-card" style="margin-bottom:14px">
+      <div class="rep-card-title">Butterfly account ${cfg.configured ? '🟢' : '⚪'}</div>
+      <div style="font-size:12px;color:var(--muted);margin:4px 0 10px">Sign-in used to fetch reports.${cfg.configured ? ' Set for <b>' + escapeHtml(cfg.username) + '</b>.' : ' Not set yet.'}</div>
+      <div style="display:grid;gap:8px;max-width:420px">
+        <input id="rep-cfg-user" class="input" placeholder="Username" value="${escapeHtml(cfg.username || '')}">
+        <input id="rep-cfg-pass" class="input" type="password" placeholder="Password ${cfg.configured ? '(leave blank to keep)' : ''}">
+        <div><button class="btn btn-sm btn-primary" onclick="repSaveConfig()">Save account</button></div>
+      </div></div>` : ''}
+    <div class="rep-card">
+      <div class="rep-card-title">Patient report lookup</div>
+      <div style="font-size:12px;color:var(--muted);margin:4px 0 10px">Enter a patient file number to find their radiology studies and open the report.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="rep-file" class="input" placeholder="Patient file number" style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter')repDoSearch()">
+        <button class="btn btn-primary" onclick="repDoSearch()">Search</button>
+      </div>
+      <div id="rep-lookup-results" style="margin-top:14px"></div>
+    </div>`;
+}
+
+async function repSaveConfig() {
+  const username = (document.getElementById('rep-cfg-user')?.value || '').trim();
+  const password = (document.getElementById('rep-cfg-pass')?.value || '');
+  try { await API.put('/reports/config', { username, password }); toast('Account saved'); loadReportBody(); }
+  catch (e) { toast(e.message || 'Failed to save', 'err'); }
+}
+
+async function repDoSearch() {
+  const file = (document.getElementById('rep-file')?.value || '').trim();
+  const box = document.getElementById('rep-lookup-results');
+  if (!box) return;
+  if (!file) { toast('Enter a file number', 'err'); return; }
+  box.innerHTML = LOADING_HTML;
+  try {
+    const d = await API.get(`/reports/search?file_no=${encodeURIComponent(file)}`);
+    if (!d.studies.length) { box.innerHTML = `<div class="rep-empty">No studies found for file ${escapeHtml(file)}.</div>`; return; }
+    box.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">${d.count} study(ies) for <b>${escapeHtml(d.studies[0].pat_name || file)}</b></div>` +
+      d.studies.map(s => {
+        const dt = s.study_date ? new Date(s.study_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+        const ready = /VERIF|COMPLETE|REVIEW|ADDEND/i.test(s.status || '');
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:13px">${escapeHtml(s.modality || '')} · ${dt}</div>
+            <div style="font-size:11px;color:var(--muted)">${escapeHtml(s.history || '—')} · <span style="color:${ready ? 'var(--green,#0a0)' : 'var(--muted)'}">${escapeHtml(s.status || '')}</span></div>
+          </div>
+          <button class="btn btn-sm" onclick="repViewStudy(${s.study_id})">Open report</button>
+        </div>`;
+      }).join('');
+  } catch (e) { box.innerHTML = `<div class="rep-empty">${escapeHtml(e.message || 'Search failed')}</div>`; }
+}
+
+async function repViewStudy(studyId) {
+  const box = document.getElementById('rep-lookup-results');
+  if (!box) return;
+  box.innerHTML = LOADING_HTML;
+  try {
+    const r = await API.get(`/reports/study/${studyId}`);
+    const dt = r.study_date ? new Date(r.study_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+    const html = (r.report_html || '').trim();
+    box.innerHTML = `
+      <button class="btn btn-xs btn-ghost" onclick="repDoSearch()">← Back to results</button>
+      <div class="rep-card" style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div><div style="font-weight:700">${escapeHtml(r.pat_name || '')}</div>
+            <div style="font-size:12px;color:var(--muted)">${escapeHtml(r.modality || '')} · ${dt} · ${escapeHtml(r.pat_age || '')} ${escapeHtml(r.pat_sex || '')}</div></div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" onclick="window.open('/api/reports/study/${studyId}/pdf?style=2','_blank')">Open PDF</button>
+            <a class="btn btn-sm btn-primary" href="/api/reports/study/${studyId}/pdf?style=2" download="report_${studyId}.pdf">Download</a>
+          </div>
+        </div>
+        ${r.history ? `<div style="font-size:12px;margin-top:8px"><b>Clinical history:</b> ${escapeHtml(r.history)}</div>` : ''}
+        ${html ? `<iframe id="rep-frame" sandbox="" style="width:100%;min-height:440px;border:1px solid var(--border);border-radius:8px;margin-top:10px;background:#fff"></iframe>`
+               : `<div class="rep-empty" style="margin-top:10px">No written report yet for this study.</div>`}
+      </div>`;
+    if (html) {
+      // Render the vendor's report HTML in a sandboxed iframe (no scripts) so
+      // external markup can't touch the app.
+      document.getElementById('rep-frame').srcdoc =
+        `<style>body{font-family:system-ui,Arial,sans-serif;font-size:13px;color:#111;padding:16px;line-height:1.6}p{margin:0 0 6px}</style>${html}`;
+    }
+  } catch (e) { toast(e.message || 'Could not open report', 'err'); repDoSearch(); }
 }

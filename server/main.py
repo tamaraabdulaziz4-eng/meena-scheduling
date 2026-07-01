@@ -593,6 +593,10 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_staff ON scheduling.staff_credentials(staff_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_creds_expiry ON scheduling.staff_credentials(expiry_date);")
+            # Employee-file documents: some (CV, transcript, diploma) have no expiry,
+            # and we record an issue date. Relax the original NOT-NULL expiry.
+            cur.execute("ALTER TABLE scheduling.staff_credentials ADD COLUMN IF NOT EXISTS issue_date DATE;")
+            cur.execute("ALTER TABLE scheduling.staff_credentials ALTER COLUMN expiry_date DROP NOT NULL;")
 
             # Staff shift preferences for a month — collected before generation.
             # kind: 'unavailable' (hard, forced Off) or 'off' (soft, prefer Off).
@@ -5698,8 +5702,14 @@ def report_qc_log(request: Request, user=Depends(require_admin)):
         r["shift_label"] = _SHIFT_CHECK_LABELS.get(r["shift"], r["shift"])
     return {"from": date_from, "to": date_to, "log": rows}
 
-# ── Staff credentials / license expiry ────────────────────────────────────────
-_CREDENTIAL_KINDS = ("scfhs", "bls", "acls", "iqama", "passport", "classification", "other")
+# ── Staff credentials / employee-file documents ───────────────────────────────
+# The employee file (CBAHI RD.1.2 / SCFHS): one slot per document type. Some carry
+# an expiry that drives reminders; the rest (CV, transcript, diploma) are one-off.
+_CREDENTIAL_KINDS = ("cv", "moh_license", "scfhs", "classification", "transcript",
+                     "diploma", "bls", "acls", "national_id", "iqama", "passport",
+                     "malpractice", "other")
+_EXPIRING_KINDS = {"moh_license", "scfhs", "classification", "bls", "acls",
+                   "national_id", "iqama", "passport", "malpractice"}
 
 def _valid_iso_date(s):
     """Return a YYYY-MM-DD string if valid, else None — guards the DB from a
@@ -5726,6 +5736,7 @@ def list_credentials(request: Request, user=Depends(require_admin)):
     """All staff credentials in scope (team lead: own branch; manager: any/all)."""
     _, branch_ids = _report_branch_scope(user, request.query_params.get("branch_id"))
     rows = q("""SELECT c.id, c.staff_id, c.kind, c.label, c.number,
+                       TO_CHAR(c.issue_date,'YYYY-MM-DD')  AS issue_date,
                        TO_CHAR(c.expiry_date,'YYYY-MM-DD') AS expiry_date,
                        (c.expiry_date - CURRENT_DATE) AS days_left,
                        s.name AS staff_name, s.branch_id, b.name AS branch_name
@@ -5733,7 +5744,7 @@ def list_credentials(request: Request, user=Depends(require_admin)):
                 JOIN scheduling.staff s ON s.id=c.staff_id
                 LEFT JOIN scheduling.branches b ON b.id=s.branch_id
                 WHERE s.branch_id = ANY(%s) AND COALESCE(s.active,true)=true
-                ORDER BY c.expiry_date""", (branch_ids,))
+                ORDER BY c.expiry_date NULLS LAST""", (branch_ids,))
     return rows
 
 @app.get("/api/credentials/expiring")
@@ -5763,9 +5774,10 @@ def staff_credentials(sid: int, user=Depends(get_current_user)):
     elif not _can_manage_staff(user, sid):
         raise HTTPException(403, "Forbidden")
     return q("""SELECT id, kind, label, number,
+                       TO_CHAR(issue_date,'YYYY-MM-DD')  AS issue_date,
                        TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date,
                        (expiry_date - CURRENT_DATE) AS days_left
-                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY expiry_date""", (sid,))
+                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY kind""", (sid,))
 
 @app.post("/api/credentials")
 async def create_credential(request: Request, user=Depends(require_admin)):
@@ -5774,15 +5786,16 @@ async def create_credential(request: Request, user=Depends(require_admin)):
     if not _can_manage_staff(user, sid):
         raise HTTPException(403, "Forbidden")
     kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    issue = _valid_iso_date(body.get("issue_date"))
     expiry = _valid_iso_date(body.get("expiry_date"))
-    if not expiry:
-        raise HTTPException(400, "A valid expiry_date (YYYY-MM-DD) is required")
-    row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,expiry_date,created_by)
-               VALUES (%s,%s,%s,%s,%s,%s)
+    if kind in _EXPIRING_KINDS and not expiry:
+        raise HTTPException(400, "This document needs a valid expiry_date (YYYY-MM-DD)")
+    row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,label,number,issue_date,expiry_date,created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
                RETURNING id, TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date""",
             (sid, kind, (body.get("label") or "").strip()[:80] or None,
-             (body.get("number") or "").strip()[:60] or None, expiry, user["id"]), one=True)
-    insert_audit(user, "CREDENTIAL_ADD", f"staff:{sid}", f"{kind} {expiry}")
+             (body.get("number") or "").strip()[:60] or None, issue, expiry, user["id"]), one=True)
+    insert_audit(user, "CREDENTIAL_ADD", f"staff:{sid}", f"{kind} {expiry or '—'}")
     return row
 
 @app.put("/api/credentials/{cid}")
@@ -5794,12 +5807,13 @@ async def update_credential(cid: int, request: Request, user=Depends(require_adm
         raise HTTPException(403, "Forbidden")
     body = await request.json()
     kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else "other"
+    issue = _valid_iso_date(body.get("issue_date"))
     expiry = _valid_iso_date(body.get("expiry_date"))
-    if not expiry:
-        raise HTTPException(400, "A valid expiry_date (YYYY-MM-DD) is required")
-    q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,expiry_date=%s WHERE id=%s""",
+    if kind in _EXPIRING_KINDS and not expiry:
+        raise HTTPException(400, "This document needs a valid expiry_date (YYYY-MM-DD)")
+    q("""UPDATE scheduling.staff_credentials SET kind=%s,label=%s,number=%s,issue_date=%s,expiry_date=%s WHERE id=%s""",
       (kind, (body.get("label") or "").strip()[:80] or None,
-       (body.get("number") or "").strip()[:60] or None, expiry, cid), exec_only=True)
+       (body.get("number") or "").strip()[:60] or None, issue, expiry, cid), exec_only=True)
     return {"ok": True}
 
 @app.delete("/api/credentials/{cid}")
@@ -5811,6 +5825,186 @@ def delete_credential(cid: int, user=Depends(require_admin)):
         raise HTTPException(403, "Forbidden")
     q("DELETE FROM scheduling.staff_credentials WHERE id=%s", (cid,), exec_only=True)
     return {"ok": True}
+
+# ── Staff self-service: fill your own employee-file document dates ─────────────
+@app.get("/api/my-credentials")
+def my_credentials(user=Depends(get_current_user)):
+    """The signed-in staff member's own document slots (for the employee file)."""
+    sid = user.get("staff_id")
+    if not sid:
+        return []
+    return q("""SELECT id, kind, label, number,
+                       TO_CHAR(issue_date,'YYYY-MM-DD')  AS issue_date,
+                       TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date,
+                       (expiry_date - CURRENT_DATE) AS days_left
+                FROM scheduling.staff_credentials WHERE staff_id=%s ORDER BY kind""", (sid,))
+
+@app.put("/api/my-credentials")
+async def upsert_my_credential(request: Request, user=Depends(get_current_user)):
+    """Staff fills the dates/number of one of their own file documents. One slot
+    per document type — upserts by (staff_id, kind)."""
+    sid = user.get("staff_id")
+    if not sid:
+        raise HTTPException(400, "Your account isn't linked to a staff profile.")
+    body = await request.json()
+    kind = body.get("kind") if body.get("kind") in _CREDENTIAL_KINDS else None
+    if not kind:
+        raise HTTPException(400, "Unknown document type")
+    issue = _valid_iso_date(body.get("issue_date"))
+    expiry = _valid_iso_date(body.get("expiry_date"))
+    if kind in _EXPIRING_KINDS and not expiry:
+        raise HTTPException(400, "This document needs an expiry date (YYYY-MM-DD)")
+    number = (body.get("number") or "").strip()[:60] or None
+    existing = q("SELECT id FROM scheduling.staff_credentials WHERE staff_id=%s AND kind=%s ORDER BY id LIMIT 1",
+                 (sid, kind), one=True)
+    if existing:
+        q("UPDATE scheduling.staff_credentials SET number=%s, issue_date=%s, expiry_date=%s WHERE id=%s",
+          (number, issue, expiry, existing["id"]), exec_only=True)
+        cid = existing["id"]
+    else:
+        row = q("""INSERT INTO scheduling.staff_credentials (staff_id,kind,number,issue_date,expiry_date,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (sid, kind, number, issue, expiry, user["id"]), one=True)
+        cid = row["id"]
+    return {"ok": True, "id": cid}
+
+@app.delete("/api/my-credentials/{kind}")
+def delete_my_credential(kind: str, user=Depends(get_current_user)):
+    """Staff clears one of their own document slots."""
+    sid = user.get("staff_id")
+    if not sid:
+        raise HTTPException(400, "Your account isn't linked to a staff profile.")
+    q("DELETE FROM scheduling.staff_credentials WHERE staff_id=%s AND kind=%s", (sid, kind), exec_only=True)
+    return {"ok": True}
+
+# ── Elite / Butterfly (DePACS) radiology reports ──────────────────────────────
+# Pull this clinic's own radiology reports from the DePACS "Butterfly" portal so
+# staff can search by patient file number and view/download the report inside
+# Meena. Contract discovered from the portal's own API:
+#   POST /auth/signin {identifier,password,device_id,platform} -> {access_token}
+#   GET  /study/get_studies?...&patient_id=<file>        -> studies list
+#   GET  /report/get_study_report_info/<study_id>        -> report_content (HTML)
+#   GET  /report/open_report_pdf/<study_id>?style=<1|2>  -> PDF
+_ELITE_API_DEFAULT = "https://test-api.diagnosticselite.net:10443/api/v1"
+_elite_token_cache = {"token": None, "exp": 0.0}
+
+def _elite_cfg():
+    return {"base": (get_setting("elite_api_base") or _ELITE_API_DEFAULT).rstrip("/"),
+            "username": get_setting("elite_username") or "",
+            "password": get_setting("elite_password") or ""}
+
+def _elite_ssl_ctx():
+    # The vendor API serves a self-signed cert on a non-standard port; skip
+    # verification for these calls only (mirrors the browser / curl -k needed).
+    import ssl
+    c = ssl.create_default_context(); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
+    return c
+
+def _elite_request(method, path, token=None, body=None, want="json", timeout=30):
+    import urllib.request, urllib.error
+    url = _elite_cfg()["base"] + path
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {"Accept": "*/*"}
+    if body is not None: headers["Content-Type"] = "application/json"
+    if token: headers["Authorization"] = "Token " + token
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_elite_ssl_ctx()) as resp:
+            raw = resp.read()
+            return (resp.getheader("Content-Type", ""), raw) if want == "raw" \
+                else json.loads(raw.decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        raise HTTPException(502, f"Reports service {e.code}: {e.read().decode('utf-8','replace')[:200]}")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't reach the reports service: {e}")
+
+def _elite_login():
+    import time
+    c = _elite_cfg()
+    if not (c["username"] and c["password"]):
+        raise HTTPException(400, "Reports lookup isn't set up. Add the Butterfly account in Settings.")
+    r = _elite_request("POST", "/auth/signin", body={
+        "identifier": c["username"], "password": c["password"],
+        "device_id": f"{c['username']}_meena", "platform": "web"})
+    tok = (r.get("body") or {}).get("access_token") if isinstance(r, dict) else None
+    if not (isinstance(r, dict) and r.get("success") and tok):
+        raise HTTPException(502, f"Reports login failed: {(isinstance(r, dict) and r.get('error')) or 'check the username/password'}")
+    _elite_token_cache.update(token=tok, exp=time.time() + 3 * 3600)
+    return tok
+
+def _elite_token():
+    import time
+    if _elite_token_cache["token"] and _elite_token_cache["exp"] > time.time() + 60:
+        return _elite_token_cache["token"]
+    return _elite_login()
+
+def _elite_get(path, want="json"):
+    try:
+        return _elite_request("GET", path, token=_elite_token(), want=want)
+    except HTTPException as e:
+        if getattr(e, "status_code", 0) == 502 and ("401" in str(e.detail) or "403" in str(e.detail)):
+            _elite_token_cache["token"] = None
+            return _elite_request("GET", path, token=_elite_login(), want=want)
+        raise
+
+def _elite_name(n):
+    return (n or "").replace("^", " ").replace("  ", " ").strip()
+
+@app.get("/api/reports/config")
+def reports_config(user=Depends(require_superadmin)):
+    c = _elite_cfg()
+    return {"configured": bool(c["username"] and c["password"]), "base": c["base"], "username": c["username"]}
+
+@app.put("/api/reports/config")
+async def reports_config_save(request: Request, user=Depends(require_superadmin)):
+    b = await request.json()
+    def _save(col, val):
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (col, val), exec_only=True)
+    if "base" in b:     _save("elite_api_base", (b.get("base") or "").strip() or _ELITE_API_DEFAULT)
+    if "username" in b: _save("elite_username", (b.get("username") or "").strip())
+    if (b.get("password") or "").strip(): _save("elite_password", b["password"].strip())
+    _elite_token_cache["token"] = None
+    insert_audit(user, "REPORTS_CONFIG", "butterfly")
+    return {"ok": True}
+
+@app.get("/api/reports/search")
+def reports_search(request: Request, user=Depends(require_admin)):
+    import urllib.parse, datetime
+    file_no = (request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    end = datetime.date.today().isoformat()
+    r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end}"
+                   f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(file_no)}")
+    rows = ((r.get("body") or {}).get("data")) or []
+    return {"file_no": file_no, "count": len(rows), "studies": [{
+        "study_id": s.get("study_id"), "pat_id": s.get("pat_id"),
+        "pat_name": _elite_name(s.get("pat_name")), "pat_sex": s.get("pat_sex"),
+        "modality": s.get("modality"), "study_date": s.get("study_date"),
+        "status": s.get("study_status"), "history": s.get("clinical_history"),
+        "category": s.get("category"),
+    } for s in rows]}
+
+@app.get("/api/reports/study/{study_id}")
+def reports_study(study_id: int, user=Depends(require_admin)):
+    b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
+    return {"study_id": b.get("study_id"), "report_id": b.get("report_id"),
+            "pat_name": _elite_name(b.get("pat_name")), "pat_id": b.get("pat_id"),
+            "pat_age": b.get("pat_age"), "pat_sex": b.get("pat_sex"),
+            "modality": b.get("modality"), "study_date": b.get("study_date"),
+            "history": b.get("history_symptoms"), "report_html": b.get("report_content") or ""}
+
+@app.get("/api/reports/study/{study_id}/pdf")
+def reports_study_pdf(study_id: int, request: Request, user=Depends(require_admin)):
+    from fastapi import Response
+    try: style = max(1, min(3, int(request.query_params.get("style") or "2")))
+    except (TypeError, ValueError): style = 2
+    ct, data = _elite_get(f"/report/open_report_pdf/{study_id}?style={style}", want="raw")
+    if "pdf" not in (ct or "").lower():
+        raise HTTPException(404, "No PDF report is available for this study yet")
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="report_{study_id}.pdf"'})
 
 _PREF_KINDS = ("off", "unavailable")
 
