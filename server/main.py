@@ -5984,6 +5984,8 @@ def reports_search(request: Request, user=Depends(require_admin)):
         "modality": s.get("modality"), "study_date": s.get("study_date"),
         "status": s.get("study_status"), "history": s.get("clinical_history"),
         "category": s.get("category"),
+        "study_desc": s.get("study_description") or s.get("study_desc"),
+        "accession_number": s.get("accession_number"),
     } for s in rows]}
 
 @app.get("/api/reports/study/{study_id}")
@@ -6005,6 +6007,111 @@ def reports_study_pdf(study_id: int, request: Request, user=Depends(require_admi
         raise HTTPException(404, "No PDF report is available for this study yet")
     return Response(content=data, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="report_{study_id}.pdf"'})
+
+# ── Radiology handoff ─────────────────────────────────────────────────────────
+# One screen that (1) reads a patient's radiology order(s) from Siratech HIS,
+# (2) writes the clinical history into the DePACS (Butterfly) study so the
+# radiologist sees it, and (3) prepares a ready-to-paste WhatsApp message that
+# staff copy into the radiology group themselves.
+#
+# HIS is Cloudflare/geo-locked to KSA, so we reach it through the Siratech
+# connector that runs next to whatsapp-bridge on the Saudi VPS. We proxy through
+# the bridge's already-open port (…/his/*) so no new firewall hole is needed —
+# the bridge URL/token are the existing WHATSAPP_NOTIFY_* env vars.
+
+def _bridge_base():
+    url = (os.environ.get("WHATSAPP_NOTIFY_URL") or "").strip()
+    if not url:
+        return ""
+    return url[:-5] if url.rstrip("/").endswith("/send") else url.rstrip("/")
+
+def _bridge_token():
+    return (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
+
+def _bridge_request(path, method="GET", body=None, timeout=60):
+    base = _bridge_base()
+    if not base:
+        raise HTTPException(400, "Radiology lookup isn't configured (WhatsApp bridge URL missing).")
+    import urllib.request, urllib.error
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {"Accept": "application/json", "Authorization": "Bearer " + _bridge_token()}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        raise HTTPException(502, f"Connector {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't reach the radiology connector: {e}")
+
+@app.get("/api/radiology/lookup/{file_no}")
+def radiology_lookup(file_no: str, user=Depends(require_admin)):
+    """Radiology orders + patient for a file (MRN) number, live from Siratech HIS."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no), timeout=90)
+
+# ---- Butterfly (DePACS) write clinical history into a study ------------------
+def _elite_put(path, body):
+    try:
+        return _elite_request("PUT", path, token=_elite_token(), body=body)
+    except HTTPException as e:
+        if getattr(e, "status_code", 0) == 502 and ("401" in str(e.detail) or "403" in str(e.detail)):
+            _elite_token_cache["token"] = None
+            return _elite_request("PUT", path, token=_elite_login(), body=body)
+        raise
+
+def _elite_fix_date(d):
+    s = str(d or "")
+    if re.fullmatch(r"\d{8}", s):      # 19590110 -> 1959-01-10 (API wants YYYY-MM-DD)
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return s[:10]
+
+def _elite_write_history(study_id, history):
+    """Write `history` into a study's clinical_history, preserving the other
+    demographic fields the edit endpoint requires (it rejects nulls)."""
+    info = _elite_get(f"/study_management/get_study_info/{study_id}")
+    b = (info.get("body") or {}) if isinstance(info, dict) else {}
+    payload = {
+        "patient_name": b.get("pat_name") or "",
+        "patient_id": b.get("pat_id") or "",
+        "patient_sex": b.get("pat_sex") or "",
+        "patient_birthdate": _elite_fix_date(b.get("pat_birthdate")),
+        "study_desc": b.get("study_desc") or "",
+        "clinical_history": history or "",
+        "accession_number": b.get("accession_number") or "",
+    }
+    res = _elite_put(f"/study_management/edit_study_info/{study_id}", payload)
+    if not (isinstance(res, dict) and res.get("success")):
+        detail = (isinstance(res, dict) and (res.get("error") or res.get("message"))) or str(res)[:150]
+        raise HTTPException(502, f"Butterfly write failed: {detail}")
+    return {"ok": True, "study_id": study_id}
+
+@app.get("/api/handoff/config")
+def handoff_config(user=Depends(require_admin)):
+    c = _elite_cfg()
+    return {"siratech_enabled": bool(_bridge_base()),
+            "butterfly_configured": bool(c["username"] and c["password"])}
+
+@app.post("/api/handoff/write-history")
+async def handoff_write_history(request: Request, user=Depends(require_admin)):
+    """Write the clinical history into a DePACS (Butterfly) study. The WhatsApp
+    message is prepared client-side for the staff to copy into the group."""
+    b = await request.json()
+    study_id = b.get("study_id")
+    history = (b.get("history") or "").strip()
+    if not study_id:
+        raise HTTPException(400, "Pick a DePACS study to write into")
+    if not history:
+        raise HTTPException(400, "Add the clinical history first")
+    out = _elite_write_history(int(study_id), history)
+    insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
+                 json.dumps({"file_no": (b.get("file_no") or "").strip()}))
+    return out
 
 _PREF_KINDS = ("off", "unavailable")
 

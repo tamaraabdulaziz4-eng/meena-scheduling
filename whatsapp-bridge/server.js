@@ -15,6 +15,11 @@ const DATA_PATH = process.env.WHATSAPP_DATA_PATH || path.join(__dirname, '.wwebj
 // (see OPERATIONS.md) so the raw port isn't exposed to the internet.
 const HOST = process.env.BRIDGE_HOST || '0.0.0.0';
 const PUBLIC_BIND = !['127.0.0.1', 'localhost', '::1'].includes(HOST);
+// The Siratech HIS connector runs on the same (Saudi) VPS on an internal port that
+// isn't open to the internet. We proxy /his/* to it so Meena reaches HIS lookups
+// over the SAME already-open port it uses for WhatsApp — no extra firewall holes.
+const HIS_CONNECTOR_URL = (process.env.HIS_CONNECTOR_URL || 'http://127.0.0.1:3005').replace(/\/+$/, '');
+const HIS_CONNECTOR_TOKEN = process.env.HIS_CONNECTOR_TOKEN || '';
 
 // Hard safety: never run an UNAUTHENTICATED bridge on a public interface — that
 // is an open relay to send WhatsApp from the linked (personal!) account. Either
@@ -257,6 +262,23 @@ app.post('/send', requireAuth, async (req, res) => {
     if (timedOut && ++sendFails >= 2) { sendFails = 0; scheduleReconnect('repeated send timeouts'); }
     const code = timedOut ? 504 : 400;
     return res.status(code).json({ ok: false, error: msg });
+  }
+});
+
+// Passthrough to the Siratech HIS connector (same VPS, internal port). Meena
+// authenticates to the bridge as usual; we forward with the connector's own token.
+app.all('/his/*', requireAuth, async (req, res) => {
+  try {
+    const sub = req.originalUrl.replace(/^\/his/, '') || '/';
+    const r = await fetch(HIS_CONNECTOR_URL + sub, {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + HIS_CONNECTOR_TOKEN },
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
+    });
+    const text = await r.text();
+    return res.status(r.status).type(r.headers.get('content-type') || 'application/json').send(text);
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: 'connector unreachable: ' + e.message });
   }
 });
 

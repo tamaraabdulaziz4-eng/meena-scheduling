@@ -1940,3 +1940,6 @@ label.input-label, .input-label { font-size: 12px; font-weight: 600; color: var(
 .seg-chip:hover { border-color: var(--accent); color: var(--text); }
 .seg-chip.on { background: linear-gradient(135deg, var(--accent2), var(--accent)); color: #fff;
   border-color: transparent; box-shadow: 0 6px 16px rgba(107,78,255,.32); }
+
+/* Radiology handoff */
+.ho-lbl { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; }
