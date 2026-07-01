@@ -5984,6 +5984,8 @@ def reports_search(request: Request, user=Depends(require_admin)):
         "modality": s.get("modality"), "study_date": s.get("study_date"),
         "status": s.get("study_status"), "history": s.get("clinical_history"),
         "category": s.get("category"),
+        "study_desc": s.get("study_description") or s.get("study_desc"),
+        "accession_number": s.get("accession_number"),
     } for s in rows]}
 
 @app.get("/api/reports/study/{study_id}")

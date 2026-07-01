@@ -1,19 +1,28 @@
 // ── Radiology handoff ─────────────────────────────────────────────────────────
-// One screen for the daily radiology hand-off:
-//   1) look up the patient's order in Siratech HIS by file (MRN) number,
-//   2) write the clinical history into the DePACS (Butterfly) study,
-//   3) prepare a ready-to-paste WhatsApp message (file · exam · priority · branch)
-//      that staff copy into the radiology group themselves.
-// Clinical history comes from a paste (HIS exposes it only after the order is
-// paid), so the textarea is the source of truth for what gets written & sent.
+// The daily radiology hand-off, in the order staff actually work:
+//   1) look up the patient's order(s) in Siratech HIS by file (MRN) number,
+//   2) image the patient and push the images to DePACS ("DE" / Butterfly),
+//   3) mark "images sent" → we POLL DePACS until the matching study lands
+//      (images take a while to arrive),
+//   4) write the clinical indication (+ ER / non-ER) into THAT study — matched to
+//      the order's modality so a patient with several exams never gets the wrong
+//      indication on the wrong study,
+//   5) copy the ready-made WhatsApp message into the radiology group.
 
-let handoff = { file: '', lookup: null, order: 0, studies: null, studyId: '', priority: 'routine' };
+let handoff = {
+  file: '', lookup: null, order: 0, priority: 'routine',
+  studies: null, matched: null, studyId: '', polling: false, pollN: 0, pollTimer: null, candidates: null,
+};
 
-async function renderHandoffPage() {
-  setTopbar('Radiology handoff', 'Pull the order, write the history, prepare the group message');
+const HO_POLL_EVERY_MS = 5000;
+const HO_POLL_MAX = 36;            // ~3 minutes
+
+function renderHandoffPage() {
+  setTopbar('Radiology handoff', 'Pull the order, send to DePACS, write the indication');
+  handoffStopPolling();
   const c = document.getElementById('content');
   c.innerHTML = `
-    ${pageHero('Radiology handoff', 'Handoff', 'Pull the order from HIS, write the clinical history to DePACS, and copy the group message')}
+    ${pageHero('Radiology handoff', 'Handoff', 'Pull the order from HIS, wait for the images in DePACS, write the indication, and copy the group message')}
     <div class="card" style="margin-bottom:14px">
       <div style="font-weight:600;margin-bottom:8px">Patient file</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -32,7 +41,8 @@ async function renderHandoffPage() {
 async function handoffLookup() {
   const file = (document.getElementById('ho-file').value || '').trim();
   if (!file) return;
-  handoff.file = file; handoff.lookup = null; handoff.studies = null; handoff.studyId = ''; handoff.order = 0;
+  handoffStopPolling();
+  handoff = { ...handoff, file, lookup: null, order: 0, studies: null, matched: null, studyId: '', candidates: null };
   const pane = document.getElementById('ho-patient');
   pane.innerHTML = LOADING_HTML;
   document.getElementById('ho-form').innerHTML = '';
@@ -43,11 +53,12 @@ async function handoffLookup() {
     handoff.priority = o && o.priority ? 'emergency' : 'routine';
     renderHandoffPatient();
     renderHandoffForm();
-    loadHandoffStudies();
   } catch (e) {
     pane.innerHTML = `<div class="empty"><p>${escapeHtml(e.message || 'Lookup failed')}</p></div>`;
   }
 }
+
+function handoffOrder() { return (handoff.lookup?.orders || [])[handoff.order] || {}; }
 
 function renderHandoffPatient() {
   const d = handoff.lookup || {};
@@ -76,53 +87,21 @@ function renderHandoffPatient() {
       </label>`;
   }).join('') : `<div style="color:var(--muted)">No radiology orders on this file.</div>`;
   pane.innerHTML = `${patientCard}
-    <div style="font-size:12px;color:var(--muted);margin:6px 0">${orders.length} radiology order(s)</div>
+    <div style="font-size:12px;color:var(--muted);margin:6px 0">${orders.length} radiology order(s)${orders.length > 1 ? ' — pick the one you imaged' : ''}</div>
     ${orderRows}`;
 }
 
 function handoffPickOrder(i) {
-  handoff.order = i;
-  const o = (handoff.lookup.orders || [])[i];
+  handoffStopPolling();
+  handoff.order = i; handoff.matched = null; handoff.studyId = ''; handoff.candidates = null;
+  const o = handoffOrder();
   handoff.priority = o && o.priority ? 'emergency' : 'routine';
   renderHandoffForm();
 }
 
-// ── Butterfly studies (write target) ──────────────────────────────────────────
-async function loadHandoffStudies() {
-  const box = document.getElementById('ho-studies');
-  if (!box) return;
-  box.innerHTML = LOADING_HTML;
-  try {
-    const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
-    handoff.studies = r.studies || [];
-    renderHandoffStudies();
-  } catch (e) {
-    box.innerHTML = `<div style="font-size:12px;color:var(--muted)">Couldn't load DePACS studies: ${escapeHtml(e.message || '')}. You can still copy the message.</div>`;
-  }
-}
-
-function renderHandoffStudies() {
-  const box = document.getElementById('ho-studies');
-  if (!box) return;
-  const studies = handoff.studies || [];
-  if (!studies.length) {
-    box.innerHTML = `<div style="font-size:12px;color:var(--muted)">No imaging study in DePACS yet (it appears after the exam is done). Write the history once it's there.</div>`;
-    return;
-  }
-  box.innerHTML = studies.map(s => `
-    <label style="display:flex;gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--border,#e5e5ef);border-radius:10px;margin-bottom:6px;cursor:pointer">
-      <input type="radio" name="ho-study" ${String(handoff.studyId) === String(s.study_id) ? 'checked' : ''} onchange="handoff.studyId='${s.study_id}'">
-      <div style="flex:1">
-        <div style="font-weight:600">${escapeHtml(s.modality || '')} · ${escapeHtml(s.study_date || '')}</div>
-        <div style="font-size:12px;color:var(--muted)">${escapeHtml((s.history || '') || 'no clinical history yet')}</div>
-      </div>
-      <span class="badge">${escapeHtml(s.status || '')}</span>
-    </label>`).join('');
-}
-
-// ── Hand-off form ─────────────────────────────────────────────────────────────
+// ── Form ──────────────────────────────────────────────────────────────────────
 function renderHandoffForm() {
-  const o = (handoff.lookup.orders || [])[handoff.order] || {};
+  const o = handoffOrder();
   const form = document.getElementById('ho-form');
   form.innerHTML = `
     <div class="card" style="margin-bottom:14px">
@@ -135,17 +114,21 @@ function renderHandoffForm() {
       <div style="margin-top:10px"><label class="ho-lbl">Priority</label>
         <div class="seg" id="ho-prio">
           <button type="button" class="${handoff.priority === 'routine' ? 'on' : ''}" onclick="handoffSetPrio('routine')">🕒 Routine</button>
-          <button type="button" class="${handoff.priority === 'emergency' ? 'on' : ''}" onclick="handoffSetPrio('emergency')">🚨 Emergency</button>
+          <button type="button" class="${handoff.priority === 'emergency' ? 'on' : ''}" onclick="handoffSetPrio('emergency')">🚨 ER / Emergency</button>
         </div>
       </div>
-      <div style="margin-top:10px"><label class="ho-lbl">Clinical history (written into DePACS)</label>
-        <textarea id="ho-history" class="input" rows="4" placeholder="Paste the clinical history / indication here"></textarea></div>
-      <div style="margin-top:12px"><label class="ho-lbl">DePACS study to write into</label>
-        <div id="ho-studies">${LOADING_HTML}</div></div>
-      <div style="margin-top:14px">
-        <button class="btn btn-primary" onclick="handoffWrite()">Write history to DePACS</button>
-      </div>
+      <div style="margin-top:10px"><label class="ho-lbl">Clinical indication (written into DePACS)</label>
+        <textarea id="ho-history" class="input" rows="4" placeholder="Paste the clinical indication here"></textarea></div>
     </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:6px">Send to DePACS</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+        Image the patient and push the images to DePACS, then press the button — we'll keep checking until the
+        <b>${escapeHtml(o.modality || '?')}</b> study for this order lands, then write the indication into it.</div>
+      <div id="ho-de"></div>
+    </div>
+
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <label class="ho-lbl" style="margin:0">WhatsApp group message</label>
@@ -154,7 +137,7 @@ function renderHandoffForm() {
       <textarea id="ho-message" class="input" rows="6"></textarea>
       <div style="font-size:12px;color:var(--muted);margin-top:6px">Copy this and paste it into the radiology WhatsApp group.</div>
     </div>`;
-  if (handoff.studies) renderHandoffStudies();
+  renderHandoffDE();
   handoffPreview();
 }
 
@@ -164,10 +147,131 @@ function handoffSetPrio(p) {
   handoffPreview();
 }
 
+// ── DePACS: poll → match → write ──────────────────────────────────────────────
+function renderHandoffDE() {
+  const box = document.getElementById('ho-de');
+  if (!box) return;
+  const o = handoffOrder();
+  if (handoff.matched) {
+    const s = handoff.matched;
+    const ok = studyMatchesOrder(s, o);
+    box.innerHTML = `
+      <div style="padding:10px;border:1px solid ${ok ? '#bfe6cd' : '#f2c9c0'};background:${ok ? '#f3fbf5' : '#fef4f2'};border-radius:10px">
+        <div style="font-weight:600">${ok ? '✅' : '⚠️'} ${escapeHtml(s.modality || '')} · ${escapeHtml(s.study_date || '')}${s.study_desc ? ' · ' + escapeHtml(s.study_desc) : ''}</div>
+        <div style="font-size:12px;color:var(--muted)">study #${escapeHtml(String(s.study_id))} · ${escapeHtml(s.status || '')}${ok ? '' : ' — modality does NOT match the order (' + escapeHtml(o.modality || '') + ')'}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">Current history: ${escapeHtml(s.history || '—')}</div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="handoffWrite()">Write indication to DePACS</button>
+        <button class="btn btn-sm" onclick="handoffRepoll()">Re-check / change study</button>
+      </div>`;
+    return;
+  }
+  if (handoff.candidates && handoff.candidates.length > 1) {
+    box.innerHTML = `<div style="font-size:13px;color:#8a5a00;margin-bottom:8px">⚠️ More than one ${escapeHtml(o.modality || '')} study — pick the exact one to avoid writing to the wrong exam:</div>
+      ${handoff.candidates.map(s => `
+        <label style="display:flex;gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--border,#e5e5ef);border-radius:10px;margin-bottom:6px;cursor:pointer">
+          <input type="radio" name="ho-cand" onchange="handoffChoose(${s.study_id})">
+          <div style="flex:1"><div style="font-weight:600">${escapeHtml(s.modality || '')} · ${escapeHtml(s.study_date || '')}${s.study_desc ? ' · ' + escapeHtml(s.study_desc) : ''}</div>
+            <div style="font-size:12px;color:var(--muted)">study #${escapeHtml(String(s.study_id))} · ${escapeHtml(s.history || 'no history yet')}</div></div>
+        </label>`).join('')}`;
+    return;
+  }
+  box.innerHTML = handoff.polling
+    ? `<div style="display:flex;gap:10px;align-items:center">
+         <span style="font-size:16px">⏳</span>
+         <span style="font-size:13px;color:var(--muted)">Waiting for the ${escapeHtml(o.modality || '')} study in DePACS… (check ${handoff.pollN}/${HO_POLL_MAX})</span>
+         <button class="btn btn-sm" onclick="handoffStopPolling(true)">Stop</button></div>`
+    : `<button class="btn btn-primary" onclick="handoffStartPolling()">✅ Images sent to DePACS — find the study</button>
+       <button class="btn btn-sm" style="margin-left:8px" onclick="handoffStartPolling()">It's already there</button>`;
+}
+
+function studyMatchesOrder(s, o) {
+  const om = (o.modality || '').toUpperCase().trim();
+  const sm = (s.modality || '').toUpperCase().trim();
+  return !!om && om === sm;
+}
+
+async function handoffStartPolling() {
+  handoff.polling = true; handoff.pollN = 0; handoff.candidates = null; handoff.matched = null;
+  renderHandoffDE();
+  handoffPollTick();
+}
+
+function handoffStopPolling(rerender) {
+  handoff.polling = false;
+  if (handoff.pollTimer) { clearTimeout(handoff.pollTimer); handoff.pollTimer = null; }
+  if (rerender) renderHandoffDE();
+}
+
+async function handoffPollTick() {
+  if (!handoff.polling) return;
+  handoff.pollN += 1;
+  const o = handoffOrder();
+  try {
+    const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
+    handoff.studies = r.studies || [];
+    const cands = handoff.studies.filter(s => studyMatchesOrder(s, o));
+    if (cands.length === 1) {
+      handoff.matched = cands[0]; handoff.studyId = String(cands[0].study_id);
+      handoffStopPolling(); renderHandoffDE(); return;
+    }
+    if (cands.length > 1) {
+      // Narrow by study description vs the order's exam name; else ask the user.
+      const exam = (handoffOrder().service || '').toUpperCase();
+      const narrowed = cands.filter(s => (s.study_desc || '').toUpperCase() && exam.includes((s.study_desc || '').toUpperCase().split(' ')[0]));
+      if (narrowed.length === 1) { handoff.matched = narrowed[0]; handoff.studyId = String(narrowed[0].study_id); handoffStopPolling(); renderHandoffDE(); return; }
+      handoff.candidates = cands; handoffStopPolling(); renderHandoffDE(); return;
+    }
+  } catch (e) { /* keep polling through transient errors */ }
+  if (handoff.pollN >= HO_POLL_MAX) {
+    handoff.polling = false;
+    const box = document.getElementById('ho-de');
+    if (box) box.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:8px">No matching ${escapeHtml(o.modality || '')} study in DePACS yet — the images may still be on the way.</div>
+      <button class="btn btn-primary" onclick="handoffStartPolling()">Check again</button>`;
+    return;
+  }
+  handoff.pollTimer = setTimeout(handoffPollTick, HO_POLL_EVERY_MS);
+  renderHandoffDE();
+}
+
+function handoffRepoll() { handoff.matched = null; handoff.studyId = ''; handoff.candidates = null; handoffStartPolling(); }
+
+function handoffChoose(studyId) {
+  const s = (handoff.candidates || []).find(x => String(x.study_id) === String(studyId));
+  if (!s) return;
+  handoff.matched = s; handoff.studyId = String(studyId); handoff.candidates = null;
+  renderHandoffDE();
+}
+
+async function handoffWrite() {
+  const o = handoffOrder();
+  const btn = event.target;
+  const history = (document.getElementById('ho-history')?.value || '').trim();
+  const res = document.getElementById('ho-result');
+  if (!handoff.studyId) { res.innerHTML = `<div class="empty"><p>Find/select the DePACS study first.</p></div>`; return; }
+  if (!history) { res.innerHTML = `<div class="empty"><p>Add the clinical indication first.</p></div>`; return; }
+  if (handoff.matched && !studyMatchesOrder(handoff.matched, o)
+      && !confirm(`The selected study is ${handoff.matched.modality || '?'} but the order is ${o.modality || '?'}. Write anyway?`)) return;
+  const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
+  btn.disabled = true; btn.textContent = 'Writing…';
+  try {
+    await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file });
+    res.innerHTML = `<div class="card">✅ Indication written into DePACS study #${escapeHtml(String(handoff.studyId))}. Now copy the message into the group.</div>`;
+    // refresh the shown history on the matched card
+    try { const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
+      const s = (r.studies || []).find(x => String(x.study_id) === String(handoff.studyId));
+      if (s) { handoff.matched = s; renderHandoffDE(); } } catch (e) {}
+  } catch (e) {
+    res.innerHTML = `<div class="empty"><p>${escapeHtml(e.message || 'Write failed')}</p></div>`;
+  } finally { btn.disabled = false; btn.textContent = 'Write indication to DePACS'; }
+}
+
+// ── WhatsApp message (copy/paste) ─────────────────────────────────────────────
 function handoffMessage() {
   const exam = (document.getElementById('ho-exam')?.value || '').trim();
   const branch = (document.getElementById('ho-branch')?.value || '').trim();
-  const prio = handoff.priority === 'emergency' ? '🚨 طارئ / Emergency' : '🕒 روتيني / Routine';
+  const prio = handoff.priority === 'emergency' ? '🚨 طارئ / ER' : '🕒 روتيني / Routine';
   return ['🩻 طلب أشعة / Radiology handoff',
     `📄 الملف / File: ${handoff.file}`,
     exam ? `🔬 الفحص / Exam: ${exam}` : '',
@@ -175,7 +279,6 @@ function handoffMessage() {
     branch ? `🏥 الفرع / Branch: ${branch}` : ''].filter(Boolean).join('\n');
 }
 
-// Keep the message in sync with the fields until the user edits it by hand.
 function handoffPreview() {
   const m = document.getElementById('ho-message');
   if (m && !m._touched) m.value = handoffMessage();
@@ -187,25 +290,8 @@ async function handoffCopy() {
   if (!m) return;
   try {
     await navigator.clipboard.writeText(m.value);
-    if (typeof toast === 'function') toast('Message copied'); else { m.select(); document.execCommand('copy'); }
+    if (typeof toast === 'function') toast('Message copied');
   } catch (e) {
     m.select(); try { document.execCommand('copy'); } catch (_e) {}
   }
-}
-
-async function handoffWrite() {
-  const btn = event.target;
-  const study = handoff.studyId;
-  const history = (document.getElementById('ho-history')?.value || '').trim();
-  const res = document.getElementById('ho-result');
-  if (!study) { res.innerHTML = `<div class="empty"><p>Pick a DePACS study to write into.</p></div>`; return; }
-  if (!history) { res.innerHTML = `<div class="empty"><p>Add the clinical history first.</p></div>`; return; }
-  btn.disabled = true; btn.textContent = 'Writing…';
-  try {
-    await API.post('/handoff/write-history', { study_id: study, history, file_no: handoff.file });
-    res.innerHTML = `<div class="card">✅ Clinical history written into the DePACS study. Now copy the message and paste it into the group.</div>`;
-    loadHandoffStudies();   // refresh the study's shown history
-  } catch (e) {
-    res.innerHTML = `<div class="empty"><p>${escapeHtml(e.message || 'Write failed')}</p></div>`;
-  } finally { btn.disabled = false; btn.textContent = 'Write history to DePACS'; }
 }
