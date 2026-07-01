@@ -311,30 +311,41 @@ async function buildMatch(file, wantBillNo) {
 
   const out = [];
   for (const row of orderRows) {
-    // pull the service name + accession from the result-entry template
+    // A single order (bill) can bundle several exams — e.g. an "XR SHOULDER +
+    // XR HUMERUS" order returns two test rows, each of which must match its OWN
+    // DePACS study (the shoulder report must never land on the humerus test).
+    // So we match per test row, not per order.
     const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
       body: results.radiologyDetailsBody(row, { hospitalId: RESULT_SITE, empId }),
     });
     const det = (dr.json && dr.json.data) || [];
-    const svc = det[0] || {};
-    const order = {
-      mrno: row.mrno, billNo: row.billNo, serviceName: svc.serviceName || row.serviceName || null,
-      categoryName: svc.categoryName || null, orderDate: row.billDate || row.visitDate || null,
-      accession: svc.accessionNo || row.accessionNo || null,
-      genPatBillingId: row.genPatBillingId, invMastserviceId: svc.inv_mast_service_id || row.invMastserviceId,
-      orderId: svc.emR_PAT_DTLS_INV_ORDER_ID || null,
-    };
-    const m = results.matchStudy(order, studies);
-    let report = null;
-    if (m.decision === 'unique') {
-      const rep = await results.depacsReport(m.study.studyId);
-      report = { studyId: m.study.studyId, desc: m.study.desc, studyDate: m.study.studyDate,
-        reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes,
-        preview: rep.reportText.slice(0, 600) };
+    const orderDate = row.billDate || row.visitDate || null;
+    const tests = [];
+    for (const t of det) {
+      const test = {
+        serviceName: t.serviceName || null, categoryName: t.categoryName || null,
+        invPatTestResultId: t.invPatTestResultId,
+        accession: t.accessionNo || null, orderDate,
+        invMastServiceId: t.inv_mast_service_id, orderId: t.emR_PAT_DTLS_INV_ORDER_ID || null,
+      };
+      const m = results.matchStudy({ mrno: row.mrno, serviceName: test.serviceName, categoryName: test.categoryName, orderDate, accession: test.accession }, studies);
+      let report = null;
+      if (m.decision === 'unique') {
+        const rep = await results.depacsReport(m.study.studyId);
+        report = { studyId: m.study.studyId, desc: m.study.desc, studyDate: m.study.studyDate,
+          reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes,
+          preview: rep.reportText.slice(0, 600) };
+      }
+      tests.push({ test, decision: m.decision, matchKey: m.key, reason: m.reason,
+        study: m.study ? { studyId: m.study.studyId, desc: m.study.desc, modality: m.study.modality, studyDate: m.study.studyDate, accession: m.study.accession } : null,
+        candidates: m.candidates, report });
     }
-    out.push({ order, decision: m.decision, matchKey: m.key, reason: m.reason,
-      study: m.study ? { studyId: m.study.studyId, desc: m.study.desc, modality: m.study.modality, studyDate: m.study.studyDate, accession: m.study.accession } : null,
-      candidates: m.candidates, report });
+    out.push({
+      order: { mrno: row.mrno, billNo: row.billNo, orderDate, genPatBillingId: row.genPatBillingId },
+      tests,
+      // an order is auto-fileable only when EVERY test resolved to exactly one study
+      allUnique: tests.length > 0 && tests.every((t) => t.decision === 'unique'),
+    });
   }
   return { file, empId, site: RESULT_SITE, studiesFound: studies.length, orders: out, count: out.length };
 }
