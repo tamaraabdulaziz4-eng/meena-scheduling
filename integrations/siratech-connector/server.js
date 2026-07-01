@@ -142,10 +142,50 @@ async function hisFetch(path, { method = 'POST', body } = {}) {
 // ── normalisation ─────────────────────────────────────────────────────────────
 const clean = (s) => (s == null ? '' : String(s)).replace(/\^+/g, ' ').replace(/\s+/g, ' ').trim();
 
-function normalizeOrder(o) {
-  // NOTE: HIS assigns the accession number only AFTER the study is performed/in
-  // PACS — NOT at payment — so it is exposed as `imaged`, not "paid". The true
-  // payment flag isn't in this response; `status` is the order's own HIS status.
+// MM/DD/YYYY [time] -> YYYY-MM-DD
+function orderedDateToISO(s) {
+  const m = String(s || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[1]}-${m[2]}` : null;
+}
+
+// Enrich an order from the RIS panel (which carries the internal order id,
+// billing status and encounter/ER) and then GetEmrOrderDetails (the clinical
+// indication). FetchRISPanel is site-scoped, so it MUST use the order's siteId.
+async function enrichOrder(mrno, o) {
+  try {
+    const d = orderedDateToISO(o.orderedDate);
+    if (!d || o.siteId == null) return {};
+    const ris = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+      mrno, fromDate: d + 'T00:00:00', toDate: d + 'T23:59:59',
+      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+      serviceCategoryId: 0, emrPatRisPanelId: 0,
+      userId: String(HIS_USER).padStart(8, '0'), hospitalId: o.siteId,
+    } });
+    const rows = (ris.json && ris.json.data) || [];
+    const row = rows.find((r) => r.billNo === o.billNo) || rows[0];
+    if (!row) return {};
+    let indication = null, reason = null, remarks = null;
+    if (row.emrPatDtlsInvOrderId) {
+      const det = await hisFetch('/billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=' + row.emrPatDtlsInvOrderId, { method: 'GET' });
+      const dd = (det.json && det.json.data) || {};
+      indication = dd.clinicalIndication || null; reason = dd.reasonForOrder || null; remarks = dd.remarks || null;
+    }
+    return {
+      clinicalIndication: indication, reasonForOrder: reason, remarks,
+      billingStatus: row.billingStatus || null,
+      encounter: row.encounter || null,                       // "ER" | "OP" | "IP"
+      isER: (row.encounter || '').toUpperCase() === 'ER',
+      provider: (row.providerName || '').trim() || null,
+      payer: row.payerName || null,
+      orderId: row.emrPatDtlsInvOrderId || null,
+      risOrderStatus: row.risOrderStatus || null,
+    };
+  } catch (e) { return {}; }
+}
+
+function normalizeOrder(o, ext) {
+  ext = ext || {};
+  // `imaged` = accession present (performed / in PACS), NOT payment.
   const imaged = o.accessionNumber != null && String(o.accessionNumber).trim() !== '';
   return {
     service: o.serviceName || '',
@@ -153,15 +193,25 @@ function normalizeOrder(o) {
     siteId: o.siteId,
     branch: o.site || '',                       // e.g. "N3 - Al Rawdah"
     priority: o.priority,                       // 0 = routine (HIS raw)
-    priorityText: o.priority ? 'Emergency' : 'Routine',
+    priorityText: ext.isER ? 'Emergency' : (o.priority ? 'Emergency' : 'Routine'),
     billNo: o.billNo || null,
     accessionNumber: o.accessionNumber || null,
     orderedDate: o.orderedDate || null,
     status: o.cpoeStatusDescription || null,    // order's HIS status, e.g. "Pending"
-    imaged,                                      // accession present => performed / in PACS
+    imaged,
     pacsId: o.pacsId || null,
     hasReport: !!o.hasRadiologyRepot,
     reportDate: o.reportDate || null,
+    // ── enriched from RIS panel + GetEmrOrderDetails ──
+    clinicalIndication: ext.clinicalIndication || null,
+    reasonForOrder: ext.reasonForOrder || null,
+    remarks: ext.remarks || null,
+    billingStatus: ext.billingStatus || null,   // e.g. "Billed"
+    encounter: ext.encounter || null,           // "ER" | "OP" | "IP"
+    isER: !!ext.isER,
+    provider: ext.provider || null,
+    payer: ext.payer || null,
+    orderId: ext.orderId || null,
   };
 }
 
@@ -214,7 +264,10 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
     if (!rad || (rad.status && rad.status >= 400) || rad.json == null) {
       throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
     }
-    const orders = (rad.json.data || []).map(normalizeOrder);
+    const rawOrders = rad.json.data || [];
+    // Enrich each order with its clinical indication + billing/ER status.
+    const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
+    const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
     const patient = normalizePatient(((pat && pat.json && pat.json.data) || [])[0]);
     return res.json({ ok: true, file, patient, orders, count: orders.length, fetchedAt: new Date().toISOString() });
   } catch (e) {

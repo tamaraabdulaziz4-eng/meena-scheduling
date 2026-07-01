@@ -103,8 +103,7 @@ async function handoffLookup() {
   pane.innerHTML = LOADING_HTML;
   try {
     handoff.lookup = await API.get(`/radiology/lookup/${encodeURIComponent(file)}`);
-    const o = handoffOrders()[0];
-    handoff.priority = o && o.priority ? 'emergency' : 'routine';
+    handoffApplyOrder(handoffOrders()[0]);
     renderHandoffPatient();
     renderHandoffSteps();
     hoStep1(document.getElementById('ho-body'));   // refresh Next-enabled state
@@ -136,16 +135,20 @@ function renderHandoffPatient() {
     block = `<div class="ho-lbl" style="margin-top:14px">Radiology order${orders.length > 1 ? 's — pick the one you imaged' : ''}</div>` +
       orders.map((o, i) => {
         const imaged = o.imaged || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
-        const chip = imaged
-          ? `<span class="badge badge-green">✅ تم التصوير · Imaged</span>`
-          : `<span class="badge badge-orange">⏳ بانتظار التصوير · Not imaged</span>`;
+        const chips = [
+          o.isER ? `<span class="badge badge-red">🚨 ER</span>` : '',
+          o.billingStatus ? `<span class="badge badge-purple">${escapeHtml(o.billingStatus)}</span>` : '',
+          imaged ? `<span class="badge badge-green">✅ تم التصوير</span>` : `<span class="badge badge-orange">⏳ بانتظار التصوير</span>`,
+        ].filter(Boolean).join('');
+        const ci = [o.clinicalIndication, o.reasonForOrder].filter(Boolean).join(' · ');
         return `<label class="ho-row ${i === handoff.order ? 'sel' : ''}">
           <input type="radio" name="ho-order" ${i === handoff.order ? 'checked' : ''} onchange="handoffPickOrder(${i})">
           <div class="ho-row-main">
             <div class="ho-row-title">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:500">(${escapeHtml(o.modality || '')})</span></div>
             <div class="ho-row-sub">🏥 ${escapeHtml(o.branch || '—')}${o.orderedDate ? ' · ' + escapeHtml(o.orderedDate) : ''}</div>
+            ${ci ? `<div class="ho-row-sub" style="color:var(--accent)">📋 ${escapeHtml(ci.slice(0, 90))}${ci.length > 90 ? '…' : ''}</div>` : ''}
           </div>
-          <div class="ho-badges">${chip}</div>
+          <div class="ho-badges">${chips}</div>
         </label>`;
       }).join('');
   }
@@ -155,10 +158,18 @@ function renderHandoffPatient() {
 function handoffPickOrder(i) {
   handoffStopPolling();
   handoff.order = i; handoff.matched = null; handoff.studyId = ''; handoff.candidates = null; handoff.baseline = null;
-  const o = handoffOrder();
-  handoff.priority = o && o.priority ? 'emergency' : 'routine';
+  handoffApplyOrder(handoffOrder());
   if (!handoff.msgEdited) handoff.msg = '';
   renderHandoffPatient();
+}
+
+// Auto-fill from the order: clinical indication (+ reason) into the textarea, and
+// priority from the ER encounter. Overwrites on order switch (deliberate action).
+function handoffApplyOrder(o) {
+  if (!o) return;
+  handoff.priority = o.isER ? 'emergency' : (o.priority ? 'emergency' : 'routine');
+  const ci = [o.clinicalIndication, o.reasonForOrder].filter(Boolean).join('\n').trim();
+  handoff.history = ci;
 }
 
 // ── Step 2 · Details ──────────────────────────────────────────────────────────
@@ -180,8 +191,8 @@ function hoStep2(b) {
             <button type="button" class="${handoff.priority === 'emergency' ? 'on' : ''}" onclick="handoffSetPrio('emergency')">🚨 ER / Emergency</button>
           </div>
         </div>
-        <div style="margin-top:13px"><label class="ho-lbl">Clinical indication <span style="font-weight:500">(written into DePACS)</span></label>
-          <textarea id="ho-history" class="input" rows="4" placeholder="Paste the clinical indication here…" oninput="handoff.history=this.value">${escapeHtml(handoff.history || '')}</textarea></div>
+        <div style="margin-top:13px"><label class="ho-lbl">Clinical indication <span style="font-weight:500">— auto-filled from HIS, edit if needed (written into DePACS)</span></label>
+          <textarea id="ho-history" class="input" rows="4" placeholder="Auto-filled from the order; paste here if empty…" oninput="handoff.history=this.value">${escapeHtml(handoff.history || '')}</textarea></div>
       </div>
       ${handoffNav('Back', 'Next', true)}
     </div>`;
@@ -281,7 +292,9 @@ async function handoffPollTick() {
     const base = handoff.baseline instanceof Set ? handoff.baseline : new Set();
     let pool = handoff.studies.filter(s => !base.has(String(s.study_id)));
     if (!pool.length) pool = handoff.studies.filter(s => _isToday(s.study_date));
-    if (pool.length === 1) { handoff.matched = pool[0]; handoff.studyId = String(pool[0].study_id); handoffStopPolling(); renderHandoffDE(); return; }
+    if (pool.length === 1) { handoff.matched = pool[0]; handoff.studyId = String(pool[0].study_id); handoffStopPolling(); renderHandoffDE();
+      if ((handoff.history || '').trim()) handoffAutoWrite();   // full DE linkage: write the indication automatically
+      return; }
     if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
   if (handoff.pollN >= HO_POLL_MAX) {
@@ -310,6 +323,20 @@ function handoffChoose(studyId) {
   handoff.matched = s; handoff.studyId = String(studyId); handoff.candidates = null;
   renderHandoffDE();
 }
+async function handoffWriteCore() {
+  const history = (handoff.history || '').trim();
+  const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
+  await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file });
+  const res = document.getElementById('ho-result');
+  if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}. Continue to the message →</div>`;
+  try {
+    const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
+    const st = (r.studies || []).find(x => String(x.study_id) === String(handoff.studyId));
+    if (st) { handoff.matched = st; renderHandoffDE(); }
+  } catch (e) {}
+}
+
+// Manual write (from the button) — asks to confirm the study first.
 async function handoffWrite(btn) {
   const o = handoffOrder();
   const history = (handoff.history || '').trim();
@@ -318,19 +345,20 @@ async function handoffWrite(btn) {
   if (!history) { res.innerHTML = `<div class="ho-note">Go back to step 2 and add the clinical indication first.</div>`; return; }
   const s = handoff.matched || {};
   if (!confirm(`Write the indication into this DePACS study?\n\n${s.modality || ''} · ${String(s.study_date || '').slice(0,16).replace('T',' ')}${s.study_desc ? ' · ' + s.study_desc : ''}\nstudy #${handoff.studyId}\n\nOrder: ${o.service || ''} (${o.modality || ''})`)) return;
-  const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
   btn.disabled = true; btn.textContent = 'Writing…';
-  try {
-    await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file });
-    res.innerHTML = `<div class="ho-de-box ok">✅ <b>Written</b> into DePACS study #${escapeHtml(String(handoff.studyId))}. Continue to the message →</div>`;
-    try {
-      const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
-      const st = (r.studies || []).find(x => String(x.study_id) === String(handoff.studyId));
-      if (st) { handoff.matched = st; renderHandoffDE(); }
-    } catch (e) {}
-  } catch (e) {
-    res.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Write failed')}</p></div>`;
-  } finally { btn.disabled = false; btn.textContent = 'Write indication to DePACS'; }
+  try { await handoffWriteCore(); }
+  catch (e) { res.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Write failed')}</p></div>`; }
+  finally { btn.disabled = false; btn.textContent = 'Write indication to DePACS'; }
+}
+
+// Auto write (full DE linkage) — fires when polling matches exactly one new study.
+async function handoffAutoWrite() {
+  const res = document.getElementById('ho-result');
+  if (res) res.innerHTML = `<div class="ho-de-box">✍️ Study arrived — writing the indication into DePACS…</div>`;
+  try { await handoffWriteCore(); }
+  catch (e) {
+    if (res) res.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div><p>Auto-write failed: ${escapeHtml(e.message || '')}. Use the Write button.</p></div>`;
+  }
 }
 
 // ── Step 4 · Message ──────────────────────────────────────────────────────────
