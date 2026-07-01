@@ -20,6 +20,11 @@ const PUBLIC_BIND = !['127.0.0.1', 'localhost', '::1'].includes(HOST);
 // over the SAME already-open port it uses for WhatsApp — no extra firewall holes.
 const HIS_CONNECTOR_URL = (process.env.HIS_CONNECTOR_URL || 'http://127.0.0.1:3005').replace(/\/+$/, '');
 const HIS_CONNECTOR_TOKEN = process.env.HIS_CONNECTOR_TOKEN || '';
+// On a small box, whatsapp-web.js' always-on Chromium is the biggest memory hog.
+// BRIDGE_HTTP_ONLY=1 skips it entirely — the bridge still serves /health and the
+// /his connector proxy, but WhatsApp send is disabled. Re-enable by removing the
+// flag (and re-linking at /qr).
+const HTTP_ONLY = process.env.BRIDGE_HTTP_ONLY === '1';
 
 // Hard safety: never run an UNAUTHENTICATED bridge on a public interface — that
 // is an open relay to send WhatsApp from the linked (personal!) account. Either
@@ -232,6 +237,7 @@ const SEND_TIMEOUT_MS   = Number(process.env.SEND_TIMEOUT_MS   || 12000);
 
 app.post('/send', requireAuth, async (req, res) => {
   try {
+    if (HTTP_ONLY) return res.status(503).json({ ok: false, error: 'WhatsApp is disabled (BRIDGE_HTTP_ONLY).' });
     if (!rateOk()) return res.status(429).json({ ok: false, error: 'Rate limit exceeded' });
     if (!isReady || !client) {
       return res.status(503).json({ ok: false, error: 'WhatsApp client is not ready yet' });
@@ -300,5 +306,10 @@ app.listen(PORT, HOST, () => {
   console.log(`Session store: ${DATA_PATH} (clientId=${SESSION_NAME})`);
 });
 
-client = buildClient();
-client.initialize();
+if (HTTP_ONLY) {
+  lastState = 'http-only';
+  console.log('BRIDGE_HTTP_ONLY=1 — WhatsApp client disabled (health + /his proxy only, no Chromium).');
+} else {
+  client = buildClient();
+  client.initialize();
+}

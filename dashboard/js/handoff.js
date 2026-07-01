@@ -73,16 +73,18 @@ function renderHandoffPatient() {
       ${p.nationalId ? `<div style="color:var(--muted);font-size:13px">ID ${escapeHtml(p.nationalId)}</div>` : ''}
     </div>` : `<div style="color:var(--muted)">No patient record found for this file.</div>`;
   const orderRows = orders.length ? orders.map((o, i) => {
-    const paid = o.paid
-      ? `<span class="badge" style="background:#e7f7ec;color:#1a7f43">Billed</span>`
-      : `<span class="badge" style="background:#fdeecf;color:#8a5a00">Pending / unpaid</span>`;
-    return `<label style="display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--border,#e5e5ef);border-radius:10px;margin-bottom:6px;cursor:pointer">
+    const statusChip = o.status
+      ? `<span class="badge" style="background:#eeeef7;color:#3b3b6d">${escapeHtml(o.status)}</span>` : '';
+    const imagedChip = o.imaged
+      ? `<span class="badge" style="background:#e7f7ec;color:#1a7f43">In PACS</span>`
+      : `<span class="badge" style="background:#fdeecf;color:#8a5a00">Not imaged yet</span>`;
+    return `<label style="display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border,#e5e5ef);border-radius:10px;margin-bottom:6px;cursor:pointer;flex-wrap:wrap">
         <input type="radio" name="ho-order" ${i === handoff.order ? 'checked' : ''} onchange="handoffPickOrder(${i})">
-        <div style="flex:1">
+        <div style="flex:1;min-width:160px">
           <div style="font-weight:600">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:400">(${escapeHtml(o.modality || '')})</span></div>
           <div style="font-size:12px;color:var(--muted)">🏥 ${escapeHtml(o.branch || '—')} · ${escapeHtml(o.orderedDate || '')}</div>
         </div>
-        ${paid}
+        ${statusChip}${imagedChip}
         ${o.accessionNumber ? `<span class="badge">ACC ${escapeHtml(o.accessionNumber)}</span>` : ''}
       </label>`;
   }).join('') : `<div style="color:var(--muted)">No radiology orders on this file.</div>`;

@@ -52,7 +52,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    // Lean flags — this runs on a small (2 GB) VPS, so trim Chromium's footprint.
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+           '--disable-gpu', '--no-zygote', '--disable-extensions',
+           '--disable-background-networking', '--disable-software-rasterizer',
+           '--js-flags=--max-old-space-size=256'],
   });
   try {
     const page = await browser.newPage();
@@ -139,7 +143,10 @@ async function hisFetch(path, { method = 'POST', body } = {}) {
 const clean = (s) => (s == null ? '' : String(s)).replace(/\^+/g, ' ').replace(/\s+/g, ' ').trim();
 
 function normalizeOrder(o) {
-  const paid = o.accessionNumber != null && String(o.accessionNumber).trim() !== '';
+  // NOTE: HIS assigns the accession number only AFTER the study is performed/in
+  // PACS — NOT at payment — so it is exposed as `imaged`, not "paid". The true
+  // payment flag isn't in this response; `status` is the order's own HIS status.
+  const imaged = o.accessionNumber != null && String(o.accessionNumber).trim() !== '';
   return {
     service: o.serviceName || '',
     modality: o.modality || '',
@@ -150,8 +157,8 @@ function normalizeOrder(o) {
     billNo: o.billNo || null,
     accessionNumber: o.accessionNumber || null,
     orderedDate: o.orderedDate || null,
-    status: o.cpoeStatusDescription || null,    // "Pending" until performed
-    paid,                                       // accession present => billed/performed
+    status: o.cpoeStatusDescription || null,    // order's HIS status, e.g. "Pending"
+    imaged,                                      // accession present => performed / in PACS
     pacsId: o.pacsId || null,
     hasReport: !!o.hasRadiologyRepot,
     reportDate: o.reportDate || null,
