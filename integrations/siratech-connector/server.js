@@ -412,7 +412,7 @@ function statsCacheSet(key, data) {
 // call. That's opt-in (?modality=1) and bounded — we sample the most recent N
 // orders so the manager gets a real, labelled mix without hammering the HIS.
 const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 400);
-const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 4);
+const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 10);
 const MOD_LABEL = { XR: 'X-Ray', US: 'Ultrasound', CT: 'CT', MR: 'MRI', MG: 'Mammography' };
 // Friendly modality label for an exam category/service. Reuse results.normMod
 // (the matcher's modality normaliser) first, then catch codes it leaves raw
@@ -496,6 +496,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
 
   const returned = [], failed = [], flat = [];
   const byBranch = new Map(), byDept = new Map(), byDoctor = new Map();
+  const patientSet = new Set();
   const daily = new Map();
   const aging = { '<1d': 0, '1-3d': 0, '3-7d': 0, '>7d': 0 };
   let total = 0, emergency = 0, routine = 0;
@@ -511,6 +512,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     returned.push({ site: s.site, count: s.rows.length });
     for (const r of s.rows) {
       total += 1;
+      if (r.mrno) patientSet.add(String(r.mrno));
       flat.push({ r, site: s.site });
       tallyPush(byBranch, s.site, branchLabel(s.site));
       tallyPush(byDept, r.departmentName, r.departmentName);
@@ -615,6 +617,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     sites: { requested: wantSites, returned, failed },
     branches: siteList,
     total,
+    patients: patientSet.size,
     byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), name: e.name, count: e.count })),
     byDepartment: tallyList(byDept).map((e) => ({ name: e.name, count: e.count })),
     byDoctor: tallyList(byDoctor, topDoctors).map((e) => ({ providerId: e.key, name: e.name, count: e.count })),

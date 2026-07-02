@@ -51,8 +51,51 @@ async function renderRadStatsPage() {
   rsRenderControls();
   rsStartClock();
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
+  else rsShowOverlay();                // first load → full-screen branded loader
   rsLoadBranches();                    // populate the branch picker (once), then it stays
   await rsLoad();
+}
+
+// ── Full-screen loader (login-style): cycling status + a progress bar ─────────
+const RS_OV_MSGS = [
+  'Connecting to Siratech HIS…',
+  'Loading all branches…',
+  'Aggregating radiology requests…',
+  'Reading modality & bills…',
+  'Building your dashboard…',
+  'Almost ready…',
+];
+function rsShowOverlay() {
+  let ov = document.getElementById('rs-overlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'rs-overlay'; document.body.appendChild(ov); }
+  ov.className = 'rs-overlay show';
+  ov.innerHTML = `
+    <div class="rs-ov-orb a"></div><div class="rs-ov-orb b"></div>
+    <div class="rs-ov-logo"><img src="/meena_logo.png" alt="Meena"></div>
+    <div class="rs-ov-msg" id="rs-ov-msg">${RS_OV_MSGS[0]}</div>
+    <div class="rs-ov-bar"><div class="rs-ov-fill" id="rs-ov-fill"></div></div>
+    <div class="rs-ov-pct" id="rs-ov-pct">0%</div>`;
+  let mi = 0, p = 0;
+  clearInterval(radstats.ovMsgTimer); clearInterval(radstats.ovBarTimer);
+  radstats.ovMsgTimer = setInterval(() => {
+    mi = (mi + 1) % RS_OV_MSGS.length;
+    const m = document.getElementById('rs-ov-msg');
+    if (m) { m.style.opacity = '0'; setTimeout(() => { m.textContent = RS_OV_MSGS[mi]; m.style.opacity = '1'; }, 180); }
+  }, 1500);
+  radstats.ovBarTimer = setInterval(() => {
+    p = Math.min(92, p + Math.max(0.6, (92 - p) * 0.06));   // ease toward 92%, finish on load
+    const f = document.getElementById('rs-ov-fill'), pc = document.getElementById('rs-ov-pct');
+    if (f) f.style.width = p + '%'; if (pc) pc.textContent = Math.round(p) + '%';
+  }, 220);
+}
+function rsHideOverlay() {
+  clearInterval(radstats.ovMsgTimer); clearInterval(radstats.ovBarTimer);
+  const ov = document.getElementById('rs-overlay');
+  if (!ov || !ov.classList.contains('show')) return;
+  const f = document.getElementById('rs-ov-fill'), pc = document.getElementById('rs-ov-pct');
+  if (f) f.style.width = '100%'; if (pc) pc.textContent = '100%';
+  const m = document.getElementById('rs-ov-msg'); if (m) m.textContent = 'Ready';
+  setTimeout(() => { ov.classList.add('fade'); setTimeout(() => { ov.className = 'rs-overlay'; }, 450); }, 260);
 }
 
 // Live ticking clock (KSA time) so the page reads as real-time.
@@ -205,6 +248,7 @@ async function rsLoad(silent) {
     radstats.lastError = (e && e.message) || 'Could not load statistics';
   } finally {
     radstats.loading = false;
+    rsHideOverlay();                    // main data in → dismiss the full-screen loader
     rsRenderControls();
     rsRenderBody();
     // Modality & revenue load automatically (no button) once the main data is in.
@@ -338,7 +382,10 @@ function rsPanel(title, inner, sub, cls) {
 }
 
 const RS_ICON = {
+  patients: '<circle cx="9" cy="7" r="4"/><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><path d="M19 8v6M22 11h-6"/>',
   total: '<path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/>',
+  exams: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  covered: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
   emg: '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/>',
   rtn: '<path d="M20 6 9 17l-5-5"/>',
   aged: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
@@ -359,8 +406,9 @@ function rsRenderBody() {
 
   if (banner) {
     banner.innerHTML = `<div class="rs-note">
-      <b>Operational view (live).</b> Numbers below are radiology requests registered in the RIS worklist per branch.
-      The <b>paid / unpaid collection split</b> and revenue are added next from the billing report.
+      <b>Live.</b> <b>Patients</b> = distinct people · <b>Requests</b> = orders (a patient can have several) ·
+      <b>Exams</b> = individual studies (an order can bundle several). Revenue is <b>billed</b>; since radiology here is
+      almost all insurance, a cash “paid/unpaid” split doesn’t apply — we show insurance-covered vs cash counts instead.
     </div>`;
   }
 
@@ -376,19 +424,27 @@ function rsRenderBody() {
   if (!d || !d.ok) { body.innerHTML = rsSkeleton(); return; }
 
   const total = d.total || 0;
+  const patients = d.patients != null ? d.patients : null;
   const emg = (d.priority && d.priority.emergency) || 0;
   const rtn = (d.priority && d.priority.routine) || 0;
   const aged = (d.aging && d.aging['>7d']) || 0;
-  const sitesOk = (d.sites && d.sites.returned && d.sites.returned.length) || 0;
   const sitesFail = (d.sites && d.sites.failed && d.sites.failed.length) || 0;
+
+  // Exams (needs modality) and Insurance-covered (needs finance) fill in when
+  // their enrichment lands; show a subtle "…" until then.
+  const m = radstats.modData, f = radstats.finData;
+  const examsVal = m ? rsNum(m.exams || 0) : '<span class="rs-pending">…</span>';
+  const covered = f ? ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count : null;
+  const coveredVal = f ? rsNum(covered || 0) : '<span class="rs-pending">…</span>';
 
   const kpis = `
     <div class="rs-kpis">
-      ${rsKpi('total', rsNum(total), 'Total requests')}
+      ${rsKpi('patients', patients != null ? rsNum(patients) : '—', 'Patients')}
+      ${rsKpi('total', rsNum(total), 'Requests')}
+      ${rsKpi('exams', examsVal, 'Exams')}
+      ${rsKpi('covered', coveredVal, 'Insurance-covered', '', f ? rsPct(covered || 0, f.requests || total) + '%' : '')}
       ${rsKpi('emg', rsNum(emg), 'Emergency', 'rs-kpi-red', total ? rsPct(emg, total) + '%' : '')}
-      ${rsKpi('rtn', rsNum(rtn), 'Routine', '', total ? rsPct(rtn, total) + '%' : '')}
       ${rsKpi('aged', rsNum(aged), 'Pending &gt; 7 days', aged ? 'rs-kpi-warn' : '')}
-      ${rsKpi('branch', rsNum(sitesOk), 'Branches reporting', '', sitesFail ? `<span class="rs-fail">${sitesFail} n/a</span>` : '')}
     </div>`;
 
   const branchItems = (d.byBranch || []).map((b) => ({ label: b.name || ('Branch ' + b.site), count: b.count }));
@@ -402,26 +458,34 @@ function rsRenderBody() {
   ], { centerVal: total, centerLabel: 'requests' });
 
   const layout = `
+    ${rsSection('Overview')}
+    ${kpis}
     <div class="rs-grid2">
       ${rsPanel('Priority split', prioDonut)}
-      ${rsPanel('Modality mix', rsModalityInner(), rsModalitySub())}
+      ${rsPanel('Daily trend', rsArea(d.daily || []), `${(d.daily || []).length} days`)}
     </div>
+
+    ${rsSection('Financial — revenue &amp; payer')}
     ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}
-    ${rsPanel('Daily trend', rsArea(d.daily || []), `${(d.daily || []).length} days`, 'rs-wide')}
+
+    ${rsSection('Breakdown')}
     <div class="rs-grid2">
+      ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
       ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)'), `${branchItems.length} branches`)}
-      ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15')}
     </div>
     <div class="rs-grid2">
+      ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15')}
       ${rsPanel('By ordering department', rsBarRows(deptItems, '#8358FD'))}
-      ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order')}
-    </div>`;
+    </div>
+    ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order', 'rs-wide')}`;
 
   const foot = `<div class="rs-foot">Range ${escapeHtml((d.range && d.range.from) || '')} → ${escapeHtml((d.range && d.range.to) || '')}
     · updated ${escapeHtml(rsAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
-  body.innerHTML = kpis + layout + foot;
+  body.innerHTML = layout + foot;
 }
+
+function rsSection(title) { return `<div class="rs-section">${title}</div>`; }
 
 function rsModalitySub() {
   const m = radstats.modData;
