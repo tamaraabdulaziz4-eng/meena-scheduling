@@ -487,14 +487,19 @@ function handoffReset() {
 }
 
 function handoffBuildMsg() {
+  // Plain English, no emoji. WhatsApp bold (*..*) on the labels so the group can
+  // scan File / Exam / Priority / Indication at a glance.
   const exam = (document.getElementById('ho-exam')?.value || handoffOrder().service || '').trim();
   const branch = (document.getElementById('ho-branch')?.value || handoffOrder().branch || '').trim();
-  const prio = handoff.priority === 'emergency' ? '🚨 طارئ / ER' : '🕒 روتيني / Routine';
-  return ['🩻 طلب أشعة / Radiology handoff',
-    `📄 الملف / File: ${handoff.file}`,
-    exam ? `🔬 الفحص / Exam: ${exam}` : '',
-    `⚑ الأولوية / Priority: ${prio}`,
-    branch ? `🏥 الفرع / Branch: ${branch}` : ''].filter(Boolean).join('\n');
+  const indication = (handoff.history || '').trim();
+  const prio = handoff.priority === 'emergency' ? 'Emergency' : 'Routine';
+  return [
+    `*File:* ${handoff.file}`,
+    exam ? `*Exam:* ${exam}` : '',
+    branch ? `*Branch:* ${branch}` : '',
+    `*Priority:* ${prio}`,
+    `*Indication:* ${indication || '-'}`,
+  ].filter(Boolean).join('\n');
 }
 function handoffSyncMsg(force) {
   const m = document.getElementById('ho-message');
