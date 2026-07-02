@@ -47,10 +47,26 @@ async function renderRadStatsPage() {
     ${pageHero('Radiology', 'Radiology statistics', 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS')}
     <div id="rs-controls"></div>
     <div id="rs-billing-banner"></div>
-    <div id="rs-body">${LOADING_HTML}</div>`;
+    <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>`;
   rsRenderControls();
-  rsLoadBranches();            // populate the branch picker (once), then it stays
+  if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
+  rsLoadBranches();                    // populate the branch picker (once), then it stays
   await rsLoad();
+}
+
+// Shimmer placeholder that mirrors the real layout, so a slow first load looks
+// alive (not hung) instead of a blank/plain spinner.
+function rsSkeleton() {
+  const n = radstats.branches.length || 14;
+  const card = `<div class="skel" style="height:74px;border-radius:14px"></div>`;
+  const block = (h) => `<div class="skel" style="height:${h}px;border-radius:14px"></div>`;
+  return `
+    <div class="rs-loadnote"><span class="mini-spin"></span> Loading ${n} branches… first load takes a few seconds, then it's cached</div>
+    <div class="rs-kpis">${Array(5).fill(card).join('')}</div>
+    <div class="rs-grid2">${block(210)}${block(210)}</div>
+    ${block(120)}
+    ${block(190)}
+    <div class="rs-grid2">${block(240)}${block(240)}</div>`;
 }
 
 // Load the real branch list so the picker shows every branch by name.
@@ -148,6 +164,8 @@ async function rsLoad(silent) {
   radstats.loading = true;
   radstats.lastError = '';
   if (!silent) rsRenderControls();
+  const bodyEl = document.getElementById('rs-body');
+  if (bodyEl && radstats.data) bodyEl.classList.add('rs-refreshing');   // keep data visible, show it's updating
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
@@ -307,6 +325,7 @@ function rsRenderBody() {
   const body = document.getElementById('rs-body');
   const banner = document.getElementById('rs-billing-banner');
   if (!body) return;
+  body.classList.remove('rs-refreshing');
 
   if (banner) {
     banner.innerHTML = `<div class="rs-note">
@@ -324,7 +343,7 @@ function rsRenderBody() {
     return;
   }
   const d = radstats.data;
-  if (!d || !d.ok) { body.innerHTML = `<div class="rs-skel">${LOADING_HTML}</div>`; return; }
+  if (!d || !d.ok) { body.innerHTML = rsSkeleton(); return; }
 
   const total = d.total || 0;
   const emg = (d.priority && d.priority.emergency) || 0;
