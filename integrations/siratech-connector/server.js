@@ -395,7 +395,7 @@ const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 12);
 // Short result cache so re-opens / auto-refresh / the daily job don't re-run the
 // full 14-branch fan-out every time (the data is live but doesn't change second
 // to second). Keyed by the query; ~45s TTL.
-const STATS_CACHE_TTL = Number(process.env.STATS_CACHE_TTL_MS || 45000);
+const STATS_CACHE_TTL = Number(process.env.STATS_CACHE_TTL_MS || 180000);
 const statsCache = new Map();
 function statsCacheGet(key) {
   const e = statsCache.get(key);
@@ -528,57 +528,24 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     }
   }
 
-  // Exact modality mix — opt-in, bounded to the most recent N orders. Each order
-  // may bundle several exams, so we count per exam (test row), not per order.
-  let modality = null;
-  if (withModality && flat.length) {
+  // Unified enrichment — ONE bill read per order (GetDueBillDetailsByID) gives us
+  // BOTH the modality mix (from the line-item names) AND revenue + payer split.
+  // This halves the per-order calls vs. reading RadiologyDetails separately, so
+  // modality and revenue come back together and faster. Bounded to the most
+  // recent N orders. Only radiology line items are counted (labs on the same
+  // bill are skipped).
+  let modality = null, financial = null;
+  if ((withModality || withFinance) && flat.length) {
     const sample = flat
       .slice()
       .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
       .slice(0, STATS_MODALITY_CAP);
-    const byMod = new Map();
-    let exams = 0;
-    const details = await pool(sample, STATS_MODALITY_CONCURRENCY, async ({ r, site }) => {
-      const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
-        body: results.radiologyDetailsBody(r, { hospitalId: site, empId }),
-      });
-      return (dr && dr.json && dr.json.data) || [];
-    });
-    for (const det of details) {
-      if (!Array.isArray(det)) continue;
-      for (const t of det) {
-        exams += 1;
-        tallyPush(byMod, friendlyModality(t.categoryName || t.serviceName), null);
-      }
-    }
-    modality = {
-      sampled: sample.length,
-      ofTotal: flat.length,
-      truncated: flat.length > sample.length,
-      exams,
-      mix: tallyList(byMod).map((e) => ({ modality: e.key, count: e.count })),
-    };
-  }
-
-  // Revenue & payer split — opt-in (?financial=1), bounded. Each order's bill is
-  // read (GetDueBillDetailsByID); only the radiology line items are summed, split
-  // into patient (cash/copay) vs sponsor (insurance). Since almost all radiology
-  // here is insurance, this is the honest money picture — NOT a collected/settled
-  // figure (that's a separate RCM claim cycle).
-  let financial = null;
-  if (withFinance && flat.length) {
-    const sample = flat
-      .slice()
-      .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
-      .slice(0, STATS_MODALITY_CAP);
-    const revByBranch = new Map(), revByMod = new Map();
-    let revenue = 0, patient = 0, sponsor = 0, items = 0;
     const bills = await pool(sample, STATS_MODALITY_CONCURRENCY, async ({ r, site }) => {
       const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(r.genPatBillingId), { method: 'GET' });
       return { site, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
     });
-    // Classify each REQUEST (bill) by who pays for its radiology: fully insurance
-    // (patient owes 0), self-pay cash (no sponsor), or insurance + a patient copay.
+    const byModCount = new Map(), revByBranch = new Map(), revByMod = new Map();
+    let exams = 0, revenue = 0, patient = 0, sponsor = 0, items = 0;
     let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqWithRad = 0;
     for (const b of bills) {
       if (!b || !Array.isArray(b.items)) continue;
@@ -586,11 +553,14 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       for (const it of b.items) {
         if (!isRadiologyItem(it.itemName)) continue;
         hasRad = true;
+        const qty = Math.max(1, Number(it.quantity) || 1);
         const net = Number(it.netAmount) || 0, pat = Number(it.patient) || 0, spo = Number(it.sponsor) || 0;
-        revenue += net; patient += pat; sponsor += spo; items += 1; bPat += pat; bSpo += spo;
-        const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 };
-        be.revenue += net; revByBranch.set(b.site, be);
         const mk = friendlyModality(it.itemName);
+        // modality (exams counted by quantity)
+        exams += qty; const mc = byModCount.get(mk) || { modality: mk, count: 0 }; mc.count += qty; byModCount.set(mk, mc);
+        // revenue + payer
+        revenue += net; patient += pat; sponsor += spo; items += 1; bPat += pat; bSpo += spo;
+        const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 }; be.revenue += net; revByBranch.set(b.site, be);
         const me = revByMod.get(mk) || { modality: mk, revenue: 0 }; me.revenue += net; revByMod.set(mk, me);
       }
       if (!hasRad) continue;
@@ -598,9 +568,10 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       if (bPat > 0 && bSpo > 0) reqCopay += 1; else if (bPat > 0) reqCash += 1; else reqInsurance += 1;
     }
     const r2 = (n) => Math.round(n * 100) / 100;
-    financial = {
-      sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length, items,
-      requests: reqWithRad,
+    const meta = { sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length };
+    if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
+    if (withFinance) financial = {
+      ...meta, items, requests: reqWithRad,
       byPayer: [
         { type: 'Insurance', count: reqInsurance },
         { type: 'Cash / self-pay', count: reqCash },
@@ -645,8 +616,9 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
     // Empty/blank means "all branches" — must not become [0] (''.split→['']→Number 0).
     const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean)
       .map(Number).filter((n) => Number.isFinite(n) && n > 0);
-    const withModality = String(req.query.modality || '') === '1';
-    const withFinance = String(req.query.financial || '') === '1';
+    const full = String(req.query.full || '') === '1';
+    const withModality = full || String(req.query.modality || '') === '1';
+    const withFinance = full || String(req.query.financial || '') === '1';
     const data = await radiologyStats({ from, to, sites, withModality, withFinance });
     return res.json({ ok: true, ...data });
   } catch (e) {

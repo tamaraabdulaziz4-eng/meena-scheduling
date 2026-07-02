@@ -6091,6 +6091,7 @@ def radiology_stats(
     sites: str = Query(""),
     modality: str = Query(""),
     financial: str = Query(""),
+    full: str = Query(""),
     user=Depends(require_admin),
 ):
     """Live hospital-wide radiology-request statistics for managers, from Siratech
@@ -6109,10 +6110,12 @@ def radiology_stats(
         q["modality"] = "1"
     if (financial or "").strip() == "1":
         q["financial"] = "1"
+    if (full or "").strip() == "1":
+        q["full"] = "1"
     qs = ("?" + urllib.parse.urlencode(q)) if q else ""
-    # Modality/financial enrichment fans out per-order detail calls, so allow more time.
-    heavy = q.get("modality") or q.get("financial")
-    return _bridge_request("/his/stats/radiology" + qs, timeout=220 if heavy else 150)
+    # Enrichment (modality/financial/full) fans out per-order bill reads, so allow more time.
+    heavy = q.get("modality") or q.get("financial") or q.get("full")
+    return _bridge_request("/his/stats/radiology" + qs, timeout=240 if heavy else 150)
 
 @app.get("/api/radiology/branches")
 def radiology_branches(user=Depends(require_admin)):

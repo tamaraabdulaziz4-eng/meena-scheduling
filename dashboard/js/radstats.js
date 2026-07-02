@@ -235,27 +235,20 @@ async function rsLoad(silent) {
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
-  // A filter change (non-silent) invalidates the separately-loaded modality &
-  // finance data; a silent auto-refresh leaves them (they auto-reload with cache).
-  if (!silent) {
-    radstats.modData = null; radstats.modError = ''; radstats.modLoading = false;
-    radstats.finData = null; radstats.finError = ''; radstats.finLoading = false;
-  }
+  q.set('full', '1');                  // ONE call returns everything (requests + modality + revenue)
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
     radstats.data = d;
+    radstats.modData = d.modality || null;   // arrives together — no separate/late panels
+    radstats.finData = d.financial || null;
+    radstats.modError = ''; radstats.finError = '';
   } catch (e) {
     radstats.lastError = (e && e.message) || 'Could not load statistics';
   } finally {
     radstats.loading = false;
-    rsHideOverlay();                    // main data in → dismiss the full-screen loader
+    rsHideOverlay();                    // everything in → dismiss the full-screen loader
     rsRenderControls();
     rsRenderBody();
-    // Modality & revenue load automatically (no button) once the main data is in.
-    if (radstats.data && radstats.data.ok) {
-      if (!radstats.modData && !radstats.modLoading) rsLoadModality();
-      if (!radstats.finData && !radstats.finLoading) rsLoadFinancial();
-    }
   }
 }
 
