@@ -6000,12 +6000,19 @@ def _elite_file_candidates(file_no):
         add("SIRA" + bare)
     return out
 
-def _elite_studies_for_file(file_no, end_date):
+# Upper date bound for study lookups. It must be well in the FUTURE, not "today":
+# DePACS timestamps a study in its own (KSA, UTC+3) day, so a scan taken at
+# 00:15 KSA is dated "tomorrow" relative to the server's UTC today — capping at
+# today silently dropped those (and any recent) studies from the reports lookup.
+_ELITE_STUDY_END_DATE = "2035-12-31"
+
+def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
     """DePACS studies for a file number across EVERY SIRA/bare candidate, merged and
     de-duplicated by study_id. We must query all forms (not stop at the first with
     hits): the same patient can have some studies filed under the bare number and
-    others under the SIRA-prefixed one, so stopping early would drop half of them —
-    which is exactly the "some results missing" bug this fixes."""
+    others under the SIRA-prefixed one, so stopping early would drop half of them.
+    end_date defaults to a far-future bound so timezone-skewed / recent studies are
+    never excluded (the "some results missing" bug)."""
     import urllib.parse
     seen, rows = set(), []
     for pid in _elite_file_candidates(file_no):
@@ -6039,12 +6046,10 @@ async def reports_config_save(request: Request, user=Depends(require_superadmin)
 
 @app.get("/api/reports/search")
 def reports_search(request: Request, user=Depends(require_admin)):
-    import datetime
     file_no = (request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    end = datetime.date.today().isoformat()
-    rows = _elite_studies_for_file(file_no, end)
+    rows = _elite_studies_for_file(file_no)
     return {"file_no": file_no, "count": len(rows), "studies": [{
         "study_id": s.get("study_id"), "pat_id": s.get("pat_id"),
         "pat_name": _elite_name(s.get("pat_name")), "pat_sex": s.get("pat_sex"),
@@ -6644,12 +6649,10 @@ def public_reports_lookup(request: Request):
     """List a patient's DePACS studies (newest first) for the public link."""
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
-    import datetime
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    end = datetime.date.today().isoformat()
-    rows = _elite_studies_for_file(file_no, end)
+    rows = _elite_studies_for_file(file_no)
     studies = [{
         "study_id": s.get("study_id"),
         "pat_name": _elite_name(s.get("pat_name")),
