@@ -166,7 +166,7 @@ function rsRenderControls() {
         <div class="rs-ctl-actions">
           <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
           <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
-          <button class="btn btn-primary btn-sm" onclick="rsLoad()" ${radstats.loading ? 'disabled' : ''}>${radstats.loading ? 'Loading…' : 'Refresh'}</button>
+          <button class="btn btn-primary btn-sm" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
         </div>
       </div>
       ${rsBranchPicker()}
@@ -225,7 +225,7 @@ function rsStartAuto() {
 }
 function rsStopAuto() { if (radstats.timer) { clearInterval(radstats.timer); radstats.timer = null; } }
 
-async function rsLoad(silent) {
+async function rsLoad(silent, force) {
   radstats.loading = true;
   radstats.lastError = '';
   if (!silent) rsRenderControls();
@@ -236,6 +236,7 @@ async function rsLoad(silent) {
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
   q.set('full', '1');                  // ONE call returns everything (requests + modality + revenue)
+  if (force) q.set('nocache', '1');    // Refresh button → skip cache, pull truly live now
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
     radstats.data = d;
