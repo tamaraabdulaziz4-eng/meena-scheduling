@@ -6092,6 +6092,7 @@ def radiology_stats(
     modality: str = Query(""),
     financial: str = Query(""),
     full: str = Query(""),
+    nocache: str = Query(""),
     user=Depends(require_admin),
 ):
     """Live hospital-wide radiology-request statistics for managers, from Siratech
@@ -6112,6 +6113,8 @@ def radiology_stats(
         q["financial"] = "1"
     if (full or "").strip() == "1":
         q["full"] = "1"
+    if (nocache or "").strip() == "1":
+        q["nocache"] = "1"
     qs = ("?" + urllib.parse.urlencode(q)) if q else ""
     # Enrichment (modality/financial/full) fans out per-order bill reads, so allow more time.
     heavy = q.get("modality") or q.get("financial") or q.get("full")

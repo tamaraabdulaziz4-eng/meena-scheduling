@@ -395,7 +395,7 @@ const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 12);
 // Short result cache so re-opens / auto-refresh / the daily job don't re-run the
 // full 14-branch fan-out every time (the data is live but doesn't change second
 // to second). Keyed by the query; ~45s TTL.
-const STATS_CACHE_TTL = Number(process.env.STATS_CACHE_TTL_MS || 180000);
+const STATS_CACHE_TTL = Number(process.env.STATS_CACHE_TTL_MS || 300000);
 const statsCache = new Map();
 function statsCacheGet(key) {
   const e = statsCache.get(key);
@@ -412,7 +412,7 @@ function statsCacheSet(key, data) {
 // call. That's opt-in (?modality=1) and bounded — we sample the most recent N
 // orders so the manager gets a real, labelled mix without hammering the HIS.
 const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 2000);
-const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 10);
+const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 28);
 const MOD_LABEL = { XR: 'X-Ray', US: 'Ultrasound', CT: 'CT', MR: 'MRI', MG: 'Mammography' };
 // Friendly modality label for an exam category/service. Reuse results.normMod
 // (the matcher's modality normaliser) first, then catch codes it leaves raw
@@ -498,10 +498,9 @@ const dayOf = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/
 function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unknown' : String(key); const e = map.get(k) || { key: k, name: name || k, count: 0 }; e.count += 1; map.set(k, e); }
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
 
-async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, topDoctors = 15 }) {
+async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, topDoctors = 15, noCache = false }) {
   const cacheKey = JSON.stringify({ from, to, sites: (sites || []).slice().sort((a, b) => a - b), withModality, withFinance });
-  const cached = statsCacheGet(cacheKey);
-  if (cached) return cached;
+  if (!noCache) { const cached = statsCacheGet(cacheKey); if (cached) return cached; }
   await getToken();
   const empId = currentEmpId() || '0';
   const today = new Date();
@@ -657,7 +656,8 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
     const full = String(req.query.full || '') === '1';
     const withModality = full || String(req.query.modality || '') === '1';
     const withFinance = full || String(req.query.financial || '') === '1';
-    const data = await radiologyStats({ from, to, sites, withModality, withFinance });
+    const noCache = String(req.query.nocache || '') === '1';   // Refresh button → truly live
+    const data = await radiologyStats({ from, to, sites, withModality, withFinance, noCache });
     return res.json({ ok: true, ...data });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -667,12 +667,28 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
 process.on('unhandledRejection', (r) => console.error('unhandledRejection:', r));
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e && e.message));
 
+// Keep the DEFAULT dashboard view (all branches, last 30 days, full enrichment)
+// pre-computed in the cache, so a manager opening the page gets it instantly
+// instead of waiting for ~1500 per-order bill reads. Runs a bit under the cache
+// TTL so the cache never goes cold. The key matches what the dashboard sends
+// (30-day preset, no sites filter, full=1).
+async function warmDefaultStats() {
+  try {
+    const today = new Date();
+    const to = today.toISOString().slice(0, 10);
+    const from = new Date(today.getTime() - 29 * 864e5).toISOString().slice(0, 10);
+    const t0 = Date.now();
+    const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
+    console.log(`[warm] default stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  } catch (e) { console.error('[warm] default stats failed:', e && e.message); }
+}
+
 app.listen(PORT, HOST, () => {
   console.log(`Siratech connector listening on ${HOST}:${PORT}`);
-  // Warm the branch list + radiology catalog so the first stats request is fast
-  // (the catalog is ~26k rows). Fire-and-forget; failures are retried on demand.
+  // Warm branch list + radiology catalog, then keep the default view warm.
   setTimeout(() => {
     getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
-    getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`)).catch(() => {});
+    getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`)).then(warmDefaultStats).catch(() => {});
   }, 4000);
+  setInterval(warmDefaultStats, 240000);   // refresh default cache every 4 min (< 5-min TTL)
 });
