@@ -303,7 +303,12 @@ async function buildMatch(file, wantBillNo) {
   const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
     body: results.radiologySearchBody({ mrno: file, hospitalId: RESULT_SITE, empId }),
   });
-  const rows = (sr.json && sr.json.data) || [];
+  // A transient HIS failure (or a mid-login 401) must surface as an error — never as
+  // "no orders", which would wrongly tell staff a patient with orders has none.
+  if (!sr || (sr.status && sr.status >= 400) || sr.json == null) {
+    throw new Error(`HIS result search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
+  }
+  const rows = sr.json.data || [];
   const orderRows = wantBillNo ? rows.filter((r) => r.billNo === wantBillNo) : rows;
 
   // 2) the patient's VERIFIED DePACS studies (once)
