@@ -8,59 +8,106 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root { --primary:#261E4F; --accent:#6B4EFF; --accent2:#8358FD; --muted:#8585A8;
-          --border:#E0DCF5; --card:#ffffff; --bg:#f4f2fc; --ok:#00A87D; --red:#E25555; }
+          --border:#E0DCF5; --card:#ffffff; --bg:#f4f2fc; --ok:#00A87D; --red:#E25555; --warn:#B7791F; }
   * { box-sizing:border-box; }
-  body { font-family:'Poppins',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary);
-         -webkit-text-size-adjust:100%; }
-  .wrap { max-width:560px; margin:0 auto; padding:18px 16px 40px; }
-  .head { display:flex; align-items:center; gap:12px; margin:8px 0 18px; }
-  .head img { height:38px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.16); }
-  .head .t { font-size:18px; font-weight:800; }
+  body { font-family:'Poppins',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary); -webkit-text-size-adjust:100%; }
+  .wrap { max-width:600px; margin:0 auto; padding:18px 16px 48px; }
+
+  /* ── Splash ── */
+  #splash { position:fixed; inset:0; z-index:50; background:linear-gradient(150deg,#2b2260,#6B4EFF 60%,#8358FD);
+            color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+            padding:28px; transition:opacity .5s ease, visibility .5s; }
+  #splash.hide { opacity:0; visibility:hidden; }
+  #splash img { height:64px; background:#fff; padding:12px 16px; border-radius:20px; box-shadow:0 16px 40px rgba(0,0,0,.25);
+                animation:pop .6s cubic-bezier(.2,1.2,.3,1) both; }
+  #splash h1 { font-size:24px; font-weight:800; margin:20px 0 4px; animation:rise .6s .15s both; }
+  #splash .sub { font-size:14px; opacity:.9; font-weight:500; animation:rise .6s .25s both; }
+  #splash .warn { margin-top:22px; max-width:460px; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.35);
+                  border-radius:16px; padding:14px 16px; font-size:13.5px; line-height:1.7; font-weight:600; animation:rise .6s .35s both; }
+  #splash .btn { margin-top:24px; background:#fff; color:var(--accent); border:none; border-radius:14px; padding:13px 34px;
+                 font-family:inherit; font-size:16px; font-weight:800; cursor:pointer; box-shadow:0 12px 30px rgba(0,0,0,.22);
+                 animation:rise .6s .45s both; }
+  @keyframes pop { from{transform:scale(.6);opacity:0} to{transform:scale(1);opacity:1} }
+  @keyframes rise { from{transform:translateY(14px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+  .head { display:flex; align-items:center; gap:12px; margin:8px 0 14px; }
+  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.16); }
+  .head .t { font-size:17px; font-weight:800; }
   .head .s { font-size:12px; color:var(--muted); font-weight:600; }
+
+  /* persistent verify banner */
+  .verify-banner { display:flex; gap:10px; align-items:flex-start; background:#FFF7E6; border:1.5px solid #F4D48A;
+                   color:#8a6100; border-radius:14px; padding:12px 14px; font-size:13px; font-weight:600; line-height:1.6; margin-bottom:14px; }
+  .verify-banner .ic { font-size:18px; line-height:1; }
+
   .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
           box-shadow:0 12px 34px rgba(43,36,88,.09); margin-bottom:14px; }
-  label { display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
+  label { display:block; font-size:13px; font-weight:700; margin:0 0 6px; }
   .row { display:flex; gap:8px; }
   input { flex:1; width:100%; padding:12px 13px; font-size:16px; font-family:inherit; color:var(--primary);
          border:1.5px solid var(--border); border-radius:11px; background:#fff; outline:none; }
   input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(107,78,255,.12); }
-  .btn { padding:12px 18px; font-size:15px; font-weight:700; font-family:inherit; color:#fff; border:none;
+  .btn2 { padding:12px 18px; font-size:15px; font-weight:700; font-family:inherit; color:#fff; border:none;
          border-radius:12px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
          box-shadow:0 8px 20px rgba(107,78,255,.32); white-space:nowrap; }
-  .btn:disabled { opacity:.6; cursor:default; }
-  .btn.ghost { background:#fff; color:var(--accent); border:1.5px solid var(--border); box-shadow:none; font-size:13px; padding:8px 14px; }
+  .btn2:disabled { opacity:.6; cursor:default; }
+  .btn.ghost { background:#fff; color:var(--accent); border:1.5px solid var(--border); box-shadow:none; font-size:13px; padding:9px 14px; border-radius:11px; cursor:pointer; font-family:inherit; font-weight:700; }
   .hint { font-size:12px; color:var(--muted); margin-top:8px; }
   .msg { font-size:13px; padding:10px 12px; border-radius:10px; margin-top:12px; display:none; }
   .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
-  .msg.info { display:block; background:rgba(107,78,255,.1); color:var(--accent); }
-  .study { border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-top:10px; cursor:pointer;
-           transition:.15s; background:#fff; }
+
+  .study { border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-top:10px; cursor:pointer; transition:.15s; background:#fff; }
   .study:hover { border-color:var(--accent); box-shadow:0 6px 16px rgba(107,78,255,.12); }
   .study .sd { font-weight:700; font-size:15px; }
   .study .sm { font-size:12px; color:var(--muted); margin-top:3px; }
   .pill { display:inline-block; font-weight:700; font-size:11px; padding:3px 10px; border-radius:999px; }
   .pill.ok { background:rgba(0,168,125,.14); color:var(--ok); }
   .pill.wait { background:rgba(133,133,168,.16); color:var(--muted); }
-  pre { white-space:pre-wrap; font-family:inherit; font-size:14px; line-height:1.7; background:var(--bg);
+
+  /* prominent patient panel */
+  .patient { background:linear-gradient(135deg,#f0ecff,#fff); border:1.5px solid var(--accent); border-radius:14px; padding:14px; margin:12px 0 0; }
+  .patient .pn { font-size:19px; font-weight:800; color:var(--primary); }
+  .patient .pg { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:8px; }
+  .patient .pg div { font-size:13px; }
+  .patient .pg b { color:var(--muted); font-weight:600; font-size:11px; display:block; }
+  .patient .pg span { font-weight:700; font-size:14px; }
+  .verify-strong { display:flex; gap:9px; align-items:flex-start; background:rgba(226,85,85,.1); border:1.5px solid rgba(226,85,85,.45);
+                   color:#c0392b; border-radius:12px; padding:11px 13px; font-size:12.5px; font-weight:700; line-height:1.6; margin-top:10px; }
+
+  pre { white-space:pre-wrap; font-family:inherit; font-size:14px; line-height:1.75; background:var(--bg);
         border:1px solid var(--border); border-radius:12px; padding:14px; margin:12px 0 0; direction:ltr; text-align:left; }
   .loading { text-align:center; color:var(--muted); padding:26px; }
-  .back { font-size:13px; color:var(--accent); font-weight:700; cursor:pointer; background:none; border:none; padding:0; margin-bottom:6px; }
   .rhead { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
 </style>
 </head>
 <body>
+
+<!-- ── Splash ── -->
+<div id="splash">
+  <img src="/meena_logo.png" alt="Meena">
+  <h1>تقارير الأشعة</h1>
+  <div class="sub">Meena Radiology · بحث التقارير للأطباء</div>
+  <div class="warn">⚠️ <b>تنبيه مهم:</b> قبل الاعتماد على أي تقرير، <u>تأكد أن بيانات المريض (الاسم ورقم الملف) تطابق التقرير</u> — لتفادي أي خلط بين المرضى.<br><span style="opacity:.85;font-weight:500">Always verify the patient's name & file number match the report before use.</span></div>
+  <button class="btn" onclick="enterApp()">ابدأ / Start</button>
+</div>
+
 <div class="wrap">
   <div class="head">
     <img src="/meena_logo.png" alt="Meena">
     <div><div class="t">تقارير الأشعة / Radiology Reports</div><div class="s">ابحث عن تقرير مريض برقم الملف</div></div>
   </div>
 
+  <div class="verify-banner">
+    <span class="ic">⚠️</span>
+    <span>يجب التحقق من <b>اسم المريض ورقم الملف</b> في التقرير قبل الاعتماد عليه.<br>
+    <span style="font-weight:500;opacity:.85">Verify patient name & file number match the report before relying on it.</span></span>
+  </div>
+
   <div class="card" id="search-card">
     <label for="file">رقم الملف / File number</label>
     <div class="row">
-      <input id="file" inputmode="numeric" autocomplete="off" placeholder="e.g. 26289620"
-             onkeydown="if(event.key==='Enter')lookup()">
-      <button class="btn" id="go" onclick="lookup()">بحث</button>
+      <input id="file" inputmode="numeric" autocomplete="off" placeholder="e.g. 26289620" onkeydown="if(event.key==='Enter')lookup()">
+      <button class="btn2" id="go" onclick="lookup()">بحث</button>
     </div>
     <div class="hint">تظهر الفحوصات من الأحدث. اضغط على الفحص لعرض التقرير كامل. / Newest first — tap a study to read the full report.</div>
     <div class="msg" id="msg"></div>
@@ -74,9 +121,14 @@ const TOKEN = new URLSearchParams(location.search).get('t') || new URLSearchPara
 const $ = (id) => document.getElementById(id);
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtDate(s){ const d=String(s||'').slice(0,16).replace('T',' '); return d||'—'; }
-function showMsg(t, kind){ const m=$('msg'); m.className='msg '+(kind||'err'); m.textContent=t; }
+function showMsg(t){ const m=$('msg'); m.className='msg err'; m.textContent=t; }
+function sexAr(s){ s=String(s||'').toUpperCase(); return s.startsWith('M')?'ذكر':s.startsWith('F')?'أنثى':(s||'—'); }
+function ageFrom(bd){ if(!bd) return ''; const m=String(bd).match(/(\d{4})(\d{2})(\d{2})/)||String(bd).match(/(\d{4})-(\d{2})-(\d{2})/); if(!m) return ''; const b=new Date(+m[1],+m[2]-1,+m[3]); if(isNaN(b)) return ''; let a=(Date.now()-b)/(365.25*864e5); return a>0&&a<130?Math.floor(a)+'y':''; }
 
-if (!TOKEN) showMsg('الرابط ناقص الرمز. اطلب رابطًا صحيحًا من قسم الأشعة. / Link is missing its access code.', 'err');
+function enterApp(){ $('splash').classList.add('hide'); setTimeout(()=>{ try{$('file').focus()}catch(e){} }, 520); }
+// auto-dismiss splash after a moment too
+setTimeout(()=>{ if($('splash') && !$('splash').classList.contains('hide')) { /* leave it; user taps Start */ } }, 100);
+if (!TOKEN){ enterApp(); showMsg('الرابط ناقص الرمز. اطلب رابطًا صحيحًا من قسم الأشعة. / Link is missing its access code.'); }
 
 async function api(path){
   const sep = path.includes('?') ? '&' : '?';
@@ -89,22 +141,34 @@ async function lookup(){
   const file = ($('file').value||'').trim();
   $('msg').className='msg';
   if (!file) return;
-  if (!TOKEN){ showMsg('الرابط ناقص الرمز.', 'err'); return; }
+  if (!TOKEN){ showMsg('الرابط ناقص الرمز.'); return; }
   $('go').disabled=true;
   $('results').innerHTML = '<div class="loading">…جاري البحث</div>';
-  try {
-    const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file));
-    renderList(d);
-  } catch(e){
-    $('results').innerHTML='';
-    showMsg(e.message || 'تعذّر البحث', 'err');
-  } finally { $('go').disabled=false; }
+  try { renderList(await api('/api/public/reports/lookup?file=' + encodeURIComponent(file))); }
+  catch(e){ $('results').innerHTML=''; showMsg(e.message || 'تعذّر البحث'); }
+  finally { $('go').disabled=false; }
+}
+
+function patientPanel(s){
+  const age = s.pat_age || ageFrom(s.pat_birthdate);
+  return `<div class="patient">
+    <div class="pn">${esc(s.pat_name || '—')}</div>
+    <div class="pg">
+      <div><b>رقم الملف / File</b><span>${esc(s.pat_id || s.file_used || '—')}</span></div>
+      <div><b>الجنس / Sex</b><span>${esc(sexAr(s.pat_sex))}</span></div>
+      ${age?`<div><b>العمر / Age</b><span>${esc(age)}</span></div>`:''}
+      <div><b>الفحص / Study</b><span>${esc(s.study_desc || s.modality || '—')}</span></div>
+      <div><b>التاريخ / Date</b><span>${fmtDate(s.study_date)}</span></div>
+    </div>
+    <div class="verify-strong">⚠️ تأكد أن هذي بيانات المريض الصحيحة وتطابق التقرير قبل الاعتماد. / Confirm this is the correct patient and matches the report.</div>
+  </div>`;
 }
 
 function renderList(d){
   const studies = d.studies || [];
+  studies.forEach(s=>s.file_used=d.file_no);
   if (!studies.length){
-    $('results').innerHTML = '<div class="card center" style="text-align:center;color:var(--muted)">لا توجد فحوصات لهذا الملف. / No studies for this file.</div>';
+    $('results').innerHTML = '<div class="card" style="text-align:center;color:var(--muted)">لا توجد فحوصات لهذا الملف. / No studies for this file.</div>';
     return;
   }
   const rows = studies.map((s,i) => `
@@ -116,7 +180,8 @@ function renderList(d){
       <div class="sm">${esc(s.modality||'')} · ${fmtDate(s.study_date)} · ${esc(s.pat_name||'')} · #${s.study_id}</div>
       <div id="rep-${i}"></div>
     </div>`).join('');
-  $('results').innerHTML = `<div class="card"><label>النتائج / Results (${studies.length})</label>${rows}</div>`;
+  window._studies = studies;
+  $('results').innerHTML = `<div class="card"><label>المريض: ${esc(studies[0].pat_name||'')} — رقم الملف ${esc(d.file_no)} · النتائج (${studies.length})</label>${rows}</div>`;
 }
 
 async function openReport(studyId, i){
@@ -127,15 +192,17 @@ async function openReport(studyId, i){
   slot.dataset.open = '1';
   try {
     const r = await api('/api/public/reports/study/' + studyId);
+    const base = (window._studies||[])[i] || {};
+    const pat = {...base, ...r};            // merge list + detail patient fields
     const txt = (r.report_text||'').trim();
-    if (!txt){ slot.innerHTML = '<pre>لا يوجد نص تقرير بعد لهذا الفحص. / No report text yet.</pre>'; return; }
-    slot.innerHTML = `
-      <pre id="txt-${i}">${esc(txt)}</pre>
-      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn ghost" onclick="event.stopPropagation();copyRep(${i},this)">📋 نسخ التقرير</button>
-        <a class="btn ghost" style="text-decoration:none" href="/api/public/reports/study/${studyId}/pdf?t=${encodeURIComponent(TOKEN)}" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>
-      </div>
-      <div class="sm" style="margin-top:8px">${r.reviewer?('الطبيب: '+esc(r.reviewer)+' · '):''}${r.report_date?fmtDate(r.report_date):''}</div>`;
+    slot.innerHTML = patientPanel(pat) + (txt
+      ? `<pre id="txt-${i}">${esc(txt)}</pre>
+         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+           <button class="btn ghost" onclick="event.stopPropagation();copyRep(${i},this)">📋 نسخ التقرير</button>
+           <a class="btn ghost" style="text-decoration:none" href="/api/public/reports/study/${studyId}/pdf?t=${encodeURIComponent(TOKEN)}" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>
+         </div>
+         <div class="sm" style="margin-top:8px;color:var(--muted)">${r.reviewer?('الطبيب: '+esc(r.reviewer)+' · '):''}${r.report_date?fmtDate(r.report_date):''}</div>`
+      : `<pre>لا يوجد نص تقرير معتمد بعد لهذا الفحص. / No approved report text yet.</pre>`);
   } catch(e){
     slot.innerHTML = '<pre>'+esc(e.message||'تعذّر تحميل التقرير')+'</pre>';
   }
