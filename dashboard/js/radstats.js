@@ -396,7 +396,10 @@ function rsRenderBody() {
 function rsModalitySub() {
   const m = radstats.modData;
   if (!m) return 'exact — click to load';
-  return m.truncated ? `sample of ${rsNum(m.sampled)}/${rsNum(m.ofTotal)} orders` : `${rsNum(m.exams || 0)} exams`;
+  // A request can bundle several exams, so exams > requests is expected.
+  return m.truncated
+    ? `${rsNum(m.exams || 0)} exams · sample of ${rsNum(m.sampled)}/${rsNum(m.ofTotal)}`
+    : `${rsNum(m.exams || 0)} exams from ${rsNum(m.ofTotal)} requests`;
 }
 
 function rsModalityInner() {
@@ -433,22 +436,21 @@ function rsFinancialInner() {
       <button class="btn btn-primary btn-sm" onclick="rsLoadFinancial()">Load revenue</button>
     </div>`;
   }
-  const donut = rsDonut([
+  const PAYER_COLOR = { 'Insurance': '#6B4EFF', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
+  const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: PAYER_COLOR[p.type] || '#94a3b8' }));
+  const payerDonut = rsDonut(payerSegs, { centerVal: f.requests || 0, centerLabel: 'requests' });
+  const revDonut = rsDonut([
     { label: 'Insurance', count: Math.round(f.sponsor || 0), color: '#6B4EFF' },
     { label: 'Cash / copay', count: Math.round(f.patient || 0), color: '#22c55e' },
   ], { centerVal: Math.round(f.revenue || 0), centerLabel: 'SAR' });
-  const brRev = (f.byBranch || []).slice(0, 8).map((b) => ({ label: b.name || ('Branch ' + b.site), count: Math.round(b.revenue) }));
   return `<div class="rs-fin">
     <div class="rs-fin-head">
-      <div class="rs-fin-total"><div class="rs-fin-n">${rsSAR(f.revenue)}</div><div class="rs-fin-l">total radiology revenue</div></div>
-      <div class="rs-fin-split">
-        <span><i style="background:#6B4EFF"></i> Insurance ${rsSAR(f.sponsor)}</span>
-        <span><i style="background:#22c55e"></i> Cash/copay ${rsSAR(f.patient)}</span>
-      </div>
+      <div class="rs-fin-total"><div class="rs-fin-n">${rsNum(f.requests)}</div><div class="rs-fin-l">radiology requests priced</div></div>
+      <div class="rs-fin-total"><div class="rs-fin-n">${rsSAR(f.revenue)}</div><div class="rs-fin-l">total revenue (billed)</div></div>
     </div>
     <div class="rs-grid2" style="margin:0">
-      ${donut}
-      <div>${rsBarRows(brRev, 'var(--accent)')}</div>
+      <div><div class="rs-subhead">Requests by payer (count)</div>${payerDonut}</div>
+      <div><div class="rs-subhead">Revenue: insurance vs cash</div>${revDonut}</div>
     </div>
   </div>`;
 }
