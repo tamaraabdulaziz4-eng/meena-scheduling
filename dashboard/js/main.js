@@ -101,6 +101,9 @@ async function initApp() {
   // Radiology handoff for team leads + managers.
   const handoffNav = document.getElementById('nav-handoff');
   if (handoffNav) handoffNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  // Radiology statistics for team leads + managers.
+  const radstatsNav = document.getElementById('nav-radstats');
+  if (radstatsNav) radstatsNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
   // Swaps page for everyone except plain viewers (staff request & track theirs).
   const swapsNav = document.getElementById('nav-swaps');
   if (swapsNav) swapsNav.style.display = (role === 'viewer') ? 'none' : 'flex';
@@ -171,6 +174,7 @@ function resolvePage(page) {
   if (page === 'reports' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'messages' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'handoff' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';
@@ -202,6 +206,7 @@ async function renderRoute(page) {
     case 'tickets':    await renderTicketsPage(); break;
     case 'reports':    await renderReportsPage(); break;
     case 'handoff':    await renderHandoffPage(); break;
+    case 'radstats':   await renderRadStatsPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
     case 'messages':   await renderMessagesPage(); break;
     case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
@@ -221,7 +226,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','cases','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','branches','shifts','users','audit']);
+  'leaves','swaps','cases','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','radstats','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;

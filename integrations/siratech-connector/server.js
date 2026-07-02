@@ -379,6 +379,164 @@ app.get('/search', requireAuth, async (req, res) => {
   }
 });
 
+// ── Radiology management statistics ──────────────────────────────────────────
+// Hospital-wide, live radiology-request stats for managers, aggregated from the
+// RIS worklist (RadiologySearch). READ-ONLY. The worklist is site-scoped, so we
+// query each branch with its own hospitalId (the billNo prefix "CR<NN>" confirms
+// the branch) and fold the rows into manager-facing breakdowns:
+//   • by branch · by ordering department · by ordering doctor
+//   • priority (emergency vs routine) · pending-age buckets · daily trend
+// The paid/unpaid *collection* split is layered on later from the billing report;
+// this covers the operational picture that RadiologySearch reliably exposes.
+
+const STATS_SITES = (process.env.STATS_SITES || '1,2,3,4,5,6,7,8,9,10,11,12,13,14')
+  .split(',').map((s) => Number(String(s).trim())).filter((n) => Number.isFinite(n));
+const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 4);
+// Modality isn't on the worklist row (departmentName is the *ordering* clinic,
+// not the imaging modality), so an exact mix needs a per-order RadiologyDetails
+// call. That's opt-in (?modality=1) and bounded — we sample the most recent N
+// orders so the manager gets a real, labelled mix without hammering the HIS.
+const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 400);
+const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 4);
+const MOD_LABEL = { XR: 'X-Ray', US: 'Ultrasound', CT: 'CT', MR: 'MRI', MG: 'Mammography' };
+// Friendly modality label for an exam category/service. Reuse results.normMod
+// (the matcher's modality normaliser) first, then catch codes it leaves raw
+// (e.g. "MAMM" mammography, "BMD"/"DEXA" bone density).
+function friendlyModality(txt) {
+  const code = results.normMod(txt);
+  if (MOD_LABEL[code]) return MOD_LABEL[code];
+  const s = String(txt || '').toUpperCase();
+  if (/MAMM|\bMG\b/.test(s)) return 'Mammography';
+  if (/\bBMD\b|DEXA|BONE\s?MIN|DENSITOM/.test(s)) return 'DEXA / Bone Density';
+  if (/ULTRA|SONO|DOPP|ECHO|\bUS\b/.test(s)) return 'Ultrasound';
+  if (/\bCT\b|TOMOG/.test(s)) return 'CT';
+  if (/\bMRI?\b|MAGNET/.test(s)) return 'MRI';
+  if (/X-?RAY|RADIOGRAPH|\bXR\b|\bCR\b|\bDR\b/.test(s)) return 'X-Ray';
+  if (/FLUORO|BARIUM|\bIVU\b|\bHSG\b/.test(s)) return 'Fluoroscopy';
+  return (code && code.length <= 5) ? code : 'Other';
+}
+
+// Small concurrency pool — keep the 2 GB VPS from opening 14 sockets at once.
+async function pool(items, size, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const worker = async () => {
+    while (i < items.length) { const idx = i; i += 1; try { out[idx] = await fn(items[idx], idx); } catch (_e) { out[idx] = null; } }
+  };
+  await Promise.all(new Array(Math.max(1, Math.min(size, items.length))).fill(0).map(worker));
+  return out;
+}
+
+const dayOf = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; };
+function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unknown' : String(key); const e = map.get(k) || { key: k, name: name || k, count: 0 }; e.count += 1; map.set(k, e); }
+function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
+
+async function radiologyStats({ from, to, sites, withModality = false, topDoctors = 15 }) {
+  await getToken();
+  const empId = currentEmpId() || '0';
+  const today = new Date();
+  const def = (d, end) => `${d.toISOString().slice(0, 10)}T${end ? '23:59:59' : '00:00:00'}.000Z`;
+  const fromISO = from ? `${from}T00:00:00.000Z` : def(new Date(today.getTime() - 30 * 864e5), false);
+  const toISO = to ? `${to}T23:59:59.000Z` : def(today, true);
+  const wantSites = (sites && sites.length) ? sites : STATS_SITES;
+
+  const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+    const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+      body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
+    });
+    if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
+    return { site, ok: true, rows: (sr.json.data || []) };
+  });
+
+  const returned = [], failed = [], flat = [];
+  const byBranch = new Map(), byDept = new Map(), byDoctor = new Map();
+  const daily = new Map();
+  const aging = { '<1d': 0, '1-3d': 0, '3-7d': 0, '>7d': 0 };
+  let total = 0, emergency = 0, routine = 0;
+  const now = Date.now();
+
+  for (const s of perSite) {
+    if (!s) continue;
+    if (!s.ok) { failed.push(s.site); continue; }
+    returned.push({ site: s.site, count: s.rows.length });
+    for (const r of s.rows) {
+      total += 1;
+      flat.push({ r, site: s.site });
+      tallyPush(byBranch, s.site, `Branch ${s.site}`);
+      tallyPush(byDept, r.departmentName, r.departmentName);
+      tallyPush(byDoctor, r.providerId || r.doctorName, (r.doctorName || '').trim() || (r.providerId || 'Unknown'));
+      if (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) emergency += 1; else routine += 1;
+      const d = dayOf(r.billDate || r.visitDate);
+      if (d) daily.set(d, (daily.get(d) || 0) + 1);
+      const t = Date.parse(r.billDate || r.visitDate || '');
+      if (Number.isFinite(t)) {
+        const days = (now - t) / 864e5;
+        if (days < 1) aging['<1d'] += 1; else if (days < 3) aging['1-3d'] += 1; else if (days < 7) aging['3-7d'] += 1; else aging['>7d'] += 1;
+      }
+    }
+  }
+
+  // Exact modality mix — opt-in, bounded to the most recent N orders. Each order
+  // may bundle several exams, so we count per exam (test row), not per order.
+  let modality = null;
+  if (withModality && flat.length) {
+    const sample = flat
+      .slice()
+      .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
+      .slice(0, STATS_MODALITY_CAP);
+    const byMod = new Map();
+    let exams = 0;
+    const details = await pool(sample, STATS_MODALITY_CONCURRENCY, async ({ r, site }) => {
+      const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+        body: results.radiologyDetailsBody(r, { hospitalId: site, empId }),
+      });
+      return (dr && dr.json && dr.json.data) || [];
+    });
+    for (const det of details) {
+      if (!Array.isArray(det)) continue;
+      for (const t of det) {
+        exams += 1;
+        tallyPush(byMod, friendlyModality(t.categoryName || t.serviceName), null);
+      }
+    }
+    modality = {
+      sampled: sample.length,
+      ofTotal: flat.length,
+      truncated: flat.length > sample.length,
+      exams,
+      mix: tallyList(byMod).map((e) => ({ modality: e.key, count: e.count })),
+    };
+  }
+
+  return {
+    range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
+    sites: { requested: wantSites, returned, failed },
+    total,
+    byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), count: e.count })),
+    byDepartment: tallyList(byDept).map((e) => ({ name: e.name, count: e.count })),
+    byDoctor: tallyList(byDoctor, topDoctors).map((e) => ({ providerId: e.key, name: e.name, count: e.count })),
+    modality,
+    priority: { emergency, routine },
+    aging,
+    daily: [...daily.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([date, count]) => ({ date, count })),
+    generatedAt: new Date().toISOString(),
+    note: 'Requests = billed radiology orders in the RIS worklist (awaiting result). Paid/unpaid collection split is added from the billing report.',
+  };
+}
+
+app.get('/stats/radiology', requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || '').trim() || null;   // YYYY-MM-DD
+    const to = String(req.query.to || '').trim() || null;
+    const sites = String(req.query.sites || '').split(',').map((s) => Number(s.trim())).filter(Number.isFinite);
+    const withModality = String(req.query.modality || '') === '1';
+    const data = await radiologyStats({ from, to, sites, withModality });
+    return res.json({ ok: true, ...data });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 process.on('unhandledRejection', (r) => console.error('unhandledRejection:', r));
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e && e.message));
 

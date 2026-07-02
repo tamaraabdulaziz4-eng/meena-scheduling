@@ -24,7 +24,7 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 from jose import jwt, JWTError
-from fastapi import FastAPI, Request, Response, HTTPException, Depends, Cookie
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, Cookie, Query
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -6063,6 +6063,32 @@ def radiology_lookup(file_no: str, user=Depends(require_admin)):
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no), timeout=90)
+
+@app.get("/api/radiology/stats")
+def radiology_stats(
+    from_: str = Query("", alias="from"),
+    to: str = Query(""),
+    sites: str = Query(""),
+    modality: str = Query(""),
+    user=Depends(require_admin),
+):
+    """Live hospital-wide radiology-request statistics for managers, from Siratech
+    HIS via the connector. Read-only. Sliced by branch, ordering department,
+    ordering doctor, priority, pending-age and daily trend. `modality=1` adds an
+    exact (bounded, sampled) modality mix via per-order detail calls."""
+    import urllib.parse
+    q = {}
+    if (from_ or "").strip():
+        q["from"] = from_.strip()
+    if (to or "").strip():
+        q["to"] = to.strip()
+    if (sites or "").strip():
+        q["sites"] = sites.strip()
+    if (modality or "").strip() == "1":
+        q["modality"] = "1"
+    qs = ("?" + urllib.parse.urlencode(q)) if q else ""
+    # Modality enrichment fans out per-order detail calls, so allow more time.
+    return _bridge_request("/his/stats/radiology" + qs, timeout=220 if q.get("modality") else 150)
 
 @app.get("/api/radiology/results/match/{file_no}")
 def radiology_results_match(file_no: str, user=Depends(require_admin)):
