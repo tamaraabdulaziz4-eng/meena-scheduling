@@ -1986,3 +1986,54 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
 .btn.btn-ghost:hover { background:var(--table-row-hover); }
 .badge-red { background:rgba(255,107,107,.14); color:#d63b3b; }
 @media (max-width:560px){ .ho-steplabel { display:none; } .ho-stepitem.cur .ho-steplabel { display:inline; } }
+
+/* ── Radiology statistics ─────────────────────────────────────────────────── */
+.rs-controls { padding:14px 16px; margin-bottom:14px; }
+.rs-ctl-row { display:flex; flex-wrap:wrap; gap:12px 18px; align-items:center; }
+.rs-presets { display:flex; gap:6px; flex-wrap:wrap; }
+.rs-chip { border:1.5px solid var(--border); background:var(--card); color:var(--text); border-radius:9px;
+  padding:6px 12px; font-size:12.5px; font-weight:600; cursor:pointer; transition:.15s; }
+.rs-chip:hover { border-color:var(--accent); color:var(--accent); }
+.rs-chip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+.rs-dates { display:flex; gap:10px; align-items:center; }
+.rs-dates label { font-size:11.5px; font-weight:600; color:var(--muted); display:flex; gap:6px; align-items:center; }
+.rs-dates input, .rs-sites { border:1.5px solid var(--border); background:var(--card); color:var(--text);
+  border-radius:8px; padding:6px 9px; font-size:12.5px; font-family:inherit; }
+.rs-ctl-actions { display:flex; gap:10px; align-items:center; margin-left:auto; flex-wrap:wrap; }
+.rs-sites { width:210px; }
+.rs-auto { font-size:12px; font-weight:600; color:var(--muted); display:flex; gap:5px; align-items:center; cursor:pointer; }
+
+.rs-note { background:rgba(107,78,255,.08); border:1px solid rgba(107,78,255,.22); color:var(--text);
+  border-radius:12px; padding:11px 15px; font-size:12.5px; margin-bottom:14px; line-height:1.6; }
+.rs-note b { color:var(--primary); }
+
+.rs-kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:14px; }
+.rs-kpi { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 14px; text-align:center;
+  box-shadow:0 2px 8px rgba(38,30,79,.04); }
+.rs-kpi-n { font-size:30px; font-weight:800; color:var(--primary); line-height:1; }
+.rs-kpi-l { font-size:11.5px; font-weight:600; color:var(--muted); margin-top:6px; }
+.rs-kpi-warn .rs-kpi-n { color:#ef4444; }
+.rs-fail { color:#ef4444; font-weight:700; }
+
+.rs-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+.rs-panel { padding:16px 18px; }
+.rs-panel-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
+.rs-panel-head h3 { font-size:14px; font-weight:700; color:var(--primary); margin:0; }
+.rs-panel-sub { font-size:11px; font-weight:600; color:var(--muted); }
+.rs-empty { font-size:12.5px; color:var(--muted); padding:14px 0; text-align:center; }
+
+.rs-bar { display:flex; align-items:center; gap:10px; margin:7px 0; }
+.rs-bar-label { width:150px; flex:0 0 150px; font-size:12px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rs-bar-track { flex:1; height:16px; background:var(--table-row-hover); border-radius:8px; overflow:hidden; }
+.rs-bar-fill { height:100%; border-radius:8px; transition:width .4s ease; min-width:2px; }
+.rs-bar-val { width:52px; flex:0 0 52px; text-align:right; font-size:12.5px; font-weight:700; color:var(--primary); }
+
+.rs-trend { display:flex; align-items:flex-end; gap:3px; height:120px; padding-top:6px; }
+.rs-tbar { flex:1; height:100%; display:flex; align-items:flex-end; }
+.rs-tbar-fill { width:100%; background:linear-gradient(180deg,var(--accent),var(--accent2)); border-radius:3px 3px 0 0; transition:height .4s ease; }
+
+.rs-foot { font-size:11.5px; color:var(--muted); margin-top:14px; text-align:center; }
+
+@media (max-width:900px){ .rs-kpis { grid-template-columns:repeat(2,1fr); } .rs-grid { grid-template-columns:1fr; } .rs-bar-label { width:110px; flex-basis:110px; } }
+.rs-modcta { text-align:center; padding:14px 6px; }
+.rs-modcta p { font-size:12px; color:var(--muted); margin:0 0 12px; line-height:1.5; }

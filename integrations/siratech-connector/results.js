@@ -209,9 +209,10 @@ function candOf(s) {
 // ── Siratech Result Entry (needs the shared hisFetch from server.js) ──────────
 // The RadiologySearch body schema (field types matter: empId is a STRING,
 // invCategoryId is nullable-decimal, visiType is int).
-function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, filterResult = '0' }) {
+function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, filterResult = '0',
+  fromDate = '1900-01-01T00:00:00.000Z', toDate = '2035-12-31T23:59:59.000Z' }) {
   return {
-    mrno, billno, fromDate: '1900-01-01T00:00:00.000Z', toDate: '2035-12-31T23:59:59.000Z',
+    mrno, billno, fromDate, toDate,
     baseCatgeory: 0, hospitalId, mode: 6, cpoeStatus: 0, isbilled: 0, empId: String(empId),
     visitno: '', selectionType: 1, filterResult, profileId: '', invCategoryId: null,
     baseInvCategoryId: 2, visitMode: '', invMastServiceId: 0, sampleNo: '',
