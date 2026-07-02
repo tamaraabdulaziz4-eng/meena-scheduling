@@ -8,20 +8,53 @@ function _greeting() {
   return 'Good evening';
 }
 
+// ── Live hero clock (Riyadh time) ─────────────────────────────────────────────
+// A big, always-ticking clock is the first thing a manager sees on Home — reads
+// as a real, live control room rather than a static page.
+let _hmClockTimer = null;
+function _hmClockParts() {
+  let t;
+  try { t = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Riyadh', hour12: false }); }
+  catch (e) { t = new Date().toLocaleTimeString('en-GB', { hour12: false }); }
+  const [hh = '00', mm = '00', ss = '00'] = String(t).split(':');
+  return { hm: `${hh}:${mm}`, ss };
+}
+function _hmStartClock() {
+  if (_hmClockTimer) clearInterval(_hmClockTimer);
+  const tick = () => {
+    const hmEl = document.getElementById('hm-clock-hm');
+    const sEl = document.getElementById('hm-clock-s');
+    if (!hmEl) { clearInterval(_hmClockTimer); _hmClockTimer = null; return; }
+    const p = _hmClockParts();
+    hmEl.textContent = p.hm;
+    if (sEl) sEl.textContent = p.ss;
+  };
+  tick();
+  _hmClockTimer = setInterval(tick, 1000);
+}
+
 async function renderHomePage() {
   setTopbar('Home', 'Your overview at a glance');
   const today = new Date();
   const greg = today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const c0 = _hmClockParts();
 
   document.getElementById('content').innerHTML = `
-    <div class="phero">
+    <div class="phero phero-lg">
       <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
+      <div class="phero-orb p3"></div>
       <div class="phero-inner">
         <div class="phero-logo"><img src="/meena_logo.png" alt="Meena"></div>
         <div class="phero-text">
           <div class="phero-hi">${_greeting()},</div>
           <div class="phero-title">${escapeHtml(currentUser?.username || '')}</div>
           <div class="phero-sub">${greg}</div>
+        </div>
+        <div class="phero-clock" id="phero-clock" aria-label="Current time in Riyadh">
+          <div class="phero-clock-time">
+            <span id="hm-clock-hm">${c0.hm}</span><span class="phero-clock-sec" id="hm-clock-s">${c0.ss}</span>
+          </div>
+          <div class="phero-clock-meta"><span class="phero-clock-dot"></span> Riyadh · live</div>
         </div>
       </div>
     </div>
@@ -47,6 +80,8 @@ async function renderHomePage() {
     <div id="hm-credentials"></div>
     <div id="hm-onduty"></div>
     <div id="hm-shiftcheck"></div>`;
+
+  _hmStartClock();
 
   // Fire EVERY card's fetch at once — don't make the side cards wait behind the
   // KPIs/cases call (that serialization is what made on-duty / approvals pop in
@@ -360,6 +395,12 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
   const box = document.getElementById(containerId);
   if (!box) return;
   const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
+  // Branded shimmer while it loads, so the card holds its place instead of
+  // popping in late (this was the "slow" feel on the manager Home).
+  box.innerHTML = `<div class="hm-card hm-eotm-card">
+    <div class="skel skel-line" style="width:38%;height:12px;margin-bottom:12px"></div>
+    <div class="skel skel-line" style="width:60%;height:22px;margin-bottom:8px"></div>
+    <div class="skel skel-line" style="width:30%;height:13px"></div></div>`;
   let d = null;
   try { d = await API.get('/employee-of-month'); } catch (e) { box.innerHTML = ''; return; }
   if (!d || !d.staff) {
@@ -373,16 +414,17 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
   }
   const s = d.staff;
   box.innerHTML = `
-    <div class="hm-card" style="background:linear-gradient(120deg,#6B4EFF12,#ffb84712);border:1px solid #6B4EFF33">
-      <div style="display:flex;align-items:center;gap:14px">
-        <div style="flex:1">
-          <div style="font-size:12px;font-weight:700;letter-spacing:.5px;color:#6B4EFF;text-transform:uppercase">
-            Employee of the Month${d.period ? ' · ' + escapeHtml(d.period) : ''}</div>
-          <div style="font-size:21px;font-weight:800">${escapeHtml(s.name)}</div>
+    <div class="hm-card hm-eotm-card hm-eotm-filled">
+      <div class="hm-eotm-shine"></div>
+      <div class="hm-eotm-row">
+        <div class="hm-eotm-medal">🏆</div>
+        <div class="hm-eotm-main">
+          <div class="hm-eotm-kicker">Employee of the Month${d.period ? ' · ' + escapeHtml(d.period) : ''}</div>
+          <div class="hm-eotm-name">${escapeHtml(s.name)}</div>
           <div class="hm-muted" style="font-size:13px">${escapeHtml(s.branch_name || '')}</div>
-          ${d.note ? `<div style="margin-top:4px;font-style:italic">“${escapeHtml(d.note)}”</div>` : ''}
+          ${d.note ? `<div class="hm-eotm-note">“${escapeHtml(d.note)}”</div>` : ''}
         </div>
-        ${isReviewer ? `<div style="display:flex;flex-direction:column;gap:6px">
+        ${isReviewer ? `<div class="hm-eotm-actions">
           <button class="btn btn-sm btn-ghost" onclick="openEotmModal()">Change</button>
           <button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="clearEotm()">Clear</button>
         </div>` : ''}

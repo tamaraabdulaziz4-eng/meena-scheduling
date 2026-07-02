@@ -260,10 +260,89 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .phero-sub { font-size: 13px; color: #6b5fa6; font-weight: 600; margin-top: 8px; }
+
+/* Larger "wow" hero for the manager Home — more presence + a live clock. */
+.phero-lg { padding: 34px 38px; border-radius: 30px; }
+.phero-lg .phero-title { font-size: 38px; }
+.phero-lg .phero-hi { font-size: 15px; }
+.phero-orb.p3 {
+  width: 130px; height: 130px; top: 40%; right: 42%; opacity: .28;
+  background: radial-gradient(circle at 30% 30%, #FFD59E, #FFB84A 60%, transparent 75%);
+  animation: hmFloat 19s ease-in-out infinite;
+}
+
+/* Big modern live clock, pinned to the right of the hero. */
+.phero-clock {
+  flex: none; margin-left: auto; text-align: right; align-self: center;
+  padding-left: 24px;
+}
+.phero-clock-time {
+  display: flex; align-items: baseline; justify-content: flex-end; gap: 2px;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+  line-height: 1;
+}
+.phero-clock-time > span:first-child {
+  font-size: 58px; font-weight: 800; letter-spacing: -1.5px;
+  background: linear-gradient(135deg, #8358FD, #6B4EFF 55%, #A17BFF);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.phero-clock-sec {
+  font-size: 22px; font-weight: 800; color: #A78BFF; letter-spacing: -.5px;
+  margin-left: 3px; min-width: 30px; text-align: left;
+}
+.phero-clock-meta {
+  margin-top: 6px; font-size: 12px; font-weight: 700; letter-spacing: .4px;
+  color: #7A6BB0; text-transform: uppercase; display: flex; align-items: center;
+  justify-content: flex-end; gap: 6px;
+}
+.phero-clock-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #34C759;
+  box-shadow: 0 0 0 0 rgba(52,199,89,.55); animation: hmPulseDot 1.8s ease-out infinite;
+}
+@keyframes hmPulseDot {
+  0% { box-shadow: 0 0 0 0 rgba(52,199,89,.5); }
+  70% { box-shadow: 0 0 0 8px rgba(52,199,89,0); }
+  100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); }
+}
+
+/* Employee of the Month — trophy medallion + gentle sheen for a premium feel. */
+.hm-eotm-card { position: relative; overflow: hidden; }
+.hm-eotm-filled {
+  background: linear-gradient(120deg, #6B4EFF12, #FFB84712);
+  border: 1px solid #6B4EFF33;
+}
+.hm-eotm-shine {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.5) 46%, transparent 60%);
+  transform: translateX(-120%); animation: hmSheen 5.5s ease-in-out infinite;
+}
+@keyframes hmSheen { 0%,72% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+.hm-eotm-row { position: relative; z-index: 1; display: flex; align-items: center; gap: 16px; }
+.hm-eotm-medal {
+  flex: none; width: 58px; height: 58px; border-radius: 50%; font-size: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 32% 28%, #fff 0%, #FFE9C2 55%, #FFC15E 100%);
+  box-shadow: 0 10px 24px rgba(255,159,67,.35), inset 0 1px 3px rgba(255,255,255,.8);
+  animation: wsplashBob 4.5s ease-in-out infinite;
+}
+.hm-eotm-main { flex: 1; min-width: 0; }
+.hm-eotm-kicker {
+  font-size: 12px; font-weight: 800; letter-spacing: .6px; color: #6B4EFF; text-transform: uppercase;
+}
+.hm-eotm-name { font-size: 23px; font-weight: 800; letter-spacing: -.4px; margin-top: 1px; }
+.hm-eotm-note { margin-top: 5px; font-style: italic; color: #6b5fa6; }
+.hm-eotm-actions { flex: none; display: flex; flex-direction: column; gap: 6px; }
+
 @media (max-width: 560px) {
-  .phero-inner { gap: 16px; }
+  .phero-inner { gap: 16px; flex-wrap: wrap; }
   .phero-title { font-size: 24px; }
+  .phero-lg { padding: 22px 20px; }
+  .phero-lg .phero-title { font-size: 26px; }
   .phero-logo { padding: 10px 13px; } .phero-logo img { height: 28px; }
+  .phero-clock { margin-left: 0; padding-left: 0; text-align: left; width: 100%; }
+  .phero-clock-time { justify-content: flex-start; }
+  .phero-clock-time > span:first-child { font-size: 44px; }
+  .phero-clock-meta { justify-content: flex-start; }
 }
 
 .hm-hero {
