@@ -5979,6 +5979,46 @@ def _elite_get(path, want="json"):
 def _elite_name(n):
     return (n or "").replace("^", " ").replace("  ", " ").strip()
 
+def _elite_file_candidates(file_no):
+    """Some Siratech orders carry the file/MRN with a 'SIRA' prefix (e.g.
+    'SIRA26339429') while DePACS may store the study under the bare number — or the
+    reverse. A single search by one form silently misses the other, so try BOTH:
+    the value as entered, the same value with any leading 'SIRA' stripped, and the
+    bare-digit value with 'SIRA' added. De-duplicated, order preserved."""
+    import re
+    s = (file_no or "").strip()
+    out = []
+    def add(x):
+        x = (x or "").strip()
+        if x and x not in out:
+            out.append(x)
+    add(s)
+    m = re.match(r"(?i)^sira[\s\-_:]*(.+)$", s)   # strip a leading SIRA (+ separators)
+    bare = m.group(1).strip() if m else s
+    add(bare)
+    if re.fullmatch(r"\d+", bare):                # a plain file number → also try SIRA-prefixed
+        add("SIRA" + bare)
+    return out
+
+def _elite_studies_for_file(file_no, end_date):
+    """DePACS studies for a file number across EVERY SIRA/bare candidate, merged and
+    de-duplicated by study_id. We must query all forms (not stop at the first with
+    hits): the same patient can have some studies filed under the bare number and
+    others under the SIRA-prefixed one, so stopping early would drop half of them —
+    which is exactly the "some results missing" bug this fixes."""
+    import urllib.parse
+    seen, rows = set(), []
+    for pid in _elite_file_candidates(file_no):
+        r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end_date}"
+                       f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(pid)}")
+        for s in ((r.get("body") or {}).get("data")) or []:
+            sid = s.get("study_id")
+            if sid in seen:
+                continue
+            seen.add(sid)
+            rows.append(s)
+    return rows
+
 @app.get("/api/reports/config")
 def reports_config(user=Depends(require_superadmin)):
     c = _elite_cfg()
@@ -5999,14 +6039,12 @@ async def reports_config_save(request: Request, user=Depends(require_superadmin)
 
 @app.get("/api/reports/search")
 def reports_search(request: Request, user=Depends(require_admin)):
-    import urllib.parse, datetime
+    import datetime
     file_no = (request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
     end = datetime.date.today().isoformat()
-    r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end}"
-                   f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(file_no)}")
-    rows = ((r.get("body") or {}).get("data")) or []
+    rows = _elite_studies_for_file(file_no, end)
     return {"file_no": file_no, "count": len(rows), "studies": [{
         "study_id": s.get("study_id"), "pat_id": s.get("pat_id"),
         "pat_name": _elite_name(s.get("pat_name")), "pat_sex": s.get("pat_sex"),
@@ -6606,14 +6644,12 @@ def public_reports_lookup(request: Request):
     """List a patient's DePACS studies (newest first) for the public link."""
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
-    import urllib.parse, datetime
+    import datetime
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
     end = datetime.date.today().isoformat()
-    r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end}"
-                   f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(file_no)}")
-    rows = ((r.get("body") or {}).get("data")) or []
+    rows = _elite_studies_for_file(file_no, end)
     studies = [{
         "study_id": s.get("study_id"),
         "pat_name": _elite_name(s.get("pat_name")),
