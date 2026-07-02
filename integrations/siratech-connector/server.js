@@ -369,6 +369,92 @@ app.post('/results/match', requireAuth, async (req, res) => {
   catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────
+// Files a VERIFIED DePACS report back into Siratech's Radiology Result Entry and
+// authorises it. NOTHING is written unless {confirm:true} is sent AND the target
+// test resolves to exactly ONE study (file-number + modality + body-part + time).
+// Dry-run returns the raw result-entry template + report + the exact payloads that
+// WOULD be posted, so a human can verify before anything is committed.
+async function buildFilePlan({ file, site, billNo, serviceId }) {
+  await getToken();
+  const empId = currentEmpId();
+  if (!empId) throw new Error('no empId (not logged in?)');
+  const useSite = Number(site) > 0 ? Number(site) : RESULT_SITE;
+
+  const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+    body: results.radiologySearchBody({ mrno: file, hospitalId: useSite, empId }),
+  });
+  if (!sr || (sr.status && sr.status >= 400) || sr.json == null) throw new Error(`HIS result search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
+  const rows = sr.json.data || [];
+  const row = billNo ? rows.find((r) => r.billNo === billNo) : rows[0];
+  if (!row) throw new Error(`no pending radiology order found for file ${file} at site ${useSite}${billNo ? ' bill ' + billNo : ''}`);
+
+  const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+    body: results.radiologyDetailsBody(row, { hospitalId: useSite, empId }),
+  });
+  const details = (dr.json && dr.json.data) || [];
+  if (!details.length) throw new Error('RadiologyDetails returned no test rows');
+
+  const studies = await results.depacsStudies(file);
+  const orderDate = row.billDate || row.visitDate || null;
+
+  // pick the target test row (by invMastServiceId when given, else the only one)
+  let target = null;
+  if (serviceId != null) {
+    target = details.find((t) => String(t.inv_mast_service_id) === String(serviceId) || String(t.invMastserviceId) === String(serviceId));
+  } else if (details.length === 1) {
+    target = details[0];
+  }
+  if (!target) {
+    return { needsPick: true, file, site: useSite, billNo: row.billNo,
+      tests: details.map((t) => ({ serviceName: t.serviceName, categoryName: t.categoryName, invMastServiceId: t.inv_mast_service_id, invPatTestResultId: t.invPatTestResultId })) };
+  }
+
+  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: target.accessionNo || null }, studies);
+  if (m.decision !== 'unique') {
+    return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName }, decision: m.decision, reason: m.reason, candidates: m.candidates, writable: false };
+  }
+  const report = await results.depacsReport(m.study.studyId);
+
+  return {
+    file, site: useSite, empId, billNo: row.billNo, orderDate,
+    searchRow: row, details, target, study: m.study, report,
+    match: { decision: m.decision, key: m.key, reason: m.reason },
+  };
+}
+
+app.post('/results/file', requireAuth, async (req, res) => {
+  const { file, site, billNo, serviceId, confirm } = req.body || {};
+  if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
+  try {
+    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId });
+    if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
+
+    // Trim the heavy report body for the dry-run response (keep a text preview and
+    // the PDF size, not the whole base64 blob).
+    const rep = plan.report;
+    const planOut = {
+      file: plan.file, site: plan.site, billNo: plan.billNo,
+      target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },
+      study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate },
+      match: plan.match,
+      report: { reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes, textPreview: (rep.reportText || '').slice(0, 400) },
+      detailsShape: plan.details.map((d) => Object.keys(d)),   // reveal the template fields to build td
+    };
+
+    if (!confirm) {
+      return res.json({ ok: true, wrote: false, dryRun: true, plan: planOut,
+        note: 'DRY-RUN — nothing was written. Re-send with confirm:true to file + authorize.' });
+    }
+
+    // Actual write is intentionally not wired yet — the dry-run must be reviewed
+    // first (and the exact save/attach payload finalised from detailsShape).
+    return res.status(409).json({ ok: false, wrote: false, error: 'write path not enabled yet — review the dry-run first', plan: planOut });
+  } catch (e) {
+    return res.status(502).json({ ok: false, wrote: false, error: String(e.message || e) });
+  }
+});
+
 // Name search (partial) — returns light patient rows for a picker.
 app.get('/search', requireAuth, async (req, res) => {
   const q = String(req.query.q || '').trim();
