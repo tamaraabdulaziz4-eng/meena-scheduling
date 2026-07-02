@@ -36,15 +36,22 @@ function rsPresetRange(id) {
 }
 
 async function renderRadStatsPage() {
-  setTopbar('Radiology statistics', 'Live requests across all branches');
+  const isLead = rsIsLead();
+  // A team lead is pinned to their own branch; resolve it before the first load.
+  if (isLead && !radstats.leadLocked) { await rsApplyLeadScope(); }
+  const scopeName = radstats.leadLocked ? (radstats.leadBranchName || 'your branch') : '';
+  setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
   rsStopAuto();
   if (radstats.preset && radstats.preset !== 'custom') {
     const r = rsPresetRange(radstats.preset);
     radstats.from = r.from; radstats.to = r.to;
   }
   const c = document.getElementById('content');
+  const heroSub = scopeName
+    ? `Live request volume for ${escapeHtml(scopeName)} — by modality, doctor and department, straight from Siratech HIS`
+    : 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS';
   c.innerHTML = `
-    ${pageHero('Radiology', 'Radiology statistics', 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS')}
+    ${pageHero('Radiology', 'Radiology statistics', heroSub)}
     <div id="rs-controls"></div>
     <div id="rs-billing-banner"></div>
     <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>`;
@@ -52,7 +59,7 @@ async function renderRadStatsPage() {
   rsStartClock();
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
   else rsShowOverlay();                // first load → full-screen branded loader
-  rsLoadBranches();                    // populate the branch picker (once), then it stays
+  if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
   await rsLoad();
 }
 
@@ -150,6 +157,72 @@ function rsSitesParam() {
   return [...radstats.sel].join(',');
 }
 
+// ── Per-branch scoping (team leads see only their own branch) ─────────────────
+// A team lead ('admin') is pinned to one branch; managers/superadmin see all.
+// We map the Meena branch name to its Siratech siteId at runtime (no stored map
+// needed) — handling both the "NEST 1"/"N6" code scheme and plain location names.
+function rsIsLead() { return currentUser?.role === 'admin'; }
+
+let _rsBranchListCache = null;
+async function rsBranchListCached() {
+  if (_rsBranchListCache) return _rsBranchListCache;
+  try { const d = await API.get('/radiology/branches'); _rsBranchListCache = (d && d.branches) || []; }
+  catch (e) { _rsBranchListCache = []; }
+  return _rsBranchListCache;
+}
+
+function _rsBranchKey(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[–—]/g, ' ').replace(/[-_]/g, ' ')
+    .replace(/[^a-z0-9؀-ۿ ]+/g, ' ')
+    .replace(/\b(meena|center|centre|clinic|medical|home|health|care|hhc|branch|nest|the|of|and|al)\b/g, ' ')
+    .replace(/\b[nyd]\d{1,2}\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+function _rsHisCode(b) { return String(b.shortName || '').split(/[-–—]/)[0].trim().toLowerCase().replace(/\s+/g, ''); }
+function _rsHisLoc(b) { const p = String(b.shortName || '').split(/[-–—]/).slice(1).join(' '); return _rsBranchKey(p || b.name); }
+
+// Map a Meena branch name → the HIS branch object (or null if we can't be sure).
+function rsMatchSite(branchName, list) {
+  const raw = String(branchName || '').trim();
+  if (!raw || !list || !list.length) return null;
+  const m = raw.match(/\b(?:nest\s*|n)(\d{1,2})\b/i);
+  if (m) { const code = 'n' + m[1]; const hit = list.find((b) => _rsHisCode(b) === code); if (hit) return hit; }
+  const want = _rsBranchKey(raw);
+  if (want) {
+    let hit = list.find((b) => _rsHisLoc(b) === want || _rsBranchKey(b.name) === want);
+    if (!hit) hit = list.find((b) => {
+      const l = _rsHisLoc(b), n = _rsBranchKey(b.name);
+      return (l && (l.includes(want) || want.includes(l))) || (n && (n.includes(want) || want.includes(n)));
+    });
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Resolve (and cache) the logged-in team lead's own HIS branch. null = no match.
+let _rsMySiteResolved = false, _rsMySite = null;
+async function rsMySite() {
+  if (_rsMySiteResolved) return _rsMySite;
+  _rsMySiteResolved = true;
+  const list = await rsBranchListCached();
+  _rsMySite = rsMatchSite(currentUser?.branch_name, list);
+  return _rsMySite;
+}
+
+// For a team lead: pin the picker to their branch before the first load.
+async function rsApplyLeadScope() {
+  const mine = await rsMySite();
+  if (mine) {
+    radstats.branches = await rsBranchListCached();      // so the label resolves
+    radstats.sel = new Set([mine.siteId]);
+    radstats.leadLocked = true;
+    radstats.leadBranchName = currentUser?.branch_name || mine.shortName || mine.name;
+  } else {
+    radstats.leadLocked = false;                          // couldn't match → show all (safe fallback)
+  }
+}
+
 function rsRenderControls() {
   const box = document.getElementById('rs-controls');
   if (!box) return;
@@ -174,6 +247,13 @@ function rsRenderControls() {
 }
 
 function rsBranchPicker() {
+  // Team lead: pinned to their own branch — show it as a single read-only chip.
+  if (radstats.leadLocked) {
+    return `<div class="rs-branches">
+        <span class="rs-branches-lbl">Branch</span>
+        <button class="rs-bchip on" disabled title="You see your own branch only">${escapeHtml(radstats.leadBranchName || 'Your branch')}</button>
+      </div>`;
+  }
   if (!radstats.branches.length) return '';
   const all = !radstats.sel || radstats.sel.size === radstats.branches.length;
   const chips = radstats.branches.map((b) => {

@@ -215,27 +215,41 @@ async function renderHomeCredentials() {
 async function renderHomeRadstats() {
   const box = document.getElementById('hm-radstats');
   if (!box) return;
-  box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Radiology — last 7 days</div></div>
+  // A team lead sees their own branch only; managers/superadmin see all branches.
+  const isLead = currentUser?.role === 'admin';
+  let site = null, scopeName = '';
+  if (isLead && typeof rsMySite === 'function') {
+    try { const mine = await rsMySite(); if (mine) { site = mine.siteId; scopeName = currentUser?.branch_name || mine.shortName || mine.name; } }
+    catch (e) {}
+  }
+  const title = scopeName ? `Radiology · ${escapeHtml(scopeName)} — 7 days` : 'Radiology — last 7 days';
+  box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">${title}</div></div>
     <div class="rs-loadnote" style="margin:8px 0 0"><span class="mini-spin"></span> Loading…</div></div>`;
   const f = (dt) => dt.toISOString().slice(0, 10);
   const to = new Date(), from = new Date(Date.now() - 6 * 864e5);
+  const q = `from=${f(from)}&to=${f(to)}${site ? `&sites=${site}` : ''}`;
   let d;
-  try { d = await API.get(`/radiology/stats?from=${f(from)}&to=${f(to)}`); } catch (e) { box.innerHTML = ''; return; }
+  try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { box.innerHTML = ''; return; }
   if (!d || !d.ok) { box.innerHTML = ''; return; }
   const total = d.total || 0, emg = (d.priority && d.priority.emergency) || 0;
+  const rtn = (d.priority && d.priority.routine) || 0;
   const aged = (d.aging && d.aging['>7d']) || 0;
   const top = (d.byBranch || []).filter(b => b.count > 0)[0];
   const kpi = (n, l, cls) => `<div class="hm-rad-kpi${cls ? ' ' + cls : ''}"><b>${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
+  // Last tile: managers get "busiest branch"; a single-branch lead gets "routine".
+  const lastTile = site
+    ? kpi(rtn, 'routine')
+    : `<div class="hm-rad-kpi"><b style="font-size:15px">${top ? escapeHtml(top.name || ('Branch ' + top.site)) : '—'}</b><span>busiest branch</span></div>`;
   box.innerHTML = `<div class="hm-card">
     <div class="hm-card-head">
-      <div class="hm-card-title">Radiology — last 7 days</div>
+      <div class="hm-card-title">${title}</div>
       <button class="action-btn" onclick="showPage('radstats')">Open →</button>
     </div>
     <div class="hm-rad-kpis">
       ${kpi(total, 'requests')}
       ${kpi(emg, 'emergency')}
       ${kpi(aged, 'pending &gt;7d', aged ? 'warn' : '')}
-      <div class="hm-rad-kpi"><b style="font-size:15px">${top ? escapeHtml(top.name || ('Branch ' + top.site)) : '—'}</b><span>busiest branch</span></div>
+      ${lastTile}
     </div></div>`;
 }
 
