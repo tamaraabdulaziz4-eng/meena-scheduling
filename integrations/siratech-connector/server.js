@@ -416,6 +416,13 @@ function friendlyModality(txt) {
   return (code && code.length <= 5) ? code : 'Other';
 }
 
+// A bill (GetDueBillDetailsByID) bundles every service on the visit — radiology
+// AND labs/consult. Match only the radiology line items so revenue isn't inflated
+// by non-radiology charges. (Validated: isolates the imaging items cleanly.)
+function isRadiologyItem(name) {
+  return /mammog|ultra|sono|us |u\/s|\bct\b|tomog|\bmri?\b|magnet|x-?ray|radiograph|\bxr\b|\bcr\b|dexa|bone densit|doppler|echo/i.test(String(name || ''));
+}
+
 // Small concurrency pool — keep the 2 GB VPS from opening 14 sockets at once.
 async function pool(items, size, fn) {
   const out = new Array(items.length);
@@ -449,7 +456,7 @@ const dayOf = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/
 function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unknown' : String(key); const e = map.get(k) || { key: k, name: name || k, count: 0 }; e.count += 1; map.set(k, e); }
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
 
-async function radiologyStats({ from, to, sites, withModality = false, topDoctors = 15 }) {
+async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, topDoctors = 15 }) {
   await getToken();
   const empId = currentEmpId() || '0';
   const today = new Date();
@@ -533,6 +540,44 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
     };
   }
 
+  // Revenue & payer split — opt-in (?financial=1), bounded. Each order's bill is
+  // read (GetDueBillDetailsByID); only the radiology line items are summed, split
+  // into patient (cash/copay) vs sponsor (insurance). Since almost all radiology
+  // here is insurance, this is the honest money picture — NOT a collected/settled
+  // figure (that's a separate RCM claim cycle).
+  let financial = null;
+  if (withFinance && flat.length) {
+    const sample = flat
+      .slice()
+      .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
+      .slice(0, STATS_MODALITY_CAP);
+    const revByBranch = new Map(), revByMod = new Map();
+    let revenue = 0, patient = 0, sponsor = 0, items = 0;
+    const bills = await pool(sample, STATS_MODALITY_CONCURRENCY, async ({ r, site }) => {
+      const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(r.genPatBillingId), { method: 'GET' });
+      return { site, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
+    });
+    for (const b of bills) {
+      if (!b || !Array.isArray(b.items)) continue;
+      for (const it of b.items) {
+        if (!isRadiologyItem(it.itemName)) continue;
+        const net = Number(it.netAmount) || 0, pat = Number(it.patient) || 0, spo = Number(it.sponsor) || 0;
+        revenue += net; patient += pat; sponsor += spo; items += 1;
+        const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 };
+        be.revenue += net; revByBranch.set(b.site, be);
+        const mk = friendlyModality(it.itemName);
+        const me = revByMod.get(mk) || { modality: mk, revenue: 0 }; me.revenue += net; revByMod.set(mk, me);
+      }
+    }
+    const r2 = (n) => Math.round(n * 100) / 100;
+    financial = {
+      sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length, items,
+      revenue: r2(revenue), patient: r2(patient), sponsor: r2(sponsor),
+      byBranch: [...revByBranch.values()].map((e) => ({ site: e.site, name: e.name, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
+      byModality: [...revByMod.values()].map((e) => ({ modality: e.modality, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
+    };
+  }
+
   return {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, returned, failed },
@@ -542,6 +587,7 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
     byDepartment: tallyList(byDept).map((e) => ({ name: e.name, count: e.count })),
     byDoctor: tallyList(byDoctor, topDoctors).map((e) => ({ providerId: e.key, name: e.name, count: e.count })),
     modality,
+    financial,
     priority: { emergency, routine },
     aging,
     daily: [...daily.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([date, count]) => ({ date, count })),
@@ -563,7 +609,8 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
     const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean)
       .map(Number).filter((n) => Number.isFinite(n) && n > 0);
     const withModality = String(req.query.modality || '') === '1';
-    const data = await radiologyStats({ from, to, sites, withModality });
+    const withFinance = String(req.query.financial || '') === '1';
+    const data = await radiologyStats({ from, to, sites, withModality, withFinance });
     return res.json({ ok: true, ...data });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });

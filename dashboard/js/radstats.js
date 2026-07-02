@@ -13,6 +13,7 @@ let radstats = {
   branches: [], sel: null,           // sel = Set of selected siteIds (null = all)
   data: null, loading: false,
   modData: null, modLoading: false, modError: '',
+  finData: null, finLoading: false, finError: '',
   auto: false, timer: null, lastError: '',
 };
 
@@ -151,8 +152,9 @@ async function rsLoad(silent) {
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
-  // Any filter change invalidates the (separately-loaded) modality mix.
+  // Any filter change invalidates the (separately-loaded) modality & finance data.
   radstats.modData = null; radstats.modError = ''; radstats.modLoading = false;
+  radstats.finData = null; radstats.finError = ''; radstats.finLoading = false;
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
     radstats.data = d;
@@ -182,6 +184,27 @@ async function rsLoadModality() {
     radstats.modError = (e && e.message) || 'Could not load modality mix';
   } finally {
     radstats.modLoading = false;
+    rsRenderBody();
+  }
+}
+
+// Revenue & payer split is slower (per-order bill reads), so it loads on demand.
+async function rsLoadFinancial() {
+  if (radstats.finLoading) return;
+  radstats.finLoading = true; radstats.finError = '';
+  rsRenderBody();
+  const q = new URLSearchParams();
+  if (radstats.from) q.set('from', radstats.from);
+  if (radstats.to) q.set('to', radstats.to);
+  const _s = rsSitesParam(); if (_s) q.set('sites', _s);
+  q.set('financial', '1');
+  try {
+    const d = await API.get('/radiology/stats?' + q.toString());
+    radstats.finData = d.financial || { revenue: 0, patient: 0, sponsor: 0, sampled: 0, ofTotal: 0 };
+  } catch (e) {
+    radstats.finError = (e && e.message) || 'Could not load revenue';
+  } finally {
+    radstats.finLoading = false;
     rsRenderBody();
   }
 }
@@ -334,6 +357,7 @@ function rsRenderBody() {
       ${rsPanel('Priority split', prioDonut)}
       ${rsPanel('Modality mix', rsModalityInner(), rsModalitySub())}
     </div>
+    ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}
     ${rsPanel('Daily trend', rsArea(d.daily || []), `${(d.daily || []).length} days`, 'rs-wide')}
     <div class="rs-grid2">
       ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)'), `${branchItems.length} branches`)}
@@ -370,6 +394,44 @@ function rsModalityInner() {
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
   const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: RS_MOD_COLOR[x.modality] || '#94a3b8' }));
   return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
+}
+
+const rsSAR = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' SAR';
+function rsFinancialSub() {
+  const f = radstats.finData;
+  if (!f) return 'insurance vs cash — click to load';
+  return f.truncated ? `sample of ${rsNum(f.sampled)}/${rsNum(f.ofTotal)} orders` : `${rsNum(f.items || 0)} items`;
+}
+function rsFinancialInner() {
+  if (radstats.finLoading) return `<div class="rs-empty"><span class="mini-spin"></span> Reading bills…</div>`;
+  if (radstats.finError) return `<div class="rs-empty">${escapeHtml(radstats.finError)} <button class="btn btn-sm" onclick="rsLoadFinancial()">Retry</button></div>`;
+  const f = radstats.finData;
+  if (!f) {
+    return `<div class="rs-modcta">
+      <span class="rs-modcta-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+      <p>Radiology revenue &amp; insurance-vs-cash split — read per order, so it loads on demand.<br>
+      <span style="opacity:.75">Note: your radiology is almost all insurance; this is billed revenue, not collected/settled.</span></p>
+      <button class="btn btn-primary btn-sm" onclick="rsLoadFinancial()">Load revenue</button>
+    </div>`;
+  }
+  const donut = rsDonut([
+    { label: 'Insurance', count: Math.round(f.sponsor || 0), color: '#6B4EFF' },
+    { label: 'Cash / copay', count: Math.round(f.patient || 0), color: '#22c55e' },
+  ], { centerVal: Math.round(f.revenue || 0), centerLabel: 'SAR' });
+  const brRev = (f.byBranch || []).slice(0, 8).map((b) => ({ label: b.name || ('Branch ' + b.site), count: Math.round(b.revenue) }));
+  return `<div class="rs-fin">
+    <div class="rs-fin-head">
+      <div class="rs-fin-total"><div class="rs-fin-n">${rsSAR(f.revenue)}</div><div class="rs-fin-l">total radiology revenue</div></div>
+      <div class="rs-fin-split">
+        <span><i style="background:#6B4EFF"></i> Insurance ${rsSAR(f.sponsor)}</span>
+        <span><i style="background:#22c55e"></i> Cash/copay ${rsSAR(f.patient)}</span>
+      </div>
+    </div>
+    <div class="rs-grid2" style="margin:0">
+      ${donut}
+      <div>${rsBarRows(brRev, 'var(--accent)')}</div>
+    </div>
+  </div>`;
 }
 
 function rsAgo(iso) {
