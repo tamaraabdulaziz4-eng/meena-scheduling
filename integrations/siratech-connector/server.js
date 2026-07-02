@@ -447,9 +447,43 @@ app.post('/results/file', requireAuth, async (req, res) => {
         note: 'DRY-RUN — nothing was written. Re-send with confirm:true to file + authorize.' });
     }
 
-    // Actual write is intentionally not wired yet — the dry-run must be reviewed
-    // first (and the exact save/attach payload finalised from detailsShape).
-    return res.status(409).json({ ok: false, wrote: false, error: 'write path not enabled yet — review the dry-run first', plan: planOut });
+    // ── confirm:true → attempt the real write (server-side validated) ──────────
+    // SAVE first; only AUTHORIZE if the save clearly succeeded. A rejected save is
+    // harmless (HIS validates the payload) and we surface its message.
+    const details = plan.details.map((d) => ({ ...d }));
+    const tgt = details.find((d) => d.invPatTestResultId === plan.target.invPatTestResultId) || details[0];
+    details.forEach((d) => { d.isSelected = d === tgt; });
+    tgt.result = rep.reportText || '';
+    tgt.isTemplateResultEntered = 0;
+    const nowIso = new Date().toISOString();
+    const td = {
+      resultEntryDetailsResponse: details,
+      resultEntrySearchResponses: [plan.searchRow],
+      auditUser: plan.empId, auditDate: nowIso, hospitalId: plan.site,
+      isResultCancellation: false, sampleCollResultEntrySelection: 1,
+      searchTypeResultAuthorizationValue: 0, blnBloodType: false,
+    };
+    const saveRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultEntry', { body: td });
+    const sData = saveRes.json && saveRes.json.data;
+    const sRow = Array.isArray(sData) ? sData[0] : sData;
+    const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(sRow.meassge && /enter template|attach/i.test(sRow.meassge));
+    if (!saveOk) {
+      return res.json({ ok: true, wrote: false, step: 'save', saveStatus: saveRes.status,
+        saveResponse: saveRes.json || String(saveRes.text || '').slice(0, 600), plan: planOut,
+        note: 'SAVE did not succeed — nothing was authorized.' });
+    }
+    const Ka = {
+      resultEntryDetailsResponse: (saveRes.json && saveRes.json.data) || details,
+      resultEntrySearchResponses: [plan.searchRow],
+      auditUser: plan.empId, auditDate: new Date().toISOString(), hospitalId: plan.site,
+      isResultCancellation: false, sampleCollResultEntrySelection: 2,
+      searchTypeResultAuthorizationValue: (plan.searchRow.baseCategory === 1 ? 0 : 1), blnBloodType: false,
+    };
+    const authRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultAuthorization', { body: Ka });
+    const aRow = authRes.json && authRes.json.data && (Array.isArray(authRes.json.data) ? authRes.json.data[0] : authRes.json.data);
+    return res.json({ ok: true, wrote: true, plan: planOut,
+      save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: sRow.meassge || sRow.message || null },
+      authorize: { status: authRes.status, isSuccess: aRow ? aRow.isSuccess : null, message: aRow ? (aRow.meassge || aRow.message) : null, raw: authRes.json || String(authRes.text || '').slice(0, 400) } });
   } catch (e) {
     return res.status(502).json({ ok: false, wrote: false, error: String(e.message || e) });
   }
