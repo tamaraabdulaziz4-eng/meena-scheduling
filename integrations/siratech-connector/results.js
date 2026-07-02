@@ -269,6 +269,28 @@ function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, fi
   };
 }
 
+// RadiologyDetails returns a row that the SaveRadiologyResultEntry DTO cannot bind
+// as-is: ~20 string fields come back `null`, but the SPA coerces them to '' before
+// posting and the server dereferences them (a null trips a server-side
+// null-reference → HTTP 500 "Object reference not set", Error_Code 1005). It also
+// adds a handful of fields RadiologyDetails omits. This normaliser replays exactly
+// what the SPA sends, derived field-for-field from a live payload capture.
+const ROW_STRING_EMPTY = ['addendum', 'criticalRange', 'dtlsdisplayorder', 'invPatOrderID',
+  'invProfileserviceId', 'mastServiceName', 'methodid', 'methodname', 'noramlRange', 'oldAddendum',
+  'parentID', 'previousresult', 'remarks', 'reportLink', 'resultComparisonOperator', 'resultCopyEmpId',
+  'resultMachine', 'resultUnit', 'samplename', 'unauthorizeRemarks', 'doctorcontactstatusold'];
+const ROW_NUM_ZERO = ['invVariantsRangeId', 'panicRangeId'];
+const ROW_MISSING_DEFAULTS = { isNotNormal: 0, isPanic: 0, resultComparisonValue: null,
+  resultEnteredAndAccepted: '0', unauthorizeRemarksId: null };
+
+function normalizeResultRow(row) {
+  const r = { ...row };
+  for (const k of ROW_STRING_EMPTY) if (r[k] == null) r[k] = '';
+  for (const k of ROW_NUM_ZERO) if (r[k] == null) r[k] = 0;
+  for (const k of Object.keys(ROW_MISSING_DEFAULTS)) if (!(k in r)) r[k] = ROW_MISSING_DEFAULTS[k];
+  return r;
+}
+
 function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
   return {
     mrno: row.mrno, gender: /^m/i.test(row.gender) ? 0 : 1, age: row.age, hospitalid: hospitalId,
@@ -282,5 +304,5 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 module.exports = {
   dpAgent, normMod, bodyTokens, sideOf,
   depacsStudies, depacsReport, matchStudy,
-  radiologySearchBody, radiologyDetailsBody,
+  radiologySearchBody, radiologyDetailsBody, normalizeResultRow,
 };

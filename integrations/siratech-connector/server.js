@@ -488,7 +488,7 @@ app.post('/results/file', requireAuth, async (req, res) => {
     const CHILD_ARRAYS = ['invPatMastCultureResult', 'invPatDtlsCultResults', 'scanDtlsFiles',
       'scanMastFiles', 'genFileAttachments', 'invPatTemplResults', 'invPatTemplResultHeads', 'invPatTemplResultTests'];
     const details = plan.details.map((d) => {
-      const row = { ...d };
+      const row = results.normalizeResultRow(d);   // null→'' string fields + missing keys the DTO needs
       for (const k of CHILD_ARRAYS) if (!Array.isArray(row[k])) row[k] = [];
       return row;
     });
@@ -557,15 +557,22 @@ app.post('/results/file', requireAuth, async (req, res) => {
     }
 
     // ── AUTHORIZE (1st level) ──────────────────────────────────────────────────
-    // Re-use the saved rows (they now carry the server-assigned invPatTestResultId)
-    // and flip the target to authorized. sampleCollResultEntrySelection:2 = the
-    // authorization action. HIS validates this server-side and returns a message.
-    const savedRows = (Array.isArray(sData) ? sData : (sData ? [sData] : details)).map((d) => ({ ...d }));
-    const authTgt = savedRows.find((d) => String(d.inv_mast_service_id) === String(tgt.inv_mast_service_id)) || savedRows[0];
-    savedRows.forEach((d) => { d.isSelected = d === authTgt; });
-    if (authTgt) { authTgt.authorizationstatus = '1'; authTgt.tempAuthStatus = 1; }
+    // Re-use the SAME normalised rows that the save just accepted (the raw save
+    // response echoes rows with null child collections, which trips a LINQ null —
+    // "Value cannot be null (Parameter 'source')"). Patch in the server-assigned
+    // invPatTestResultId (a fresh order comes back with a real id we must authorize
+    // against), flip the target to authorized, and drop the already-saved PDF from
+    // the payload so authorization doesn't file a duplicate attachment.
+    const savedIdRow = Array.isArray(sData)
+      ? sData.find((x) => String(x.inv_mast_service_id) === String(tgt.inv_mast_service_id))
+      : (sData && typeof sData === 'object' ? sData : null);
+    if (savedIdRow && savedIdRow.invPatTestResultId != null) tgt.invPatTestResultId = savedIdRow.invPatTestResultId;
+    tgt.genFileAttachments = [];      // attachment already persisted by the save
+    tgt.isfileAttachmentExists = 1;
+    tgt.authorizationstatus = '1';
+    tgt.tempAuthStatus = 1;
     const Ka = {
-      resultEntryDetailsResponse: savedRows,
+      resultEntryDetailsResponse: details,
       resultEntrySearchResponses: [plan.searchRow],
       auditUser, auditDate: new Date().toISOString(), hospitalId: plan.site,
       isResultCancellation: false, sampleCollResultEntrySelection: 2,
