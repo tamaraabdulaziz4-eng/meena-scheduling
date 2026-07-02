@@ -724,6 +724,26 @@ def init_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_sched_entries_staff_date ON scheduling.schedule_entries(staff_id, date);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_staff_branch_active ON scheduling.staff(branch_id, active);")
 
+            # Radiology statistics history — one immutable snapshot per calendar day,
+            # captured from Siratech HIS by the daily job. This is what makes the
+            # month-over-month and quarter-over-quarter comparisons possible (the
+            # live view alone keeps no history). `payload` holds the full daily
+            # aggregate (branch/department/doctor/…); the scalar columns exist for
+            # fast monthly/quarterly roll-ups without unpacking JSON.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_stats_daily (
+                    stat_date   DATE PRIMARY KEY,
+                    total       INTEGER NOT NULL DEFAULT 0,
+                    emergency   INTEGER NOT NULL DEFAULT 0,
+                    routine     INTEGER NOT NULL DEFAULT 0,
+                    by_branch     JSONB NOT NULL DEFAULT '[]',
+                    by_department JSONB NOT NULL DEFAULT '[]',
+                    by_doctor     JSONB NOT NULL DEFAULT '[]',
+                    payload       JSONB NOT NULL DEFAULT '{}',
+                    source      TEXT NOT NULL DEFAULT 'worklist',
+                    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -6090,6 +6110,49 @@ def radiology_stats(
     # Modality enrichment fans out per-order detail calls, so allow more time.
     return _bridge_request("/his/stats/radiology" + qs, timeout=220 if q.get("modality") else 150)
 
+@app.get("/api/radiology/stats/history")
+def radiology_stats_history(
+    from_: str = Query("", alias="from"),
+    to: str = Query(""),
+    user=Depends(require_admin),
+):
+    """Stored daily radiology snapshots for month/quarter comparison. Returns the
+    daily rows in range plus a monthly roll-up. History is built by the daily
+    snapshot job (and any manual /snapshot calls)."""
+    clauses, params = [], []
+    if (from_ or "").strip():
+        clauses.append("stat_date >= %s"); params.append(from_.strip())
+    if (to or "").strip():
+        clauses.append("stat_date <= %s"); params.append(to.strip())
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = q(f"""SELECT stat_date, total, emergency, routine, source, captured_at
+                 FROM scheduling.radiology_stats_daily{where} ORDER BY stat_date""",
+             tuple(params), many=True) or []
+    days, months = [], {}
+    for r in rows:
+        d = r["stat_date"].isoformat()
+        days.append({"date": d, "total": r["total"], "emergency": r["emergency"],
+                     "routine": r["routine"], "source": r["source"]})
+        mk = d[:7]
+        m = months.setdefault(mk, {"month": mk, "total": 0, "emergency": 0, "routine": 0, "days": 0})
+        m["total"] += r["total"]; m["emergency"] += r["emergency"]; m["routine"] += r["routine"]; m["days"] += 1
+    return {"ok": True, "days": days,
+            "months": [months[k] for k in sorted(months)],
+            "count": len(days)}
+
+@app.post("/api/radiology/stats/snapshot")
+def radiology_stats_snapshot(date: str = Query(...), user=Depends(require_admin)):
+    """Manually capture (or refresh) one day's snapshot — used to back-fill or to
+    seed history immediately instead of waiting for the nightly job."""
+    date = (date or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    try:
+        total = _capture_radiology_day(date, source_label="manual")
+    except Exception as e:
+        raise HTTPException(502, f"Snapshot failed: {e}")
+    return {"ok": True, "date": date, "total": total}
+
 @app.get("/api/radiology/results/match/{file_no}")
 def radiology_results_match(file_no: str, user=Depends(require_admin)):
     """Reverse handoff: match a patient's radiology order(s)/test(s) to the
@@ -7539,6 +7602,61 @@ def start_scheduler():
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()
     threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
+    threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
+
+def _capture_radiology_day(day_str, source_label="worklist"):
+    """Pull the radiology stats for a single day from the connector and store an
+    immutable daily snapshot (idempotent on stat_date — a re-run refreshes it)."""
+    import urllib.parse
+    qs = urllib.parse.urlencode({"from": day_str, "to": day_str})
+    data = _bridge_request("/his/stats/radiology?" + qs, timeout=150)
+    if not data or not data.get("ok"):
+        raise RuntimeError(f"connector returned {data.get('error') if isinstance(data, dict) else 'no data'}")
+    pr = data.get("priority") or {}
+    q("""INSERT INTO scheduling.radiology_stats_daily
+             (stat_date, total, emergency, routine, by_branch, by_department, by_doctor, payload, source, captured_at)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW())
+         ON CONFLICT (stat_date) DO UPDATE SET
+             total=EXCLUDED.total, emergency=EXCLUDED.emergency, routine=EXCLUDED.routine,
+             by_branch=EXCLUDED.by_branch, by_department=EXCLUDED.by_department, by_doctor=EXCLUDED.by_doctor,
+             payload=EXCLUDED.payload, source=EXCLUDED.source, captured_at=NOW()""",
+      (day_str, data.get("total", 0), pr.get("emergency", 0), pr.get("routine", 0),
+       json.dumps(data.get("byBranch") or []), json.dumps(data.get("byDepartment") or []),
+       json.dumps(data.get("byDoctor") or []), json.dumps(data), source_label),
+      exec_only=True)
+    return data.get("total", 0)
+
+def _radiology_snapshot_loop():
+    """Once a day, store a snapshot of the *previous* KSA day's radiology stats so
+    the month/quarter comparisons have history. We capture yesterday (fully
+    settled) rather than today, and back-fill up to 7 recent missing days so a
+    weekend restart doesn't leave gaps. The per-day claim + PK make it run once
+    even across gunicorn workers."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            if not _bridge_base():
+                time.sleep(3600); continue
+            ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+            for back in range(1, 8):                       # yesterday .. 7 days ago
+                day = (ksa - timedelta(days=back)).strftime('%Y-%m-%d')
+                claimed = q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+                               ON CONFLICT (key) DO NOTHING RETURNING key""",
+                            (f"radstats_snapshot:{day}", ksa.isoformat()), one=True)
+                if not claimed:
+                    continue
+                try:
+                    n = _capture_radiology_day(day)
+                    print(f"[radstats] snapshot {day}: {n} requests")
+                except Exception as e:
+                    # Release the claim so a later tick retries this day.
+                    q("DELETE FROM scheduling.app_settings WHERE key=%s",
+                      (f"radstats_snapshot:{day}",), exec_only=True)
+                    print(f"[radstats] snapshot {day} failed: {e}")
+        except Exception as e:
+            print(f"[radstats] loop error: {e}")
+        time.sleep(3600)
 
 def _credential_reminder_loop():
     """Once a day, sweep for credentials expiring within 30 days and alert."""
