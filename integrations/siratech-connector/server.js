@@ -391,7 +391,7 @@ app.get('/search', requireAuth, async (req, res) => {
 
 const STATS_SITES = (process.env.STATS_SITES || '1,2,3,4,5,6,7,8,9,10,11,12,13,14')
   .split(',').map((s) => Number(String(s).trim())).filter((n) => Number.isFinite(n));
-const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 4);
+const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 7);
 // Modality isn't on the worklist row (departmentName is the *ordering* clinic,
 // not the imaging modality), so an exact mix needs a per-order RadiologyDetails
 // call. That's opt-in (?modality=1) and bounded — we sample the most recent N
@@ -559,7 +559,9 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
   try {
     const from = String(req.query.from || '').trim() || null;   // YYYY-MM-DD
     const to = String(req.query.to || '').trim() || null;
-    const sites = String(req.query.sites || '').split(',').map((s) => Number(s.trim())).filter(Number.isFinite);
+    // Empty/blank means "all branches" — must not become [0] (''.split→['']→Number 0).
+    const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean)
+      .map(Number).filter((n) => Number.isFinite(n) && n > 0);
     const withModality = String(req.query.modality || '') === '1';
     const data = await radiologyStats({ from, to, sites, withModality });
     return res.json({ ok: true, ...data });
