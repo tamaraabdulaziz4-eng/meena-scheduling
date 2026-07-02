@@ -24,10 +24,39 @@ function renderHandoffPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Handoff', 'Radiology handoff', 'Look up the order, send to DePACS, write the indication, message the group')}
+    <div id="ho-reports-link"></div>
     <div id="ho-steps" class="ho-steps"></div>
     <div id="ho-body"></div>`;
   renderHandoffSteps();
   renderHandoffStep();
+  handoffRenderReportsLink();
+}
+
+// Shareable, login-free link for doctors to look up a patient's finished report
+// by file number (temporary, until result write-back is automated).
+async function handoffRenderReportsLink() {
+  const box = document.getElementById('ho-reports-link');
+  if (!box) return;
+  let d;
+  try { d = await API.get('/reports/public-link'); } catch (e) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card" style="margin-bottom:14px">
+    <div class="ho-msg-head"><div class="ho-lbl" style="margin:0">🔗 Doctors' report link (no login)</div></div>
+    <div style="font-size:12px;color:var(--muted);margin:2px 0 10px">Share privately with doctors. They open it, type a file number, and read the finished radiology report — no account needed. Anyone with the link can read reports, so keep it private and regenerate if it leaks.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input id="ho-rlink" class="input" readonly value="${escapeHtml(d.url || '')}" style="flex:1;min-width:200px;font-size:12px">
+      <button class="btn btn-sm btn-primary" onclick="handoffCopyReportsLink()">Copy</button>
+      <button class="btn btn-sm btn-ghost" onclick="handoffRegenReportsLink()">Regenerate</button>
+    </div></div>`;
+}
+async function handoffCopyReportsLink() {
+  const inp = document.getElementById('ho-rlink'); if (!inp) return;
+  try { await navigator.clipboard.writeText(inp.value); toast && toast('Link copied'); }
+  catch (e) { inp.select(); try { document.execCommand('copy'); toast && toast('Link copied'); } catch (_) {} }
+}
+async function handoffRegenReportsLink() {
+  if (!confirm('Regenerate the doctors\' link? The old link stops working immediately.')) return;
+  try { await API.post('/reports/public-link/regenerate'); toast && toast('New link generated'); handoffRenderReportsLink(); }
+  catch (e) { toast && toast(e.message || 'Failed', 'err'); }
 }
 
 function handoffOrders() { return (handoff.lookup && handoff.lookup.orders) || []; }

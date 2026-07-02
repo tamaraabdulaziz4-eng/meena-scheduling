@@ -1720,6 +1720,15 @@ def serve_downtime_public():
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
+@app.get("/reports")
+def serve_reports_public():
+    """Public, login-free radiology report lookup (shared link for doctors)."""
+    return FileResponse(
+        os.path.join(DASHBOARD, "reports-public.html"),
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
 @app.get("/sw.js")
 def serve_service_worker():
     """Served from root so the service worker controls the whole app scope."""
@@ -6442,6 +6451,117 @@ def regen_downtime_link(user=Depends(require_reviewer)):
          ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
     insert_audit(user, "DOWNTIME_LINK_REGEN")
     return {"url": _downtime_public_url(), "token": t}
+
+# ── Public radiology report lookup (shareable link for doctors) ───────────────
+# A temporary, login-free way for a doctor to pull a patient's finished radiology
+# report by file number — until result write-back into the HIS is automated. It
+# reads straight from DePACS (no HIS/connector dependency). Gated by an
+# unguessable link token that is shared privately with doctors.
+# PRIVACY: anyone holding the link can read reports by file number. Rotate the
+# token if it leaks, and move to real doctor accounts when possible.
+def _reports_token():
+    import secrets
+    t = get_setting("reports_public_token")
+    if not t:
+        t = secrets.token_urlsafe(24)
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('reports_public_token',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    return t
+
+def _reports_public_url():
+    base = (os.environ.get("APP_URL", "").strip().rstrip("/"))
+    return f"{base}/reports?t={_reports_token()}"
+
+_reports_pub_hits: list = []
+def _reports_throttle():
+    import time as _t
+    now = _t.time()
+    _reports_pub_hits[:] = [h for h in _reports_pub_hits if now - h < 60]
+    if len(_reports_pub_hits) >= 120:        # max 120 public lookups / minute
+        raise HTTPException(429, "Too many lookups, please wait a moment.")
+    _reports_pub_hits.append(now)
+
+def _check_reports_token(token):
+    if not token or token != _reports_token():
+        raise HTTPException(403, "Invalid or expired link. Ask the radiology team for a new one.")
+
+def _report_html_to_text(html):
+    import re as _re
+    t = _re.sub(r"<\s*(br|/p|/div|/tr|/h[1-6]|/li)\s*/?>", "\n", html or "", flags=_re.I)
+    t = _re.sub(r"<[^>]+>", " ", t)
+    for a, b in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&#39;", "'"), ("&quot;", '"')):
+        t = t.replace(a, b)
+    t = _re.sub(r"[ \t]+", " ", t)
+    t = _re.sub(r"\n[ \t]+", "\n", t)
+    t = _re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+@app.get("/api/public/reports/lookup")
+def public_reports_lookup(request: Request):
+    """List a patient's DePACS studies (newest first) for the public link."""
+    _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _reports_throttle()
+    import urllib.parse, datetime
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    end = datetime.date.today().isoformat()
+    r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end}"
+                   f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(file_no)}")
+    rows = ((r.get("body") or {}).get("data")) or []
+    studies = [{
+        "study_id": s.get("study_id"),
+        "pat_name": _elite_name(s.get("pat_name")),
+        "modality": s.get("modality"),
+        "study_date": s.get("study_date"),
+        "status": s.get("study_status"),
+        "study_desc": s.get("study_description") or s.get("study_desc"),
+        "reported": str(s.get("study_status") or "").upper() in ("VERIFIED", "APPROVED", "SIGNED", "COMPLETED"),
+    } for s in rows]
+    studies.sort(key=lambda x: str(x.get("study_date") or ""), reverse=True)
+    return {"file_no": file_no, "count": len(studies), "studies": studies}
+
+@app.get("/api/public/reports/study/{study_id}")
+def public_reports_study(study_id: int, request: Request):
+    """Full report text for one study (public link)."""
+    _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _reports_throttle()
+    b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
+    return {"study_id": b.get("study_id"),
+            "pat_name": _elite_name(b.get("pat_name")),
+            "modality": b.get("modality"), "study_date": b.get("study_date"),
+            "study_desc": b.get("study_desc"),
+            "report_text": _report_html_to_text(b.get("report_content") or ""),
+            "report_date": b.get("report_date") or b.get("verification_date"),
+            "reviewer": _elite_name(b.get("reviewer_name"))}
+
+@app.get("/api/public/reports/study/{study_id}/pdf")
+def public_reports_pdf(study_id: int, request: Request):
+    from fastapi import Response
+    _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _reports_throttle()
+    try: style = max(1, min(3, int(request.query_params.get("style") or "2")))
+    except (TypeError, ValueError): style = 2
+    ct, data = _elite_get(f"/report/open_report_pdf/{study_id}?style={style}", want="raw")
+    if "pdf" not in (ct or "").lower():
+        raise HTTPException(404, "No PDF report available for this study yet")
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="report_{study_id}.pdf"'})
+
+@app.get("/api/reports/public-link")
+def get_reports_link(user=Depends(require_admin)):
+    """The shareable public report-lookup link (admin)."""
+    return {"url": _reports_public_url(), "token": _reports_token()}
+
+@app.post("/api/reports/public-link/regenerate")
+def regen_reports_link(user=Depends(require_admin)):
+    """Rotate the token — old links stop working immediately."""
+    import secrets
+    t = secrets.token_urlsafe(24)
+    q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('reports_public_token',%s)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    insert_audit(user, "REPORTS_LINK_REGEN")
+    return {"url": _reports_public_url(), "token": t}
 
 # ── Consumables inventory ─────────────────────────────────────────────────────
 def _inv_num(v, name, default=None):
