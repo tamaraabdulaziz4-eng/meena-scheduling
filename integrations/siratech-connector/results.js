@@ -63,8 +63,31 @@ const STOP = new Set(['XR', 'CT', 'MR', 'MRI', 'US', 'THE', 'AND', 'VIEW', 'VIEW
   'PA', 'LAT', 'LATERAL', 'OBLIQUE', 'LT', 'RT', 'LEFT', 'RIGHT', 'BILATERAL', 'BILAT', 'BOTH',
   'WITH', 'WITHOUT', 'CONTRAST', 'SERIES', 'STUDY', 'SCAN', 'PLAIN', 'ROUTINE', 'PORTABLE',
   'MIN', 'STANDING', 'ERECT', 'SUPINE', 'ONE', 'TWO', 'THREE']);
+// Canonicalise common radiology short-hand so a terse DePACS desc lines up with
+// the verbose Siratech order. Applied to BOTH sides, so it only unifies wording —
+// the unique/subset/modality/time gate still decides the match, nothing is loosened.
+// Crucial for this DePACS instance, where the study description is a stub like
+// "X L.SPNE" / "T SPINE" / "ABD" (and the single-letter region L/T/C would
+// otherwise be dropped by the >2-char filter and lose the lumbar-vs-thoracic key).
+function expandAnat(s) {
+  let t = ' ' + String(s || '').toUpperCase().replace(/[^A-Z]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  t = t
+    .replace(/\bLUMBO\s?SACRAL\b/g, ' LUMBAR SPINE ')
+    .replace(/\bLUMBOSACRAL\b/g, ' LUMBAR SPINE ')
+    .replace(/\bLUMBO\b/g, ' LUMBAR ')
+    .replace(/\bL\s?S\s?SP?I?NE?\b/g, ' LUMBAR SPINE ')   // LS SPINE / LSSPINE
+    .replace(/\bL\s?SP?I?NE?\b/g, ' LUMBAR SPINE ')       // L SPNE / L SPINE / LSPINE
+    .replace(/\bT\s?SP?I?NE?\b/g, ' THORACIC SPINE ')     // T SPINE / TSPINE
+    .replace(/\bD\s?SP?I?NE?\b/g, ' THORACIC SPINE ')     // D SPINE (dorsal)
+    .replace(/\bDORSAL\b/g, ' THORACIC ')
+    .replace(/\bC\s?SP?I?NE?\b/g, ' CERVICAL SPINE ')     // C SPINE / CSPINE
+    .replace(/\bSPNE\b/g, ' SPINE ')
+    .replace(/\bABDO?\b/g, ' ABDOMEN ')                   // ABD / ABDO
+    .replace(/\bCXR\b/g, ' CHEST ');
+  return t;
+}
 function bodyTokens(s) {
-  return [...new Set(String(s || '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/)
+  return [...new Set(expandAnat(s).split(/\s+/)
     .filter((w) => w.length > 2 && !STOP.has(w)))];
 }
 
@@ -82,6 +105,18 @@ function sideOf(s) {
   if (l) return 'L';
   if (r) return 'R';
   return null;
+}
+
+// The file-number (MRN) equality test used as the first match gate. DePACS
+// stores pat_id as the bare MRN OR the MRN with the patient name concatenated
+// ("25097956ELAZIM, WAEL"), so accept the MRN as a leading token but never let a
+// longer/different number slip through (the char after the MRN must be non-digit).
+function sameMrn(patId, mrno) {
+  const pid = String(patId == null ? '' : patId).trim();
+  const m = String(mrno == null ? '' : mrno).trim();
+  if (!pid || !m) return false;
+  if (pid === m) return true;
+  return pid.startsWith(m) && !/[0-9]/.test(pid.charAt(m.length));
 }
 
 // ── DePACS (Butterfly) client ─────────────────────────────────────────────────
@@ -118,6 +153,10 @@ async function depacsStudies(mrno) {
       const info = await dpFetch('/report/get_study_report_info/' + s.study_id, { token });
       desc = (info.json && info.json.body && info.json.body.study_desc) || '';
     }
+    // This DePACS instance often leaves study_desc blank and puts the description
+    // in the accession_number field ("X L.SPNE", "T SPINE"). Use it as the body-part
+    // source when desc is empty — it only feeds the (still strict) body-part match.
+    if (!desc && s.accession_number) desc = String(s.accession_number);
     out.push({
       studyId: s.study_id, iuid: s.study_iuid, modality: s.modality, desc,
       studyDate: s.study_date, status: s.study_status, patName: s.pat_name, patId: s.pat_id,
@@ -156,7 +195,17 @@ function matchStudy(order, studies, { windowBeforeH = 24, windowAfterH = 96 } = 
   const orderTime = order.orderDate ? new Date(order.orderDate).getTime() : null;
   const orderAcc = order.accession ? String(order.accession).trim() : null;
 
-  const verified = studies.filter((s) => String(s.status).toUpperCase() === 'VERIFIED');
+  // GATE 0 — the file number (MRN) is the FIRST, non-negotiable key: a study may
+  // only ever bind to an order for the SAME patient file. DePACS is inconsistent
+  // here (pat_id is sometimes the bare MRN "25097956", sometimes the MRN with the
+  // name glued on: "25097956ELAZIM, WAEL"), so we require the MRN as a clean
+  // prefix rather than exact equality — but a different patient can never match.
+  const fileStudies = studies.filter((s) => sameMrn(s.patId, order.mrno));
+  if (order.mrno && !fileStudies.length) {
+    return { decision: 'none', key: 'file', candidates: [], reason: `no VERIFIED study found for file ${order.mrno}` };
+  }
+
+  const verified = fileStudies.filter((s) => String(s.status).toUpperCase() === 'VERIFIED');
 
   // PRIMARY: accession (deterministic) — only on the REAL DICOM accession.
   if (orderAcc) {
