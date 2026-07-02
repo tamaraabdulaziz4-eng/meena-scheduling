@@ -9,8 +9,8 @@
 // yet cover.
 
 let radstats = {
-  from: '', to: '', sites: '',
-  preset: '30d',
+  from: '', to: '', preset: '30d',
+  branches: [], sel: null,           // sel = Set of selected siteIds (null = all)
   data: null, loading: false,
   modData: null, modLoading: false, modError: '',
   auto: false, timer: null, lastError: '',
@@ -48,7 +48,25 @@ async function renderRadStatsPage() {
     <div id="rs-billing-banner"></div>
     <div id="rs-body">${LOADING_HTML}</div>`;
   rsRenderControls();
+  rsLoadBranches();            // populate the branch picker (once), then it stays
   await rsLoad();
+}
+
+// Load the real branch list so the picker shows every branch by name.
+async function rsLoadBranches() {
+  if (radstats.branches.length) { rsRenderControls(); return; }
+  try {
+    const d = await API.get('/radiology/branches');
+    radstats.branches = (d && d.branches) || [];
+  } catch (e) { /* picker just stays hidden; stats still default to all */ }
+  rsRenderControls();
+}
+
+// null selection (or all selected) means "all branches" → send no sites param.
+function rsSitesParam() {
+  if (!radstats.sel || !radstats.branches.length) return '';
+  if (radstats.sel.size === radstats.branches.length) return '';
+  return [...radstats.sel].join(',');
 }
 
 function rsRenderControls() {
@@ -65,12 +83,35 @@ function rsRenderControls() {
           <label>To <input type="date" id="rs-to" value="${escapeHtml(radstats.to)}" onchange="rsSetCustom()"></label>
         </div>
         <div class="rs-ctl-actions">
-          <input type="text" id="rs-sites" class="rs-sites" placeholder="Branches e.g. 2,11 (blank = all)" value="${escapeHtml(radstats.sites)}" onchange="rsSetSites()">
           <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
           <button class="btn btn-primary btn-sm" onclick="rsLoad()" ${radstats.loading ? 'disabled' : ''}>${radstats.loading ? 'Loading…' : 'Refresh'}</button>
         </div>
       </div>
+      ${rsBranchPicker()}
     </div>`;
+}
+
+function rsBranchPicker() {
+  if (!radstats.branches.length) return '';
+  const all = !radstats.sel || radstats.sel.size === radstats.branches.length;
+  const chips = radstats.branches.map((b) => {
+    const on = all || (radstats.sel && radstats.sel.has(b.siteId));
+    return `<button class="rs-bchip${on ? ' on' : ''}" onclick="rsToggleBranch(${b.siteId})" title="${escapeHtml(b.name)}">${escapeHtml(b.shortName || b.name)}</button>`;
+  }).join('');
+  return `<div class="rs-branches">
+      <span class="rs-branches-lbl">Branches</span>
+      <button class="rs-bchip rs-ball${all ? ' on' : ''}" onclick="rsAllBranches()">All (${radstats.branches.length})</button>
+      ${chips}
+    </div>`;
+}
+
+function rsAllBranches() { radstats.sel = null; rsRenderControls(); rsLoad(); }
+function rsToggleBranch(id) {
+  if (!radstats.sel) radstats.sel = new Set(radstats.branches.map((b) => b.siteId));  // start from "all"
+  if (radstats.sel.has(id)) radstats.sel.delete(id); else radstats.sel.add(id);
+  if (radstats.sel.size === 0) radstats.sel = null;                                    // never allow empty → all
+  rsRenderControls();
+  rsLoad();
 }
 
 function rsSetPreset(id) {
@@ -86,11 +127,6 @@ function rsSetCustom() {
   radstats.to = (t && t.value) || radstats.to;
   radstats.preset = 'custom';
   rsRenderControls();
-  rsLoad();
-}
-function rsSetSites() {
-  const el = document.getElementById('rs-sites');
-  radstats.sites = (el && el.value || '').replace(/[^0-9,]/g, '');
   rsLoad();
 }
 function rsToggleAuto() {
@@ -114,7 +150,7 @@ async function rsLoad(silent) {
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
-  if (radstats.sites) q.set('sites', radstats.sites);
+  const _s = rsSitesParam(); if (_s) q.set('sites', _s);
   // Any filter change invalidates the (separately-loaded) modality mix.
   radstats.modData = null; radstats.modError = ''; radstats.modLoading = false;
   try {
@@ -137,7 +173,7 @@ async function rsLoadModality() {
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
-  if (radstats.sites) q.set('sites', radstats.sites);
+  const _s = rsSitesParam(); if (_s) q.set('sites', _s);
   q.set('modality', '1');
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
@@ -153,26 +189,94 @@ async function rsLoadModality() {
 // ── rendering ─────────────────────────────────────────────────────────────────
 const RS_MOD_COLOR = { CT: '#6B4EFF', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
 const rsNum = (n) => Number(n || 0).toLocaleString();
+const rsPct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
 
-function rsBarRows(items, labelKey, valMax, color) {
+function rsBarRows(items, color, max0) {
   if (!items || !items.length) return `<div class="rs-empty">No data</div>`;
-  const max = valMax || Math.max(1, ...items.map((i) => i.count));
-  return items.map((i) => {
-    const label = escapeHtml(String(i[labelKey] == null || i[labelKey] === '' ? 'Unknown' : i[labelKey]));
+  const total = items.reduce((a, i) => a + i.count, 0);
+  const max = max0 || Math.max(1, ...items.map((i) => i.count));
+  return `<div class="rs-bars">` + items.map((i) => {
+    const label = escapeHtml(String(i.label == null || i.label === '' ? 'Unknown' : i.label));
     const pct = Math.round((i.count / max) * 100);
     const col = typeof color === 'function' ? color(i) : (color || 'var(--accent)');
     return `<div class="rs-bar">
       <div class="rs-bar-label" title="${label}">${label}</div>
       <div class="rs-bar-track"><div class="rs-bar-fill" style="width:${pct}%;background:${col}"></div></div>
-      <div class="rs-bar-val">${rsNum(i.count)}</div>
+      <div class="rs-bar-val">${rsNum(i.count)}<span class="rs-bar-share">${rsPct(i.count, total)}%</span></div>
     </div>`;
-  }).join('');
+  }).join('') + `</div>`;
 }
 
-function rsPanel(title, inner, sub) {
-  return `<div class="card rs-panel">
+// Lightweight SVG donut with a legend — no chart library.
+function rsDonut(segs, opts) {
+  segs = (segs || []).filter((s) => s.count > 0);
+  const total = segs.reduce((a, s) => a + s.count, 0);
+  if (!total) return `<div class="rs-empty">No data</div>`;
+  const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70, sw = 20;
+  let off = 0;
+  const arcs = segs.map((s) => {
+    const len = (s.count / total) * C;
+    const el = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}" stroke-width="${sw}"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})">
+      <title>${escapeHtml(s.label)}: ${rsNum(s.count)} (${rsPct(s.count, total)}%)</title></circle>`;
+    off += len; return el;
+  }).join('');
+  const legend = segs.map((s) => `<div class="rs-leg">
+      <span class="rs-leg-dot" style="background:${s.color}"></span>
+      <span class="rs-leg-l" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span>
+      <span class="rs-leg-v">${rsNum(s.count)} · ${rsPct(s.count, total)}%</span></div>`).join('');
+  const cVal = opts && opts.centerVal != null ? opts.centerVal : total;
+  return `<div class="rs-donut-wrap">
+    <svg viewBox="0 0 140 140" class="rs-donut">${arcs}
+      <text x="70" y="67" text-anchor="middle" class="rs-donut-n">${rsNum(cVal)}</text>
+      <text x="70" y="85" text-anchor="middle" class="rs-donut-l">${escapeHtml((opts && opts.centerLabel) || 'total')}</text>
+    </svg>
+    <div class="rs-legend">${legend}</div>
+  </div>`;
+}
+
+// Smooth-ish area + line trend with gridlines and hover dots.
+function rsArea(daily) {
+  if (!daily || !daily.length) return `<div class="rs-empty">No data</div>`;
+  const W = 720, H = 180, pad = 30, n = daily.length;
+  const max = Math.max(1, ...daily.map((x) => x.count));
+  const X = (i) => pad + (n <= 1 ? (W - 2 * pad) / 2 : (i / (n - 1)) * (W - 2 * pad));
+  const Y = (v) => H - pad - (v / max) * (H - 2 * pad);
+  const pts = daily.map((x, i) => `${X(i).toFixed(1)},${Y(x.count).toFixed(1)}`);
+  const line = `M${pts.join(' L')}`;
+  const area = `M${X(0).toFixed(1)},${H - pad} L${pts.join(' L')} L${X(n - 1).toFixed(1)},${H - pad} Z`;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const y = H - pad - f * (H - 2 * pad);
+    return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" class="rs-grid"/><text x="${pad - 6}" y="${y + 3}" text-anchor="end" class="rs-axis">${Math.round(max * f)}</text>`;
+  }).join('');
+  const dots = daily.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="3" class="rs-dot"><title>${escapeHtml(x.date)}: ${x.count}</title></circle>`).join('');
+  const idxs = [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
+  const xl = idxs.map((i) => `<text x="${X(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" class="rs-axis">${escapeHtml(daily[i].date.slice(5))}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="rs-area">
+    <defs><linearGradient id="rsg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+    ${grid}<path d="${area}" fill="url(#rsg)"/><path d="${line}" class="rs-line"/>${dots}${xl}
+  </svg>`;
+}
+
+function rsPanel(title, inner, sub, cls) {
+  return `<div class="card rs-panel${cls ? ' ' + cls : ''}">
     <div class="rs-panel-head"><h3>${escapeHtml(title)}</h3>${sub ? `<span class="rs-panel-sub">${escapeHtml(sub)}</span>` : ''}</div>
     ${inner}
+  </div>`;
+}
+
+const RS_ICON = {
+  total: '<path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/>',
+  emg: '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/>',
+  rtn: '<path d="M20 6 9 17l-5-5"/>',
+  aged: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+  branch: '<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/>',
+};
+function rsKpi(icon, val, label, cls, sub) {
+  return `<div class="rs-kpi${cls ? ' ' + cls : ''}">
+    <span class="rs-kpi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${RS_ICON[icon] || ''}</svg></span>
+    <div><div class="rs-kpi-n">${val}</div><div class="rs-kpi-l">${label}${sub ? ` <span class="rs-kpi-sub">${sub}</span>` : ''}</div></div>
   </div>`;
 }
 
@@ -197,7 +301,7 @@ function rsRenderBody() {
     return;
   }
   const d = radstats.data;
-  if (!d || !d.ok) { body.innerHTML = LOADING_HTML; return; }
+  if (!d || !d.ok) { body.innerHTML = `<div class="rs-skel">${LOADING_HTML}</div>`; return; }
 
   const total = d.total || 0;
   const emg = (d.priority && d.priority.emergency) || 0;
@@ -208,30 +312,42 @@ function rsRenderBody() {
 
   const kpis = `
     <div class="rs-kpis">
-      <div class="rs-kpi"><div class="rs-kpi-n">${rsNum(total)}</div><div class="rs-kpi-l">Total requests</div></div>
-      <div class="rs-kpi"><div class="rs-kpi-n">${rsNum(emg)}</div><div class="rs-kpi-l">Emergency</div></div>
-      <div class="rs-kpi"><div class="rs-kpi-n">${rsNum(rtn)}</div><div class="rs-kpi-l">Routine</div></div>
-      <div class="rs-kpi rs-kpi-warn"><div class="rs-kpi-n">${rsNum(aged)}</div><div class="rs-kpi-l">Pending &gt; 7 days</div></div>
-      <div class="rs-kpi"><div class="rs-kpi-n">${rsNum(sitesOk)}</div><div class="rs-kpi-l">Branches reporting${sitesFail ? ` <span class="rs-fail">(${sitesFail} n/a)</span>` : ''}</div></div>
+      ${rsKpi('total', rsNum(total), 'Total requests')}
+      ${rsKpi('emg', rsNum(emg), 'Emergency', 'rs-kpi-red', total ? rsPct(emg, total) + '%' : '')}
+      ${rsKpi('rtn', rsNum(rtn), 'Routine', '', total ? rsPct(rtn, total) + '%' : '')}
+      ${rsKpi('aged', rsNum(aged), 'Pending &gt; 7 days', aged ? 'rs-kpi-warn' : '')}
+      ${rsKpi('branch', rsNum(sitesOk), 'Branches reporting', '', sitesFail ? `<span class="rs-fail">${sitesFail} n/a</span>` : '')}
     </div>`;
 
-  const branchItems = (d.byBranch || []).map((b) => ({ label: 'Branch ' + b.site, count: b.count }));
+  const branchItems = (d.byBranch || []).map((b) => ({ label: b.name || ('Branch ' + b.site), count: b.count }));
+  const docItems = (d.byDoctor || []).map((x) => ({ label: x.name, count: x.count }));
+  const deptItems = (d.byDepartment || []).map((x) => ({ label: x.name, count: x.count }));
   const agingItems = ['<1d', '1-3d', '3-7d', '>7d'].map((k) => ({ label: k, count: (d.aging && d.aging[k]) || 0 }));
+  const agingColor = (i) => i.label === '>7d' ? '#ef4444' : (i.label === '3-7d' ? '#f59e0b' : (i.label === '1-3d' ? '#eab308' : '#22c55e'));
+  const prioDonut = rsDonut([
+    { label: 'Routine', count: rtn, color: '#22c55e' },
+    { label: 'Emergency', count: emg, color: '#ef4444' },
+  ], { centerVal: total, centerLabel: 'requests' });
 
-  const panels = `
-    <div class="rs-grid">
-      ${rsPanel('By branch', rsBarRows(branchItems, 'label', null, 'var(--accent)'), `${branchItems.length} branches`)}
-      ${rsPanel('By modality', rsModalityInner(), rsModalitySub())}
-      ${rsPanel('Top ordering doctors', rsBarRows((d.byDoctor || []).map((x) => ({ label: x.name, count: x.count })), 'label', null, '#0ea5e9'), 'top 15')}
-      ${rsPanel('By ordering department', rsBarRows((d.byDepartment || []).map((x) => ({ label: x.name, count: x.count })), 'label', null, '#8358FD'))}
-      ${rsPanel('Pending age', rsBarRows(agingItems, 'label', null, (i) => i.label === '>7d' ? '#ef4444' : (i.label === '3-7d' ? '#f59e0b' : '#22c55e')), 'time since order')}
-      ${rsPanel('Daily trend', rsTrend(d.daily || []), `${(d.daily || []).length} days`)}
+  const layout = `
+    <div class="rs-grid2">
+      ${rsPanel('Priority split', prioDonut)}
+      ${rsPanel('Modality mix', rsModalityInner(), rsModalitySub())}
+    </div>
+    ${rsPanel('Daily trend', rsArea(d.daily || []), `${(d.daily || []).length} days`, 'rs-wide')}
+    <div class="rs-grid2">
+      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)'), `${branchItems.length} branches`)}
+      ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15')}
+    </div>
+    <div class="rs-grid2">
+      ${rsPanel('By ordering department', rsBarRows(deptItems, '#8358FD'))}
+      ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order')}
     </div>`;
 
   const foot = `<div class="rs-foot">Range ${escapeHtml((d.range && d.range.from) || '')} → ${escapeHtml((d.range && d.range.to) || '')}
     · updated ${escapeHtml(rsAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
-  body.innerHTML = kpis + panels + foot;
+  body.innerHTML = kpis + layout + foot;
 }
 
 function rsModalitySub() {
@@ -246,22 +362,14 @@ function rsModalityInner() {
   const m = radstats.modData;
   if (!m) {
     return `<div class="rs-modcta">
-      <p>Modality isn't on the request row — it's read per order, so it loads on demand.</p>
+      <span class="rs-modcta-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg></span>
+      <p>Modality is read per order, so it loads on demand.</p>
       <button class="btn btn-primary btn-sm" onclick="rsLoadModality()">Load modality mix</button>
     </div>`;
   }
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
-  return rsBarRows(m.mix.map((x) => ({ label: x.modality, count: x.count })), 'label', null, (i) => RS_MOD_COLOR[i.label] || '#94a3b8');
-}
-
-function rsTrend(daily) {
-  if (!daily.length) return `<div class="rs-empty">No data</div>`;
-  const max = Math.max(1, ...daily.map((x) => x.count));
-  const bars = daily.map((x) => {
-    const h = Math.max(3, Math.round((x.count / max) * 100));
-    return `<div class="rs-tbar" title="${escapeHtml(x.date)}: ${x.count}"><div class="rs-tbar-fill" style="height:${h}%"></div></div>`;
-  }).join('');
-  return `<div class="rs-trend">${bars}</div>`;
+  const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: RS_MOD_COLOR[x.modality] || '#94a3b8' }));
+  return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
 }
 
 function rsAgo(iso) {

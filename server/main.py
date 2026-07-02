@@ -6110,6 +6110,12 @@ def radiology_stats(
     # Modality enrichment fans out per-order detail calls, so allow more time.
     return _bridge_request("/his/stats/radiology" + qs, timeout=220 if q.get("modality") else 150)
 
+@app.get("/api/radiology/branches")
+def radiology_branches(user=Depends(require_admin)):
+    """The real list of branches (id + name) the connector's HIS user can see —
+    used to populate the branch picker so all branches show by name."""
+    return _bridge_request("/his/stats/branches", timeout=90)
+
 @app.get("/api/radiology/stats/history")
 def radiology_stats_history(
     from_: str = Query("", alias="from"),

@@ -427,6 +427,24 @@ async function pool(items, size, fn) {
   return out;
 }
 
+// The real branch list (id + name), from the site the logged-in user can see.
+// Branches change rarely, so cache for a few hours. Used both to label branches
+// and as the default "all branches" set (future-proof if a branch is added).
+let sitesCache = { list: null, ts: 0 };
+async function getSites() {
+  if (sitesCache.list && Date.now() - sitesCache.ts < 6 * 3600 * 1000) return sitesCache.list;
+  await getToken();
+  const uid = String(HIS_USER).padStart(8, '0');
+  const r = await hisFetch('/security-api/api/v1/Authentication/Sites/ByUser?userId=' + encodeURIComponent(uid), { method: 'GET' });
+  const rows = (r.json && r.json.data) || [];
+  const list = rows
+    .map((s) => ({ siteId: Number(s.siteId), name: s.siteName || `Branch ${s.siteId}`, shortName: (s.siteShortName || '').trim() || s.siteName || `Branch ${s.siteId}` }))
+    .filter((s) => Number.isFinite(s.siteId))
+    .sort((a, b) => a.siteId - b.siteId);
+  if (list.length) sitesCache = { list, ts: Date.now() };
+  return list;
+}
+
 const dayOf = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; };
 function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unknown' : String(key); const e = map.get(k) || { key: k, name: name || k, count: 0 }; e.count += 1; map.set(k, e); }
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
@@ -438,7 +456,10 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
   const def = (d, end) => `${d.toISOString().slice(0, 10)}T${end ? '23:59:59' : '00:00:00'}.000Z`;
   const fromISO = from ? `${from}T00:00:00.000Z` : def(new Date(today.getTime() - 30 * 864e5), false);
   const toISO = to ? `${to}T23:59:59.000Z` : def(today, true);
-  const wantSites = (sites && sites.length) ? sites : STATS_SITES;
+  const siteList = await getSites().catch(() => []);
+  const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+  const wantSites = (sites && sites.length) ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);
+  const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
 
   const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
@@ -455,6 +476,10 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
   let total = 0, emergency = 0, routine = 0;
   const now = Date.now();
 
+  // Seed every queried branch at zero so the panel shows ALL branches (a branch
+  // with no radiology that period still appears, instead of silently missing).
+  for (const site of wantSites) byBranch.set(String(site), { key: String(site), name: branchLabel(site), count: 0 });
+
   for (const s of perSite) {
     if (!s) continue;
     if (!s.ok) { failed.push(s.site); continue; }
@@ -462,7 +487,7 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
     for (const r of s.rows) {
       total += 1;
       flat.push({ r, site: s.site });
-      tallyPush(byBranch, s.site, `Branch ${s.site}`);
+      tallyPush(byBranch, s.site, branchLabel(s.site));
       tallyPush(byDept, r.departmentName, r.departmentName);
       tallyPush(byDoctor, r.providerId || r.doctorName, (r.doctorName || '').trim() || (r.providerId || 'Unknown'));
       if (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) emergency += 1; else routine += 1;
@@ -511,8 +536,9 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
   return {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, returned, failed },
+    branches: siteList,
     total,
-    byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), count: e.count })),
+    byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), name: e.name, count: e.count })),
     byDepartment: tallyList(byDept).map((e) => ({ name: e.name, count: e.count })),
     byDoctor: tallyList(byDoctor, topDoctors).map((e) => ({ providerId: e.key, name: e.name, count: e.count })),
     modality,
@@ -523,6 +549,11 @@ async function radiologyStats({ from, to, sites, withModality = false, topDoctor
     note: 'Requests = billed radiology orders in the RIS worklist (awaiting result). Paid/unpaid collection split is added from the billing report.',
   };
 }
+
+app.get('/stats/branches', requireAuth, async (_req, res) => {
+  try { return res.json({ ok: true, branches: await getSites() }); }
+  catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
 
 app.get('/stats/radiology', requireAuth, async (req, res) => {
   try {
