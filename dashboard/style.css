@@ -2113,3 +2113,26 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
 .hm-rad-kpi.warn b { color:#ef4444; }
 @media (max-width:700px){ .hm-rad-kpis { grid-template-columns:repeat(2,1fr); } }
 .rs-subhead { font-size:12px; font-weight:700; color:var(--primary); margin-bottom:8px; }
+
+/* Live clock chip */
+.rs-clock { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--primary);
+  font-variant-numeric:tabular-nums; background:var(--card-alt,rgba(107,78,255,.06)); border:1px solid var(--border);
+  border-radius:9px; padding:6px 11px; }
+.rs-clock-dot { width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 0 rgba(34,197,94,.5); animation:rsPulse 1.6s ease-out infinite; }
+@keyframes rsPulse { 0% { box-shadow:0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow:0 0 0 7px rgba(34,197,94,0); } 100% { box-shadow:0 0 0 0 rgba(34,197,94,0); } }
+
+/* Premium in-page loader (matches the app boot splash) */
+.rs-boot { position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:center; gap:12px;
+  padding:34px 16px 30px; margin-bottom:14px; border-radius:18px;
+  background:radial-gradient(ellipse at 30% 20%, #ffffff 0%, #f3f1fc 55%, #e9e5fa 100%);
+  border:1px solid var(--border); }
+.rs-boot-orb { position:absolute; border-radius:50%; filter:blur(1px); pointer-events:none; }
+.rs-boot-orb.o1 { width:180px; height:180px; top:-40px; left:8%; opacity:.28;
+  background:radial-gradient(circle at 30% 30%, #A78BFF, #6B4EFF 60%, transparent 75%); animation:ploaderFloat 14s ease-in-out infinite; }
+.rs-boot-orb.o2 { width:150px; height:150px; bottom:-40px; right:10%; opacity:.26;
+  background:radial-gradient(circle at 30% 30%, #C7B8FF, #8B76FF 60%, transparent 75%); animation:ploaderFloat 16s ease-in-out infinite reverse; }
+.rs-boot-logo { background:#fff; padding:12px 18px; border-radius:18px; position:relative; z-index:2;
+  box-shadow:0 16px 40px rgba(107,78,255,.28); animation:ploaderBounce 1.3s ease-in-out infinite; }
+.rs-boot-logo img { height:34px; display:block; }
+.rs-boot-label { font-size:14.5px; font-weight:700; color:var(--primary); position:relative; z-index:2; }
+.rs-boot-sub { font-size:11.5px; font-weight:600; color:var(--muted); position:relative; z-index:2; margin-top:-4px; }

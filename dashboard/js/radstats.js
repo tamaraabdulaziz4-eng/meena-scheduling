@@ -14,7 +14,7 @@ let radstats = {
   data: null, loading: false,
   modData: null, modLoading: false, modError: '',
   finData: null, finLoading: false, finError: '',
-  auto: false, timer: null, lastError: '',
+  auto: false, timer: null, clockTimer: null, lastError: '',
 };
 
 const RS_PRESETS = [
@@ -49,9 +49,24 @@ async function renderRadStatsPage() {
     <div id="rs-billing-banner"></div>
     <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>`;
   rsRenderControls();
+  rsStartClock();
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
   rsLoadBranches();                    // populate the branch picker (once), then it stays
   await rsLoad();
+}
+
+// Live ticking clock (KSA time) so the page reads as real-time.
+function rsClockNow() {
+  try { return new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Riyadh', hour12: false }); }
+  catch (e) { return new Date().toLocaleTimeString(); }
+}
+function rsStartClock() {
+  if (radstats.clockTimer) clearInterval(radstats.clockTimer);
+  radstats.clockTimer = setInterval(() => {
+    const el = document.getElementById('rs-clock-t');
+    if (!el) { clearInterval(radstats.clockTimer); radstats.clockTimer = null; return; }
+    el.textContent = rsClockNow();
+  }, 1000);
 }
 
 // Shimmer placeholder that mirrors the real layout, so a slow first load looks
@@ -61,7 +76,13 @@ function rsSkeleton() {
   const card = `<div class="skel" style="height:74px;border-radius:14px"></div>`;
   const block = (h) => `<div class="skel" style="height:${h}px;border-radius:14px"></div>`;
   return `
-    <div class="rs-loadnote"><span class="mini-spin"></span> Loading ${n} branches… first load takes a few seconds, then it's cached</div>
+    <div class="rs-boot">
+      <div class="rs-boot-orb o1"></div><div class="rs-boot-orb o2"></div>
+      <div class="rs-boot-logo"><img src="/meena_logo.png" alt="Meena"></div>
+      <div class="rs-boot-label">Loading live radiology data…</div>
+      <div class="rs-boot-sub">${n} branches · Siratech HIS</div>
+      <div class="ploader-dots"><i></i><i></i><i></i></div>
+    </div>
     <div class="rs-kpis">${Array(5).fill(card).join('')}</div>
     <div class="rs-grid2">${block(210)}${block(210)}</div>
     ${block(120)}
@@ -100,6 +121,7 @@ function rsRenderControls() {
           <label>To <input type="date" id="rs-to" value="${escapeHtml(radstats.to)}" onchange="rsSetCustom()"></label>
         </div>
         <div class="rs-ctl-actions">
+          <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
           <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
           <button class="btn btn-primary btn-sm" onclick="rsLoad()" ${radstats.loading ? 'disabled' : ''}>${radstats.loading ? 'Loading…' : 'Refresh'}</button>
         </div>
@@ -170,9 +192,12 @@ async function rsLoad(silent) {
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
-  // Any filter change invalidates the (separately-loaded) modality & finance data.
-  radstats.modData = null; radstats.modError = ''; radstats.modLoading = false;
-  radstats.finData = null; radstats.finError = ''; radstats.finLoading = false;
+  // A filter change (non-silent) invalidates the separately-loaded modality &
+  // finance data; a silent auto-refresh leaves them (they auto-reload with cache).
+  if (!silent) {
+    radstats.modData = null; radstats.modError = ''; radstats.modLoading = false;
+    radstats.finData = null; radstats.finError = ''; radstats.finLoading = false;
+  }
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
     radstats.data = d;
@@ -182,6 +207,11 @@ async function rsLoad(silent) {
     radstats.loading = false;
     rsRenderControls();
     rsRenderBody();
+    // Modality & revenue load automatically (no button) once the main data is in.
+    if (radstats.data && radstats.data.ok) {
+      if (!radstats.modData && !radstats.modLoading) rsLoadModality();
+      if (!radstats.finData && !radstats.finLoading) rsLoadFinancial();
+    }
   }
 }
 
