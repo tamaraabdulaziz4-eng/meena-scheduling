@@ -579,6 +579,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     const byModCount = new Map(), revByBranch = new Map(), revByMod = new Map();
     let exams = 0, revenue = 0, patient = 0, sponsor = 0, items = 0;
     let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqWithRad = 0;
+    // EXAM-level payer split (X-ray + US on one order = two exams counted apart).
+    let exInsurance = 0, exCash = 0, exCopay = 0, exFree = 0;
     for (const b of bills) {
       if (!b || !Array.isArray(b.items)) continue;
       let bPat = 0, bSpo = 0, hasRad = false;
@@ -589,6 +591,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         exams += 1;
         const net = Number(it.netAmount) || 0, pat = Number(it.patient) || 0, spo = Number(it.sponsor) || 0;
         revenue += net; patient += pat; sponsor += spo; items += 1; bPat += pat; bSpo += spo;
+        // this exam: who pays?
+        if (pat > 0 && spo > 0) exCopay += 1; else if (pat > 0) exCash += 1; else if (spo > 0) exInsurance += 1; else exFree += 1;
         const mc = byModCount.get(mod) || { modality: mod, count: 0 }; mc.count += 1; byModCount.set(mod, mc);
         const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 }; be.revenue += net; revByBranch.set(b.site, be);
         const me = revByMod.get(mod) || { modality: mod, revenue: 0 }; me.revenue += net; revByMod.set(mod, me);
@@ -599,12 +603,18 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     const meta = { sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length };
     if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
     if (withFinance) financial = {
-      ...meta, items, requests: reqWithRad,
+      ...meta, items, requests: reqWithRad, exams,
       byPayer: [
         { type: 'Insurance', count: reqInsurance },
         { type: 'Cash / self-pay', count: reqCash },
         { type: 'Insurance + copay', count: reqCopay },
       ],
+      // exam-level split (each X-ray / US counted separately)
+      examsByPayer: [
+        { type: 'Insurance', count: exInsurance },
+        { type: 'Cash / self-pay', count: exCash },
+        { type: 'Insurance + copay', count: exCopay },
+      ].concat(exFree ? [{ type: 'Zero-charge', count: exFree }] : []),
       revenue: r2(revenue), patient: r2(patient), sponsor: r2(sponsor),
       byBranch: [...revByBranch.values()].map((e) => ({ site: e.site, name: e.name, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
       byModality: [...revByMod.values()].map((e) => ({ modality: e.modality, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
