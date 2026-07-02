@@ -294,14 +294,17 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
 // holds the report — the strict, no-guess gate. READ-ONLY: it never writes.
 // GET /results/match/:file            → match every pending order for the file
 // POST /results/match {file, billNo}  → match one specific order (by bill no)
-async function buildMatch(file, wantBillNo) {
+async function buildMatch(file, wantBillNo, site) {
   await getToken();                                    // ensure logged in (empId)
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
+  // A patient's orders live at THEIR branch, not a fixed one — the result-entry
+  // worklist is per-site, so search the order's actual hospitalId when given.
+  const useSite = Number(site) > 0 ? Number(site) : RESULT_SITE;
 
   // 1) the patient's radiology orders that are awaiting a result (filterResult 0)
   const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
-    body: results.radiologySearchBody({ mrno: file, hospitalId: RESULT_SITE, empId }),
+    body: results.radiologySearchBody({ mrno: file, hospitalId: useSite, empId }),
   });
   // A transient HIS failure (or a mid-login 401) must surface as an error — never as
   // "no orders", which would wrongly tell staff a patient with orders has none.
@@ -321,7 +324,7 @@ async function buildMatch(file, wantBillNo) {
     // DePACS study (the shoulder report must never land on the humerus test).
     // So we match per test row, not per order.
     const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
-      body: results.radiologyDetailsBody(row, { hospitalId: RESULT_SITE, empId }),
+      body: results.radiologyDetailsBody(row, { hospitalId: useSite, empId }),
     });
     const det = (dr.json && dr.json.data) || [];
     const orderDate = row.billDate || row.visitDate || null;
@@ -352,11 +355,11 @@ async function buildMatch(file, wantBillNo) {
       allUnique: tests.length > 0 && tests.every((t) => t.decision === 'unique'),
     });
   }
-  return { file, empId, site: RESULT_SITE, studiesFound: studies.length, orders: out, count: out.length };
+  return { file, empId, site: useSite, studiesFound: studies.length, orders: out, count: out.length };
 }
 
 app.get('/results/match/:file', requireAuth, async (req, res) => {
-  try { return res.json({ ok: true, ...(await buildMatch(String(req.params.file || '').trim(), null)) }); }
+  try { return res.json({ ok: true, ...(await buildMatch(String(req.params.file || '').trim(), null, req.query.site)) }); }
   catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 app.post('/results/match', requireAuth, async (req, res) => {
