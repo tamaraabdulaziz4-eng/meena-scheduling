@@ -416,9 +416,17 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   }
   const report = await results.depacsReport(m.study.studyId);
 
+  // The radiology result is template-based: fetch the test's template so we can
+  // populate invPatTemplResults (read-only).
+  let template = null;
+  try {
+    const tr = await hisFetch('/investigation-api/api/v1/ResultEntry/GetTestTemplate?InvMastServiceId=' + encodeURIComponent(target.inv_mast_service_id), { method: 'GET' });
+    template = (tr.json && (tr.json.data != null ? tr.json.data : tr.json)) || null;
+  } catch (e) { template = { error: String(e.message || e) }; }
+
   return {
     file, site: useSite, empId, billNo: row.billNo, orderDate,
-    searchRow: row, details, target, study: m.study, report,
+    searchRow: row, details, target, study: m.study, report, template,
     match: { decision: m.decision, key: m.key, reason: m.reason },
   };
 }
@@ -440,6 +448,7 @@ app.post('/results/file', requireAuth, async (req, res) => {
       match: plan.match,
       report: { reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes, textPreview: (rep.reportText || '').slice(0, 400) },
       detailsShape: plan.details.map((d) => Object.keys(d)),   // reveal the template fields to build td
+      template: plan.template,                                  // the test's result template (structure)
     };
 
     if (!confirm) {
