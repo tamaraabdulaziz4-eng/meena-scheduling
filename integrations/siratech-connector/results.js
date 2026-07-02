@@ -43,22 +43,45 @@ const DEPACS_PASS = process.env.DEPACS_PASS || '';
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 const MOD_MAP = { DX: 'XR', CR: 'XR', DR: 'XR', XR: 'XR', CT: 'CT', MR: 'MR', MRI: 'MR', US: 'US', MG: 'MG', NM: 'NM', PT: 'PT', XA: 'XA' };
-const normMod = (m) => MOD_MAP[String(m || '').toUpperCase().trim()] || String(m || '').toUpperCase().trim();
+function normMod(m) {
+  const s = String(m || '').toUpperCase().trim();
+  if (MOD_MAP[s]) return MOD_MAP[s];
+  // The Siratech category can be a label ("GENERAL X-RAY", "ULTRASOUND") rather than
+  // a DICOM code — map those too, else a legitimate report would never match.
+  if (/X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
+  if (/ULTRA\s?SOUND|SONOGRAM|\bUS\b/.test(s)) return 'US';
+  if (/\bCT\b|COMPUTED\s+TOMOG/.test(s)) return 'CT';
+  if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
+  if (/MAMMOG|\bMG\b/.test(s)) return 'MG';
+  return s;
+}
 
-// Words that describe the *body part* — strip modality/laterality/generic filler so
-// only anatomy is compared (SHOULDER vs HUMERUS must NOT collide).
+// Anatomy tokens describe the *body part*: strip modality / view / generic filler.
+// Laterality (left/right) is handled SEPARATELY (see sideOf) — it must never be
+// silently discarded, or "XR LT SHOULDER" would match "XR RT SHOULDER".
 const STOP = new Set(['XR', 'CT', 'MR', 'MRI', 'US', 'THE', 'AND', 'VIEW', 'VIEWS', 'VIEWS.', 'AP',
-  'PA', 'LAT', 'LATERAL', 'OBLIQUE', 'LT', 'RT', 'LEFT', 'RIGHT', 'BILATERAL', 'WITH', 'WITHOUT',
-  'CONTRAST', 'SERIES', 'STUDY', 'SCAN', 'PLAIN', 'ROUTINE', 'PORTABLE', 'MIN', 'STANDING']);
+  'PA', 'LAT', 'LATERAL', 'OBLIQUE', 'LT', 'RT', 'LEFT', 'RIGHT', 'BILATERAL', 'BILAT', 'BOTH',
+  'WITH', 'WITHOUT', 'CONTRAST', 'SERIES', 'STUDY', 'SCAN', 'PLAIN', 'ROUTINE', 'PORTABLE',
+  'MIN', 'STANDING', 'ERECT', 'SUPINE', 'ONE', 'TWO', 'THREE']);
 function bodyTokens(s) {
   return [...new Set(String(s || '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/)
     .filter((w) => w.length > 2 && !STOP.has(w)))];
 }
 
-function parseAccessionFromIuid(iuid) {
-  // e.g. "1.2.840.4892943.343.20260624212234.60176" → "60176"
-  const m = String(iuid || '').match(/\.(\d{3,})$/);
-  return m ? m[1] : null;
+// Laterality of an exam name → 'L' | 'R' | 'B' | null. Only whole-word matches
+// (so "RIB" is never read as right, "SILVER" never as left).
+function sideOf(s) {
+  const words = String(s || '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/);
+  let l = false, r = false, b = false;
+  for (const w of words) {
+    if (w === 'LEFT' || w === 'LT') l = true;
+    else if (w === 'RIGHT' || w === 'RT') r = true;
+    else if (w === 'BILATERAL' || w === 'BILAT' || w === 'BOTH') b = true;
+  }
+  if (b || (l && r)) return 'B';
+  if (l) return 'L';
+  if (r) return 'R';
+  return null;
 }
 
 // ── DePACS (Butterfly) client ─────────────────────────────────────────────────
@@ -98,8 +121,10 @@ async function depacsStudies(mrno) {
     out.push({
       studyId: s.study_id, iuid: s.study_iuid, modality: s.modality, desc,
       studyDate: s.study_date, status: s.study_status, patName: s.pat_name, patId: s.pat_id,
-      accession: s.accession_number || parseAccessionFromIuid(s.study_iuid),
-      accessionRaw: s.accession_number || null,
+      // Only the REAL DICOM accession is a deterministic key. The study-UID's last
+      // arc is NOT the accession (it just happens to coincide sometimes), so it must
+      // never drive the primary match — that would risk a wrong-study bind.
+      accession: s.accession_number || null,
     });
   }
   return out;
@@ -126,41 +151,59 @@ async function depacsReport(studyId) {
 // Returns { decision:'unique'|'none'|'ambiguous', study?, candidates[], reason }
 function matchStudy(order, studies, { windowBeforeH = 24, windowAfterH = 96 } = {}) {
   const orderMod = normMod(order.categoryName || order.modality);
-  const orderTokens = bodyTokens(order.serviceName);
+  const orderAnat = bodyTokens(order.serviceName);
+  const orderSide = sideOf(order.serviceName);
   const orderTime = order.orderDate ? new Date(order.orderDate).getTime() : null;
   const orderAcc = order.accession ? String(order.accession).trim() : null;
 
   const verified = studies.filter((s) => String(s.status).toUpperCase() === 'VERIFIED');
 
-  // PRIMARY: accession (deterministic) — only when the order actually has one.
+  // PRIMARY: accession (deterministic) — only on the REAL DICOM accession.
   if (orderAcc) {
     const hits = verified.filter((s) => s.accession && String(s.accession).trim() === orderAcc);
-    if (hits.length === 1) return { decision: 'unique', key: 'accession', study: hits[0], candidates: hits, reason: `accession ${orderAcc}` };
-    if (hits.length > 1) return { decision: 'ambiguous', key: 'accession', candidates: hits, reason: `${hits.length} studies share accession ${orderAcc}` };
+    if (hits.length === 1) return { decision: 'unique', key: 'accession', study: hits[0], candidates: hits.map(candOf), reason: `accession ${orderAcc}` };
+    if (hits.length > 1) return { decision: 'ambiguous', key: 'accession', candidates: hits.map(candOf), reason: `${hits.length} studies share accession ${orderAcc}` };
     // no accession hit → fall through to body-part+time (do not fail outright)
   }
 
-  // FALLBACK: modality + body-part + time window.
+  // FALLBACK: modality + body-part (subset, side-aware) + time window.
+  // Without a reliable order date we CANNOT confirm the study is the recent one,
+  // so we refuse to call it unique — a stale prior study must not auto-match.
+  const dateKnown = orderTime != null;
   const scored = verified.map((s) => {
-    const stTokens = bodyTokens(s.desc);
-    const overlap = orderTokens.filter((t) => stTokens.includes(t));
+    const stAnat = bodyTokens(s.desc);
+    const stSide = sideOf(s.desc);
+    const overlap = orderAnat.filter((t) => stAnat.includes(t));
+    // The DePACS desc is usually terser than the order ("XR LT SHOULDER" vs
+    // "XR SHOULDER / SCAPULA 3 VIEWS"), so we require the STUDY's anatomy to be a
+    // subset of the ORDER's: the study must not introduce a DIFFERENT region. This
+    // matches the terse study to the verbose order, yet still rejects
+    // "CERVICAL SPINE" against a "LUMBAR SPINE" order (CERVICAL ∉ order).
+    const anatOk = stAnat.length > 0 && orderAnat.length > 0 && stAnat.every((t) => orderAnat.includes(t));
+    // laterality: reject only an EXPLICIT conflict (both sides named and different).
+    const sideOk = !(orderSide && stSide && orderSide !== stSide);
     const modOk = normMod(s.modality) === orderMod;
-    let inWindow = true;
-    if (orderTime != null && s.studyDate) {
+    let inWindow = false;
+    if (dateKnown && s.studyDate) {
       const gap = new Date(s.studyDate).getTime() - orderTime;
       inWindow = gap >= -windowBeforeH * 3600e3 && gap <= windowAfterH * 3600e3;
     }
-    return { study: s, modOk, bodyOverlap: overlap, inWindow };
+    return { study: s, modOk, anatOk, sideOk, bodyOverlap: overlap, inWindow };
   });
 
-  const survivors = scored.filter((c) => c.modOk && c.bodyOverlap.length > 0 && c.inWindow);
+  const survivors = scored.filter((c) => c.modOk && c.anatOk && c.sideOk && c.inWindow);
   const candidates = scored
-    .filter((c) => c.modOk)
-    .map((c) => ({ studyId: c.study.studyId, desc: c.study.desc, studyDate: c.study.studyDate, modality: c.study.modality, bodyMatch: c.bodyOverlap, inWindow: c.inWindow }));
+    .filter((c) => c.modOk && (c.anatOk || c.bodyOverlap.length))
+    .map((c) => ({ ...candOf(c.study), bodyMatch: c.bodyOverlap, inWindow: c.inWindow }));
 
-  if (survivors.length === 1) return { decision: 'unique', key: 'bodypart+time', study: survivors[0].study, candidates, reason: `body-part [${survivors[0].bodyOverlap.join(',')}] within time window` };
-  if (survivors.length === 0) return { decision: 'none', key: 'bodypart+time', candidates, reason: 'no VERIFIED study matched modality + body-part + time window' };
-  return { decision: 'ambiguous', key: 'bodypart+time', candidates, reason: `${survivors.length} studies matched — refusing to guess` };
+  if (survivors.length === 1) return { decision: 'unique', key: 'bodypart+time', study: survivors[0].study, candidates, reason: `body-part [${orderAnat.join(',')}]${orderSide ? ' ' + orderSide : ''} within time window` };
+  if (survivors.length > 1) return { decision: 'ambiguous', key: 'bodypart+time', candidates, reason: `${survivors.length} studies matched — refusing to guess` };
+  if (!dateKnown) return { decision: 'none', key: 'bodypart+time', candidates, reason: 'order date unknown — cannot confirm timing; manual review' };
+  return { decision: 'none', key: 'bodypart+time', candidates, reason: 'no VERIFIED study matched modality + body-part + time window' };
+}
+
+function candOf(s) {
+  return { studyId: s.studyId, desc: s.desc, studyDate: s.studyDate, modality: s.modality, accession: s.accession };
 }
 
 // ── Siratech Result Entry (needs the shared hisFetch from server.js) ──────────
@@ -187,7 +230,7 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 }
 
 module.exports = {
-  dpAgent, normMod, bodyTokens, parseAccessionFromIuid,
+  dpAgent, normMod, bodyTokens, sideOf,
   depacsStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody,
 };
