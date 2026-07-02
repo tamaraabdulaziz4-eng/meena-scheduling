@@ -426,16 +426,27 @@ function rsRenderBody() {
   // Exams (needs modality) and Insurance-covered (needs finance) fill in when
   // their enrichment lands; show a subtle "…" until then.
   const m = radstats.modData, f = radstats.finData;
-  const examsVal = m ? rsNum(m.exams || 0) : '<span class="rs-pending">…</span>';
-  const covered = f ? ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count : null;
-  const coveredVal = f ? rsNum(covered || 0) : '<span class="rs-pending">…</span>';
+  // Exams is per-exam; when only a sample was priced we scale it to the total so
+  // it isn't misleadingly smaller than the request count.
+  let examsVal = '<span class="rs-pending">…</span>';
+  if (m) examsVal = m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0);
+  // Insurance-covered: exact when everything was priced, else scaled to the total
+  // (a sample of 800 vs 1,118 must NOT read as "the rest are unpaid").
+  let coveredVal = '<span class="rs-pending">…</span>', coveredSub = '';
+  if (f) {
+    const priced = f.requests || 0;
+    const cov = ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count || 0;
+    const share = priced ? cov / priced : 0;
+    if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
+    else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
+  }
 
   const kpis = `
     <div class="rs-kpis">
       ${rsKpi('patients', patients != null ? rsNum(patients) : '—', 'Patients')}
       ${rsKpi('total', rsNum(total), 'Requests')}
       ${rsKpi('exams', examsVal, 'Exams')}
-      ${rsKpi('covered', coveredVal, 'Insurance-covered', '', f ? rsPct(covered || 0, f.requests || total) + '%' : '')}
+      ${rsKpi('covered', coveredVal, 'Insurance-covered', '', coveredSub)}
       ${rsKpi('emg', rsNum(emg), 'Emergency', 'rs-kpi-red', total ? rsPct(emg, total) + '%' : '')}
       ${rsKpi('aged', rsNum(aged), 'Pending &gt; 7 days', aged ? 'rs-kpi-warn' : '')}
     </div>`;

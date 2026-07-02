@@ -411,7 +411,7 @@ function statsCacheSet(key, data) {
 // not the imaging modality), so an exact mix needs a per-order RadiologyDetails
 // call. That's opt-in (?modality=1) and bounded — we sample the most recent N
 // orders so the manager gets a real, labelled mix without hammering the HIS.
-const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 400);
+const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 2000);
 const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 10);
 const MOD_LABEL = { XR: 'X-Ray', US: 'Ultrasound', CT: 'CT', MR: 'MRI', MG: 'Mammography' };
 // Friendly modality label for an exam category/service. Reuse results.normMod
@@ -435,7 +435,34 @@ function friendlyModality(txt) {
 // AND labs/consult. Match only the radiology line items so revenue isn't inflated
 // by non-radiology charges. (Validated: isolates the imaging items cleanly.)
 function isRadiologyItem(name) {
-  return /mammog|ultra|sono|us |u\/s|\bct\b|tomog|\bmri?\b|magnet|x-?ray|radiograph|\bxr\b|\bcr\b|dexa|bone densit|doppler|echo/i.test(String(name || ''));
+  // Precise: word-bounded tokens only. Earlier `us `/`\bcr\b` matched lab names
+  // (venoUS, virUS, lupUS, Creatinine CR) and inflated the totals. Verified
+  // against real bill line items: matches only imaging, rejects labs.
+  return /\bultra\s?sound\b|\bsonogra|\bdoppler\b|\bus\b\s+[a-z]|\bx[- ]?ray\b|\bxr\b|\bradiograph|\bct\b[\s-]|computed tomog|tomograph|\bmri\b|magnetic resonance|mammogr|\bdexa\b|bone mineral densit|densitometry|fluoroscop|\bbarium\b|angiograph|myelogram/i.test(String(name || ''));
+}
+
+// The AUTHORITATIVE radiology catalog (Master service list, baseCategory =
+// "Radiology"): the exact set of services that count as imaging, plus each one's
+// modality (serviceCategory: XR / CT / MRI / MAMM / BMD / Ultrasound /
+// Fluoroscopy). Matching bill line items against this by name is exact — keyword
+// guessing wrongly counted drug names like "Diafor XR", "Diamicron-MR", "Dexa
+// cream", "Barium paste" as imaging, and missed contrast studies (arthrography,
+// IVP, "US -Doppler"). Cached for a few hours.
+const CAT_MOD = { XR: 'X-Ray', CT: 'CT', MRI: 'MRI', MAMM: 'Mammography', BMD: 'DEXA / Bone Density', Ultrasound: 'Ultrasound', FLUROSCOPY: 'Fluoroscopy', FLUOROSCOPY: 'Fluoroscopy' };
+const normName = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+let radCatalog = { map: null, ts: 0 };
+async function getRadCatalog() {
+  if (radCatalog.map && Date.now() - radCatalog.ts < 6 * 3600 * 1000) return radCatalog.map;
+  await getToken();
+  const r = await hisFetch('/master-settings-api/api/v1/ServiceGroup/GetServices', { body: { hospitalId: Number(cache.hospitalid) || 11 } });
+  const rows = (r.json && r.json.data) || [];
+  const map = new Map();
+  for (const x of rows) {
+    if (!/radiolog/i.test(x.baseCategory || '')) continue;
+    map.set(normName(x.serviceName), CAT_MOD[x.serviceCategory] || x.serviceCategory || 'Other');
+  }
+  if (map.size) radCatalog = { map, ts: Date.now() };
+  return map;
 }
 
 // Small concurrency pool — keep the 2 GB VPS from opening 14 sockets at once.
@@ -540,6 +567,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       .slice()
       .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
       .slice(0, STATS_MODALITY_CAP);
+    // ONE bill read per order (GetDueBillDetailsByID). Each line item is checked
+    // against the radiology catalog — a match is a real imaging exam, and the
+    // catalog also tells us its modality. This gives exam count, modality mix,
+    // revenue and payer split accurately from a single call.
+    const catalog = await getRadCatalog().catch(() => new Map());
     const bills = await pool(sample, STATS_MODALITY_CONCURRENCY, async ({ r, site }) => {
       const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(r.genPatBillingId), { method: 'GET' });
       return { site, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
@@ -551,21 +583,17 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       if (!b || !Array.isArray(b.items)) continue;
       let bPat = 0, bSpo = 0, hasRad = false;
       for (const it of b.items) {
-        if (!isRadiologyItem(it.itemName)) continue;
+        const mod = catalog.get(normName(it.itemName));   // in the radiology catalog?
+        if (!mod) continue;                                // not imaging (lab / drug / consult)
         hasRad = true;
-        const qty = Math.max(1, Number(it.quantity) || 1);
+        exams += 1;
         const net = Number(it.netAmount) || 0, pat = Number(it.patient) || 0, spo = Number(it.sponsor) || 0;
-        const mk = friendlyModality(it.itemName);
-        // modality (exams counted by quantity)
-        exams += qty; const mc = byModCount.get(mk) || { modality: mk, count: 0 }; mc.count += qty; byModCount.set(mk, mc);
-        // revenue + payer
         revenue += net; patient += pat; sponsor += spo; items += 1; bPat += pat; bSpo += spo;
+        const mc = byModCount.get(mod) || { modality: mod, count: 0 }; mc.count += 1; byModCount.set(mod, mc);
         const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 }; be.revenue += net; revByBranch.set(b.site, be);
-        const me = revByMod.get(mk) || { modality: mk, revenue: 0 }; me.revenue += net; revByMod.set(mk, me);
+        const me = revByMod.get(mod) || { modality: mod, revenue: 0 }; me.revenue += net; revByMod.set(mod, me);
       }
-      if (!hasRad) continue;
-      reqWithRad += 1;
-      if (bPat > 0 && bSpo > 0) reqCopay += 1; else if (bPat > 0) reqCash += 1; else reqInsurance += 1;
+      if (hasRad) { reqWithRad += 1; if (bPat > 0 && bSpo > 0) reqCopay += 1; else if (bPat > 0) reqCash += 1; else reqInsurance += 1; }
     }
     const r2 = (n) => Math.round(n * 100) / 100;
     const meta = { sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length };
@@ -629,4 +657,12 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
 process.on('unhandledRejection', (r) => console.error('unhandledRejection:', r));
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e && e.message));
 
-app.listen(PORT, HOST, () => console.log(`Siratech connector listening on ${HOST}:${PORT}`));
+app.listen(PORT, HOST, () => {
+  console.log(`Siratech connector listening on ${HOST}:${PORT}`);
+  // Warm the branch list + radiology catalog so the first stats request is fast
+  // (the catalog is ~26k rows). Fire-and-forget; failures are retried on demand.
+  setTimeout(() => {
+    getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
+    getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`)).catch(() => {});
+  }, 4000);
+});
