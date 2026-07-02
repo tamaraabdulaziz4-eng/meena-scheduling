@@ -82,6 +82,19 @@
         border:1px solid var(--border); border-radius:12px; padding:14px; margin:12px 0 0; }
   .loading { text-align:center; color:var(--muted); padding:26px; }
   .rhead { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+
+  /* animated cycling loader */
+  .cload { text-align:center; padding:34px 20px; }
+  .cload .puls { width:54px; height:54px; margin:0 auto 18px; border-radius:50%;
+                 background:radial-gradient(circle at 35% 35%, #8fb6ff, #2563eb 65%, #1e40af);
+                 box-shadow:0 10px 30px rgba(37,99,235,.35); animation:cpuls 1.2s ease-in-out infinite; }
+  @keyframes cpuls { 0%,100%{transform:scale(.82);opacity:.7} 50%{transform:scale(1.06);opacity:1} }
+  .cload .ct { font-size:14.5px; font-weight:700; color:var(--accent); min-height:22px; }
+  @keyframes cfade { 0%{opacity:0;transform:translateY(10px)} 18%{opacity:1;transform:translateY(0)} 82%{opacity:1;transform:translateY(0)} 100%{opacity:0;transform:translateY(-10px)} }
+  .cdots { display:flex; gap:7px; justify-content:center; margin-top:14px; }
+  .cdots i { width:9px; height:9px; border-radius:50%; background:var(--accent2); animation:cdot 1.2s ease-in-out infinite; }
+  .cdots i:nth-child(2){ animation-delay:.2s; } .cdots i:nth-child(3){ animation-delay:.4s; }
+  @keyframes cdot { 0%,100%{transform:scale(.6);opacity:.4} 50%{transform:scale(1);opacity:1} }
 </style>
 </head>
 <body>
@@ -130,6 +143,15 @@ function showMsg(t){ const m=$('msg'); m.className='msg err'; m.textContent=t; }
 function sexEn(s){ s=String(s||'').toUpperCase(); return s.startsWith('M')?'Male':s.startsWith('F')?'Female':(s||'—'); }
 function ageFrom(bd){ if(!bd) return ''; const m=String(bd).match(/(\d{4})-?(\d{2})-?(\d{2})/); if(!m) return ''; const b=new Date(+m[1],+m[2]-1,+m[3]); if(isNaN(b)) return ''; let a=(Date.now()-b)/(365.25*864e5); return a>0&&a<130?Math.floor(a)+'y':''; }
 
+// animated loader: cycles through messages that fade in and out
+function loaderHTML(id){ return `<div class="cload"><div class="puls"></div><div class="ct" id="${id}"></div><div class="cdots"><i></i><i></i><i></i></div></div>`; }
+function cycle(id, msgs){
+  const el = $(id); if(!el) return ()=>{};
+  let i = 0;
+  const tick = () => { const e=$(id); if(!e) return; e.textContent = msgs[i % msgs.length]; e.style.animation='none'; void e.offsetWidth; e.style.animation='cfade 1.7s ease'; i++; };
+  tick(); const t = setInterval(tick, 1700); return () => clearInterval(t);
+}
+
 function enterApp(){ $('splash').classList.add('hide'); setTimeout(()=>{ try{$('file').focus()}catch(e){} }, 520); }
 if (!TOKEN){ enterApp(); showMsg('Link is missing its access code. Ask the radiology team for a valid link.'); }
 
@@ -146,9 +168,10 @@ async function lookup(){
   if (!file) return;
   if (!TOKEN){ showMsg('Link is missing its access code.'); return; }
   $('go').disabled=true;
-  $('results').innerHTML = '<div class="loading">Searching…</div>';
-  try { renderList(await api('/api/public/reports/lookup?file=' + encodeURIComponent(file))); }
-  catch(e){ $('results').innerHTML=''; showMsg(e.message || 'Search failed'); }
+  $('results').innerHTML = loaderHTML('ld-search');
+  const stop = cycle('ld-search', ['Searching…', 'Contacting the imaging system…', 'Fetching studies…', 'Reading results…', 'Almost there…']);
+  try { const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file)); stop(); renderList(d); }
+  catch(e){ stop(); $('results').innerHTML=''; showMsg(e.message || 'Search failed'); }
   finally { $('go').disabled=false; }
 }
 
@@ -191,10 +214,12 @@ async function openReport(studyId, i){
   const slot = $('rep-'+i);
   if (!slot) return;
   if (slot.dataset.open === '1'){ slot.innerHTML=''; slot.dataset.open=''; return; }
-  slot.innerHTML = '<div class="loading">Loading report…</div>';
+  slot.innerHTML = loaderHTML('ld-rep-'+i);
   slot.dataset.open = '1';
+  const stopR = cycle('ld-rep-'+i, ['Loading report…', 'Fetching from PACS…', 'Preparing the report…']);
   try {
     const r = await api('/api/public/reports/study/' + studyId);
+    stopR();
     const base = (window._studies||[])[i] || {};
     const pat = {...base, ...r};
     const txt = (r.report_text||'').trim();
@@ -207,6 +232,7 @@ async function openReport(studyId, i){
          <div class="sm" style="margin-top:8px;color:var(--muted)">${r.reviewer?('Radiologist: '+esc(r.reviewer)+' · '):''}${r.report_date?fmtDate(r.report_date):''}</div>`
       : `<pre>No approved report text yet for this study.</pre>`);
   } catch(e){
+    stopR();
     slot.innerHTML = '<pre>'+esc(e.message||'Failed to load report')+'</pre>';
   }
 }
