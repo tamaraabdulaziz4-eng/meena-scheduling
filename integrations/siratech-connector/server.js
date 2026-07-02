@@ -445,11 +445,12 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
 app.post('/results/file', requireAuth, async (req, res) => {
   const { file, site, billNo, serviceId, confirm, range, authorize } = req.body || {};
   if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
-  // Resolve the clinical range classification the row is saved under.
-  const stringRange = (() => {
+  // Did the caller pin the range explicitly? If so it always wins; otherwise we
+  // auto-classify from the report's IMPRESSION further down (once we have it).
+  const explicitRange = (() => {
     if (req.body && req.body.stringRange != null && Number.isFinite(Number(req.body.stringRange))) return Number(req.body.stringRange);
     if (typeof range === 'string' && RANGE_NAME_TO_CODE[range.toLowerCase()] != null) return RANGE_NAME_TO_CODE[range.toLowerCase()];
-    return DEFAULT_STRING_RANGE;
+    return null;
   })();
   const doAuthorize = authorize !== false;   // default: also authorize after a good save
   try {
@@ -459,12 +460,19 @@ app.post('/results/file', requireAuth, async (req, res) => {
     // Trim the heavy report body for the dry-run response (keep a text preview and
     // the PDF size, not the whole base64 blob).
     const rep = plan.report;
+    // Auto-classify normal vs. abnormal from the report's IMPRESSION unless the
+    // caller pinned the range explicitly (explicit always wins).
+    const autoClass = results.classifyRange(rep.reportText);
+    const stringRange = explicitRange != null ? explicitRange
+      : (RANGE_NAME_TO_CODE[autoClass.range] != null ? RANGE_NAME_TO_CODE[autoClass.range] : DEFAULT_STRING_RANGE);
+    const rangeSource = explicitRange != null ? 'explicit' : 'auto:' + autoClass.range;
     const planOut = {
       file: plan.file, site: plan.site, billNo: plan.billNo,
       target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },
       study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate },
       match: plan.match,
       report: { reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes, textPreview: (rep.reportText || '').slice(0, 400) },
+      range: { code: stringRange, source: rangeSource, classified: autoClass.range, impression: autoClass.impression, reason: autoClass.reason },
       detailsShape: plan.details.map((d) => Object.keys(d)),   // reveal the template fields to build td
       template: plan.template,                                  // the test's result template (structure)
     };

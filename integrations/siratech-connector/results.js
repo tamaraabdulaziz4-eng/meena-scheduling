@@ -269,6 +269,37 @@ function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, fi
   };
 }
 
+// ── Normal vs. abnormal classification ────────────────────────────────────────
+// DePACS stores NO structured normal/abnormal flag — `category` is a study group
+// ("Others"), and critical_result.critical_classification only marks CRITICAL
+// findings. The verdict lives only in the free-text report's IMPRESSION section.
+// So we read that section and classify, biasing to ABNORMAL when unclear (labelling
+// a normal study abnormal only triggers a harmless review; the reverse could hide
+// real pathology). The caller can always override the result explicitly.
+const _NORMAL_IMPRESSION = /(normal study|unremarkable (study|examination|abdomen|chest|appearance|scan)|within normal limits|no (significant |radiographic |acute )?abnormalit|no abnormal finding|negative (study|examination)|study is normal|essentially normal|no evidence of (acute |significant )?(disease|abnormalit|patholog)|normal (chest|abdominal|radiographic|us|ultrasound|ct|mri) (study|examination|appearance|scan))/;
+const _ABNORMAL_TERMS = /(calcul|stone|mass\b|lesion|fracture|scolio|spondyl|osteophy|retrolisthes|hernia|effusion|consolidat|nodul|cyst|dilat|stenos|opacit|collection|hydronephros|o?edema|h(a)?emorrhage|infiltrat|deformity|degener|tear\b|rupture|thromb|aneurysm|metasta|tumou?r|enlarged|thicken|narrow|gravel|distension|inflamm|abscess|fibroid|polyp|obstruct|occlus|ischem|infarct|fatty (liver|infiltration)|steatos)/;
+
+function classifyRange(reportText) {
+  const text = String(reportText || '');
+  // Isolate the radiologist's verdict; fall back to the whole report if unlabelled.
+  const m = text.match(/\b(IMPRESSION|CONCLUSION|OPINION)\s*:?\s*([\s\S]*)$/i);
+  const impression = (m ? m[2] : text).replace(/\s+/g, ' ').trim();
+  const imp = impression.toLowerCase();
+  // Strip NEGATED clauses before hunting for pathology, so "no fracture", "without
+  // effusion", "free of lesions" don't read as positive findings. We cut from the
+  // negation cue up to the next clause boundary. The normal-statement test runs on
+  // the ORIGINAL text (so "no abnormality" still counts as a normal verdict).
+  const impPos = imp.replace(/\b(no|without|free of|negative for|absence of|rule out|r\/o|resolved|unremarkable)\b[^.,;:]*/g, ' ');
+  const hasFinding = _ABNORMAL_TERMS.test(impPos);
+  const saysNormal = _NORMAL_IMPRESSION.test(imp);
+  let range = 'abnormal', reason;
+  if (!imp) { reason = 'empty report — defaulting to abnormal (needs review)'; }
+  else if (hasFinding) { reason = 'impression names positive finding(s)'; }
+  else if (saysNormal) { range = 'normal'; reason = 'impression states a normal / unremarkable study'; }
+  else { reason = 'no explicit normal statement in impression — defaulting to abnormal (safer)'; }
+  return { range, impression: impression.slice(0, 300), reason, hadImpressionHeader: !!m };
+}
+
 // RadiologyDetails returns a row that the SaveRadiologyResultEntry DTO cannot bind
 // as-is: ~20 string fields come back `null`, but the SPA coerces them to '' before
 // posting and the server dereferences them (a null trips a server-side
@@ -304,5 +335,5 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 module.exports = {
   dpAgent, normMod, bodyTokens, sideOf,
   depacsStudies, depacsReport, matchStudy,
-  radiologySearchBody, radiologyDetailsBody, normalizeResultRow,
+  radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
 };
