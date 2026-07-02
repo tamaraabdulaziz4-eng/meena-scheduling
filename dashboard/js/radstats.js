@@ -57,6 +57,7 @@ async function renderRadStatsPage() {
     <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>`;
   rsRenderControls();
   rsStartClock();
+  rsBindTips();                        // live cursor-following tooltips
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
   else rsShowOverlay();                // first load → full-screen branded loader
   if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
@@ -380,20 +381,63 @@ const RS_MOD_COLOR = { CT: '#6B4EFF', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultras
 const rsNum = (n) => Number(n || 0).toLocaleString();
 const rsPct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
 
-function rsBarRows(items, color, max0) {
+function rsBarRows(items, color, max0, opts) {
   if (!items || !items.length) return `<div class="rs-empty">No data</div>`;
+  const drill = opts && opts.drill;
   const total = items.reduce((a, i) => a + i.count, 0);
   const max = max0 || Math.max(1, ...items.map((i) => i.count));
   return `<div class="rs-bars">` + items.map((i) => {
     const label = escapeHtml(String(i.label == null || i.label === '' ? 'Unknown' : i.label));
     const pct = Math.round((i.count / max) * 100);
     const col = typeof color === 'function' ? color(i) : (color || 'var(--accent)');
-    return `<div class="rs-bar">
-      <div class="rs-bar-label" title="${label}">${label}</div>
+    const tip = `<b>${label}</b><br>${rsNum(i.count)} · ${rsPct(i.count, total)}% of shown`;
+    const clickable = drill && i.site != null;
+    const attrs = clickable
+      ? ` class="rs-bar rs-bar-click" role="button" tabindex="0" onclick="rsDrillBranch(${i.site})" onkeydown="if(event.key==='Enter')rsDrillBranch(${i.site})"`
+      : ` class="rs-bar"`;
+    return `<div${attrs} data-tip="${escapeHtml(tip)}">
+      <div class="rs-bar-label" title="${label}">${label}${clickable ? '<span class="rs-bar-go">›</span>' : ''}</div>
       <div class="rs-bar-track"><div class="rs-bar-fill" style="width:${pct}%;background:${col}"></div></div>
       <div class="rs-bar-val">${rsNum(i.count)}<span class="rs-bar-share">${rsPct(i.count, total)}%</span></div>
     </div>`;
   }).join('') + `</div>`;
+}
+
+// Drill the whole dashboard into one branch by clicking its bar (managers only —
+// a team lead is already pinned). Selecting just that branch re-scopes every
+// panel + KPI; the "All" chip in the picker brings everything back.
+function rsDrillBranch(site) {
+  if (rsIsLead() || radstats.leadLocked) return;
+  const id = Number(site);
+  if (!Number.isFinite(id)) return;
+  // Toggle off if it's already the sole focus → back to all.
+  if (radstats.sel && radstats.sel.size === 1 && radstats.sel.has(id)) { radstats.sel = null; }
+  else { radstats.sel = new Set([id]); }
+  rsRenderControls();
+  rsLoad();
+  const b = document.getElementById('rs-body'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Live cursor-following tooltip (works for any element with [data-tip]) ──────
+function rsBindTips() {
+  if (radstats._tipsBound) return;
+  radstats._tipsBound = true;
+  const move = (e) => {
+    const src = e.target;
+    const el = src && src.closest ? src.closest('[data-tip]') : null;
+    let tip = document.getElementById('rs-tip');
+    if (!el) { if (tip) tip.classList.remove('show'); return; }
+    if (!tip) { tip = document.createElement('div'); tip.id = 'rs-tip'; tip.className = 'rs-tip'; document.body.appendChild(tip); }
+    tip.innerHTML = el.getAttribute('data-tip') || '';
+    tip.classList.add('show');
+    const pad = 16, r = tip.getBoundingClientRect();
+    let x = e.clientX + pad, y = e.clientY + pad;
+    if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - pad;
+    if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - pad;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  };
+  document.addEventListener('mousemove', move, { passive: true });
+  document.addEventListener('mouseleave', () => { const t = document.getElementById('rs-tip'); if (t) t.classList.remove('show'); }, true);
 }
 
 // Lightweight SVG donut with a legend — no chart library.
@@ -405,12 +449,13 @@ function rsDonut(segs, opts) {
   let off = 0;
   const arcs = segs.map((s) => {
     const len = (s.count / total) * C;
-    const el = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}" stroke-width="${sw}"
-      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})">
-      <title>${escapeHtml(s.label)}: ${rsNum(s.count)} (${rsPct(s.count, total)}%)</title></circle>`;
+    const tip = `<b>${escapeHtml(s.label)}</b><br>${rsNum(s.count)} · ${rsPct(s.count, total)}%`;
+    const el = `<circle class="rs-arc" cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}" stroke-width="${sw}"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})"
+      data-tip="${escapeHtml(tip)}"></circle>`;
     off += len; return el;
   }).join('');
-  const legend = segs.map((s) => `<div class="rs-leg">
+  const legend = segs.map((s) => `<div class="rs-leg" data-tip="${escapeHtml(`<b>${escapeHtml(s.label)}</b><br>${rsNum(s.count)} · ${rsPct(s.count, total)}%`)}">
       <span class="rs-leg-dot" style="background:${s.color}"></span>
       <span class="rs-leg-l" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span>
       <span class="rs-leg-v">${rsNum(s.count)} · ${rsPct(s.count, total)}%</span></div>`).join('');
@@ -438,7 +483,7 @@ function rsArea(daily) {
     const y = H - pad - f * (H - 2 * pad);
     return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" class="rs-grid"/><text x="${pad - 6}" y="${y + 3}" text-anchor="end" class="rs-axis">${Math.round(max * f)}</text>`;
   }).join('');
-  const dots = daily.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="3" class="rs-dot"><title>${escapeHtml(x.date)}: ${x.count}</title></circle>`).join('');
+  const dots = daily.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="9" class="rs-dot-hit" data-tip="${escapeHtml(`<b>${escapeHtml(x.date)}</b><br>${rsNum(x.count)} requests`)}"/><circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="3" class="rs-dot"/>`).join('');
   const idxs = [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
   const xl = idxs.map((i) => `<text x="${X(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" class="rs-axis">${escapeHtml(daily[i].date.slice(5))}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" class="rs-area">
@@ -532,7 +577,8 @@ function rsRenderBody() {
       ${rsKpi('aged', rsNum(aged), 'Pending &gt; 7 days', aged ? 'rs-kpi-warn' : '')}
     </div>`;
 
-  const branchItems = (d.byBranch || []).map((b) => ({ label: b.name || ('Branch ' + b.site), count: b.count }));
+  const branchItems = (d.byBranch || []).map((b) => ({ label: b.name || ('Branch ' + b.site), count: b.count, site: b.site }));
+  const canDrill = !rsIsLead() && !radstats.leadLocked;
   const docItems = (d.byDoctor || []).map((x) => ({ label: x.name, count: x.count }));
   const deptItems = (d.byDepartment || []).map((x) => ({ label: x.name, count: x.count }));
   const agingItems = ['<1d', '1-3d', '3-7d', '>7d'].map((k) => ({ label: k, count: (d.aging && d.aging[k]) || 0 }));
@@ -542,7 +588,21 @@ function rsRenderBody() {
     { label: 'Emergency', count: emg, color: '#ef4444' },
   ], { centerVal: total, centerLabel: 'requests' });
 
+  // When a manager has drilled into a single branch, show a clear focus pill
+  // with a one-click way back to all branches.
+  let focusNote = '';
+  if (canDrill && radstats.sel && radstats.sel.size === 1) {
+    const only = [...radstats.sel][0];
+    const nm = (radstats.branches.find((b) => b.siteId === only) || {}).name
+      || ((d.byBranch || []).find((b) => b.site === only) || {}).name || ('Branch ' + only);
+    focusNote = `<div class="rs-focus">
+      <span class="rs-focus-dot"></span>Focused on <b>${escapeHtml(nm)}</b>
+      <button class="rs-focus-clear" onclick="rsAllBranches()">✕ Show all branches</button>
+    </div>`;
+  }
+
   const layout = `
+    ${focusNote}
     ${rsSection('Overview')}
     ${kpis}
     <div class="rs-grid2">
@@ -556,7 +616,7 @@ function rsRenderBody() {
     ${rsSection('Breakdown')}
     <div class="rs-grid2">
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
-      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)'), `${branchItems.length} branches`)}
+      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
     </div>
     <div class="rs-grid2">
       ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15')}

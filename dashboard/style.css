@@ -2172,6 +2172,52 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
 
 /* Modality CTA icon */
 .rs-modcta-ic { display:block; color:var(--accent); opacity:.5; margin:0 auto 4px; }
+
+/* ── Interactivity: live tooltip, click-to-drill, hover highlights ─────────── */
+.rs-tip {
+  position:fixed; z-index:4000; pointer-events:none; opacity:0; transform:translateY(3px);
+  transition:opacity .12s ease, transform .12s ease;
+  background:rgba(24,20,48,.96); color:#fff; font-size:12px; line-height:1.45; font-weight:600;
+  padding:8px 11px; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,.28);
+  max-width:240px; white-space:normal;
+}
+.rs-tip.show { opacity:1; transform:translateY(0); }
+.rs-tip b { font-weight:800; }
+
+/* Every bar reacts to hover; branch bars are clickable (drill-down). */
+.rs-bar { border-radius:8px; padding:2px 4px; margin:5px 0; transition:background .15s ease; }
+.rs-bar:hover { background:var(--table-row-hover); }
+.rs-bar:hover .rs-bar-fill { filter:brightness(1.06) saturate(1.1); }
+.rs-bar-click { cursor:pointer; }
+.rs-bar-click:hover { background:rgba(107,78,255,.10); }
+.rs-bar-click:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.rs-bar-go { color:var(--accent); font-weight:800; margin-inline-start:6px; opacity:0; transition:opacity .15s ease; }
+.rs-bar-click:hover .rs-bar-go, .rs-bar-click:focus-visible .rs-bar-go { opacity:1; }
+
+/* Donut segments grow + isolate on hover; legend rows highlight too. */
+.rs-arc { transition:stroke-width .18s ease, opacity .18s ease; cursor:pointer; }
+.rs-donut:hover .rs-arc { opacity:.42; }
+.rs-donut .rs-arc:hover { opacity:1; stroke-width:26; }
+.rs-leg { padding:3px 6px; border-radius:8px; transition:background .15s ease; cursor:default; }
+.rs-leg:hover { background:var(--table-row-hover); }
+
+/* Trend dots: invisible larger hit-area + a dot that pops on hover. */
+.rs-dot-hit { fill:transparent; cursor:pointer; }
+.rs-dot { transition:r .15s ease, stroke-width .15s ease; }
+.rs-dot-hit:hover + .rs-dot { r:5; stroke-width:3; }
+
+/* Manager drill-down focus pill. */
+.rs-focus {
+  display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+  background:linear-gradient(120deg,rgba(107,78,255,.10),rgba(107,78,255,.03));
+  border:1px solid rgba(107,78,255,.28); border-radius:12px;
+  padding:10px 14px; margin-bottom:14px; font-size:13px; font-weight:600; color:var(--text);
+}
+.rs-focus-dot { width:9px; height:9px; border-radius:50%; background:var(--accent);
+  box-shadow:0 0 0 0 rgba(107,78,255,.5); animation:hmPulseDot 1.8s ease-out infinite; }
+.rs-focus-clear { margin-inline-start:auto; border:1.5px solid var(--border); background:var(--card);
+  color:var(--muted); border-radius:8px; padding:5px 11px; font-size:12px; font-weight:700; cursor:pointer; transition:.15s; }
+.rs-focus-clear:hover { border-color:var(--accent); color:var(--accent); }
 .rs-modcta-ic svg { width:34px; height:34px; }
 
 @media (max-width:900px){ .rs-kpis { grid-template-columns:repeat(2,1fr); } .rs-grid2 { grid-template-columns:1fr; } .rs-donut-wrap { justify-content:center; } }
