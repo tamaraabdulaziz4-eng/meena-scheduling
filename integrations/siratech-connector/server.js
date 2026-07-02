@@ -575,21 +575,35 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(r.genPatBillingId), { method: 'GET' });
       return { site, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
     });
+    // Classify each REQUEST (bill) by who pays for its radiology: fully insurance
+    // (patient owes 0), self-pay cash (no sponsor), or insurance + a patient copay.
+    let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqWithRad = 0;
     for (const b of bills) {
       if (!b || !Array.isArray(b.items)) continue;
+      let bPat = 0, bSpo = 0, hasRad = false;
       for (const it of b.items) {
         if (!isRadiologyItem(it.itemName)) continue;
+        hasRad = true;
         const net = Number(it.netAmount) || 0, pat = Number(it.patient) || 0, spo = Number(it.sponsor) || 0;
-        revenue += net; patient += pat; sponsor += spo; items += 1;
+        revenue += net; patient += pat; sponsor += spo; items += 1; bPat += pat; bSpo += spo;
         const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 };
         be.revenue += net; revByBranch.set(b.site, be);
         const mk = friendlyModality(it.itemName);
         const me = revByMod.get(mk) || { modality: mk, revenue: 0 }; me.revenue += net; revByMod.set(mk, me);
       }
+      if (!hasRad) continue;
+      reqWithRad += 1;
+      if (bPat > 0 && bSpo > 0) reqCopay += 1; else if (bPat > 0) reqCash += 1; else reqInsurance += 1;
     }
     const r2 = (n) => Math.round(n * 100) / 100;
     financial = {
       sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length, items,
+      requests: reqWithRad,
+      byPayer: [
+        { type: 'Insurance', count: reqInsurance },
+        { type: 'Cash / self-pay', count: reqCash },
+        { type: 'Insurance + copay', count: reqCopay },
+      ],
       revenue: r2(revenue), patient: r2(patient), sponsor: r2(sponsor),
       byBranch: [...revByBranch.values()].map((e) => ({ site: e.site, name: e.name, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
       byModality: [...revByMod.values()].map((e) => ({ modality: e.modality, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
