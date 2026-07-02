@@ -35,6 +35,17 @@ const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 55 * 60 * 1000);
 // The Result-Entry worklist is scoped to the logged-in user's site (not the
 // order's original siteId), so result lookups use this site. Default 1 (proven).
 const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
+// A verified radiology report is filed as a PDF ATTACHMENT on the result row (the
+// exams here are template-less, so there is no free-text/template result to type —
+// the proven path is: attach the DePACS PDF under the EMR "Report" file-attachment
+// category, mark the row's range, save, authorize). 151472 = the "Report" category
+// id captured live at Alworood (site 2); override per-site with env if it differs.
+const FILE_ATTACHMENT_CATEGORY_ID = Number(process.env.FILE_ATTACHMENT_CATEGORY_ID || 151472);
+// The result "range" classification the row is saved under (clinical call). The
+// live-proven value is 1 (= "Abnormal"); expose it so the caller can set it per
+// report. normal→0, abnormal→1, critical→2 (only 1 is live-verified).
+const DEFAULT_STRING_RANGE = Number(process.env.RESULT_STRING_RANGE || 1);
+const RANGE_NAME_TO_CODE = { normal: 0, abnormal: 1, critical: 2 };
 
 if (!API_TOKEN) {
   console.warn('⚠  CONNECTOR_TOKEN is not set — /patient is UNAUTHENTICATED. Set it in production.');
@@ -432,8 +443,15 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
 }
 
 app.post('/results/file', requireAuth, async (req, res) => {
-  const { file, site, billNo, serviceId, confirm } = req.body || {};
+  const { file, site, billNo, serviceId, confirm, range, authorize } = req.body || {};
   if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
+  // Resolve the clinical range classification the row is saved under.
+  const stringRange = (() => {
+    if (req.body && req.body.stringRange != null && Number.isFinite(Number(req.body.stringRange))) return Number(req.body.stringRange);
+    if (typeof range === 'string' && RANGE_NAME_TO_CODE[range.toLowerCase()] != null) return RANGE_NAME_TO_CODE[range.toLowerCase()];
+    return DEFAULT_STRING_RANGE;
+  })();
+  const doAuthorize = authorize !== false;   // default: also authorize after a good save
   try {
     const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId });
     if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
@@ -451,48 +469,118 @@ app.post('/results/file', requireAuth, async (req, res) => {
       template: plan.template,                                  // the test's result template (structure)
     };
 
+    // The DePACS report MUST be a real PDF — that is the artifact we file. Refuse to
+    // write anything if the PDF didn't come back (never file an empty attachment).
+    if (!rep.pdfOk || !rep.pdfBase64) {
+      return res.json({ ok: true, wrote: false, step: 'report', plan: planOut,
+        note: 'DePACS did not return a valid report PDF — refusing to file.' });
+    }
+
+    // ── Build the EXACT SaveRadiologyResultEntry payload (matches the live capture) ─
+    // The result row carries no template/free-text result; the report rides along as
+    // a base64 PDF in the selected row's genFileAttachments[0]. Everything else is
+    // the RadiologyDetails rows echoed back, with only the target row's range,
+    // attachment and selection flags set.
+    // RadiologyDetails returns a FLATTER row than the save DTO expects — the SPA
+    // enriches each row with empty child collections before posting. Replicate that
+    // so the server-side model binds cleanly (a missing array can bind to null and
+    // trip validation). Captured live: all of these are [] on a fresh result row.
+    const CHILD_ARRAYS = ['invPatMastCultureResult', 'invPatDtlsCultResults', 'scanDtlsFiles',
+      'scanMastFiles', 'genFileAttachments', 'invPatTemplResults', 'invPatTemplResultHeads', 'invPatTemplResultTests'];
+    const details = plan.details.map((d) => {
+      const row = { ...d };
+      for (const k of CHILD_ARRAYS) if (!Array.isArray(row[k])) row[k] = [];
+      return row;
+    });
+    const tgt = details.find((d) => d.invPatTestResultId === plan.target.invPatTestResultId
+      && String(d.inv_mast_service_id) === String(plan.target.inv_mast_service_id)) || details[0];
+    details.forEach((d) => { d.isSelected = d === tgt; });
+
+    // auditUser is the padded 8-digit employee code the SPA sends (e.g. "00101454").
+    const auditUser = String(HIS_USER).padStart(8, '0');
+    // The attachment's `site` label is the branch short name (display only).
+    const branchName = await getSites().then((s) => (s.find((x) => x.siteId === plan.site) || {}).shortName || plan.searchRow.site || '').catch(() => plan.searchRow.site || '');
+    const nowIso = new Date().toISOString();
+    const attachment = {
+      fileName: 'report.pdf', site: branchName, filePath: '', file: '',
+      fileAttachmentCategoryId: FILE_ATTACHMENT_CATEGORY_ID, fileAttachmentSubCategoryId: null,
+      isLoading: true, resultType: 'pdf', objectState: 1,
+      attachedfile: rep.pdfBase64, auditDate: null, attachedFile: rep.pdfBase64,
+      genFileAttachmentsId: -1, mrno: String(tgt.mrno),
+      serviceId: String(tgt.inv_mast_service_id), invPatTestResultId: tgt.invPatTestResultId,
+      hospitalId: plan.site, genPatBillingId: tgt.genPatBillingId, entryDate: nowIso,
+    };
+    tgt.result = null;
+    tgt.isTemplateResultEntered = 0;
+    tgt.stringRange = stringRange;
+    tgt.isfileAttachmentExists = 1;
+    tgt.genFileAttachments = [attachment];
+
+    const td = {
+      resultEntryDetailsResponse: details,
+      resultEntrySearchResponses: [plan.searchRow],
+      auditUser, auditDate: nowIso, hospitalId: plan.site,
+      isResultCancellation: false, sampleCollResultEntrySelection: 1,
+      searchTypeResultAuthorizationValue: 0, blnBloodType: false,
+    };
+
     if (!confirm) {
+      // DRY-RUN — show the caller the exact write we WOULD post (PDF elided), so a
+      // human can verify the target row, range and attachment before committing.
+      const previewTd = { ...td, resultEntryDetailsResponse: details.map((d) => ({
+        serviceName: d.serviceName, inv_mast_service_id: d.inv_mast_service_id,
+        invPatTestResultId: d.invPatTestResultId, isSelected: d.isSelected, stringRange: d.stringRange,
+        genFileAttachments: (d.genFileAttachments || []).map((a) => ({ ...a, attachedfile: `<pdf ${rep.pdfBytes}b>`, attachedFile: `<pdf ${rep.pdfBytes}b>` })),
+      })) };
       return res.json({ ok: true, wrote: false, dryRun: true, plan: planOut,
-        note: 'DRY-RUN — nothing was written. Re-send with confirm:true to file + authorize.' });
+        stringRange, willAuthorize: doAuthorize, payloadPreview: previewTd,
+        note: 'DRY-RUN — nothing was written. Re-send with confirm:true to file' + (doAuthorize ? ' + authorize.' : ' (authorize:false → save only).') });
     }
 
     // ── confirm:true → attempt the real write (server-side validated) ──────────
     // SAVE first; only AUTHORIZE if the save clearly succeeded. A rejected save is
     // harmless (HIS validates the payload) and we surface its message.
-    const details = plan.details.map((d) => ({ ...d }));
-    const tgt = details.find((d) => d.invPatTestResultId === plan.target.invPatTestResultId) || details[0];
-    details.forEach((d) => { d.isSelected = d === tgt; });
-    tgt.result = rep.reportText || '';
-    tgt.isTemplateResultEntered = 0;
-    const nowIso = new Date().toISOString();
-    const td = {
-      resultEntryDetailsResponse: details,
-      resultEntrySearchResponses: [plan.searchRow],
-      auditUser: plan.empId, auditDate: nowIso, hospitalId: plan.site,
-      isResultCancellation: false, sampleCollResultEntrySelection: 1,
-      searchTypeResultAuthorizationValue: 0, blnBloodType: false,
-    };
     const saveRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultEntry', { body: td });
     const sData = saveRes.json && saveRes.json.data;
     const sRow = Array.isArray(sData) ? sData[0] : sData;
-    const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(sRow.meassge && /enter template|attach/i.test(sRow.meassge));
+    const saveMsg = sRow && (sRow.meassge || sRow.message);
+    const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(saveMsg && /enter template|select .*range|attach/i.test(saveMsg));
     if (!saveOk) {
       return res.json({ ok: true, wrote: false, step: 'save', saveStatus: saveRes.status,
         saveResponse: saveRes.json || String(saveRes.text || '').slice(0, 600), plan: planOut,
         note: 'SAVE did not succeed — nothing was authorized.' });
     }
+    if (!doAuthorize) {
+      return res.json({ ok: true, wrote: true, authorized: false, plan: planOut, stringRange,
+        save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
+        note: 'Result FILED (PDF attached). authorize:false — left pending authorization.' });
+    }
+
+    // ── AUTHORIZE (1st level) ──────────────────────────────────────────────────
+    // Re-use the saved rows (they now carry the server-assigned invPatTestResultId)
+    // and flip the target to authorized. sampleCollResultEntrySelection:2 = the
+    // authorization action. HIS validates this server-side and returns a message.
+    const savedRows = (Array.isArray(sData) ? sData : (sData ? [sData] : details)).map((d) => ({ ...d }));
+    const authTgt = savedRows.find((d) => String(d.inv_mast_service_id) === String(tgt.inv_mast_service_id)) || savedRows[0];
+    savedRows.forEach((d) => { d.isSelected = d === authTgt; });
+    if (authTgt) { authTgt.authorizationstatus = '1'; authTgt.tempAuthStatus = 1; }
     const Ka = {
-      resultEntryDetailsResponse: (saveRes.json && saveRes.json.data) || details,
+      resultEntryDetailsResponse: savedRows,
       resultEntrySearchResponses: [plan.searchRow],
-      auditUser: plan.empId, auditDate: new Date().toISOString(), hospitalId: plan.site,
+      auditUser, auditDate: new Date().toISOString(), hospitalId: plan.site,
       isResultCancellation: false, sampleCollResultEntrySelection: 2,
-      searchTypeResultAuthorizationValue: (plan.searchRow.baseCategory === 1 ? 0 : 1), blnBloodType: false,
+      searchTypeResultAuthorizationValue: 0, blnBloodType: false,
     };
     const authRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultAuthorization', { body: Ka });
-    const aRow = authRes.json && authRes.json.data && (Array.isArray(authRes.json.data) ? authRes.json.data[0] : authRes.json.data);
-    return res.json({ ok: true, wrote: true, plan: planOut,
-      save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: sRow.meassge || sRow.message || null },
-      authorize: { status: authRes.status, isSuccess: aRow ? aRow.isSuccess : null, message: aRow ? (aRow.meassge || aRow.message) : null, raw: authRes.json || String(authRes.text || '').slice(0, 400) } });
+    const aData = authRes.json && authRes.json.data;
+    const aRow = aData && (Array.isArray(aData) ? aData[0] : aData);
+    const authMsg = aRow ? (aRow.meassge || aRow.message) : null;
+    const authOk = authRes.status === 200 && aRow && aRow.isSuccess !== false && !(authMsg && /no record|select|fail/i.test(authMsg));
+    return res.json({ ok: true, wrote: true, authorized: !!authOk, plan: planOut, stringRange,
+      save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
+      authorize: { status: authRes.status, isSuccess: aRow ? aRow.isSuccess : null, message: authMsg,
+        raw: authOk ? undefined : (authRes.json || String(authRes.text || '').slice(0, 400)) },
+      note: authOk ? 'Result FILED + AUTHORIZED.' : 'Result FILED, but authorization was not confirmed by HIS — verify/authorize in the UI.' });
   } catch (e) {
     return res.status(502).json({ ok: false, wrote: false, error: String(e.message || e) });
   }
