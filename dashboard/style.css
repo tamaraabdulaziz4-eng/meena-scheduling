@@ -2037,3 +2037,62 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
 @media (max-width:900px){ .rs-kpis { grid-template-columns:repeat(2,1fr); } .rs-grid { grid-template-columns:1fr; } .rs-bar-label { width:110px; flex-basis:110px; } }
 .rs-modcta { text-align:center; padding:14px 6px; }
 .rs-modcta p { font-size:12px; color:var(--muted); margin:0 0 12px; line-height:1.5; }
+.rs-branches { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+.rs-branches-lbl { font-size:11.5px; font-weight:700; color:var(--muted); margin-inline-end:4px; }
+.rs-bchip { border:1.5px solid var(--border); background:var(--card); color:var(--muted); border-radius:8px;
+  padding:5px 10px; font-size:11.5px; font-weight:600; cursor:pointer; transition:.15s; }
+.rs-bchip:hover { border-color:var(--accent); color:var(--accent); }
+.rs-bchip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+.rs-bchip.rs-ball { font-weight:800; }
+
+/* ── Radiology stats — upgraded UI ────────────────────────────────────────── */
+.rs-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+.rs-wide { margin-bottom:14px; }
+.rs-skel { min-height:220px; display:grid; place-items:center; }
+
+/* KPI cards with icon */
+.rs-kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:14px; }
+.rs-kpi { display:flex; align-items:center; gap:12px; text-align:left;
+  background:var(--card); border:1px solid var(--border); border-radius:14px; padding:15px 16px;
+  box-shadow:0 2px 10px rgba(38,30,79,.05); }
+.rs-kpi-ic { flex:0 0 40px; width:40px; height:40px; border-radius:11px; display:grid; place-items:center;
+  background:rgba(107,78,255,.12); color:var(--accent); }
+.rs-kpi-ic svg { width:20px; height:20px; }
+.rs-kpi-n { font-size:26px; font-weight:800; color:var(--primary); line-height:1; }
+.rs-kpi-l { font-size:11.5px; font-weight:600; color:var(--muted); margin-top:4px; }
+.rs-kpi-sub { font-weight:800; color:var(--accent); }
+.rs-kpi-red .rs-kpi-ic { background:rgba(239,68,68,.12); color:#ef4444; }
+.rs-kpi-red .rs-kpi-sub { color:#ef4444; }
+.rs-kpi-warn .rs-kpi-ic { background:rgba(239,68,68,.12); color:#ef4444; }
+.rs-kpi-warn .rs-kpi-n { color:#ef4444; }
+.rs-fail { color:#ef4444; font-weight:700; }
+
+/* Donut */
+.rs-donut-wrap { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+.rs-donut { width:140px; height:140px; flex:0 0 140px; }
+.rs-donut circle { transition:stroke-dashoffset .5s ease; }
+.rs-donut-n { font-size:26px; font-weight:800; fill:var(--primary); }
+.rs-donut-l { font-size:10px; font-weight:600; fill:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+.rs-legend { flex:1; min-width:150px; display:flex; flex-direction:column; gap:7px; }
+.rs-leg { display:flex; align-items:center; gap:8px; font-size:12px; }
+.rs-leg-dot { width:11px; height:11px; border-radius:3px; flex:0 0 11px; }
+.rs-leg-l { flex:1; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rs-leg-v { font-weight:700; color:var(--primary); font-variant-numeric:tabular-nums; }
+
+/* Area/line trend */
+.rs-area { width:100%; height:auto; display:block; }
+.rs-line { fill:none; stroke:var(--accent); stroke-width:2.4; stroke-linejoin:round; stroke-linecap:round; }
+.rs-grid { stroke:var(--border); stroke-width:1; stroke-dasharray:3 4; opacity:.6; }
+.rs-axis { font-size:9px; fill:var(--muted); }
+.rs-dot { fill:#fff; stroke:var(--accent); stroke-width:2; }
+
+/* Bars with share */
+.rs-bars { display:flex; flex-direction:column; gap:2px; }
+.rs-bar-share { font-size:10.5px; font-weight:600; color:var(--muted); margin-inline-start:6px; }
+.rs-bar-val { min-width:74px; flex-basis:74px; }
+
+/* Modality CTA icon */
+.rs-modcta-ic { display:block; color:var(--accent); opacity:.5; margin:0 auto 4px; }
+.rs-modcta-ic svg { width:34px; height:34px; }
+
+@media (max-width:900px){ .rs-kpis { grid-template-columns:repeat(2,1fr); } .rs-grid2 { grid-template-columns:1fr; } .rs-donut-wrap { justify-content:center; } }
