@@ -110,11 +110,6 @@ async function initApp() {
   // A staff member can still reach the Leave page (their own requests only).
   const leavesNav = document.getElementById('nav-leaves');
   if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
-  // Daily Cases: managers/leads view; staff (night/eligible) fill.
-  // Daily Cases = the OLD manual radiology-count entry, superseded by the live
-  // Radiology Stats page. Hidden from the menu (data/page kept, just not surfaced).
-  const casesNav = document.getElementById('nav-cases');
-  if (casesNav) casesNav.style.display = 'none';
   // Downtime registration: every working staff member can log a patient.
   const downtimeNav = document.getElementById('nav-downtime');
   if (downtimeNav) downtimeNav.style.display = (role === 'viewer') ? 'none' : 'flex';
@@ -169,7 +164,7 @@ function resolvePage(page) {
     return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'schedule'   && role === 'staff')  return 'myschedule';
   if (page === 'nest-config')                     return 'schedule';
-  if (['swaps','cases'].includes(page) && role === 'viewer') return 'schedule';
+  if (page === 'swaps' && role === 'viewer') return 'schedule';
   // Branches, shift types, and the audit log are full-admin (superadmin) tools —
   // the backend rejects everyone else, so the route guard must match (a team lead
   // reaching them via a stale link would otherwise see a page that then 403s).
@@ -201,7 +196,6 @@ async function renderRoute(page) {
                        // Staff list (for the request modal) loads in the background.
                        if (!allStaff || !allStaff.length) loadStaff().catch(()=>{});
                        break;
-    case 'cases':      renderCasesPage(); break;
     case 'inventory':  await renderInventoryPage(); break;
     case 'equipment':  await renderEquipmentPage(); break;
     case 'downtime':   await renderDowntimePage(); break;
@@ -228,7 +222,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','cases','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','radstats','branches','shifts','users','audit']);
+  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','radstats','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;

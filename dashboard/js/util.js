@@ -378,7 +378,7 @@ function pageHero(eyebrow, title, sub = '') {
 
 // ── Branded PDF report canvas ─────────────────────────────────────────────────
 // Builds the polished "dashboard report" look (logo chip + title) shared by the
-// Daily Cases and Schedule PDF exports. openReport() drops the built markup into
+// Reports and Schedule PDF exports. openReport() drops the built markup into
 // #report-root, flips the body into report-print mode, prints, then restores.
 function reportHeader(title, sub) {
   return `

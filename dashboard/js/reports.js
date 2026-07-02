@@ -1,8 +1,9 @@
 // ── Reports (team lead: own branch · manager: any/all) ────────────────────────
-// Three tabs: Cases trends, Fairness (load distribution), and the equipment-check
-// (QC) log for accreditation.
+// Tabs: Patient report, Fairness (load distribution), the equipment-check (QC)
+// log for accreditation, and licence expiry. Live radiology case trends now live
+// on the Radiology Stats page (pulled straight from the HIS).
 
-let reportsTab = 'cases';
+let reportsTab = 'lookup';
 let reportsYear = new Date().getFullYear();
 let reportsMonth = new Date().getMonth() + 1;
 let reportsBranch = '';   // '' = all (manager only)
@@ -10,13 +11,13 @@ let reportsBranch = '';   // '' = all (manager only)
 function _repIsReviewer() { return ['manager', 'superadmin'].includes(currentUser?.role); }
 
 async function renderReportsPage() {
-  setTopbar('Reports', 'Cases, fairness & equipment-check log');
+  setTopbar('Reports', 'Fairness & equipment-check log');
   // A team lead is pinned to their branch; a manager can pick.
   if (!_repIsReviewer()) reportsBranch = String(currentUser?.branch_id || '');
   const c = document.getElementById('content');
-  const tabs = [['lookup', 'Patient report'], ['cases', 'Cases trends'], ['fairness', 'Fairness'], ['qc', 'Equipment QC log'], ['credentials', 'Licenses & expiry']];
+  const tabs = [['lookup', 'Patient report'], ['fairness', 'Fairness'], ['qc', 'Equipment QC log'], ['credentials', 'Licenses & expiry']];
   c.innerHTML = `
-    ${pageHero('Reports', 'Reports', 'Track cases, balance the load, and keep an audit-ready check log')}
+    ${pageHero('Reports', 'Reports', 'Balance the load and keep an audit-ready check log')}
     <div class="rep-toolbar">
       <div class="seg" id="rep-tabs">${tabs.map(([v, l]) =>
         `<button data-t="${v}" class="${v === reportsTab ? 'on' : ''}">${l}</button>`).join('')}</div>
@@ -56,7 +57,7 @@ function repChangeMonth(d) {
 }
 
 function _repRange() {
-  // Cases/QC use the selected month as the range.
+  // QC uses the selected month as the range.
   const last = new Date(reportsYear, reportsMonth, 0).getDate();
   const mm = String(reportsMonth).padStart(2, '0');
   return [`${reportsYear}-${mm}-01`, `${reportsYear}-${mm}-${String(last).padStart(2, '0')}`];
@@ -66,61 +67,16 @@ async function loadReportBody() {
   const ctrl = document.getElementById('rep-controls');
   const body = document.getElementById('rep-body');
   if (!body) return;
-  if (ctrl) ctrl.innerHTML = (reportsTab === 'cases' || reportsTab === 'qc') ? _repMonthNav() : '';
+  if (ctrl) ctrl.innerHTML = (reportsTab === 'qc') ? _repMonthNav() : '';
   body.innerHTML = LOADING_HTML;
   try {
     if (reportsTab === 'lookup') return await loadReportLookup(body);
-    if (reportsTab === 'cases') return await loadCasesReport(body);
     if (reportsTab === 'fairness') return await loadFairnessReport(body);
     if (reportsTab === 'qc') return await loadQcReport(body);
     if (reportsTab === 'credentials') return await loadCredentialsReport(body);
   } catch (e) {
     body.innerHTML = `<div class="empty"><p>${escapeHtml(e.message || 'Failed to load')}</p></div>`;
   }
-}
-
-// ── Cases trends ──────────────────────────────────────────────────────────────
-async function loadCasesReport(body) {
-  const [from, to] = _repRange();
-  const qs = `from=${from}&to=${to}${reportsBranch ? `&branch_id=${reportsBranch}` : ''}`;
-  const d = await API.get(`/reports/cases?${qs}`);
-  const t = d.totals || {};
-  const kpi = (label, val, alt) => `<div class="rep-stat${alt ? ' alt' : ''}">
-      <div class="rep-stat-val">${(val ?? 0).toLocaleString()}</div><div class="rep-stat-lbl">${label}</div></div>`;
-  const series = d.series || [];
-  const maxv = Math.max(1, ...series.map(s => s.total_cases));
-  const avg = series.length ? Math.round(series.reduce((a, s) => a + s.total_cases, 0) / series.length) : 0;
-  const showTick = series.length <= 16 ? 1 : (series.length <= 24 ? 5 : 7);
-  const bars = series.map(s => {
-    const h = Math.round((s.total_cases / maxv) * 100);
-    const day = Number(String(s.date).slice(8, 10));
-    const dow = new Date(s.date).getDay();          // 5 = Friday (KSA weekend)
-    const wknd = (dow === 5 || dow === 6) ? ' wknd' : '';
-    return `<div class="rep-bar-col" title="${s.date} · ${s.total_cases} cases">
-        <div class="rep-bar${wknd}" style="height:${h}%"></div></div>`;
-  }).join('');
-  const ticks = series.map((s, i) => {
-    const day = Number(String(s.date).slice(8, 10));
-    return `<div class="rep-xtick">${(i % showTick === 0) ? day : ''}</div>`;
-  }).join('');
-  body.innerHTML = `
-    <div class="rep-stat-grid">
-      ${kpi('Total cases', t.total_cases)}${kpi('Patients', t.total_pt)}
-      ${kpi('X-Ray', t.xray)}${kpi('CT', t.ct)}${kpi('Ultrasound', t.us)}${kpi('Mammo', t.mamo)}${kpi('BMD', t.bmd)}${kpi('CDs burned', t.insert_cd, true)}
-    </div>
-    <div class="rep-card">
-      <div class="rep-card-head">
-        <div class="rep-card-title">Daily cases — ${monthLabel(reportsYear, reportsMonth)}</div>
-        <div style="font-size:12px;color:var(--muted)">Peak <b style="color:var(--primary)">${maxv}</b> · Avg <b style="color:var(--primary)">${avg}</b>/day</div>
-      </div>
-      ${series.length ? `<div class="rep-chart">${bars}</div><div class="rep-xaxis">${ticks}</div>
-        <div class="rep-chart-foot"><span>Purple = weekday · light = weekend</span><span>${d.rows || 0} days with data</span></div>`
-        : `<div class="rep-empty">No cases recorded this month.</div>`}
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
-      <span class="rep-pill rep-pill-amber">BMD not done: ${t.bmd_not_done || 0}</span>
-      <span class="rep-pill rep-pill-amber">Mammo not done: ${t.mamo_not_done || 0}</span>
-    </div>`;
 }
 
 // ── Fairness ──────────────────────────────────────────────────────────────────

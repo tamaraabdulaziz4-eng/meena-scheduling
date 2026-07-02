@@ -351,9 +351,6 @@
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span> Announcements
         <span id="announcements-badge" style="display:none;margin-left:auto;background:#E25555;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px"></span>
       </button>
-      <button class="nav-item" id="nav-cases" onclick="showPage('cases')" style="display:none">
-        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/></svg></span> Daily Cases
-      </button>
       <button class="nav-item" id="nav-downtime" onclick="showPage('downtime')">
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><line x1="12" y1="2" x2="12" y2="12"/></svg></span> Downtime
       </button>
@@ -529,12 +526,6 @@
             This controls which section the staff member belongs to for schedule generation.
           </div>
         </div>
-        <div class="form-field">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="staff-can-report" style="width:auto">
-            Can file the daily cases report (besides night-shift staff)
-          </label>
-        </div>
         <div style="font-size:12px;color:var(--muted);line-height:1.5">
           Monthly limits (min/max shifts, max consecutive) are managed from the
           <strong style="color:var(--text)">Schedule → Settings</strong> modal.
@@ -658,17 +649,6 @@
           <div class="msg" id="cutoff-msg" style="margin-top:6px"></div>
         </div>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
-          <label>Daily-cases auto reminder</label>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <select id="cases-remind-hour" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--card-alt);color:var(--text)">
-              <option value="off">Off</option>
-            </select>
-            <button class="btn btn-ghost btn-sm" onclick="saveCasesRemindHour()">Save</button>
-            <span style="font-size:11px;color:var(--muted)">Auto-remind branches that haven't submitted (KSA time).</span>
-          </div>
-          <div class="msg" id="remind-hour-msg" style="margin-top:6px"></div>
-        </div>
-        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
           <label>Self-registration links</label>
           <div id="reg-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">Loading…</div>
           <div id="reg-links">
@@ -732,42 +712,6 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeHolidaysModal()">Close</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── Daily Cases Modal ── -->
-<div class="modal-overlay" id="case-modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3 id="case-modal-title">Daily Cases</h3>
-      <button class="modal-close" onclick="closeCaseModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div style="display:flex;flex-direction:column;gap:12px">
-        <div class="case-grid">
-          <label>X-RAY<input type="number" min="0" id="case-xray" oninput="updateCaseTotal()"></label>
-          <label>CT<input type="number" min="0" id="case-ct" oninput="updateCaseTotal()"></label>
-          <label>US<input type="number" min="0" id="case-us" oninput="updateCaseTotal()"></label>
-          <label>MAMO<input type="number" min="0" id="case-mamo" oninput="updateCaseTotal()"></label>
-          <label>BMD<input type="number" min="0" id="case-bmd" oninput="updateCaseTotal()"></label>
-          <label>INSERT CD<input type="number" min="0" id="case-insert_cd" oninput="updateCaseTotal()"></label>
-        </div>
-        <div class="case-total-row">Total cases: <b id="case-total">0</b></div>
-        <div class="case-grid">
-          <label>Total patients<input type="number" min="0" id="case-total_pt"></label>
-          <label>BMD not done<input type="number" min="0" id="case-bmd_not_done"></label>
-          <label>MAMO not done<input type="number" min="0" id="case-mamo_not_done"></label>
-        </div>
-        <div id="case-locked-note" class="msg" style="display:none">🔒 Submitted &amp; locked — ask a manager to reopen to edit.</div>
-        <div class="msg" id="case-msg"></div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost btn-sm" onclick="closeCaseModal()">Close</button>
-      <button class="btn btn-ghost btn-sm" id="case-reopen-btn" style="display:none" onclick="reopenCase()">🔓 Reopen</button>
-      <button class="btn btn-ghost btn-sm" id="case-save-btn" onclick="saveCase(false)">Save draft</button>
-      <button class="btn btn-sm" id="case-submit-btn" onclick="saveCase(true)">Submit &amp; lock</button>
     </div>
   </div>
 </div>
@@ -1082,20 +1026,19 @@
 <script src="/js/util.js?v=20260625a"></script>
 <script src="/js/branches.js?v=20260625a"></script>
 <script src="/js/users.js?v=20260625a"></script>
-<script src="/js/staff.js?v=20260625a"></script>
+<script src="/js/staff.js?v=20260702m"></script>
 <script src="/js/leaves.js?v=20260625a"></script>
 <script src="/js/swaps.js?v=20260625a"></script>
-<script src="/js/holidays.js?v=20260625a"></script>
+<script src="/js/holidays.js?v=20260702m"></script>
 <script src="/js/notifications.js?v=20260625a"></script>
 <script src="/js/push.js?v=20260625a"></script>
 <script src="/js/portal.js?v=20260625a"></script>
-<script src="/js/cases.js?v=20260625a"></script>
 <script src="/js/downtime.js?v=20260625a"></script>
 <script src="/js/inventory.js?v=20260625a"></script>
 <script src="/js/equipment.js?v=20260625a"></script>
 <script src="/js/messages.js?v=20260625a"></script>
 <script src="/js/tickets.js?v=20260625a"></script>
-<script src="/js/reports.js?v=20260625a"></script>
+<script src="/js/reports.js?v=20260702m"></script>
 <script src="/js/handoff.js?v=20260702g"></script>
 <script src="/js/radstats.js?v=20260702l"></script>
 <script src="/js/announcements.js?v=20260625a"></script>
@@ -1105,6 +1048,6 @@
 <script src="/js/review.js?v=20260625a"></script>
 <script src="/js/export.js?v=20260625a"></script>
 <script src="/js/audit.js?v=20260625a"></script>
-<script src="/js/main.js?v=20260702f"></script>
+<script src="/js/main.js?v=20260702m"></script>
 </body>
 </html>
