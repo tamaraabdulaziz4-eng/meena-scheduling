@@ -21,8 +21,6 @@ async function openHolidaysModal() {
   document.getElementById('cutoff-msg').textContent = '';
   const ci = document.getElementById('leave-cutoff-input');
   if (ci) ci.value = (typeof leaveCutoffDay !== 'undefined' ? leaveCutoffDay : 15);
-  document.getElementById('remind-hour-msg').textContent = '';
-  loadCasesRemindHour();
   loadRegistrationLink();
   document.getElementById('holidays-modal-overlay').classList.add('open');
   loadEmailConfig();
@@ -67,36 +65,6 @@ function copyRegLink(role = 'staff') {
   navigator.clipboard?.writeText(link.value).then(
     () => toast(`${label} link copied`),
     () => { link.select(); document.execCommand('copy'); toast(`${label} link copied`); });
-}
-
-async function loadCasesRemindHour() {
-  const sel = document.getElementById('cases-remind-hour');
-  if (!sel) return;
-  // Build the hour options once (Off + 00:00..23:00).
-  if (sel.options.length <= 1) {
-    for (let h = 0; h < 24; h++) {
-      const o = document.createElement('option');
-      o.value = String(h);
-      o.textContent = `${String(h).padStart(2, '0')}:00`;
-      sel.appendChild(o);
-    }
-  }
-  try {
-    const s = await API.get('/settings');
-    sel.value = (s.cases_remind_hour === undefined || s.cases_remind_hour === 'off')
-      ? 'off' : String(parseInt(s.cases_remind_hour, 10));
-  } catch (e) { sel.value = 'off'; }
-}
-
-async function saveCasesRemindHour() {
-  const msg = document.getElementById('remind-hour-msg');
-  const v = document.getElementById('cases-remind-hour').value;
-  try {
-    const r = await API.put('/settings', { cases_remind_hour: v });
-    msg.className = 'msg'; msg.textContent = '';
-    toast(r.cases_remind_hour === 'off' ? 'Auto reminder turned off'
-                                        : `Auto reminder set to ${String(r.cases_remind_hour).padStart(2,'0')}:00`);
-  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
 
 async function loadEmailConfig() {
