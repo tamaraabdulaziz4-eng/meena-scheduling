@@ -6512,6 +6512,8 @@ def public_reports_lookup(request: Request):
     studies = [{
         "study_id": s.get("study_id"),
         "pat_name": _elite_name(s.get("pat_name")),
+        "pat_id": s.get("pat_id"), "pat_sex": s.get("pat_sex"),
+        "pat_birthdate": s.get("pat_birthdate"),
         "modality": s.get("modality"),
         "study_date": s.get("study_date"),
         "status": s.get("study_status"),
@@ -6529,6 +6531,7 @@ def public_reports_study(study_id: int, request: Request):
     b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
     return {"study_id": b.get("study_id"),
             "pat_name": _elite_name(b.get("pat_name")),
+            "pat_id": b.get("pat_id"), "pat_age": b.get("pat_age"), "pat_sex": b.get("pat_sex"),
             "modality": b.get("modality"), "study_date": b.get("study_date"),
             "study_desc": b.get("study_desc"),
             "report_text": _report_html_to_text(b.get("report_content") or ""),
