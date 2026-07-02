@@ -391,7 +391,22 @@ app.get('/search', requireAuth, async (req, res) => {
 
 const STATS_SITES = (process.env.STATS_SITES || '1,2,3,4,5,6,7,8,9,10,11,12,13,14')
   .split(',').map((s) => Number(String(s).trim())).filter((n) => Number.isFinite(n));
-const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 7);
+const STATS_SITE_CONCURRENCY = Number(process.env.STATS_SITE_CONCURRENCY || 12);
+// Short result cache so re-opens / auto-refresh / the daily job don't re-run the
+// full 14-branch fan-out every time (the data is live but doesn't change second
+// to second). Keyed by the query; ~45s TTL.
+const STATS_CACHE_TTL = Number(process.env.STATS_CACHE_TTL_MS || 45000);
+const statsCache = new Map();
+function statsCacheGet(key) {
+  const e = statsCache.get(key);
+  if (e && Date.now() - e.ts < STATS_CACHE_TTL) return e.data;
+  if (e) statsCache.delete(key);
+  return null;
+}
+function statsCacheSet(key, data) {
+  statsCache.set(key, { data, ts: Date.now() });
+  if (statsCache.size > 60) statsCache.delete(statsCache.keys().next().value);  // simple bound
+}
 // Modality isn't on the worklist row (departmentName is the *ordering* clinic,
 // not the imaging modality), so an exact mix needs a per-order RadiologyDetails
 // call. That's opt-in (?modality=1) and bounded — we sample the most recent N
@@ -457,6 +472,9 @@ function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unkn
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
 
 async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, topDoctors = 15 }) {
+  const cacheKey = JSON.stringify({ from, to, sites: (sites || []).slice().sort((a, b) => a - b), withModality, withFinance });
+  const cached = statsCacheGet(cacheKey);
+  if (cached) return cached;
   await getToken();
   const empId = currentEmpId() || '0';
   const today = new Date();
@@ -578,7 +596,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     };
   }
 
-  return {
+  const result = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, returned, failed },
     branches: siteList,
@@ -594,6 +612,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     generatedAt: new Date().toISOString(),
     note: 'Requests = billed radiology orders in the RIS worklist (awaiting result). Paid/unpaid collection split is added from the billing report.',
   };
+  statsCacheSet(cacheKey, result);
+  return result;
 }
 
 app.get('/stats/branches', requireAuth, async (_req, res) => {

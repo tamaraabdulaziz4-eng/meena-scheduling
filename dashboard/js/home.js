@@ -42,6 +42,7 @@ async function renderHomePage() {
     </div>
     <div id="hm-eotm"></div>
     <div id="hm-actions" class="hm-actions"></div>
+    <div id="hm-radstats"></div>
     <div id="hm-approvals"></div>
     <div id="hm-credentials"></div>
     <div id="hm-onduty"></div>
@@ -53,7 +54,7 @@ async function renderHomePage() {
   renderHomeEotm();
   renderHomeOnDuty();
   renderHomeShiftChecks();
-  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) { renderHomeApprovals(); renderHomeCredentials(); }
+  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) { renderHomeApprovals(); renderHomeCredentials(); renderHomeRadstats(); }
   renderHomeRecent();
   _bindHomeSearchShortcut();
 
@@ -171,6 +172,36 @@ async function renderHomeCredentials() {
       <button class="action-btn" onclick="showPage('reports')">Manage →</button>
     </div>
     <div style="margin-top:6px">${rows}</div></div>`;
+}
+
+// Radiology snapshot on Home (managers/admins). Uses a short 7-day window so it's
+// quick, and the connector caches it — it opens instantly if the full page was
+// visited recently. Renders itself when its own request lands; never blocks Home.
+async function renderHomeRadstats() {
+  const box = document.getElementById('hm-radstats');
+  if (!box) return;
+  box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Radiology — last 7 days</div></div>
+    <div class="rs-loadnote" style="margin:8px 0 0"><span class="mini-spin"></span> Loading…</div></div>`;
+  const f = (dt) => dt.toISOString().slice(0, 10);
+  const to = new Date(), from = new Date(Date.now() - 6 * 864e5);
+  let d;
+  try { d = await API.get(`/radiology/stats?from=${f(from)}&to=${f(to)}`); } catch (e) { box.innerHTML = ''; return; }
+  if (!d || !d.ok) { box.innerHTML = ''; return; }
+  const total = d.total || 0, emg = (d.priority && d.priority.emergency) || 0;
+  const aged = (d.aging && d.aging['>7d']) || 0;
+  const top = (d.byBranch || []).filter(b => b.count > 0)[0];
+  const kpi = (n, l, cls) => `<div class="hm-rad-kpi${cls ? ' ' + cls : ''}"><b>${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
+  box.innerHTML = `<div class="hm-card">
+    <div class="hm-card-head">
+      <div class="hm-card-title">Radiology — last 7 days</div>
+      <button class="action-btn" onclick="showPage('radstats')">Open →</button>
+    </div>
+    <div class="hm-rad-kpis">
+      ${kpi(total, 'requests')}
+      ${kpi(emg, 'emergency')}
+      ${kpi(aged, 'pending &gt;7d', aged ? 'warn' : '')}
+      <div class="hm-rad-kpi"><b style="font-size:15px">${top ? escapeHtml(top.name || ('Branch ' + top.site)) : '—'}</b><span>busiest branch</span></div>
+    </div></div>`;
 }
 
 async function homeApproveLeave(ids) {

@@ -111,8 +111,10 @@ async function initApp() {
   const leavesNav = document.getElementById('nav-leaves');
   if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Daily Cases: managers/leads view; staff (night/eligible) fill.
+  // Daily Cases = the OLD manual radiology-count entry, superseded by the live
+  // Radiology Stats page. Hidden from the menu (data/page kept, just not surfaced).
   const casesNav = document.getElementById('nav-cases');
-  if (casesNav) casesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
+  if (casesNav) casesNav.style.display = 'none';
   // Downtime registration: every working staff member can log a patient.
   const downtimeNav = document.getElementById('nav-downtime');
   if (downtimeNav) downtimeNav.style.display = (role === 'viewer') ? 'none' : 'flex';
