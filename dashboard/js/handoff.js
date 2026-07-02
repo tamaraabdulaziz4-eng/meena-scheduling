@@ -396,10 +396,13 @@ function hoStep4(b) {
     <div class="card">
       <div class="ho-msg-head">
         <div class="ho-step-title"><span class="ho-step-num">4</span> WhatsApp message</div>
-        <button class="btn btn-sm btn-primary" onclick="handoffCopy(this)">📋 Copy</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm btn-ghost" onclick="handoffCopy(this)">Copy</button>
+          <button class="btn btn-sm btn-primary" onclick="handoffSendWhatsApp()">Send on WhatsApp</button>
+        </div>
       </div>
       <textarea id="ho-message" class="input" rows="6" oninput="handoffMsgInput(this)"></textarea>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px">Copy this and paste it into the radiology WhatsApp group.</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px">Tap <b>Send on WhatsApp</b> — WhatsApp opens with this message ready; pick the radiology group and hit send.</div>
       <div class="ho-results-sec">
         <div class="ho-msg-head" style="margin-top:4px">
           <div class="ho-lbl" style="margin:0">🔬 Radiology report — is it back yet?</div>
@@ -507,6 +510,16 @@ function handoffSyncMsg(force) {
   if (m) m.value = handoff.msg;
 }
 function handoffMsgInput(el) { handoff.msgEdited = true; handoff.msg = el.value; }
+// Open WhatsApp with the (current, possibly-edited) message pre-filled. WhatsApp
+// has no public link that targets a specific GROUP with pre-filled text, so this
+// opens the app/Web with the text ready — the user picks the radiology group and
+// hits send (usually the top/most-recent chat). Works on mobile and desktop.
+function handoffSendWhatsApp() {
+  const m = document.getElementById('ho-message');
+  const text = ((m && m.value) || handoff.msg || '').trim();
+  if (!text) { toast && toast('Nothing to send'); return; }
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
+}
 async function handoffCopy(btn) {
   const m = document.getElementById('ho-message');
   if (!m) return;
