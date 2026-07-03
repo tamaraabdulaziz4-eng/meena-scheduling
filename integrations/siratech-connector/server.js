@@ -18,6 +18,8 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const puppeteer = require('puppeteer');
 const results = require('./results');
 
@@ -35,6 +37,10 @@ const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 55 * 60 * 1000);
 // The Result-Entry worklist is scoped to the logged-in user's site (not the
 // order's original siteId), so result lookups use this site. Default 1 (proven).
 const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
+// The DePACS web viewer (OHIF) — images have no REST endpoint, so the RIS page
+// deep-links into the viewer by study_iuid. Probed live: viewer.diagnosticselite.net
+// is the OHIF app; its deep-link is /viewer?StudyInstanceUIDs=<iuid>.
+const DEPACS_VIEWER_BASE = (process.env.DEPACS_VIEWER_BASE || 'https://viewer.diagnosticselite.net').replace(/\/+$/, '');
 // A verified radiology report is filed as a PDF ATTACHMENT on the result row (the
 // exams here are template-less, so there is no free-text/template result to type —
 // the proven path is: attach the DePACS PDF under the EMR "Report" file-attachment
@@ -433,7 +439,7 @@ async function buildMatch(file, wantBillNo, site) {
     throw new Error(`HIS result search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
   }
   const rows = sr.json.data || [];
-  const orderRows = wantBillNo ? rows.filter((r) => r.billNo === wantBillNo) : rows;
+  const orderRows = wantBillNo ? rows.filter((r) => String(r.billNo) === String(wantBillNo)) : rows;
 
   // 2) the patient's VERIFIED DePACS studies (once)
   const studies = await results.depacsStudies(file);
@@ -527,13 +533,148 @@ app.post('/results/match', requireAuth, async (req, res) => {
   catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── RIS patient view (one-page aggregator) ───────────────────────────────────
+// Powers GET /ris: enter MRN/ID/phone → one call returns demographics + every
+// radiology order (with clinical indication) merged with its DePACS study and a
+// DERIVED status. Unlike /results/match (the STRICT, verified-only, no-guess gate
+// that governs writes), this is a DISPLAY view: it associates against ALL studies
+// (any status) so a performed-but-unread exam still shows as "performed", and it
+// never writes. Ambiguous associations are flagged, not hidden.
+const REPORTED_RX = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/;
+const READ_RX = /\b(REPORTED|READ|DICTAT|DRAFT|PRELIM|PENDING\s*VERIF)\b/;
+function deriveExamStatus(study) {
+  if (!study) return 'ordered';
+  const s = String(study.status || '').toUpperCase();
+  if (REPORTED_RX.test(s)) return 'verified';
+  if (READ_RX.test(s)) return 'read';
+  return 'performed';                       // UNREAD or any other → the study exists = performed
+}
+// Lenient display association: reuse the matcher's own primitives (modality,
+// body-part subset, laterality) but over ALL studies and a wider window. Returns
+// the best study or null, and whether more than one plausibly fit (→ "verify").
+function associateStudyForDisplay(order, studies) {
+  if (!studies || !studies.length) return { study: null, ambiguous: false };
+  const oMod = results.normMod(order.modality || order.service);
+  const oAnat = results.bodyTokens(order.service);
+  const oSide = results.sideOf(order.service);
+  const iso = orderedDateToISO(order.orderedDate);
+  const oTime = iso ? new Date(iso + 'T00:00:00').getTime() : null;
+  const oAcc = order.accessionNumber ? String(order.accessionNumber).trim() : null;
+  // PRIMARY — real DICOM accession (deterministic) when present.
+  if (oAcc) {
+    const hit = studies.filter((s) => s.accession && String(s.accession).trim() === oAcc);
+    if (hit.length) return { study: hit[0], ambiguous: hit.length > 1, via: 'accession' };
+  }
+  // FALLBACK — modality + body-part subset + laterality + wide time window (-2d..+10d).
+  const fits = studies.filter((s) => {
+    if (results.normMod(s.modality) !== oMod) return false;
+    const sAnat = results.bodyTokens(s.desc);
+    if (!(sAnat.length && oAnat.length && sAnat.every((t) => oAnat.includes(t)))) return false;
+    const sSide = results.sideOf(s.desc);
+    if (oSide && sSide && oSide !== sSide) return false;
+    if (oTime && s.studyDate) {
+      const gap = new Date(s.studyDate).getTime() - oTime;
+      if (gap < -48 * 3600e3 || gap > 240 * 3600e3) return false;
+    }
+    return true;
+  });
+  if (!fits.length) return { study: null, ambiguous: false };
+  if (oTime) fits.sort((a, b) => Math.abs(new Date(a.studyDate).getTime() - oTime) - Math.abs(new Date(b.studyDate).getTime() - oTime));
+  return { study: fits[0], ambiguous: fits.length > 1, via: 'bodypart+time' };
+}
+
+async function buildRisView(file) {
+  const [radR, patR] = await Promise.allSettled([
+    hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }),
+    hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: file } }),
+  ]);
+  const rad = radR.status === 'fulfilled' ? radR.value : null;
+  if (!rad || (rad.status && rad.status >= 400) || rad.json == null) {
+    throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
+  }
+  const rawOrders = rad.json.data || [];
+  const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
+  const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
+  const pat = patR.status === 'fulfilled' ? patR.value : null;
+  const patient = normalizePatient(((pat && pat.json && pat.json.data) || [])[0] || null);
+
+  // DePACS is the source of truth for performed/read/verified. If it's unreachable
+  // we still return the orders (as "ordered") plus an error flag — never silently
+  // drop imaging status, which would misread a done exam as not-performed.
+  let studies = [], depacsError = null;
+  try { studies = await results.depacsStudies(file); }
+  catch (e) { depacsError = String(e.message || e); }
+
+  const exams = [];
+  for (const o of orders) {
+    const { study, ambiguous } = associateStudyForDisplay(o, studies);
+    const status = depacsError ? 'ordered' : deriveExamStatus(study);
+    let report = null;
+    const viewerUrl = study ? DEPACS_VIEWER_BASE + '/viewer?StudyInstanceUIDs=' + encodeURIComponent(study.iuid) : null;
+    if (study && (status === 'verified' || status === 'read')) {
+      try {
+        const r = await results.depacsReport(study.studyId);
+        report = { studyId: study.studyId, reviewer: r.reviewer, reportDate: r.reportDate,
+          text: (r.reportText || '').slice(0, 4000), pdfOk: r.pdfOk };
+      } catch (_e) { /* report is best-effort; the study + status still stand */ }
+    }
+    exams.push({
+      service: o.service, modality: o.modality, branch: o.branch, billNo: o.billNo,
+      orderedDate: o.orderedDate, priorityText: o.priorityText, isER: o.isER,
+      indication: o.clinicalIndication || o.reasonForOrder || null,
+      hasReportHIS: o.hasReport, status, ambiguous,
+      study: study ? { studyId: study.studyId, iuid: study.iuid, modality: study.modality,
+        desc: study.desc, studyDate: study.studyDate, status: study.status } : null,
+      report, viewerUrl,
+    });
+  }
+  const counts = { ordered: 0, performed: 0, read: 0, verified: 0 };
+  for (const e of exams) counts[e.status] = (counts[e.status] || 0) + 1;
+  return { ok: true, file, patient, exams, counts, studiesFound: studies.length, depacsError,
+    fetchedAt: new Date().toISOString() };
+}
+
+// The page shell (no PHI; the data calls below are token-guarded).
+const RIS_HTML = fs.readFileSync(path.join(__dirname, 'ris.html'), 'utf8');
+app.get('/ris', (_req, res) => res.type('html').send(RIS_HTML));
+
+// One call for the whole page. :id may be an MRN, a national ID/Iqama, or a phone
+// number — resolve non-MRN identifiers to an MRN via the same search the UI uses.
+app.get('/ris/data/:id', requireAuth, async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'id (MRN / National ID / phone) is required' });
+  try {
+    let mrno = id;
+    const digits = id.replace(/\D/g, '');
+    if (/^0?5\d{8,9}$/.test(digits) || /^[12]\d{9}$/.test(digits)) {   // phone or 10-digit ID → resolve
+      const { patients } = await _patientSearch(id, false);
+      if (!patients.length) return res.status(404).json({ ok: false, error: `No patient found for "${id}"` });
+      mrno = patients[0].mrno || id;
+    }
+    return res.json(await buildRisView(String(mrno).trim()));
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// Stream a study's signed report PDF from DePACS (fetched with Bearer by the page,
+// opened as a blob — so the token never lands in a URL).
+app.get('/ris/report/:studyId', requireAuth, async (req, res) => {
+  const sid = Number(String(req.params.studyId || '').replace(/\D/g, ''));
+  if (!sid) return res.status(400).json({ ok: false, error: 'studyId is required' });
+  try {
+    const r = await results.depacsReport(sid);
+    if (!r.pdfOk || !r.pdfBase64) return res.status(404).json({ ok: false, error: 'No report PDF for this study' });
+    res.set('Content-Disposition', `inline; filename="report-${sid}.pdf"`);
+    return res.type('application/pdf').send(Buffer.from(r.pdfBase64, 'base64'));
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 // ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────
 // Files a VERIFIED DePACS report back into Siratech's Radiology Result Entry and
 // authorises it. NOTHING is written unless {confirm:true} is sent AND the target
 // test resolves to exactly ONE study (file-number + modality + body-part + time).
 // Dry-run returns the raw result-entry template + report + the exact payloads that
 // WOULD be posted, so a human can verify before anything is committed.
-async function buildFilePlan({ file, site, billNo, serviceId }) {
+async function buildFilePlan({ file, site, billNo, serviceId, allowFiledForAuthorize }) {
   await getToken();
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
@@ -577,6 +718,15 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
       tests: details.map((t) => ({ serviceName: t.serviceName, categoryName: t.categoryName, invMastServiceId: svcId(t), invPatTestResultId: t.invPatTestResultId })) };
   }
 
+  // authorize-only: FINISH authorization for an already-filed result (save landed but
+  // authorization didn't stick). No DePACS match / no re-file — hand the raw rows back
+  // so the caller can authorize the existing attachment. notFiled flags the case where
+  // there's nothing filed yet (so the caller can tell the user to file first).
+  if (allowFiledForAuthorize) {
+    const filed = Number(target.isfileAttachmentExists) === 1 || (Array.isArray(target.genFileAttachments) && target.genFileAttachments.length);
+    return { authorizeOnly: true, notFiled: !filed, file, site: useSite, empId, billNo: row.billNo, searchRow: row, details, target };
+  }
+
   // Idempotency: if this test already carries a filed attachment, don't file again
   // (a retry after a lost response would otherwise append a duplicate PDF).
   if (Number(target.isfileAttachmentExists) === 1 || (Array.isArray(target.genFileAttachments) && target.genFileAttachments.length)) {
@@ -601,13 +751,39 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
         candidates: m.candidates, writable: false };
     }
   }
+  // ── Cross-bill sibling guard (mirrors buildMatch's file-wide de-dup) ──────────
+  // The same-bill loop above only sees THIS bill's tests. buildMatch de-dups a shared
+  // study across the WHOLE file; the write path must too, or a study uniquely matched
+  // by a test on ANOTHER order for this file would be filed twice — one report PDF on
+  // two result rows (the idempotency check keys on the Siratech test row, not the
+  // DePACS study, so it can't catch this). Scan every OTHER order on the file and
+  // refuse if any test there also resolves uniquely to the same study.
+  for (const orow of rows) {
+    if (String(orow.billNo) === String(row.billNo)) continue;   // same bill handled above
+    let odet = [];
+    try {
+      const odr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+        body: results.radiologyDetailsBody(orow, { hospitalId: useSite, empId }),
+      });
+      odet = (odr.json && odr.json.data) || [];
+    } catch (_e) { odet = []; }
+    const oDate = orow.billDate || orow.visitDate || null;
+    for (const t of odet) {
+      const sm = results.matchStudy({ mrno: orow.mrno, serviceName: t.serviceName, categoryName: t.categoryName, orderDate: oDate, accession: pickAccession(t, orow) }, studies);
+      if (sm.decision === 'unique' && sm.study && String(sm.study.studyId) === String(m.study.studyId)) {
+        return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
+          decision: 'ambiguous', reason: `study #${m.study.studyId} also matches "${t.serviceName}" on bill ${orow.billNo} for this file — refusing to file the same report to two orders; review manually`,
+          candidates: m.candidates, writable: false };
+      }
+    }
+  }
   const report = await results.depacsReport(m.study.studyId);
 
   // The radiology result is template-based: fetch the test's template so we can
   // populate invPatTemplResults (read-only).
   let template = null;
   try {
-    const tr = await hisFetch('/investigation-api/api/v1/ResultEntry/GetTestTemplate?InvMastServiceId=' + encodeURIComponent(target.inv_mast_service_id), { method: 'GET' });
+    const tr = await hisFetch('/investigation-api/api/v1/ResultEntry/GetTestTemplate?InvMastServiceId=' + encodeURIComponent(svcId(target)), { method: 'GET' });
     template = (tr.json && (tr.json.data != null ? tr.json.data : tr.json)) || null;
   } catch (e) { template = { error: String(e.message || e) }; }
 
@@ -618,8 +794,63 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   };
 }
 
+// Shared rejection-message gate for save/authorize responses. Anchored phrases (not
+// bare error|cannot|fail) so a benign success line ("Saved with 0 errors", "cannot be
+// undone") isn't misread as a rejection, which would wrongly report a real write as
+// failed and prompt a duplicate re-file.
+const REJECT_MSG = /enter template|select .*range|please attach|attach .*(report|file|result)|duplicate|already (exist|filed|saved|authoriz|present)|record is locked|is invalid|invalid (input|data|payload|request)|object reference not set|not set to an instance|no record (found|to|exist)|access denied|unauthor|an error (occurred|has|was)|error while|cannot be (saved|processed|completed|authoriz)|failed to (save|authoriz|process|update)|operation failed|save failed/i;
+
+// Post the 1st-level radiology authorization for the target row, and confirm it can
+// actually stick. The target's invPatTestResultId on a FRESH result is a NEGATIVE
+// placeholder; the SAVE assigns the real positive id. Authorization MUST target that
+// real id — posting the placeholder is a silent no-op (HIS returns 200 but the row
+// stays UNAUTHORIZED). Recover the id from: the row itself if already positive
+// (authorize-only path) → the save response `sData` → a fresh RadiologyDetails read.
+// If it still can't be found, return {skipped:true} so the caller never claims a false
+// success. Drops the PDF from the payload so authorization can't file a duplicate.
+async function doRadAuthorize({ details, searchRow, tgt, site, empId, auditUser, sData }) {
+  const _svc = (x) => (x && (x.inv_mast_service_id != null ? x.inv_mast_service_id : x.invMastserviceId));
+  const _isRealId = (v) => Number.isFinite(Number(v)) && Number(v) > 0;
+  let savedId = _isRealId(tgt.invPatTestResultId) ? tgt.invPatTestResultId : null;
+  if (savedId == null && Array.isArray(sData)) {
+    const r = sData.find((x) => _svc(x) != null && String(_svc(x)) === String(_svc(tgt)));
+    if (r && _isRealId(r.invPatTestResultId)) savedId = r.invPatTestResultId;
+  } else if (savedId == null && sData && typeof sData === 'object' && _isRealId(sData.invPatTestResultId)) {
+    savedId = sData.invPatTestResultId;
+  }
+  if (savedId == null) {
+    try {
+      const rr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+        body: results.radiologyDetailsBody(searchRow, { hospitalId: site, empId }),
+      });
+      const rrows = (rr.json && rr.json.data) || [];
+      const back = rrows.find((x) => _svc(x) != null && String(_svc(x)) === String(_svc(tgt)) && _isRealId(x.invPatTestResultId));
+      if (back) savedId = back.invPatTestResultId;
+    } catch (_e) { /* fall through to the skip below */ }
+  }
+  if (savedId == null) return { skipped: true, authorized: false };
+  tgt.invPatTestResultId = savedId;
+  tgt.genFileAttachments = [];      // attachment already persisted; don't re-file it
+  tgt.isfileAttachmentExists = 1;
+  tgt.authorizationstatus = '1';
+  tgt.tempAuthStatus = 1;
+  const Ka = {
+    resultEntryDetailsResponse: details,
+    resultEntrySearchResponses: [searchRow],
+    auditUser, auditDate: new Date().toISOString(), hospitalId: site,
+    isResultCancellation: false, sampleCollResultEntrySelection: 2,
+    searchTypeResultAuthorizationValue: 0, blnBloodType: false,
+  };
+  const authRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultAuthorization', { body: Ka });
+  const aData = authRes.json && authRes.json.data;
+  const aRow = aData && (Array.isArray(aData) ? aData[0] : aData);
+  const authMsg = aRow ? (aRow.meassge || aRow.message) : null;
+  const authorized = authRes.status === 200 && aRow && aRow.isSuccess !== false && !(authMsg && REJECT_MSG.test(authMsg));
+  return { skipped: false, authorized: !!authorized, authStatus: authRes.status, aRow, authMsg, authJson: authRes.json, authText: authRes.text };
+}
+
 app.post('/results/file', requireAuth, async (req, res) => {
-  const { file, site, billNo, serviceId, confirm, range, authorize } = req.body || {};
+  const { file, site, billNo, serviceId, confirm, range, authorize, authorizeOnly } = req.body || {};
   if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
   // Did the caller pin the range explicitly? If so it always wins; otherwise we
   // auto-classify from the report's IMPRESSION further down (once we have it).
@@ -630,8 +861,41 @@ app.post('/results/file', requireAuth, async (req, res) => {
   })();
   const doAuthorize = authorize !== false;   // default: also authorize after a good save
   try {
-    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId });
+    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId, allowFiledForAuthorize: !!authorizeOnly });
     if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
+
+    // authorizeOnly: finish authorization for an ALREADY-FILED result (the save landed
+    // before but authorization didn't stick). No re-file — just (re)authorize the row.
+    if (plan.authorizeOnly) {
+      if (plan.notFiled) return res.json({ ok: true, wrote: false, authorizeOnly: true, notFiled: true,
+        billNo: plan.billNo, target: { serviceName: plan.target.serviceName },
+        note: 'This result has no filed attachment yet — nothing to authorize. Use the file flow first.' });
+      const CHILD_ARRAYS = ['invPatMastCultureResult', 'invPatDtlsCultResults', 'scanDtlsFiles',
+        'scanMastFiles', 'genFileAttachments', 'invPatTemplResults', 'invPatTemplResultHeads', 'invPatTemplResultTests'];
+      const azDetails = plan.details.map((d) => {
+        const r = results.normalizeResultRow(d);
+        for (const k of CHILD_ARRAYS) if (!Array.isArray(r[k])) r[k] = [];
+        return r;
+      });
+      const _svc = (x) => (x && (x.inv_mast_service_id != null ? x.inv_mast_service_id : x.invMastserviceId));
+      const tgt = azDetails.find((d) => d.invPatTestResultId === plan.target.invPatTestResultId && String(_svc(d)) === String(_svc(plan.target)));
+      if (!tgt) throw new Error('target test row not found after normalisation — refusing to authorize the wrong row');
+      azDetails.forEach((d) => { d.isSelected = d === tgt; });
+      if (!confirm) {
+        return res.json({ ok: true, wrote: false, dryRun: true, authorizeOnly: true,
+          billNo: plan.billNo, target: { serviceName: tgt.serviceName, invPatTestResultId: tgt.invPatTestResultId },
+          note: 'DRY-RUN authorize-only — this result is already filed; re-send confirm:true to authorize it.' });
+      }
+      const auditUser = String(HIS_USER).padStart(8, '0');
+      const az = await doRadAuthorize({ details: azDetails, searchRow: plan.searchRow, tgt, site: plan.site, empId: plan.empId, auditUser });
+      if (az.skipped) return res.json({ ok: true, authorizeOnly: true, authorized: false,
+        note: 'Could not recover the saved result id — authorize this result in the Siratech UI.' });
+      return res.json({ ok: true, authorizeOnly: true, authorized: az.authorized, billNo: plan.billNo,
+        target: { serviceName: tgt.serviceName },
+        authorize: { status: az.authStatus, isSuccess: az.aRow ? az.aRow.isSuccess : null, message: az.authMsg,
+          raw: az.authorized ? undefined : (az.authJson || String(az.authText || '').slice(0, 400)) },
+        note: az.authorized ? 'Result AUTHORIZED.' : 'Authorization was not confirmed by HIS — verify in the UI.' });
+    }
 
     // On CONFIRM, the study MUST be the same one the human reviewed in the dry-run.
     // buildFilePlan re-matches fresh, so if a new verified study / corrected accession
@@ -657,7 +921,7 @@ app.post('/results/file', requireAuth, async (req, res) => {
       : (DEFAULT_STRING_RANGE === RANGE_NOT_APPLICABLE ? 'not applicable (radiology default)' : 'default');
     const planOut = {
       file: plan.file, site: plan.site, billNo: plan.billNo,
-      target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },
+      target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id != null ? plan.target.inv_mast_service_id : plan.target.invMastserviceId },
       study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate },
       match: plan.match,
       report: { reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes, textPreview: (rep.reportText || '').slice(0, 400) },
@@ -747,10 +1011,9 @@ app.post('/results/file', requireAuth, async (req, res) => {
     const sData = saveRes.json && saveRes.json.data;
     const sRow = Array.isArray(sData) ? sData[0] : sData;
     const saveMsg = sRow && (sRow.meassge || sRow.message);
-    // A HIS reject can arrive as HTTP 200 with isSuccess omitted and a message that
-    // isn't in the old narrow list — treat any recognized error wording as failure so
-    // a rejection is never reported as a successful medical-record write.
-    const REJECT_MSG = /enter template|select .*range|attach|duplicate|already|locked|invalid|object reference|not set|no record|denied|unauthor|error|cannot|failed|fail\b/i;
+    // A HIS reject can arrive as HTTP 200 with isSuccess omitted and a message — treat
+    // recognized rejection wording (module-level REJECT_MSG) as failure so a rejection
+    // is never reported as a successful medical-record write.
     const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(saveMsg && REJECT_MSG.test(saveMsg));
     if (!saveOk) {
       return res.json({ ok: true, wrote: false, step: 'save', saveStatus: saveRes.status,
@@ -763,39 +1026,18 @@ app.post('/results/file', requireAuth, async (req, res) => {
         note: 'Result FILED (PDF attached). authorize:false — left pending authorization.' });
     }
 
-    // ── AUTHORIZE (1st level) ──────────────────────────────────────────────────
-    // Re-use the SAME normalised rows that the save just accepted (the raw save
-    // response echoes rows with null child collections, which trips a LINQ null —
-    // "Value cannot be null (Parameter 'source')"). Patch in the server-assigned
-    // invPatTestResultId (a fresh order comes back with a real id we must authorize
-    // against), flip the target to authorized, and drop the already-saved PDF from
-    // the payload so authorization doesn't file a duplicate attachment.
-    const _svc = (x) => (x && (x.inv_mast_service_id != null ? x.inv_mast_service_id : x.invMastserviceId));
-    const savedIdRow = Array.isArray(sData)
-      ? sData.find((x) => _svc(x) != null && String(_svc(x)) === String(_svc(tgt)))
-      : (sData && typeof sData === 'object' ? sData : null);
-    if (savedIdRow && savedIdRow.invPatTestResultId != null) tgt.invPatTestResultId = savedIdRow.invPatTestResultId;
-    tgt.genFileAttachments = [];      // attachment already persisted by the save
-    tgt.isfileAttachmentExists = 1;
-    tgt.authorizationstatus = '1';
-    tgt.tempAuthStatus = 1;
-    const Ka = {
-      resultEntryDetailsResponse: details,
-      resultEntrySearchResponses: [plan.searchRow],
-      auditUser, auditDate: new Date().toISOString(), hospitalId: plan.site,
-      isResultCancellation: false, sampleCollResultEntrySelection: 2,
-      searchTypeResultAuthorizationValue: 0, blnBloodType: false,
-    };
-    const authRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultAuthorization', { body: Ka });
-    const aData = authRes.json && authRes.json.data;
-    const aRow = aData && (Array.isArray(aData) ? aData[0] : aData);
-    const authMsg = aRow ? (aRow.meassge || aRow.message) : null;
-    const authOk = authRes.status === 200 && aRow && aRow.isSuccess !== false && !(authMsg && REJECT_MSG.test(authMsg));
-    return res.json({ ok: true, wrote: true, authorized: !!authOk, plan: planOut, stringRange,
+    // ── AUTHORIZE (1st level) — via the shared helper (real-id recovery + no-op guard) ─
+    const az = await doRadAuthorize({ details, searchRow: plan.searchRow, tgt, site: plan.site, empId: plan.empId, auditUser, sData });
+    if (az.skipped) {
+      return res.json({ ok: true, wrote: true, authorized: false, plan: planOut, stringRange,
+        save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
+        note: 'Result FILED (PDF attached), but the server-assigned result id could not be recovered — authorization was SKIPPED rather than posted against a placeholder (which silently no-ops). Re-run with authorizeOnly:true, or authorize in the Siratech UI.' });
+    }
+    return res.json({ ok: true, wrote: true, authorized: az.authorized, plan: planOut, stringRange,
       save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
-      authorize: { status: authRes.status, isSuccess: aRow ? aRow.isSuccess : null, message: authMsg,
-        raw: authOk ? undefined : (authRes.json || String(authRes.text || '').slice(0, 400)) },
-      note: authOk ? 'Result FILED + AUTHORIZED.' : 'Result FILED, but authorization was not confirmed by HIS — verify/authorize in the UI.' });
+      authorize: { status: az.authStatus, isSuccess: az.aRow ? az.aRow.isSuccess : null, message: az.authMsg,
+        raw: az.authorized ? undefined : (az.authJson || String(az.authText || '').slice(0, 400)) },
+      note: az.authorized ? 'Result FILED + AUTHORIZED.' : 'Result FILED, but authorization was not confirmed by HIS — verify/authorize in the UI.' });
   } catch (e) {
     return res.status(502).json({ ok: false, wrote: false, error: String(e.message || e) });
   }
