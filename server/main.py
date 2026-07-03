@@ -382,6 +382,34 @@ def init_schema():
                                key TEXT PRIMARY KEY, value TEXT);""")
             cur.execute("""INSERT INTO scheduling.app_settings (key,value) VALUES ('leave_cutoff_day','15')
                            ON CONFLICT (key) DO NOTHING;""")
+            # Secure radiology-CD transfer: a branch uploads a full CD image (ISO/ZIP)
+            # via a token link; an authorised user downloads it to import into PACS.
+            # Files are auto-deleted after a short TTL; the row is the operations log.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.cd_transfers (
+                    id SERIAL PRIMARY KEY,
+                    ref TEXT UNIQUE NOT NULL,
+                    upload_id TEXT,
+                    file_no TEXT,
+                    branch TEXT,
+                    exam_type TEXT,
+                    exam_date TEXT,
+                    uploader TEXT,
+                    patient_initials TEXT,
+                    note TEXT,
+                    orig_name TEXT,
+                    stored_name TEXT,
+                    kind TEXT,
+                    size_bytes BIGINT NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'uploading',
+                    dicom_check TEXT,
+                    upload_ip TEXT,
+                    download_ip TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    uploaded_at TIMESTAMPTZ,
+                    downloaded_at TIMESTAMPTZ,
+                    expires_at TIMESTAMPTZ
+                );""")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
@@ -1745,6 +1773,15 @@ def serve_reports_public():
     """Public, login-free radiology report lookup (shared link for doctors)."""
     return FileResponse(
         os.path.join(DASHBOARD, "reports-public.html"),
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+@app.get("/cdupload")
+def serve_cdupload_public():
+    """Public, login-free radiology-CD upload page (shared link for a branch)."""
+    return FileResponse(
+        os.path.join(DASHBOARD, "cdupload-public.html"),
         media_type="text/html",
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
@@ -6622,6 +6659,291 @@ def regen_downtime_link(user=Depends(require_reviewer)):
     insert_audit(user, "DOWNTIME_LINK_REGEN")
     return {"url": _downtime_public_url(), "token": t}
 
+# ── Secure radiology-CD transfer ──────────────────────────────────────────────
+# A branch employee opens a token link and uploads a full CD image (ISO or ZIP);
+# an authorised user downloads it to import into PACS ("Import from CD"). Files
+# are streamed to disk in chunks (handles ~CD-sized 4 GB uploads with progress),
+# validated (ISO/ZIP only, size cap, magic-byte sniff, best-effort DICOMDIR check
+# for ZIPs), auto-deleted after a short TTL, and never modified/transcoded.
+import tempfile as _tempfile
+
+CDXFER_DIR = os.environ.get("CDXFER_DIR", os.path.join(_tempfile.gettempdir(), "meena_cdxfer"))
+CDXFER_MAX_BYTES = int(os.environ.get("CDXFER_MAX_BYTES", str(4 * 1024**3)))   # 4 GB
+CDXFER_TTL_HOURS = int(os.environ.get("CDXFER_TTL_HOURS", "48"))
+CDXFER_CHUNK = 8 * 1024 * 1024                                                 # 8 MB advisory
+_CDXFER_ALLOWED_EXT = {".iso", ".zip"}
+# Belt-and-braces: even though only .iso/.zip are accepted, name the executable
+# types we must never accept so the intent is explicit and testable.
+_CDXFER_BLOCKED_EXT = {".exe", ".bat", ".cmd", ".msi", ".com", ".scr", ".ps1", ".vbs", ".js", ".jar", ".dll"}
+
+def _cdxfer_dir():
+    os.makedirs(CDXFER_DIR, exist_ok=True)
+    return CDXFER_DIR
+
+def _cdxfer_token():
+    import secrets
+    t = get_setting("cdxfer_public_token")
+    if not t:
+        t = secrets.token_urlsafe(24)
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('cdxfer_public_token',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    return t
+
+def _cdxfer_public_url():
+    base = (os.environ.get("APP_URL", "").strip().rstrip("/"))
+    return f"{base}/cdupload?t={_cdxfer_token()}"
+
+def _check_cdxfer_token(token):
+    import secrets
+    if not token or not secrets.compare_digest(str(token).encode(), str(_cdxfer_token()).encode()):
+        raise HTTPException(403, "Invalid or expired link. Ask the radiology team for a new one.")
+
+_cdxfer_hits: list = []
+def _cdxfer_throttle():
+    # Throttle uploads STARTED per minute (not per chunk — a 4 GB upload is many
+    # chunks and must not trip this).
+    import time as _t
+    now = _t.time()
+    _cdxfer_hits[:] = [h for h in _cdxfer_hits if now - h < 60]
+    if len(_cdxfer_hits) >= 20:
+        raise HTTPException(429, "Too many uploads just now — please wait a moment.")
+    _cdxfer_hits.append(now)
+
+def _req_ip(request: Request):
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return xff or (request.client.host if request.client else "")
+
+def _cdxfer_ext(name):
+    m = re.search(r"(\.[A-Za-z0-9]+)$", (name or "").strip())
+    return (m.group(1).lower() if m else "")
+
+def _cdxfer_sniff(path, kind):
+    """Best-effort content check that the stored file really is what it claims —
+    without modifying it. Returns (ok, note)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+            if kind == "zip":
+                if head[:4] not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+                    return False, "Not a valid ZIP file (bad signature)."
+                # Best-effort: does it contain DICOMDIR or .dcm entries?
+                try:
+                    import zipfile
+                    with zipfile.ZipFile(path) as z:
+                        names = z.namelist()
+                    has_dicomdir = any(n.upper().rstrip("/").endswith("DICOMDIR") for n in names)
+                    has_dcm = any(n.lower().endswith(".dcm") for n in names)
+                    if has_dicomdir:
+                        return True, "ZIP contains DICOMDIR."
+                    if has_dcm:
+                        return True, "ZIP contains DICOM (.dcm) files, no DICOMDIR."
+                    return True, "ZIP OK, but no DICOMDIR/.dcm detected — verify contents."
+                except Exception:
+                    return True, "ZIP signature OK (couldn't inspect entries)."
+            else:  # iso
+                f.seek(32769)                       # ISO9660 primary volume descriptor
+                if f.read(5) == b"CD001":
+                    return True, "ISO9660 signature present."
+                return True, "Saved as-is (no ISO9660 signature found — verify it mounts)."
+    except Exception as e:
+        return True, f"Saved (sniff skipped: {e})"
+
+@app.post("/api/public/cdxfer/init")
+async def cdxfer_init(request: Request):
+    """Start an upload from the branch link: validate the metadata + declared file,
+    create the record, and return a ref + upload_id the chunks are posted with."""
+    _check_cdxfer_token(request.query_params.get("t") or request.query_params.get("token"))
+    _cdxfer_throttle()
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Invalid request body")
+    filename = (b.get("filename") or "").strip()
+    ext = _cdxfer_ext(filename)
+    if ext in _CDXFER_BLOCKED_EXT or ext not in _CDXFER_ALLOWED_EXT:
+        raise HTTPException(400, "Only ISO or ZIP CD images are allowed.")
+    kind = "iso" if ext == ".iso" else "zip"
+    try:
+        size = int(b.get("size") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid file size")
+    if size <= 0:
+        raise HTTPException(400, "The file looks empty.")
+    if size > CDXFER_MAX_BYTES:
+        raise HTTPException(400, f"File too large — the limit is {CDXFER_MAX_BYTES // (1024**3)} GB.")
+    file_no = (b.get("file_no") or "").strip()[:40]
+    uploader = (b.get("uploader") or "").strip()[:80]
+    if not file_no or not uploader:
+        raise HTTPException(400, "Medical file number and your name are required.")
+    import secrets, uuid
+    ref = "CDX-" + secrets.token_hex(4).upper()
+    upload_id = secrets.token_urlsafe(18)
+    stored = uuid.uuid4().hex + ext
+    from datetime import datetime, timezone, timedelta
+    expires = datetime.now(timezone.utc) + timedelta(hours=CDXFER_TTL_HOURS)
+    # Create the (empty) destination file up front.
+    open(os.path.join(_cdxfer_dir(), stored), "wb").close()
+    q("""INSERT INTO scheduling.cd_transfers
+           (ref, upload_id, file_no, branch, exam_type, exam_date, uploader,
+            patient_initials, note, orig_name, stored_name, kind, size_bytes,
+            status, upload_ip, expires_at)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,'uploading',%s,%s)""",
+      (ref, upload_id, file_no, (b.get("branch") or "").strip()[:80],
+       (b.get("exam_type") or "").strip()[:80], (b.get("exam_date") or "").strip()[:20],
+       uploader, (b.get("patient_initials") or "").strip()[:12] or None,
+       (b.get("note") or "").strip()[:500] or None, filename[:200], stored, kind,
+       _req_ip(request), expires), exec_only=True)
+    return {"ok": True, "ref": ref, "upload_id": upload_id, "chunk_size": CDXFER_CHUNK}
+
+@app.post("/api/public/cdxfer/chunk")
+async def cdxfer_chunk(request: Request):
+    """Append one raw chunk to the in-progress upload (ordered by index)."""
+    _check_cdxfer_token(request.query_params.get("t") or request.query_params.get("token"))
+    upload_id = (request.query_params.get("upload_id") or "").strip()
+    row = q("SELECT id, stored_name, size_bytes, status FROM scheduling.cd_transfers WHERE upload_id=%s",
+            (upload_id,), one=True)
+    if not row or row["status"] != "uploading":
+        raise HTTPException(404, "Upload session not found or already finished.")
+    path = os.path.join(_cdxfer_dir(), row["stored_name"])
+    if not os.path.exists(path):
+        raise HTTPException(410, "Upload session expired — please start again.")
+    data = await request.body()
+    if not data:
+        return {"ok": True, "received": row["size_bytes"]}
+    new_size = row["size_bytes"] + len(data)
+    if new_size > CDXFER_MAX_BYTES:
+        try: os.remove(path)
+        except OSError: pass
+        q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
+        raise HTTPException(413, "File exceeds the size limit.")
+    with open(path, "ab") as f:
+        f.write(data)
+    q("UPDATE scheduling.cd_transfers SET size_bytes=%s WHERE id=%s", (new_size, row["id"]), exec_only=True)
+    return {"ok": True, "received": new_size}
+
+@app.post("/api/public/cdxfer/finish")
+async def cdxfer_finish(request: Request):
+    """Finalise the upload: verify the file type, run the DICOMDIR sniff, mark ready."""
+    _check_cdxfer_token(request.query_params.get("t") or request.query_params.get("token"))
+    upload_id = (request.query_params.get("upload_id") or "").strip()
+    row = q("""SELECT id, ref, stored_name, kind, size_bytes, file_no, branch, uploader
+               FROM scheduling.cd_transfers WHERE upload_id=%s""", (upload_id,), one=True)
+    if not row:
+        raise HTTPException(404, "Upload session not found.")
+    path = os.path.join(_cdxfer_dir(), row["stored_name"])
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
+        raise HTTPException(400, "No data was received.")
+    ok, note = _cdxfer_sniff(path, row["kind"])
+    if not ok:
+        try: os.remove(path)
+        except OSError: pass
+        q("UPDATE scheduling.cd_transfers SET status='failed', dicom_check=%s WHERE id=%s",
+          (note, row["id"]), exec_only=True)
+        raise HTTPException(400, note)
+    actual = os.path.getsize(path)
+    from datetime import datetime, timezone
+    q("""UPDATE scheduling.cd_transfers
+           SET status='ready', size_bytes=%s, uploaded_at=%s, dicom_check=%s WHERE id=%s""",
+      (actual, datetime.now(timezone.utc), note, row["id"]), exec_only=True)
+    insert_audit({"id": None, "username": f"cd-upload:{row['uploader']}", "role": "public",
+                  "branch_name": row["branch"]}, "CDXFER_UPLOAD", row["ref"],
+                 json.dumps({"file_no": row["file_no"], "kind": row["kind"], "bytes": actual}))
+    return {"ok": True, "ref": row["ref"], "dicom_check": note}
+
+def _cdxfer_public(row):
+    return {k: row.get(k) for k in (
+        "ref", "file_no", "branch", "exam_type", "exam_date", "uploader",
+        "patient_initials", "note", "orig_name", "kind", "size_bytes", "status",
+        "dicom_check", "upload_ip", "download_ip", "created_at", "uploaded_at",
+        "downloaded_at", "expires_at")}
+
+@app.get("/api/cdxfer/list")
+def cdxfer_list(user=Depends(require_admin)):
+    """All CD transfers, newest first (authorised staff only)."""
+    rows = q("""SELECT ref, file_no, branch, exam_type, exam_date, uploader, patient_initials,
+                       note, orig_name, kind, size_bytes, status, dicom_check, upload_ip, download_ip,
+                       TO_CHAR(created_at,'YYYY-MM-DD"T"HH24:MI:SS') AS created_at,
+                       TO_CHAR(uploaded_at,'YYYY-MM-DD"T"HH24:MI:SS') AS uploaded_at,
+                       TO_CHAR(downloaded_at,'YYYY-MM-DD"T"HH24:MI:SS') AS downloaded_at,
+                       TO_CHAR(expires_at,'YYYY-MM-DD"T"HH24:MI:SS') AS expires_at
+                FROM scheduling.cd_transfers ORDER BY created_at DESC LIMIT 500""") or []
+    return {"ok": True, "transfers": [_cdxfer_public(r) for r in rows], "ttl_hours": CDXFER_TTL_HOURS}
+
+@app.get("/api/cdxfer/{ref}/download")
+def cdxfer_download(ref: str, request: Request, user=Depends(require_admin)):
+    """Stream the stored CD image to the authorised user (never to a public link)."""
+    row = q("SELECT * FROM scheduling.cd_transfers WHERE ref=%s", (ref,), one=True)
+    if not row or row["status"] in ("deleted", "expired", "failed"):
+        raise HTTPException(404, "File not available.")
+    path = os.path.join(_cdxfer_dir(), row["stored_name"] or "")
+    if not row["stored_name"] or not os.path.exists(path):
+        raise HTTPException(404, "File is no longer on the server.")
+    from datetime import datetime, timezone
+    q("""UPDATE scheduling.cd_transfers SET status='downloaded', downloaded_at=%s, download_ip=%s
+         WHERE id=%s""", (datetime.now(timezone.utc), _req_ip(request), row["id"]), exec_only=True)
+    insert_audit(user, "CDXFER_DOWNLOAD", ref, json.dumps({"file_no": row["file_no"], "bytes": row["size_bytes"]}))
+    # Download name uses the ref + file number only — never the patient's name.
+    dl_name = f"{ref}_{(row['file_no'] or 'cd')}{'.iso' if row['kind'] == 'iso' else '.zip'}"
+    media = "application/x-iso9660-image" if row["kind"] == "iso" else "application/zip"
+    return FileResponse(path, media_type=media, filename=dl_name)
+
+@app.delete("/api/cdxfer/{ref}")
+def cdxfer_delete(ref: str, user=Depends(require_admin)):
+    """Delete the stored file now (the log row is kept, marked deleted)."""
+    row = q("SELECT id, stored_name, file_no FROM scheduling.cd_transfers WHERE ref=%s", (ref,), one=True)
+    if not row:
+        raise HTTPException(404, "Not found")
+    if row["stored_name"]:
+        try: os.remove(os.path.join(_cdxfer_dir(), row["stored_name"]))
+        except OSError: pass
+    q("UPDATE scheduling.cd_transfers SET status='deleted' WHERE id=%s", (row["id"],), exec_only=True)
+    insert_audit(user, "CDXFER_DELETE", ref, json.dumps({"file_no": row["file_no"]}))
+    return {"ok": True}
+
+@app.get("/api/cdxfer/public-link")
+def cdxfer_get_link(user=Depends(require_admin)):
+    """The shareable branch upload link (authorised staff)."""
+    return {"url": _cdxfer_public_url(), "token": _cdxfer_token(), "ttl_hours": CDXFER_TTL_HOURS,
+            "max_gb": CDXFER_MAX_BYTES // (1024**3)}
+
+@app.post("/api/cdxfer/public-link/regenerate")
+def cdxfer_regen_link(user=Depends(require_admin)):
+    """Rotate the token — old branch links stop working immediately."""
+    import secrets
+    t = secrets.token_urlsafe(24)
+    q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('cdxfer_public_token',%s)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    insert_audit(user, "CDXFER_LINK_REGEN")
+    return {"url": _cdxfer_public_url(), "token": t}
+
+def _cdxfer_cleanup_loop():
+    """Delete expired CD files (past their TTL) and stalled uploads. The DB row is
+    kept as the operations log; only the on-disk file is removed."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            # Expired, still-present files.
+            for r in (q("""SELECT id, stored_name FROM scheduling.cd_transfers
+                           WHERE expires_at < %s AND status NOT IN ('deleted','expired')""",
+                        (now,)) or []):
+                if r["stored_name"]:
+                    try: os.remove(os.path.join(_cdxfer_dir(), r["stored_name"]))
+                    except OSError: pass
+                q("UPDATE scheduling.cd_transfers SET status='expired' WHERE id=%s", (r["id"],), exec_only=True)
+            # Stalled 'uploading' sessions older than 6h.
+            stale = now - timedelta(hours=6)
+            for r in (q("""SELECT id, stored_name FROM scheduling.cd_transfers
+                           WHERE status='uploading' AND created_at < %s""", (stale,)) or []):
+                if r["stored_name"]:
+                    try: os.remove(os.path.join(_cdxfer_dir(), r["stored_name"]))
+                    except OSError: pass
+                q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (r["id"],), exec_only=True)
+        except Exception as e:
+            print(f"[cdxfer] cleanup error: {e}")
+        time.sleep(1800)   # every 30 min
+
 # ── Public radiology report lookup (shareable link for doctors) ───────────────
 # A temporary, login-free way for a doctor to pull a patient's finished radiology
 # report by file number — until result write-back into the HIS is automated. It
@@ -7736,6 +8058,7 @@ def start_scheduler():
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()
     threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
     threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
+    threading.Thread(target=_cdxfer_cleanup_loop, daemon=True).start()
 
 def _capture_radiology_day(day_str, source_label="worklist"):
     """Pull the radiology stats for a single day from the connector and store an

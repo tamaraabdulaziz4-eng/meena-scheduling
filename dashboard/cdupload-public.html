@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meena Radiology — CD Upload</title>
+<link rel="icon" href="/meena_logo.png" type="image/png">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --primary:#0f2a6b; --accent:#2563eb; --accent2:#3b82f6; --muted:#6b7ba5;
+          --border:#d5e3fb; --card:#ffffff; --bg:#eff5ff; --ok:#00A87D; --red:#E25555; }
+  * { box-sizing:border-box; }
+  body { font-family:'Poppins',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary); -webkit-text-size-adjust:100%; }
+  .wrap { max-width:600px; margin:0 auto; padding:18px 16px 48px; }
+  .head { display:flex; align-items:center; gap:12px; margin:8px 0 14px; }
+  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(37,99,235,.18); }
+  .head .t { font-size:17px; font-weight:800; }
+  .head .s { font-size:12px; color:var(--muted); font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
+          box-shadow:0 12px 34px rgba(15,42,107,.08); margin-bottom:14px; }
+  label { display:block; font-size:13px; font-weight:700; margin:0 0 6px; }
+  .fieldrow { margin-bottom:12px; }
+  input, select, textarea { width:100%; padding:11px 12px; font-size:15px; font-family:inherit; color:var(--primary);
+         border:1.5px solid var(--border); border-radius:11px; background:#fff; outline:none; }
+  input:focus, select:focus, textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.14); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:480px){ .grid2 { grid-template-columns:1fr; } }
+  .req { color:var(--red); }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .filebox { border:2px dashed var(--border); border-radius:14px; padding:18px; text-align:center; background:#fbfdff; cursor:pointer; }
+  .filebox.has { border-color:var(--accent); background:#f2f7ff; }
+  .filebox .fn { font-weight:700; font-size:14px; word-break:break-all; }
+  .filebox .fs { font-size:12px; color:var(--muted); margin-top:3px; }
+  .btn2 { width:100%; padding:14px 20px; font-size:16px; font-weight:800; font-family:inherit; color:#fff; border:none;
+         border-radius:13px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
+         box-shadow:0 8px 20px rgba(37,99,235,.32); }
+  .btn2:disabled { opacity:.55; cursor:default; }
+  .msg { font-size:13px; padding:11px 13px; border-radius:11px; margin-top:12px; display:none; line-height:1.6; }
+  .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
+  .msg.ok  { display:block; background:rgba(0,168,125,.12); color:#067a5b; }
+  .prog { margin-top:14px; display:none; }
+  .prog.show { display:block; }
+  .bar { height:12px; border-radius:999px; background:#e4edff; overflow:hidden; }
+  .fill { height:100%; width:0%; border-radius:999px; background:linear-gradient(90deg,var(--accent2),var(--accent)); transition:width .2s; }
+  .prog .lbl { font-size:12px; color:var(--muted); margin-top:6px; display:flex; justify-content:space-between; }
+  .refbox { text-align:center; padding:8px 0; }
+  .refbox .rn { font-size:26px; font-weight:800; letter-spacing:1px; color:var(--accent); margin:6px 0; }
+  .note { background:#FFF7E6; border:1.5px solid #F4D48A; color:#8a6100; border-radius:12px; padding:11px 13px; font-size:12.5px; font-weight:600; line-height:1.6; margin-bottom:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="/meena_logo.png" alt="Meena">
+    <div><div class="t">Radiology CD Upload</div><div class="s">Send a patient's imaging CD securely to the main site</div></div>
+  </div>
+
+  <div class="note">📀 Make a full copy of the CD as a single <b>ISO</b> file (recommended) or a <b>ZIP</b> of everything on the disc, then upload it below. Do not rename or edit the DICOM files. Max size 4 GB. No patient full name is stored in the link.</div>
+
+  <div class="card" id="form-card">
+    <div class="fieldrow">
+      <label>Medical file number <span class="req">*</span></label>
+      <input id="file_no" inputmode="numeric" autocomplete="off" placeholder="e.g. 26289620">
+    </div>
+    <div class="grid2">
+      <div class="fieldrow"><label>Branch</label><input id="branch" placeholder="e.g. N3 - Al Rawdah"></div>
+      <div class="fieldrow"><label>Exam type</label><input id="exam_type" placeholder="e.g. CT Brain"></div>
+    </div>
+    <div class="grid2">
+      <div class="fieldrow"><label>Exam date</label><input id="exam_date" type="date"></div>
+      <div class="fieldrow"><label>Patient initials <span style="font-weight:500;color:var(--muted)">(optional)</span></label><input id="patient_initials" maxlength="12" placeholder="e.g. A.M."></div>
+    </div>
+    <div class="fieldrow">
+      <label>Your name (uploader) <span class="req">*</span></label>
+      <input id="uploader" autocomplete="off" placeholder="Staff name">
+    </div>
+    <div class="fieldrow">
+      <label>Note <span style="font-weight:500;color:var(--muted)">(optional)</span></label>
+      <textarea id="note" rows="2" placeholder="Anything the receiving team should know…"></textarea>
+    </div>
+    <div class="fieldrow">
+      <label>CD image file <span class="req">*</span></label>
+      <div class="filebox" id="filebox" onclick="document.getElementById('file').click()">
+        <div id="fb-empty"><div style="font-size:28px">📁</div><div style="font-weight:700;font-size:14px">Tap to choose an ISO or ZIP file</div><div class="fs">ISO or ZIP · up to 4 GB</div></div>
+        <div id="fb-has" style="display:none"><div class="fn" id="fb-name"></div><div class="fs" id="fb-size"></div><div class="fs" style="color:var(--accent);margin-top:6px">Tap to change</div></div>
+      </div>
+      <input id="file" type="file" accept=".iso,.zip,application/zip,application/x-iso9660-image" style="display:none" onchange="onPick()">
+    </div>
+
+    <button class="btn2" id="go" onclick="startUpload()">Upload securely</button>
+
+    <div class="prog" id="prog">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="lbl"><span id="prog-txt">Preparing…</span><span id="prog-pct">0%</span></div>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="card" id="done-card" style="display:none">
+    <div class="refbox">
+      <div style="font-size:34px">✅</div>
+      <div style="font-weight:800;font-size:16px;margin-top:6px">Upload complete</div>
+      <div class="hint" style="margin-top:8px">Reference number — give this to the radiology team if they ask:</div>
+      <div class="rn" id="done-ref">—</div>
+      <div class="hint" id="done-dicom"></div>
+    </div>
+    <button class="btn2" style="margin-top:8px" onclick="location.reload()">Upload another CD</button>
+  </div>
+</div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.search).get('token') || '';
+const $ = (id) => document.getElementById(id);
+const MAX = 4 * 1024 * 1024 * 1024;
+let picked = null, busy = false;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtSize(n){ if(n>=1073741824) return (n/1073741824).toFixed(2)+' GB'; if(n>=1048576) return (n/1048576).toFixed(1)+' MB'; return (n/1024).toFixed(0)+' KB'; }
+function showMsg(t, cls){ const m=$('msg'); m.className='msg '+(cls||'err'); m.textContent=t; }
+function clearMsg(){ $('msg').className='msg'; }
+function extOf(name){ const m=String(name||'').match(/(\.[A-Za-z0-9]+)$/); return m?m[1].toLowerCase():''; }
+
+if (!TOKEN) showMsg('This link is missing its access code. Ask the radiology team for a valid link.');
+
+function onPick(){
+  const f = $('file').files[0];
+  clearMsg();
+  if (!f){ picked=null; $('fb-empty').style.display=''; $('fb-has').style.display='none'; $('filebox').classList.remove('has'); return; }
+  const ext = extOf(f.name);
+  if (ext !== '.iso' && ext !== '.zip'){ showMsg('Only ISO or ZIP files are allowed.'); $('file').value=''; return; }
+  if (f.size > MAX){ showMsg('File is larger than the 4 GB limit.'); $('file').value=''; return; }
+  if (f.size === 0){ showMsg('That file looks empty.'); $('file').value=''; return; }
+  picked = f;
+  $('fb-name').textContent = f.name;
+  $('fb-size').textContent = fmtSize(f.size) + ' · ' + ext.slice(1).toUpperCase();
+  $('fb-empty').style.display='none'; $('fb-has').style.display=''; $('filebox').classList.add('has');
+}
+
+async function apiJSON(path, body){
+  const r = await fetch(path + (path.includes('?')?'&':'?') + 't=' + encodeURIComponent(TOKEN), {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+  let d; try{ d = await r.json(); }catch(e){ d = {}; }
+  if (!r.ok) throw new Error(d.detail || ('HTTP '+r.status));
+  return d;
+}
+
+function putChunk(uploadId, index, blob, onprog){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const url = '/api/public/cdxfer/chunk?t=' + encodeURIComponent(TOKEN) +
+                '&upload_id=' + encodeURIComponent(uploadId) + '&index=' + index;
+    xhr.open('POST', url, true);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onprog(e.loaded); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else { let m='HTTP '+xhr.status; try{ m = JSON.parse(xhr.responseText).detail || m; }catch(e){} reject(new Error(m)); }
+    };
+    xhr.onerror = () => reject(new Error('Network error during upload — check the connection.'));
+    xhr.send(blob);
+  });
+}
+
+async function startUpload(){
+  if (busy) return;
+  clearMsg();
+  if (!TOKEN){ showMsg('Link is missing its access code.'); return; }
+  const file_no = $('file_no').value.trim();
+  const uploader = $('uploader').value.trim();
+  if (!file_no){ showMsg('Enter the medical file number.'); return; }
+  if (!uploader){ showMsg('Enter your name.'); return; }
+  if (!picked){ showMsg('Choose the ISO or ZIP file to upload.'); return; }
+
+  busy = true; $('go').disabled = true;
+  $('prog').classList.add('show');
+  const setPct = (p, txt) => { const v=Math.max(0,Math.min(100,p)); $('fill').style.width=v+'%'; $('prog-pct').textContent=Math.floor(v)+'%'; if(txt) $('prog-txt').textContent=txt; };
+  setPct(0, 'Starting…');
+
+  try {
+    const meta = {
+      filename: picked.name, size: picked.size,
+      file_no, uploader,
+      branch: $('branch').value.trim(), exam_type: $('exam_type').value.trim(),
+      exam_date: $('exam_date').value.trim(),
+      patient_initials: $('patient_initials').value.trim(), note: $('note').value.trim(),
+    };
+    const init = await apiJSON('/api/public/cdxfer/init', meta);
+    const chunkSize = init.chunk_size || (8*1024*1024);
+    const total = picked.size;
+    let sent = 0, index = 0;
+    for (let off = 0; off < total; off += chunkSize, index++) {
+      const blob = picked.slice(off, Math.min(off + chunkSize, total));
+      const base = sent;
+      await putChunk(init.upload_id, index, blob, (loaded) => setPct((base + loaded) / total * 100, 'Uploading…'));
+      sent += blob.size;
+      setPct(sent / total * 100, 'Uploading…');
+    }
+    setPct(100, 'Finalising…');
+    const fin = await apiJSON('/api/public/cdxfer/finish?upload_id=' + encodeURIComponent(init.upload_id), {});
+    $('form-card').style.display = 'none';
+    $('done-card').style.display = '';
+    $('done-ref').textContent = fin.ref || init.ref;
+    $('done-dicom').textContent = fin.dicom_check ? ('Check: ' + fin.dicom_check) : '';
+  } catch (e) {
+    showMsg(e.message || 'Upload failed. Please try again.');
+    $('prog').classList.remove('show');
+  } finally {
+    busy = false; $('go').disabled = false;
+  }
+}
+</script>
+</body>
+</html>
