@@ -18,6 +18,8 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const puppeteer = require('puppeteer');
 const results = require('./results');
 
@@ -35,6 +37,10 @@ const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 55 * 60 * 1000);
 // The Result-Entry worklist is scoped to the logged-in user's site (not the
 // order's original siteId), so result lookups use this site. Default 1 (proven).
 const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
+// The DePACS web viewer (OHIF) — images have no REST endpoint, so the RIS page
+// deep-links into the viewer by study_iuid. Probed live: viewer.diagnosticselite.net
+// is the OHIF app; its deep-link is /viewer?StudyInstanceUIDs=<iuid>.
+const DEPACS_VIEWER_BASE = (process.env.DEPACS_VIEWER_BASE || 'https://viewer.diagnosticselite.net').replace(/\/+$/, '');
 // A verified radiology report is filed as a PDF ATTACHMENT on the result row (the
 // exams here are template-less, so there is no free-text/template result to type —
 // the proven path is: attach the DePACS PDF under the EMR "Report" file-attachment
@@ -525,6 +531,141 @@ app.post('/results/match', requireAuth, async (req, res) => {
   if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
   try { return res.json({ ok: true, ...(await buildMatch(String(file).trim(), billNo || null)) }); }
   catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── RIS patient view (one-page aggregator) ───────────────────────────────────
+// Powers GET /ris: enter MRN/ID/phone → one call returns demographics + every
+// radiology order (with clinical indication) merged with its DePACS study and a
+// DERIVED status. Unlike /results/match (the STRICT, verified-only, no-guess gate
+// that governs writes), this is a DISPLAY view: it associates against ALL studies
+// (any status) so a performed-but-unread exam still shows as "performed", and it
+// never writes. Ambiguous associations are flagged, not hidden.
+const REPORTED_RX = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/;
+const READ_RX = /\b(REPORTED|READ|DICTAT|DRAFT|PRELIM|PENDING\s*VERIF)\b/;
+function deriveExamStatus(study) {
+  if (!study) return 'ordered';
+  const s = String(study.status || '').toUpperCase();
+  if (REPORTED_RX.test(s)) return 'verified';
+  if (READ_RX.test(s)) return 'read';
+  return 'performed';                       // UNREAD or any other → the study exists = performed
+}
+// Lenient display association: reuse the matcher's own primitives (modality,
+// body-part subset, laterality) but over ALL studies and a wider window. Returns
+// the best study or null, and whether more than one plausibly fit (→ "verify").
+function associateStudyForDisplay(order, studies) {
+  if (!studies || !studies.length) return { study: null, ambiguous: false };
+  const oMod = results.normMod(order.modality || order.service);
+  const oAnat = results.bodyTokens(order.service);
+  const oSide = results.sideOf(order.service);
+  const iso = orderedDateToISO(order.orderedDate);
+  const oTime = iso ? new Date(iso + 'T00:00:00').getTime() : null;
+  const oAcc = order.accessionNumber ? String(order.accessionNumber).trim() : null;
+  // PRIMARY — real DICOM accession (deterministic) when present.
+  if (oAcc) {
+    const hit = studies.filter((s) => s.accession && String(s.accession).trim() === oAcc);
+    if (hit.length) return { study: hit[0], ambiguous: hit.length > 1, via: 'accession' };
+  }
+  // FALLBACK — modality + body-part subset + laterality + wide time window (-2d..+10d).
+  const fits = studies.filter((s) => {
+    if (results.normMod(s.modality) !== oMod) return false;
+    const sAnat = results.bodyTokens(s.desc);
+    if (!(sAnat.length && oAnat.length && sAnat.every((t) => oAnat.includes(t)))) return false;
+    const sSide = results.sideOf(s.desc);
+    if (oSide && sSide && oSide !== sSide) return false;
+    if (oTime && s.studyDate) {
+      const gap = new Date(s.studyDate).getTime() - oTime;
+      if (gap < -48 * 3600e3 || gap > 240 * 3600e3) return false;
+    }
+    return true;
+  });
+  if (!fits.length) return { study: null, ambiguous: false };
+  if (oTime) fits.sort((a, b) => Math.abs(new Date(a.studyDate).getTime() - oTime) - Math.abs(new Date(b.studyDate).getTime() - oTime));
+  return { study: fits[0], ambiguous: fits.length > 1, via: 'bodypart+time' };
+}
+
+async function buildRisView(file) {
+  const [radR, patR] = await Promise.allSettled([
+    hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }),
+    hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: file } }),
+  ]);
+  const rad = radR.status === 'fulfilled' ? radR.value : null;
+  if (!rad || (rad.status && rad.status >= 400) || rad.json == null) {
+    throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
+  }
+  const rawOrders = rad.json.data || [];
+  const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
+  const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
+  const pat = patR.status === 'fulfilled' ? patR.value : null;
+  const patient = normalizePatient(((pat && pat.json && pat.json.data) || [])[0] || null);
+
+  // DePACS is the source of truth for performed/read/verified. If it's unreachable
+  // we still return the orders (as "ordered") plus an error flag — never silently
+  // drop imaging status, which would misread a done exam as not-performed.
+  let studies = [], depacsError = null;
+  try { studies = await results.depacsStudies(file); }
+  catch (e) { depacsError = String(e.message || e); }
+
+  const exams = [];
+  for (const o of orders) {
+    const { study, ambiguous } = associateStudyForDisplay(o, studies);
+    const status = depacsError ? 'ordered' : deriveExamStatus(study);
+    let report = null;
+    const viewerUrl = study ? DEPACS_VIEWER_BASE + '/viewer?StudyInstanceUIDs=' + encodeURIComponent(study.iuid) : null;
+    if (study && (status === 'verified' || status === 'read')) {
+      try {
+        const r = await results.depacsReport(study.studyId);
+        report = { studyId: study.studyId, reviewer: r.reviewer, reportDate: r.reportDate,
+          text: (r.reportText || '').slice(0, 4000), pdfOk: r.pdfOk };
+      } catch (_e) { /* report is best-effort; the study + status still stand */ }
+    }
+    exams.push({
+      service: o.service, modality: o.modality, branch: o.branch, billNo: o.billNo,
+      orderedDate: o.orderedDate, priorityText: o.priorityText, isER: o.isER,
+      indication: o.clinicalIndication || o.reasonForOrder || null,
+      hasReportHIS: o.hasReport, status, ambiguous,
+      study: study ? { studyId: study.studyId, iuid: study.iuid, modality: study.modality,
+        desc: study.desc, studyDate: study.studyDate, status: study.status } : null,
+      report, viewerUrl,
+    });
+  }
+  const counts = { ordered: 0, performed: 0, read: 0, verified: 0 };
+  for (const e of exams) counts[e.status] = (counts[e.status] || 0) + 1;
+  return { ok: true, file, patient, exams, counts, studiesFound: studies.length, depacsError,
+    fetchedAt: new Date().toISOString() };
+}
+
+// The page shell (no PHI; the data calls below are token-guarded).
+const RIS_HTML = fs.readFileSync(path.join(__dirname, 'ris.html'), 'utf8');
+app.get('/ris', (_req, res) => res.type('html').send(RIS_HTML));
+
+// One call for the whole page. :id may be an MRN, a national ID/Iqama, or a phone
+// number — resolve non-MRN identifiers to an MRN via the same search the UI uses.
+app.get('/ris/data/:id', requireAuth, async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'id (MRN / National ID / phone) is required' });
+  try {
+    let mrno = id;
+    const digits = id.replace(/\D/g, '');
+    if (/^0?5\d{8,9}$/.test(digits) || /^[12]\d{9}$/.test(digits)) {   // phone or 10-digit ID → resolve
+      const { patients } = await _patientSearch(id, false);
+      if (!patients.length) return res.status(404).json({ ok: false, error: `No patient found for "${id}"` });
+      mrno = patients[0].mrno || id;
+    }
+    return res.json(await buildRisView(String(mrno).trim()));
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// Stream a study's signed report PDF from DePACS (fetched with Bearer by the page,
+// opened as a blob — so the token never lands in a URL).
+app.get('/ris/report/:studyId', requireAuth, async (req, res) => {
+  const sid = Number(String(req.params.studyId || '').replace(/\D/g, ''));
+  if (!sid) return res.status(400).json({ ok: false, error: 'studyId is required' });
+  try {
+    const r = await results.depacsReport(sid);
+    if (!r.pdfOk || !r.pdfBase64) return res.status(404).json({ ok: false, error: 'No report PDF for this study' });
+    res.set('Content-Disposition', `inline; filename="report-${sid}.pdf"`);
+    return res.type('application/pdf').send(Buffer.from(r.pdfBase64, 'base64'));
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
 // ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────

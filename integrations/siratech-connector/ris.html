@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meena RIS — Radiology Patient View</title>
+<style>
+  :root{
+    --bg:#f3f5f6; --panel:#fff; --panel-2:#f7f9fa; --ink:#132027; --ink-2:#4a5c66; --ink-3:#7a8b94;
+    --line:#e2e8ea; --line-2:#eef2f3; --accent:#0f7d86; --accent-ink:#0a5a61; --accent-wash:#e2f1f1;
+    --ordered:#6b7a83; --ordered-wash:#eceff0; --performed:#2563a8; --performed-wash:#e5eef8;
+    --read:#b06a06; --read-wash:#faeeda; --verified:#1f7a44; --verified-wash:#e2f2e7;
+    --critical:#c02a35; --critical-wash:#fbe6e7;
+    --shadow:0 1px 2px rgba(19,32,39,.06),0 6px 20px rgba(19,32,39,.05);
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0d1417; --panel:#141d21; --panel-2:#101619; --ink:#e8eef0; --ink-2:#a6b6bd; --ink-3:#6f8189;
+    --line:#243036; --line-2:#1b262b; --accent:#39b3bc; --accent-ink:#7fd6dc; --accent-wash:#12363a;
+    --ordered:#8497a0; --ordered-wash:#1c262b; --performed:#6aa6e6; --performed-wash:#152a3f;
+    --read:#e2a44e; --read-wash:#3a2c14; --verified:#5cc07f; --verified-wash:#153524;
+    --critical:#f0737e; --critical-wash:#3a1618;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.28);}}
+  :root[data-theme="dark"]{
+    --bg:#0d1417; --panel:#141d21; --panel-2:#101619; --ink:#e8eef0; --ink-2:#a6b6bd; --ink-3:#6f8189;
+    --line:#243036; --line-2:#1b262b; --accent:#39b3bc; --accent-ink:#7fd6dc; --accent-wash:#12363a;
+    --ordered:#8497a0; --ordered-wash:#1c262b; --performed:#6aa6e6; --performed-wash:#152a3f;
+    --read:#e2a44e; --read-wash:#3a2c14; --verified:#5cc07f; --verified-wash:#153524;
+    --critical:#f0737e; --critical-wash:#3a1618; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.28);}
+  :root[data-theme="light"]{
+    --bg:#f3f5f6; --panel:#fff; --panel-2:#f7f9fa; --ink:#132027; --ink-2:#4a5c66; --ink-3:#7a8b94;
+    --line:#e2e8ea; --line-2:#eef2f3; --accent:#0f7d86; --accent-ink:#0a5a61; --accent-wash:#e2f1f1;
+    --ordered:#6b7a83; --ordered-wash:#eceff0; --performed:#2563a8; --performed-wash:#e5eef8;
+    --read:#b06a06; --read-wash:#faeeda; --verified:#1f7a44; --verified-wash:#e2f2e7;
+    --critical:#c02a35; --critical-wash:#fbe6e7; --shadow:0 1px 2px rgba(19,32,39,.06),0 6px 20px rgba(19,32,39,.05);}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums}.mono{font-family:var(--mono)}
+  button{font-family:inherit;cursor:pointer}a{color:var(--accent-ink)}
+
+  .top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:12px 22px;
+    background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+  .brand .dot{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--accent-ink));display:grid;place-items:center;color:#fff;font-size:13px}
+  .brand small{font-weight:500;color:var(--ink-3);letter-spacing:.02em}
+  .search{flex:1;display:flex;align-items:center;gap:8px;max-width:560px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:7px 12px}
+  .search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+  .search input{flex:1;border:0;background:transparent;color:var(--ink);font-size:14.5px;outline:none}
+  .search .kind{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-ink);background:var(--accent-wash);padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .search svg{color:var(--ink-3);flex-shrink:0}
+  .go{border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;padding:8px 14px}
+  .go:hover{background:var(--accent-ink)}.go:disabled{opacity:.5;cursor:progress}
+  .toggle{margin-left:auto;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);border-radius:8px;padding:7px 10px;font-size:12.5px}
+  main{max-width:1240px;margin:0 auto;padding:20px 22px 60px}
+
+  .banner{border-radius:10px;padding:11px 14px;margin-bottom:14px;font-size:13px;display:none}
+  .banner.err{display:block;background:var(--critical-wash);color:var(--critical);border:1px solid color-mix(in srgb,var(--critical) 30%,transparent)}
+  .banner.warn{display:block;background:var(--read-wash);color:var(--read);border:1px solid color-mix(in srgb,var(--read) 30%,transparent)}
+
+  .patient{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px}
+  .phead{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  .avatar{width:46px;height:46px;border-radius:12px;background:var(--accent-wash);color:var(--accent-ink);display:grid;place-items:center;font-weight:700;font-size:18px;flex-shrink:0}
+  .pname{font-size:20px;font-weight:700;letter-spacing:-.015em;line-height:1.2}
+  .pname .ar{font-size:15px;color:var(--ink-2);font-weight:600;margin-left:8px}
+  .pmeta{display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:6px;color:var(--ink-2);font-size:13px}
+  .pmeta b{color:var(--ink);font-weight:600}
+  .pmeta .lbl{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-right:5px}
+
+  .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .stat .n{font-size:26px;font-weight:750;letter-spacing:-.02em;line-height:1}
+  .stat .k{font-size:11.5px;color:var(--ink-2);margin-top:5px;text-transform:uppercase;letter-spacing:.03em}
+  .stat .stripe{position:absolute;left:0;top:0;bottom:0;width:4px}
+  .stat[data-s=ordered] .n{color:var(--ordered)} .stat[data-s=ordered] .stripe{background:var(--ordered)}
+  .stat[data-s=performed] .n{color:var(--performed)} .stat[data-s=performed] .stripe{background:var(--performed)}
+  .stat[data-s=read] .n{color:var(--read)} .stat[data-s=read] .stripe{background:var(--read)}
+  .stat[data-s=verified] .n{color:var(--verified)} .stat[data-s=verified] .stripe{background:var(--verified)}
+  .stat[data-s=critical] .n{color:var(--critical)} .stat[data-s=critical] .stripe{background:var(--critical)}
+
+  .grid{display:grid;grid-template-columns:minmax(340px,1fr) minmax(420px,1.35fr);gap:16px;align-items:start}
+  .col-h{display:flex;align-items:center;gap:10px;margin:2px 2px 10px}
+  .col-h h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2);margin:0}
+  .col-h .count{font-size:12px;color:var(--ink-3);background:var(--line-2);border-radius:20px;padding:1px 9px}
+  .list{display:flex;flex-direction:column;gap:9px}
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 14px;box-shadow:var(--shadow);cursor:pointer;transition:border-color .12s;position:relative}
+  .item:hover{border-color:var(--accent)}
+  .item.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash),var(--shadow)}
+  .item .r1{display:flex;align-items:center;gap:9px}
+  .mod{font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.02em;color:var(--accent-ink);background:var(--accent-wash);border-radius:6px;padding:3px 7px;min-width:34px;text-align:center}
+  .svc{font-weight:650;letter-spacing:-.01em;flex:1;min-width:0}
+  .item .r2{display:flex;align-items:center;gap:12px;margin-top:7px;color:var(--ink-3);font-size:12px}
+  .item .ind{margin-top:8px;font-size:12.5px;color:var(--ink-2);background:var(--panel-2);border-left:2px solid var(--line);padding:5px 9px;border-radius:0 7px 7px 0}
+  .item .ind span{color:var(--ink-3);text-transform:uppercase;font-size:10px;letter-spacing:.05em;margin-right:5px}
+
+  .pill{font-size:11px;font-weight:650;padding:2px 9px;border-radius:20px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .pill.ordered{color:var(--ordered);background:var(--ordered-wash)}
+  .pill.performed{color:var(--performed);background:var(--performed-wash)}
+  .pill.read{color:var(--read);background:var(--read-wash)}
+  .pill.verified{color:var(--verified);background:var(--verified-wash)}
+  .pill.critical{color:var(--critical);background:var(--critical-wash)}
+  .pill.inhis{color:var(--accent-ink);background:var(--accent-wash)}
+  .pill.inhis::before{background:none;content:"✓";width:auto;height:auto;font-size:10px;line-height:1}
+  .pill.amb{color:var(--read);background:var(--read-wash)}
+  .pill.amb::before{background:none;content:"?";width:auto;height:auto;font-size:11px;font-weight:800;line-height:1}
+
+  .detail{position:sticky;top:74px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .detail .dh{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start}
+  .detail .dh .svc{font-size:17px;font-weight:700;letter-spacing:-.01em}
+  .detail .dh .sub{color:var(--ink-3);font-size:12.5px;margin-top:3px}
+  .dbody{padding:16px 18px;display:flex;flex-direction:column;gap:16px}
+  .block .bh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin:0 0 8px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 16px;font-size:13px}
+  .kv dt{color:var(--ink-3)} .kv dd{margin:0;font-weight:550;text-align:right;word-break:break-word}
+  .indication{background:var(--read-wash);color:var(--ink);border-radius:9px;padding:11px 13px;font-size:13.5px;line-height:1.55}
+  .report{background:var(--panel-2);border:1px solid var(--line-2);border-radius:9px;padding:12px 14px;font-size:12.5px;line-height:1.6;color:var(--ink-2);max-height:230px;overflow:auto;white-space:pre-wrap}
+  .actions{display:flex;gap:9px;flex-wrap:wrap}
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:9px 13px;font-weight:600;font-size:12.5px;display:inline-flex;align-items:center;gap:7px;text-decoration:none}
+  .btn:hover{border-color:var(--accent);color:var(--accent-ink)}
+  .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.pri:hover{background:var(--accent-ink)}
+  .btn[disabled],.btn.off{opacity:.42;cursor:not-allowed;pointer-events:none}
+
+  .legend{margin-top:26px;border-top:1px solid var(--line);padding-top:18px;display:flex;flex-wrap:wrap;gap:10px 24px;align-items:center;font-size:12px;color:var(--ink-2)}
+  .legend .lg{display:flex;align-items:center;gap:7px}
+  .note{color:var(--ink-3);font-size:12px;margin-top:14px;line-height:1.6;max-width:74ch}
+  .empty{color:var(--ink-3);text-align:center;padding:60px 20px;font-size:13px}
+
+  /* token gate */
+  .gate{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 82%,#000 8%);backdrop-filter:blur(4px);z-index:50;display:grid;place-items:center;padding:20px}
+  .gate.hidden{display:none}
+  .gcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:24px;max-width:400px;width:100%}
+  .gcard h3{margin:0 0 6px;font-size:16px}
+  .gcard p{margin:0 0 14px;color:var(--ink-3);font-size:13px;line-height:1.5}
+  .gcard input{width:100%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:10px 12px;font-family:var(--mono);font-size:13px;outline:none}
+  .gcard input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+  .gcard .grow{display:flex;gap:9px;margin-top:14px}
+  .gcard button{flex:1;border:0;border-radius:9px;background:var(--accent);color:#fff;font-weight:650;padding:10px}
+  @media (max-width:860px){.grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(3,1fr)}.detail{position:static}.search{max-width:none}}
+</style>
+</head>
+<body>
+<div class="gate" id="gate">
+  <div class="gcard">
+    <h3>Connector access</h3>
+    <p>Paste the connector token to open patient records. It is stored only in this browser.</p>
+    <input id="tokin" type="password" placeholder="CONNECTOR_TOKEN" autocomplete="off">
+    <div class="grow"><button onclick="saveToken()">Unlock</button></div>
+  </div>
+</div>
+
+<div class="top">
+  <div class="brand"><span class="dot">✚</span>Meena&nbsp;RIS<small>Radiology&nbsp;Patient&nbsp;View</small></div>
+  <form class="search" id="search" onsubmit="return doSearch(event)">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="q" placeholder="Enter MRN, National ID, or phone…" autocomplete="off">
+    <span class="kind" id="kind">MRN</span>
+    <button class="go" id="gobtn" type="submit">Open</button>
+  </form>
+  <button class="toggle" onclick="toggleTheme()">◐ Theme</button>
+</div>
+
+<main>
+  <div class="banner" id="banner"></div>
+  <section id="app"><div class="empty">Enter an MRN, National ID, or phone number to open a patient's radiology record.</div></section>
+  <div class="legend" id="legend" style="display:none">
+    <span style="font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;font-size:11px">Status</span>
+    <span class="lg"><span class="pill ordered">Ordered</span> not yet in PACS</span>
+    <span class="lg"><span class="pill performed">Performed · unread</span> study exists, no report</span>
+    <span class="lg"><span class="pill read">Read · unverified</span> report drafted</span>
+    <span class="lg"><span class="pill verified">Verified</span> signed report</span>
+    <span class="lg"><span class="pill inhis">In HIS</span> filed to Siratech</span>
+  </div>
+  <p class="note" id="note" style="display:none">Status is derived from DePACS (a study only exists once images are acquired); Siratech provides the order &amp; clinical indication. “View images” opens the DePACS viewer for that study; “Open report PDF” streams the signed report.</p>
+</main>
+
+<script>
+const SL={ordered:"Ordered",performed:"Performed · unread",read:"Read · unverified",verified:"Verified"};
+let TOKEN=localStorage.getItem("ris_token")||"";
+let CUR=null, SELI=0;
+const $=(id)=>document.getElementById(id);
+const el=(h)=>{const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstElementChild;};
+const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+if(TOKEN) $("gate").classList.add("hidden");
+function saveToken(){const v=$("tokin").value.trim();if(!v)return;TOKEN=v;localStorage.setItem("ris_token",v);$("gate").classList.add("hidden");$("q").focus();}
+$("tokin")&&$("tokin").addEventListener("keydown",e=>{if(e.key==="Enter")saveToken();});
+
+function detectKind(v){v=v.trim();const d=v.replace(/\D/g,"");
+  if(/^0?5\d{8,9}$/.test(d))return"Phone";
+  if(/^[12]\d{9}$/.test(d))return"National ID";
+  return"MRN";}
+$("q").addEventListener("input",e=>{$("kind").textContent=detectKind(e.target.value);});
+
+function banner(msg,cls){const b=$("banner");if(!msg){b.className="banner";b.textContent="";return;}b.className="banner "+(cls||"err");b.textContent=msg;}
+
+async function api(path,opts){
+  const r=await fetch(path,Object.assign({headers:{Authorization:"Bearer "+TOKEN}},opts||{}));
+  if(r.status===401){localStorage.removeItem("ris_token");TOKEN="";$("gate").classList.remove("hidden");throw new Error("Session expired — re-enter the token.");}
+  return r;
+}
+
+async function doSearch(e){e.preventDefault();
+  const v=$("q").value.trim();if(!v)return false;
+  if(!TOKEN){$("gate").classList.remove("hidden");return false;}
+  banner("");$("gobtn").disabled=true;$("gobtn").textContent="…";
+  try{
+    const r=await api("/ris/data/"+encodeURIComponent(v));
+    const data=await r.json();
+    if(!r.ok||!data.ok){banner(data.error||("Lookup failed (HTTP "+r.status+")"));renderEmpty();}
+    else render(data);
+  }catch(err){banner(err.message||String(err));}
+  finally{$("gobtn").disabled=false;$("gobtn").textContent="Open";}
+  return false;
+}
+
+function renderEmpty(){$("app").innerHTML='<div class="empty">No record to show.</div>';$("legend").style.display="none";$("note").style.display="none";}
+
+function render(data){
+  CUR=data;SELI=0;
+  const p=data.patient||{};const exams=data.exams||[];
+  const c=data.counts||{};const nCrit=exams.filter(x=>x.study&&/CRITIC/i.test(x.study.status||"")||x.critical).length;
+  const app=$("app");app.innerHTML="";
+  if(data.depacsError) banner("DePACS is unreachable — showing orders only, imaging status unavailable ("+data.depacsError+")","warn");
+  const initials=(p.name||"?").split(" ").filter(Boolean).map(w=>w[0]).slice(0,2).join("")||"?";
+  app.appendChild(el(`
+    <div class="patient"><div class="phead">
+      <div class="avatar">${esc(initials)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="pname">${esc(p.name||"(name unavailable)")}${p.nameArabic?`<span class="ar" dir="rtl">${esc(p.nameArabic)}</span>`:""}</div>
+        <div class="pmeta">
+          <span><span class="lbl">MRN</span><b class="num">${esc(p.mrno||data.file||"—")}</b></span>
+          ${p.age||p.gender?`<span><span class="lbl">Age/Sex</span><b>${esc([p.age,p.gender].filter(Boolean).join(" · ")||"—")}</b></span>`:""}
+          ${p.nationality?`<span><span class="lbl">Nationality</span><b>${esc(p.nationality)}</b></span>`:""}
+          ${p.nationalId?`<span><span class="lbl">ID</span><b class="num">${esc(p.nationalId)}</b></span>`:""}
+          ${p.phone?`<span><span class="lbl">Phone</span><b class="num">${esc(p.phone)}</b></span>`:""}
+          ${p.allergy?`<span><span class="lbl" style="color:var(--critical)">Allergy</span><b style="color:var(--critical)">${esc(p.allergy)}</b></span>`:""}
+        </div>
+      </div>
+    </div></div>`));
+  app.appendChild(el(`
+    <div class="summary">
+      ${["ordered","performed","read","verified"].map(s=>`<div class="stat" data-s="${s}"><span class="stripe"></span><div class="n num">${c[s]||0}</div><div class="k">${SL[s]}</div></div>`).join("")}
+      <div class="stat" data-s="critical"><span class="stripe"></span><div class="n num">${nCrit}</div><div class="k">Critical</div></div>
+    </div>`));
+  if(!exams.length){app.appendChild(el('<div class="empty">No radiology orders on file for this patient.</div>'));$("legend").style.display="flex";return;}
+  const grid=el('<div class="grid"></div>');
+  const left=el(`<div><div class="col-h"><h2>Radiology timeline</h2><span class="count num">${exams.length}</span></div><div class="list" id="list"></div></div>`);
+  const right=el('<div><div class="col-h"><h2>Exam detail</h2></div><div id="detail"></div></div>');
+  grid.append(left,right);app.appendChild(grid);
+  const list=left.querySelector("#list");
+  exams.forEach((it,i)=>{
+    const when=(it.study&&it.study.studyDate)||it.orderedDate||"";
+    const node=el(`
+      <div class="item ${i===SELI?"sel":""}">
+        <div class="r1"><span class="mod">${esc(it.modality||"–")}</span><span class="svc">${esc(it.service||"Exam")}</span>${it.isER?'<span class="pill critical">ER</span>':""}</div>
+        <div class="r2">
+          <span class="pill ${it.status}">${SL[it.status]}</span>
+          ${it.hasReportHIS?'<span class="pill inhis">In HIS</span>':""}
+          ${it.ambiguous?'<span class="pill amb">Verify match</span>':""}
+          <span class="num" style="margin-left:auto">${esc(fmt(when))}</span>
+        </div>
+        ${it.indication?`<div class="ind"><span>Indication</span>${esc(it.indication)}</div>`:""}
+      </div>`);
+    node.addEventListener("click",()=>{SELI=i;[...list.children].forEach(c=>c.classList.remove("sel"));node.classList.add("sel");renderDetail();});
+    list.appendChild(node);
+  });
+  renderDetail();
+  $("legend").style.display="flex";$("note").style.display="block";
+}
+
+function fmt(s){if(!s)return"—";const m=String(s).match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if(m)return`${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;return String(s);}
+
+function renderDetail(){
+  const it=CUR.exams[SELI];const d=$("detail");const perf=it.status!=="ordered";const st=it.study;
+  d.innerHTML="";
+  d.appendChild(el(`
+    <div class="detail">
+      <div class="dh"><span class="mod">${esc(it.modality||"–")}</span>
+        <div style="flex:1"><div class="svc">${esc(it.service||"Exam")}</div>
+          <div class="sub">${esc([it.branch,it.billNo?"Bill "+it.billNo:""].filter(Boolean).join(" · ")||"")}</div></div>
+        <span class="pill ${it.status}">${SL[it.status]}</span>
+      </div>
+      <div class="dbody">
+        <div class="block"><div class="bh">Order</div>
+          <dl class="kv">
+            <dt>Ordered</dt><dd class="num">${esc(fmt(it.orderedDate))}</dd>
+            <dt>Priority</dt><dd>${esc(it.priorityText||"—")}</dd>
+            ${it.billNo?`<dt>Bill No</dt><dd class="num">${esc(it.billNo)}</dd>`:""}
+          </dl>
+        </div>
+        <div class="block"><div class="bh">Clinical indication</div>
+          <div class="indication">${it.indication?esc(it.indication):'<span style="color:var(--ink-3)">Not recorded in HIS.</span>'}</div>
+        </div>
+        ${perf&&st?`
+        <div class="block"><div class="bh">DePACS study</div>
+          <dl class="kv">
+            <dt>Study date</dt><dd class="num">${esc(fmt(st.studyDate))}</dd>
+            <dt>Description</dt><dd>${esc(st.desc||"—")}</dd>
+            <dt>DePACS status</dt><dd>${esc(st.status||"—")}</dd>
+            <dt>study_iuid</dt><dd class="mono" style="font-size:11px">${esc(st.iuid||"—")}</dd>
+          </dl>
+          ${it.ambiguous?'<div class="sub" style="color:var(--read);margin-top:8px">⚠ Auto-matched by body-part + date — more than one study fit; verify before filing.</div>':""}
+        </div>`:`
+        <div class="block"><div class="bh">DePACS study</div>
+          <div class="report">No study in DePACS yet — the exam is ordered but not performed. Imaging will appear here once the study is acquired.</div>
+        </div>`}
+        ${it.report?`
+        <div class="block"><div class="bh">Report${it.report.reviewer?" · "+(it.status==="verified"?"verified":"draft"):""}</div>
+          ${it.report.reviewer?`<div class="sub" style="color:var(--ink-3);margin-bottom:8px">${esc(it.report.reviewer)}${it.report.reportDate?" · "+esc(fmt(it.report.reportDate)):""}</div>`:""}
+          <div class="report">${esc(it.report.text||"(report text unavailable)")}</div>
+        </div>`:""}
+        <div class="block"><div class="bh">Actions</div>
+          <div class="actions">
+            <a class="btn ${it.viewerUrl?"":"off"}" ${it.viewerUrl?`href="${esc(it.viewerUrl)}" target="_blank" rel="noopener"`:""}>🖼 View images in DePACS</a>
+            <button class="btn ${(it.report&&it.report.pdfOk)?"":"off"}" ${(it.report&&it.report.pdfOk)?`onclick="openPdf(${st.studyId})"`:"disabled"}>📄 Open report PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>`));
+}
+
+async function openPdf(studyId){
+  banner("");
+  try{
+    const r=await api("/ris/report/"+studyId);
+    if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||"PDF unavailable");}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(err){banner("Could not open report PDF: "+(err.message||err));}
+}
+
+function toggleTheme(){const r=document.documentElement;
+  const cur=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
+  r.setAttribute("data-theme",cur==="dark"?"light":"dark");}
+</script>
+</body>
+</html>
