@@ -800,10 +800,35 @@ app.post('/results/file', requireAuth, async (req, res) => {
     // against), flip the target to authorized, and drop the already-saved PDF from
     // the payload so authorization doesn't file a duplicate attachment.
     const _svc = (x) => (x && (x.inv_mast_service_id != null ? x.inv_mast_service_id : x.invMastserviceId));
+    // The target's invPatTestResultId from RadiologyDetails on a FRESH result is a
+    // NEGATIVE placeholder (-1, -2 …); the SAVE is what assigns the real positive id.
+    // Authorization MUST target that real id — posting the placeholder is a silent
+    // no-op: HIS returns 200 but nothing is authorized, so the row stays UNAUTHORIZED
+    // while we'd wrongly report success (the "filed but still unauthorised" symptom).
+    // Recover the real id from the save response; if its shape didn't carry it, re-read
+    // RadiologyDetails (the just-saved row now has a positive id + the attachment). If
+    // we STILL can't get it, do NOT post a doomed authorize — report honestly.
+    const _isRealId = (v) => Number.isFinite(Number(v)) && Number(v) > 0;
     const savedIdRow = Array.isArray(sData)
       ? sData.find((x) => _svc(x) != null && String(_svc(x)) === String(_svc(tgt)))
       : (sData && typeof sData === 'object' ? sData : null);
-    if (savedIdRow && savedIdRow.invPatTestResultId != null) tgt.invPatTestResultId = savedIdRow.invPatTestResultId;
+    let savedId = savedIdRow && _isRealId(savedIdRow.invPatTestResultId) ? savedIdRow.invPatTestResultId : null;
+    if (savedId == null) {
+      try {
+        const rr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+          body: results.radiologyDetailsBody(plan.searchRow, { hospitalId: plan.site, empId: plan.empId }),
+        });
+        const rrows = (rr.json && rr.json.data) || [];
+        const back = rrows.find((x) => _svc(x) != null && String(_svc(x)) === String(_svc(tgt)) && _isRealId(x.invPatTestResultId));
+        if (back) savedId = back.invPatTestResultId;
+      } catch (_e) { /* fall through to the honest skip below */ }
+    }
+    if (savedId == null) {
+      return res.json({ ok: true, wrote: true, authorized: false, plan: planOut, stringRange,
+        save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
+        note: 'Result FILED (PDF attached), but the server-assigned result id could not be recovered — authorization was SKIPPED rather than posted against a placeholder (which silently no-ops). Authorize this result in the Siratech UI.' });
+    }
+    tgt.invPatTestResultId = savedId;
     tgt.genFileAttachments = [];      // attachment already persisted by the save
     tgt.isfileAttachmentExists = 1;
     tgt.authorizationstatus = '1';
