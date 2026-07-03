@@ -214,7 +214,10 @@ function _hmKsaToday() {
 }
 async function renderHomeRadstats() {
   const box = document.getElementById('hm-radstats');
-  if (!box) { if (_hmRadTimer) { clearInterval(_hmRadTimer); _hmRadTimer = null; } return; }
+  // Clear any existing auto-refresh up front — two quick re-entries would otherwise
+  // both await, then both assign _hmRadTimer, orphaning the first interval.
+  if (_hmRadTimer) { clearInterval(_hmRadTimer); _hmRadTimer = null; }
+  if (!box) return;
   const isLead = currentUser?.role === 'admin';
   let site = null, scopeName = '';
   if (isLead && typeof rsMySite === 'function') {
@@ -358,6 +361,7 @@ function renderHomeActions(d) {
 
 // ── Manager home: live staff lookup by name / employee ID ─────────────────────
 let _hmSearchTimer = null;
+let _hmSearchSeq = 0;         // request-sequence guard (stale response drops)
 let _hmLastResults = [];      // last fetched rows (for client-side section filtering)
 let _hmFilter = '';           // '' | 'General' | 'US'
 let _hmLastTerm = '';
@@ -378,9 +382,11 @@ function homeStaffSearch(term) {
   }
   if (recent) recent.innerHTML = '';      // hide recents while actively searching
   if (box) box.innerHTML = `<div class="hm-results-head hm-muted">Searching…</div>`;
+  const seq = (_hmSearchSeq = (_hmSearchSeq || 0) + 1);   // ignore a slow response superseded by a newer term
   _hmSearchTimer = setTimeout(async () => {
     try {
       const r = await API.get(`/staff/search?q=${encodeURIComponent(q)}`);
+      if (seq !== _hmSearchSeq) return;   // a newer search already ran — drop this stale result
       _hmLastResults = r.results || [];
       if (filters) filters.style.display = _hmLastResults.length ? 'flex' : 'none';
       renderHomeStaffResults();

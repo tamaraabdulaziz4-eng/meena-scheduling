@@ -506,7 +506,9 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   });
   if (!sr || (sr.status && sr.status >= 400) || sr.json == null) throw new Error(`HIS result search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
   const rows = sr.json.data || [];
-  const row = billNo ? rows.find((r) => r.billNo === billNo) : rows[0];
+  // Never pick an arbitrary order: require billNo to disambiguate a multi-order file.
+  if (!billNo && rows.length > 1) throw new Error('This file has multiple orders — a bill number is required to pick the right one');
+  const row = billNo ? rows.find((r) => String(r.billNo) === String(billNo)) : rows[0];
   if (!row) throw new Error(`no pending radiology order found for file ${file} at site ${useSite}${billNo ? ' bill ' + billNo : ''}`);
 
   const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
@@ -518,16 +520,28 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   const studies = await results.depacsStudies(file);
   const orderDate = row.billDate || row.visitDate || null;
 
-  // pick the target test row (by invMastServiceId when given, else the only one)
+  // Canonical service id — HIS spells it inv_mast_service_id OR invMastserviceId
+  // depending on the build/site. Using a single spelling elsewhere would break the
+  // sibling guard (undefined===undefined) and the attachment payload.
+  const svcId = (t) => (t && (t.inv_mast_service_id != null ? t.inv_mast_service_id : t.invMastserviceId));
+
+  // pick the target test row (by service id when given, else the only one)
   let target = null;
   if (serviceId != null) {
-    target = details.find((t) => String(t.inv_mast_service_id) === String(serviceId) || String(t.invMastserviceId) === String(serviceId));
+    target = details.find((t) => svcId(t) != null && String(svcId(t)) === String(serviceId));
   } else if (details.length === 1) {
     target = details[0];
   }
   if (!target) {
     return { needsPick: true, file, site: useSite, billNo: row.billNo,
-      tests: details.map((t) => ({ serviceName: t.serviceName, categoryName: t.categoryName, invMastServiceId: t.inv_mast_service_id, invPatTestResultId: t.invPatTestResultId })) };
+      tests: details.map((t) => ({ serviceName: t.serviceName, categoryName: t.categoryName, invMastServiceId: svcId(t), invPatTestResultId: t.invPatTestResultId })) };
+  }
+
+  // Idempotency: if this test already carries a filed attachment, don't file again
+  // (a retry after a lost response would otherwise append a duplicate PDF).
+  if (Number(target.isfileAttachmentExists) === 1 || (Array.isArray(target.genFileAttachments) && target.genFileAttachments.length)) {
+    return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
+      decision: 'already_filed', reason: 'a report is already attached to this test in Siratech', writable: false };
   }
 
   const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: pickAccession(target, row) }, studies);
@@ -539,7 +553,7 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   // one report to two result rows. Refuse — a human must decide which test owns it.
   for (const t of details) {
     if (t === target) continue;
-    if (String(t.inv_mast_service_id) === String(target.inv_mast_service_id)) continue;
+    if (svcId(t) != null && String(svcId(t)) === String(svcId(target))) continue;
     const sm = results.matchStudy({ mrno: row.mrno, serviceName: t.serviceName, categoryName: t.categoryName, orderDate, accession: pickAccession(t, row) }, studies);
     if (sm.decision === 'unique' && sm.study && String(sm.study.studyId) === String(m.study.studyId)) {
       return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
@@ -655,7 +669,8 @@ app.post('/results/file', requireAuth, async (req, res) => {
       isLoading: true, resultType: 'pdf', objectState: 1,
       attachedfile: rep.pdfBase64, auditDate: null, attachedFile: rep.pdfBase64,
       genFileAttachmentsId: -1, mrno: String(tgt.mrno),
-      serviceId: String(tgt.inv_mast_service_id), invPatTestResultId: tgt.invPatTestResultId,
+      serviceId: String(tgt.inv_mast_service_id != null ? tgt.inv_mast_service_id : tgt.invMastserviceId),
+      invPatTestResultId: tgt.invPatTestResultId,
       hospitalId: plan.site, genPatBillingId: tgt.genPatBillingId, entryDate: nowIso,
     };
     tgt.result = null;
@@ -692,7 +707,11 @@ app.post('/results/file', requireAuth, async (req, res) => {
     const sData = saveRes.json && saveRes.json.data;
     const sRow = Array.isArray(sData) ? sData[0] : sData;
     const saveMsg = sRow && (sRow.meassge || sRow.message);
-    const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(saveMsg && /enter template|select .*range|attach/i.test(saveMsg));
+    // A HIS reject can arrive as HTTP 200 with isSuccess omitted and a message that
+    // isn't in the old narrow list — treat any recognized error wording as failure so
+    // a rejection is never reported as a successful medical-record write.
+    const REJECT_MSG = /enter template|select .*range|attach|duplicate|already|locked|invalid|object reference|not set|no record|denied|unauthor|error|cannot|failed|fail\b/i;
+    const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(saveMsg && REJECT_MSG.test(saveMsg));
     if (!saveOk) {
       return res.json({ ok: true, wrote: false, step: 'save', saveStatus: saveRes.status,
         saveResponse: saveRes.json || String(saveRes.text || '').slice(0, 600), plan: planOut,
@@ -711,8 +730,9 @@ app.post('/results/file', requireAuth, async (req, res) => {
     // invPatTestResultId (a fresh order comes back with a real id we must authorize
     // against), flip the target to authorized, and drop the already-saved PDF from
     // the payload so authorization doesn't file a duplicate attachment.
+    const _svc = (x) => (x && (x.inv_mast_service_id != null ? x.inv_mast_service_id : x.invMastserviceId));
     const savedIdRow = Array.isArray(sData)
-      ? sData.find((x) => String(x.inv_mast_service_id) === String(tgt.inv_mast_service_id))
+      ? sData.find((x) => _svc(x) != null && String(_svc(x)) === String(_svc(tgt)))
       : (sData && typeof sData === 'object' ? sData : null);
     if (savedIdRow && savedIdRow.invPatTestResultId != null) tgt.invPatTestResultId = savedIdRow.invPatTestResultId;
     tgt.genFileAttachments = [];      // attachment already persisted by the save
@@ -730,7 +750,7 @@ app.post('/results/file', requireAuth, async (req, res) => {
     const aData = authRes.json && authRes.json.data;
     const aRow = aData && (Array.isArray(aData) ? aData[0] : aData);
     const authMsg = aRow ? (aRow.meassge || aRow.message) : null;
-    const authOk = authRes.status === 200 && aRow && aRow.isSuccess !== false && !(authMsg && /no record|select|fail/i.test(authMsg));
+    const authOk = authRes.status === 200 && aRow && aRow.isSuccess !== false && !(authMsg && REJECT_MSG.test(authMsg));
     return res.json({ ok: true, wrote: true, authorized: !!authOk, plan: planOut, stringRange,
       save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
       authorize: { status: authRes.status, isSuccess: aRow ? aRow.isSuccess : null, message: authMsg,

@@ -6534,10 +6534,15 @@ async def handoff_write_history(request: Request, user=Depends(require_admin)):
     if not history:
         raise HTTPException(400, "Add the clinical history first")
     sid = _int_or_400(study_id, "study_id")
-    out = _elite_write_history(sid, history)
+    # Flag Emergency + Category only when the handoff is actually an emergency — the
+    # step-2 Routine/Emergency toggle must drive this, not a hardcoded True (a routine
+    # study shouldn't jump the radiologist's priority worklist).
+    emergency = (str(b.get("priority") or "").lower() == "emergency") or (b.get("emergency") is True)
+    out = _elite_write_history(sid, history, set_emergency=emergency)
     insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
                  json.dumps({"file_no": (b.get("file_no") or "").strip(),
-                             "emergency": True, "category": _ELITE_EMERGENCY_CATEGORY_NAME}))
+                             "emergency": bool(emergency),
+                             "category": _ELITE_EMERGENCY_CATEGORY_NAME if emergency else None}))
     return out
 
 @app.get("/api/handoff/study-info-debug/{study_id}")
@@ -6573,7 +6578,9 @@ def _ksa_now():
         from zoneinfo import ZoneInfo
         return datetime.now(ZoneInfo("Asia/Riyadh"))
     except Exception:
-        return datetime.utcnow()
+        # No tzdata → KSA is a fixed UTC+3 (no DST), so add 3h rather than stamp UTC
+        # (a UTC stamp near midnight would print the wrong calendar date on the form).
+        return datetime.now(timezone.utc) + timedelta(hours=3)
 
 @app.post("/api/consent")
 async def create_consent(request: Request, user=Depends(require_admin)):
@@ -6598,6 +6605,8 @@ async def create_consent(request: Request, user=Depends(require_admin)):
     lmp = (b.get("lmp_date") or "").strip()
     if reason == "lmp" and not lmp:
         raise HTTPException(400, "Enter the date of the last menstrual period")
+    if reason != "lmp":
+        lmp = ""   # never stamp an LMP date next to a different ticked reason
     sig = b.get("signature") or ""
     png = None
     if isinstance(sig, str) and sig.startswith("data:image"):
@@ -6641,8 +6650,12 @@ def list_consents(request: Request, user=Depends(require_admin)):
     file_no = (request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
+    # Only SIGNED consents (a pending QR link that was never signed has no PDF and
+    # isn't a real consent — it must not appear in the patient's list).
     rows = q("""SELECT id, kind, procedure, patient_type, reason, created_by_name, created_at
-                FROM scheduling.consents WHERE file_no=%s ORDER BY created_at DESC""", (file_no,))
+                FROM scheduling.consents
+                WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
+                ORDER BY created_at DESC""", (file_no,))
     return {"file_no": file_no, "count": len(rows), "consents": rows}
 
 @app.get("/api/consent/{consent_id}/pdf")
@@ -6784,6 +6797,8 @@ async def public_consent_sign(token: str, request: Request):
     lmp = (b.get("lmp_date") or "").strip()
     if reason == "lmp" and not lmp:
         raise HTTPException(400, "Enter the date of the last menstrual period")
+    if reason != "lmp":
+        lmp = ""   # never stamp an LMP date next to a different ticked reason
     sig = b.get("signature") or ""
     if not isinstance(sig, str) or len(sig) > 3_000_000:   # ~2MB PNG ceiling
         raise HTTPException(400, "Signature is missing or too large")
