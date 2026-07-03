@@ -48,23 +48,25 @@ function rsPresetRange(id) {
   return { from: minus(29), to: end };                      // 30d
 }
 
-async function renderRadStatsPage() {
+async function renderRadStatsPage(opts) {
+  opts = opts || {};
+  const embed = !!opts.container;           // render the full stats INSIDE a host (e.g. Home) instead of the page
   const isLead = rsIsLead();
   // A team lead is pinned to their own branch; resolve it before the first load.
   if (isLead && !radstats.leadLocked) { await rsApplyLeadScope(); }
   const scopeName = radstats.leadLocked ? (radstats.leadBranchName || 'your branch') : '';
-  setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
+  if (!embed) setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
   rsStopAuto();
   if (radstats.preset && radstats.preset !== 'custom') {
     const r = rsPresetRange(radstats.preset);
     radstats.from = r.from; radstats.to = r.to;
   }
-  const c = document.getElementById('content');
+  const c = opts.container || document.getElementById('content');
   const heroSub = scopeName
     ? `Live request volume for ${escapeHtml(scopeName)} — by modality, doctor and department, straight from Siratech HIS`
     : 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS';
   c.innerHTML = `
-    ${pageHero('Radiology', 'Radiology statistics', heroSub)}
+    ${embed ? '' : pageHero('Radiology', 'Radiology statistics', heroSub)}
     <div id="rs-controls"></div>
     <div id="rs-billing-banner"></div>
     <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>`;
@@ -77,7 +79,7 @@ async function renderRadStatsPage() {
     return;
   }
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
-  else rsShowOverlay();                // first load → full-screen branded loader
+  else if (!embed) rsShowOverlay();    // first load → full-screen branded loader (page only, not embedded)
   if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
   await rsLoad();
 }

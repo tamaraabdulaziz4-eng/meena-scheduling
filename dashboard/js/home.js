@@ -59,6 +59,7 @@ async function renderHomePage() {
       </div>
     </div>
     <div id="hm-radstats"></div>
+    <div id="hm-fullstats" style="margin-top:14px"></div>
     <div id="hm-approvals"></div>
     <div class="hm-search">
       <div class="hm-searchbar">
@@ -85,6 +86,12 @@ async function renderHomePage() {
   // / Staff); expiring-credentials and the duplicate count-chips were removed.
   if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) {
     renderHomeRadstats();
+    // Full radiology statistics embedded right in Home (by branch / modality /
+    // department / doctor / payer / trend), reusing the Radiology-stats view.
+    const fs = document.getElementById('hm-fullstats');
+    if (fs && typeof renderRadStatsPage === 'function') {
+      renderRadStatsPage({ container: fs }).catch(() => {});
+    }
     renderHomeApprovals();
   }
   renderHomeRecent();
