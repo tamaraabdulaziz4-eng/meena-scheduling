@@ -335,7 +335,7 @@ function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, fi
     baseCatgeory: 0, hospitalId, mode: 6, cpoeStatus: 0, isbilled: 0, empId: String(empId),
     visitno: '', selectionType: 1, filterResult, profileId: '', invCategoryId: null,
     baseInvCategoryId: 2, visitMode: '', invMastServiceId: 0, sampleNo: '',
-    isCreditWithoutBilling: 0, cpoeSearchGroupMode: 0, searchType: 'B', visiType: 0,
+    isCreditWithoutBilling: 0, cpoeSearchGroupMode: 0, searchType: 'B', visiType: '0',
   };
 }
 
