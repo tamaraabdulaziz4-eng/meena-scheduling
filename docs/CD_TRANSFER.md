@@ -66,18 +66,23 @@ it with **Regenerate** if it leaks).
 
 ## 2) Branch employee — how to send a CD
 
-1. Put the CD in the drive and make **one** file from it:
-   - **ISO (recommended):** any built-in "create image from disc" tool, or on
-     Windows with no installs, use the drive's *right-click → …* if available, or
-     ask IT once to enable an imaging option. If ISO isn't possible →
-   - **ZIP:** open the CD in File Explorer, select **all** its contents
-     (including the `DICOMDIR` file and `DICOM`/`IMAGES` folders), right-click →
-     **Send to → Compressed (zipped) folder**.
+**Easiest way (no ISO/ZIP needed):**
+1. Put the CD in the drive.
 2. Open the **upload link** the radiology team shared.
 3. Fill: **medical file number** (required), branch, exam type, exam date,
-   **your name** (required), optional patient initials / note.
-4. Choose the **ISO or ZIP** file → **Upload securely**. Watch the progress bar.
-5. On success you get a **reference number** — keep it in case the team asks.
+   **your name** (required), optional initials / note.
+4. Press **Choose the CD (whole disc / folder)** → in the picker select the CD
+   drive (e.g. **DVD RW Drive (D:)**) → **Select Folder** → allow "upload N
+   files". Everything on the disc is sent, DICOM files unchanged; the server packs
+   them into one ZIP for you.
+5. **Upload securely** → watch the progress → keep the **reference number**.
+
+**Alternative (if you already have an image file):** use *Upload a ready ISO or
+ZIP file* instead — an ISO of the disc, or a ZIP of all its contents (right-click
+the CD's files → **Send to → Compressed (zipped) folder**).
+
+> The folder option needs Chrome or Edge (both are fine on the branch PC). Whether
+> the branch sends a folder, a ZIP, or an ISO, you receive a downloadable file.
 
 ## 3) You (receiving user) — download & import into PACS
 
