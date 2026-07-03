@@ -41,11 +41,15 @@ const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
 // category, mark the row's range, save, authorize). 151472 = the "Report" category
 // id captured live at Alworood (site 2); override per-site with env if it differs.
 const FILE_ATTACHMENT_CATEGORY_ID = Number(process.env.FILE_ATTACHMENT_CATEGORY_ID || 151472);
-// The result "range" classification the row is saved under (clinical call). The
-// live-proven value is 1 (= "Abnormal"); expose it so the caller can set it per
-// report. normal→0, abnormal→1, critical→2 (only 1 is live-verified).
-const DEFAULT_STRING_RANGE = Number(process.env.RESULT_STRING_RANGE || 1);
-const RANGE_NAME_TO_CODE = { normal: 0, abnormal: 1, critical: 2 };
+// The result "range" classification the row is saved under. The Siratech dropdown
+// is Normal / Abnormal / Critical / Not Applicable → 0 / 1 / 2 / 3. For RADIOLOGY
+// the normal-vs-abnormal "range" is a lab concept that does not apply — the
+// radiologist's report itself carries the interpretation — so we file every
+// radiology result as "Not Applicable" (3) unless the caller pins a range
+// explicitly. (Default overridable via RESULT_STRING_RANGE for other setups.)
+const RANGE_NAME_TO_CODE = { normal: 0, abnormal: 1, critical: 2, 'not applicable': 3, notapplicable: 3, na: 3 };
+const RANGE_NOT_APPLICABLE = 3;
+const DEFAULT_STRING_RANGE = Number(process.env.RESULT_STRING_RANGE || RANGE_NOT_APPLICABLE);
 
 if (!API_TOKEN) {
   console.warn('⚠  CONNECTOR_TOKEN is not set — /patient is UNAUTHENTICATED. Set it in production.');
@@ -509,12 +513,14 @@ app.post('/results/file', requireAuth, async (req, res) => {
     // Trim the heavy report body for the dry-run response (keep a text preview and
     // the PDF size, not the whole base64 blob).
     const rep = plan.report;
-    // Auto-classify normal vs. abnormal from the report's IMPRESSION unless the
-    // caller pinned the range explicitly (explicit always wins).
+    // RADIOLOGY results are always filed as "Not Applicable" (the report carries the
+    // interpretation; normal/abnormal is a lab range, not a radiology one) — unless
+    // the caller pins a range explicitly, which always wins. We still classify the
+    // impression for INFORMATIONAL display only (never to drive the written range).
     const autoClass = results.classifyRange(rep.reportText);
-    const stringRange = explicitRange != null ? explicitRange
-      : (RANGE_NAME_TO_CODE[autoClass.range] != null ? RANGE_NAME_TO_CODE[autoClass.range] : DEFAULT_STRING_RANGE);
-    const rangeSource = explicitRange != null ? 'explicit' : 'auto:' + autoClass.range;
+    const stringRange = explicitRange != null ? explicitRange : DEFAULT_STRING_RANGE;
+    const rangeSource = explicitRange != null ? 'explicit'
+      : (DEFAULT_STRING_RANGE === RANGE_NOT_APPLICABLE ? 'not applicable (radiology default)' : 'default');
     const planOut = {
       file: plan.file, site: plan.site, billNo: plan.billNo,
       target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },

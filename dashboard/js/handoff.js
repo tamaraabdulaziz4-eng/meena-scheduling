@@ -587,7 +587,17 @@ async function handoffFileConfirm(billNo, serviceId, site, btn) {
   try {
     const r = await API.post('/radiology/results/file', { file: handoff.file, billNo, serviceId, site, confirm: true, authorize: true });
     if (r && r.wrote) {
-      out.innerHTML = `<div class="ho-de-box ok" style="display:block">✅ <b>Filed into Siratech</b>${r.authorized ? ' and <b>authorized</b>' : ' — <b>pending authorization</b> (verify in Siratech)'}.${r.note ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${escapeHtml(r.note)}</div>` : ''}</div>`;
+      // When HIS did NOT confirm the authorization, surface its actual response
+      // (status + message + raw) so the reason is visible instead of a blind
+      // "pending" — this is what tells us how to fix the authorize payload.
+      let authDbg = '';
+      if (!r.authorized && r.authorize) {
+        const a = r.authorize;
+        const raw = a.raw != null ? (typeof a.raw === 'string' ? a.raw : JSON.stringify(a.raw)) : '';
+        authDbg = `<div style="font-size:11px;color:var(--warn,#b7791f);margin-top:5px;border-top:1px dashed var(--border);padding-top:4px;word-break:break-all;line-height:1.7">
+          🔎 authorize → HTTP ${escapeHtml(String(a.status != null ? a.status : '—'))}${a.isSuccess != null ? ' · isSuccess:' + escapeHtml(String(a.isSuccess)) : ''}${a.message ? ' · msg: ' + escapeHtml(String(a.message)) : ''}${raw ? '<br>raw: ' + escapeHtml(raw.slice(0, 400)) : ''}</div>`;
+      }
+      out.innerHTML = `<div class="ho-de-box ok" style="display:block">✅ <b>Filed into Siratech</b>${r.authorized ? ' and <b>authorized</b>' : ' — <b>pending authorization</b> (verify in Siratech)'}.${r.note ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${escapeHtml(r.note)}</div>` : ''}${authDbg}</div>`;
     } else {
       out.innerHTML = `<div class="ho-note">Not filed — ${escapeHtml((r && (r.note || r.reason || r.step)) || 'unknown reason')}.</div>`;
     }
