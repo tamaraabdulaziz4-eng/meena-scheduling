@@ -4,6 +4,75 @@
 // with a finger, and the signed PDF is generated server-side and filed to her file.
 
 let _consent = { prefill: null, onDone: null, drawing: false, hasInk: false };
+let _consentPoll = null;
+
+// ── QR flow: the patient scans and signs on HER OWN phone ─────────────────────
+// The specialist opens this, the patient scans the QR, reads & signs on her phone,
+// and this screen flips to ✅ the moment she submits (polling the consent status).
+async function openConsentQR(prefill, onDone) {
+  _consent = { prefill: prefill || {}, onDone: onDone || null, drawing: false, hasInk: false };
+  let ov = document.getElementById('consent-overlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'consent-overlay'; document.body.appendChild(ov); }
+  ov.innerHTML = `<div class="cn-sheet"><div class="cn-head"><div><div class="cn-title">إقرار عدم الحمل</div>
+    <div class="cn-sub">Non-Pregnancy Consent</div></div><button class="cn-x" onclick="closeConsent()">✕</button></div>
+    <div class="cn-body" style="text-align:center"><div class="mini-spin"></div><p style="margin-top:10px;color:var(--muted)">Preparing link…</p></div></div>`;
+  try {
+    const r = await API.post('/consent/link', _consent.prefill);
+    if (!r || !r.ok) throw new Error('Could not create the consent link');
+    renderConsentQR(ov, r);
+    consentStartPoll(r.id);
+  } catch (e) {
+    const body = ov.querySelector('.cn-body');
+    if (body) body.innerHTML = `<div class="cn-err">${escapeHtml(e.message || 'Failed to prepare the link')}</div>
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="consentSignHere()">Sign on this device · وقّعي على هذا الجهاز</button></div>`;
+  }
+}
+function renderConsentQR(ov, r) {
+  const p = _consent.prefill || {};
+  ov.querySelector('.cn-sheet').innerHTML = `
+    <div class="cn-head"><div><div class="cn-title">إقرار عدم الحمل</div><div class="cn-sub">Non-Pregnancy Consent · ${escapeHtml(p.name || '')}</div></div>
+      <button class="cn-x" onclick="closeConsent()">✕</button></div>
+    <div class="cn-body" style="text-align:center">
+      <p style="font-size:14px;font-weight:700;margin-bottom:4px">اطلبي من المريضة مسح الرمز بجوالها</p>
+      <p style="font-size:12.5px;color:var(--muted);direction:ltr;margin-bottom:14px">Ask the patient to scan this with her phone camera</p>
+      ${r.qr ? `<img src="${escapeHtml(r.qr)}" alt="QR" style="width:230px;max-width:70vw;height:auto;border:1px solid var(--border);border-radius:14px;padding:8px;background:#fff">` : ''}
+      <div style="margin-top:14px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
+        <input class="input" readonly value="${escapeHtml(r.url || '')}" style="flex:1;font-size:12px" onclick="this.select()">
+        <button class="btn btn-sm" onclick="consentCopyLink(this,'${escapeHtml(r.url || '')}')">Copy</button>
+      </div>
+      <div id="cn-poll" class="cn-poll">⏳ بانتظار توقيع المريضة… · waiting for signature…</div>
+      <div style="margin-top:14px;border-top:1px dashed var(--border);padding-top:12px">
+        <button class="btn btn-ghost btn-sm" onclick="consentSignHere()">أو وقّعي على هذا الجهاز · sign on this device</button>
+      </div>
+    </div>`;
+}
+function consentCopyLink(btn, url) {
+  try { navigator.clipboard.writeText(url).then(() => { const t = btn.textContent; btn.textContent = '✓'; setTimeout(() => btn.textContent = t, 1200); }); } catch (e) {}
+}
+function consentSignHere() {
+  const pre = _consent.prefill, done = _consent.onDone;
+  consentStopPoll();
+  openConsent(pre, done);
+}
+function consentStartPoll(id) {
+  consentStopPoll();
+  _consentPoll = setInterval(async () => {
+    if (!document.getElementById('consent-overlay')) { consentStopPoll(); return; }
+    try {
+      const s = await API.get(`/consent/status/${id}`);
+      if (s && s.status === 'signed') {
+        consentStopPoll();
+        const box = document.getElementById('cn-poll');
+        if (box) box.innerHTML = `<span class="cn-ok">✅ تم التوقيع · Signed</span>
+          <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${id}/pdf" target="_blank" rel="noopener">View PDF</a>`;
+        const done = _consent.onDone;
+        if (typeof done === 'function') done(id);
+        setTimeout(closeConsent, 2500);
+      }
+    } catch (e) {}
+  }, 3000);
+}
+function consentStopPoll() { if (_consentPoll) { clearInterval(_consentPoll); _consentPoll = null; } }
 
 // Open the consent for a patient. prefill: {file_no,name,mrn,dob,procedure,weight,
 // height,patient_type,physician}. onDone(consentId) fires after a successful save.
@@ -14,6 +83,7 @@ function openConsent(prefill, onDone) {
   renderConsent(ov);
 }
 function closeConsent() {
+  consentStopPoll();
   const ov = document.getElementById('consent-overlay');
   if (ov) ov.remove();
 }
@@ -32,42 +102,40 @@ function renderConsent(ov) {
       </div>
 
       <div class="cn-body">
-        <div class="cn-patient">
-          <div><span>Patient / المريضة</span><b>${escapeHtml(p.name || '—')}</b></div>
-          <div><span>File / الملف</span><b>${escapeHtml(p.mrno || p.file_no || '—')}</b></div>
-          ${p.dob ? `<div><span>DOB / الميلاد</span><b>${escapeHtml(p.dob)}</b></div>` : ''}
+        <!-- Her data, already registered — read-only summary -->
+        <div class="cn-summary">
+          <div class="cn-sum-row"><span>المريضة · Patient</span><b>${escapeHtml(p.name || '—')}</b></div>
+          <div class="cn-sum-row"><span>الملف · File</span><b>${escapeHtml(p.mrno || p.file_no || '—')}</b></div>
+          ${p.dob ? `<div class="cn-sum-row"><span>الميلاد · DOB</span><b>${escapeHtml(p.dob)}</b></div>` : ''}
+          <div class="cn-sum-row"><span>الإجراء · Procedure</span><b>${escapeHtml(p.procedure || '—')}</b></div>
+          ${p.branch ? `<div class="cn-sum-row"><span>الفرع · Branch</span><b>${escapeHtml(p.branch)}</b></div>` : ''}
+          <div class="cn-sum-row"><span>النوع · Type</span><b>${isER ? 'طوارئ · ER' : 'مراجعة · Outpatient'}</b></div>
+          ${p.physician ? `<div class="cn-sum-row"><span>الطبيب · Physician</span><b>${escapeHtml(p.physician)}</b></div>` : ''}
         </div>
+        <input type="hidden" id="cn-proc" value="${escapeHtml(p.procedure || '')}">
 
-        <div class="cn-grid">
-          <label class="cn-f"><span>Procedure · الإجراء</span>
-            <input id="cn-proc" class="input" value="${escapeHtml(p.procedure || '')}" placeholder="Exam"></label>
-          <label class="cn-f"><span>Weight · الوزن</span>
-            <input id="cn-weight" class="input" value="${escapeHtml(p.weight || '')}" placeholder="kg"></label>
-          <label class="cn-f"><span>Height · الطول</span>
-            <input id="cn-height" class="input" value="${escapeHtml(p.height || '')}" placeholder="cm"></label>
-          <label class="cn-f"><span>HCG (if applicable) · تحليل الحمل</span>
-            <input id="cn-hcg" class="input" placeholder="—"></label>
-        </div>
-
-        <div class="cn-seg">
-          <span class="cn-lbl">Patient type · نوع المريضة</span>
-          <div class="seg" id="cn-type">
-            <button type="button" class="${!isER ? 'on' : ''}" onclick="consentSetType('outpatient',this)">Outpatient · مراجعة</button>
-            <button type="button" class="${isER ? 'on' : ''}" onclick="consentSetType('er',this)">ER · طوارئ</button>
+        <!-- Optional clinical values the specialist enters if measured -->
+        <div class="cn-vitals">
+          <div class="cn-vitals-h">قياسات (اختياري — يعبّيها الأخصائي) · Vitals (optional)</div>
+          <div class="cn-vitals-row">
+            <label><span>الوزن · Weight</span><input id="cn-weight" class="input" inputmode="decimal" value="${escapeHtml(p.weight || '')}" placeholder="kg"></label>
+            <label><span>الطول · Height</span><input id="cn-height" class="input" inputmode="decimal" value="${escapeHtml(p.height || '')}" placeholder="cm"></label>
+            <label><span>HCG</span><input id="cn-hcg" class="input" placeholder="—"></label>
           </div>
         </div>
 
+        <!-- What the patient reads and chooses -->
         <div class="cn-declare">
-          <div class="cn-declare-h">أقر بأني لست حامل أثناء عمل فحص الأشعة — I declare I am not pregnant during the exam.</div>
-          <div class="cn-lbl" style="margin-top:8px">Because · بسبب:</div>
-          <label class="cn-radio"><input type="radio" name="cn-reason" value="not_married" onchange="consentSetReason('not_married')"> لست متزوجة · I'm not married</label>
+          <div class="cn-declare-h">أقر بأني لست حامل أثناء عمل فحص الأشعة<br><span>I declare I am not pregnant during the exam.</span></div>
+          <div class="cn-lbl" style="margin-top:10px">بسبب · Because:</div>
+          <label class="cn-radio"><input type="radio" name="cn-reason" value="not_married" onchange="consentSetReason('not_married')"> لست متزوجة · Not married</label>
           <label class="cn-radio"><input type="radio" name="cn-reason" value="lmp" checked onchange="consentSetReason('lmp')"> تاريخ آخر دورة شهرية · Last menstrual period
             <input id="cn-lmp" type="date" class="input" style="max-width:180px;margin-inline-start:8px"></label>
           <label class="cn-radio"><input type="radio" name="cn-reason" value="iud" onchange="consentSetReason('iud')"> مانع الحمل اللولب · IUD</label>
         </div>
 
-        <div class="cn-risk">⚠️ أدرك أن هذا الإجراء يستخدم الأشعة المؤيّنة وقد يعرّض الجنين للمخاطر.<br>
-          I understand this procedure uses ionizing radiation which may pose a risk to a fetus, and I consent to it.</div>
+        <div class="cn-risk">⚠️ أدرك أن هذا الإجراء يستخدم الأشعة المؤيّنة وقد يعرّض الجنين للمخاطر، وأوافق على إجرائه.<br>
+          <span>I understand this procedure uses ionizing radiation which may pose a risk to a fetus, and I consent to it.</span></div>
 
         <div class="cn-siglabel">التوقيع · Signature <span style="color:var(--muted);font-weight:500">— وقّعي هنا بإصبعك / sign with your finger</span></div>
         <div class="cn-sigwrap">

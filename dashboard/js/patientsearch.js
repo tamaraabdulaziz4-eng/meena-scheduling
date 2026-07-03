@@ -211,9 +211,9 @@ function psStartConsent() {
   const orders = (d.orders || []).map((o, i) => ({ o, i }))
     .sort((a, b) => (psOrderTime(b.o) - psOrderTime(a.o)) || (a.i - b.i)).map((x) => x.o);
   const top = orders[0] || {};
-  openConsent({
+  openConsentQR({
     file_no: p.mrno || '', mrno: p.mrno || '', name: p.name || '', dob: p.dob || '',
-    weight: p.weight || '', height: p.height || '',
+    weight: p.weight || '', height: p.height || '', branch: top.branch || '',
     procedure: top.service || '', patient_type: top.isER ? 'er' : 'outpatient',
     physician: top.provider || '', bill_no: top.billNo || '', site: top.siteId || null,
   }, () => psLoadConsents());

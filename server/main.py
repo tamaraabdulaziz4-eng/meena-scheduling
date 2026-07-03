@@ -436,6 +436,16 @@ def init_schema():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_consents_file ON scheduling.consents(file_no);")
+            # QR / remote-signing support: a pending consent carries a one-time token
+            # the patient opens on her own phone; the PDF is filled in only once she
+            # signs, so `pdf` must be nullable and status tracks pending → signed.
+            cur.execute("ALTER TABLE scheduling.consents ALTER COLUMN pdf DROP NOT NULL;")
+            for col, typ in (("token", "TEXT"), ("status", "TEXT NOT NULL DEFAULT 'signed'"),
+                             ("dob", "TEXT"), ("branch", "TEXT"), ("weight", "TEXT"),
+                             ("height", "TEXT"), ("hcg", "TEXT"), ("signed_at", "TIMESTAMPTZ"),
+                             ("expires_at", "TIMESTAMPTZ")):
+                cur.execute(f"ALTER TABLE scheduling.consents ADD COLUMN IF NOT EXISTS {col} {typ};")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_consents_token ON scheduling.consents(token) WHERE token IS NOT NULL;")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
@@ -6536,6 +6546,140 @@ def consent_pdf(consent_id: int, user=Depends(require_admin)):
     data = bytes(row["pdf"])
     return Response(content=data, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="consent_{consent_id}.pdf"'})
+
+# ---- QR / remote signing: patient signs on her own phone ---------------------
+@app.post("/api/consent/link")
+async def create_consent_link(request: Request, user=Depends(require_admin)):
+    """Create a pending consent + a one-time link/QR the patient opens on her own
+    phone to read & sign. Her data is pre-registered now; the PDF is filled when she
+    signs. Returns the URL and an inline-SVG QR."""
+    import secrets
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    file_no = str(b.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "A patient file number is required")
+    patient_type = (b.get("patient_type") or "").strip().lower()
+    if patient_type and patient_type not in _CONSENT_TYPES:
+        patient_type = ""
+    token = secrets.token_urlsafe(24)
+    tech = _consent_signer(user)
+    row = q("""INSERT INTO scheduling.consents
+                 (kind, file_no, mrn, patient_name, procedure, patient_type, physician, technologist,
+                  bill_no, site, dob, branch, weight, height, token, status, created_by, created_by_name, expires_at)
+               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '12 hours')
+               RETURNING id""",
+            (file_no, (b.get("mrn") or file_no).strip(), (b.get("name") or "").strip(),
+             (b.get("procedure") or "").strip(), patient_type or None, (b.get("physician") or "").strip() or None,
+             tech, (b.get("bill_no") or None), (b.get("site") if isinstance(b.get("site"), int) else None),
+             (b.get("dob") or "").strip() or None, (b.get("branch") or "").strip() or None,
+             (b.get("weight") or "").strip() or None, (b.get("height") or "").strip() or None,
+             token, user["id"], tech), one=True)
+    base = str(request.base_url).rstrip("/")
+    # Honour the forwarded host so the link is the public https URL, not the internal one.
+    xf_host = request.headers.get("x-forwarded-host")
+    xf_proto = request.headers.get("x-forwarded-proto") or "https"
+    if xf_host:
+        base = f"{xf_proto}://{xf_host}"
+    url = f"{base}/consent-sign?t={token}"
+    qr = ""
+    try:
+        import segno
+        qr = segno.make(url, error="m").svg_data_uri(scale=5, border=2, dark="#12103a")
+    except Exception:
+        qr = ""
+    insert_audit(user, "CONSENT_LINK", file_no, json.dumps({"id": row["id"]}))
+    return {"ok": True, "id": row["id"], "url": url, "qr": qr}
+
+@app.get("/api/consent/status/{consent_id}")
+def consent_status(consent_id: int, user=Depends(require_admin)):
+    """Poll whether a QR consent has been signed yet."""
+    r = q("SELECT status, signed_at FROM scheduling.consents WHERE id=%s", (consent_id,), one=True)
+    if not r:
+        raise HTTPException(404, "Consent not found")
+    return {"id": consent_id, "status": r["status"] or "signed",
+            "signed_at": str(r["signed_at"]) if r.get("signed_at") else None}
+
+@app.get("/consent-sign")
+def serve_consent_sign():
+    """Public, login-free consent-signing page opened from the QR on the patient's phone."""
+    return FileResponse(os.path.join(DASHBOARD, "consent-sign.html"), media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+def _consent_by_token(token):
+    token = (token or "").strip()
+    if not token:
+        raise HTTPException(400, "Invalid link")
+    r = q("SELECT * FROM scheduling.consents WHERE token=%s", (token,), one=True)
+    if not r:
+        raise HTTPException(404, "This link is not valid.")
+    exp = r.get("expires_at")
+    if exp is not None and exp < datetime.now(timezone.utc):
+        raise HTTPException(410, "This link has expired. Ask the specialist for a new one.")
+    return r
+
+@app.get("/api/public/consent/{token}")
+def public_consent_get(token: str):
+    """Prefill data for the patient's phone page (gated by the unguessable token)."""
+    r = _consent_by_token(token)
+    if (r.get("status") or "") == "signed":
+        return {"signed": True}
+    return {"signed": False, "name": r.get("patient_name") or "", "file_no": r.get("file_no") or "",
+            "mrn": r.get("mrn") or "", "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
+            "patient_type": r.get("patient_type") or "", "branch": r.get("branch") or "",
+            "weight": r.get("weight") or "", "height": r.get("height") or ""}
+
+@app.post("/api/public/consent/{token}/sign")
+async def public_consent_sign(token: str, request: Request):
+    """The patient submits her signed consent from her phone. One-time: the token is
+    burned once signed. No login — the unguessable token is the authorization."""
+    import base64
+    from consent_pdf import generate_consent_pdf
+    r = _consent_by_token(token)
+    if (r.get("status") or "") == "signed":
+        raise HTTPException(409, "This consent has already been signed.")
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    reason = (b.get("reason") or "").strip().lower()
+    if reason and reason not in _CONSENT_REASONS:
+        raise HTTPException(400, "Invalid reason")
+    lmp = (b.get("lmp_date") or "").strip()
+    if reason == "lmp" and not lmp:
+        raise HTTPException(400, "Enter the date of the last menstrual period")
+    sig = b.get("signature") or ""
+    png = None
+    if isinstance(sig, str) and sig.startswith("data:image"):
+        try:
+            png = base64.b64decode(sig.split(",", 1)[1])
+        except Exception:
+            png = None
+    if not png:
+        raise HTTPException(400, "Signature is required")
+    now = _ksa_now()
+    weight = (b.get("weight") or r.get("weight") or "").strip()
+    height = (b.get("height") or r.get("height") or "").strip()
+    hcg = (b.get("hcg") or "").strip()
+    data = {
+        "name": r.get("patient_name") or "", "mrn": r.get("mrn") or r.get("file_no") or "",
+        "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
+        "weight": weight, "height": height, "hcg": hcg, "patient_type": r.get("patient_type") or "",
+        "reason": reason, "lmp_date": lmp, "undersigned": r.get("patient_name") or "",
+        "physician": r.get("physician") or "", "technologist": r.get("technologist") or "",
+        "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
+    }
+    try:
+        pdf = generate_consent_pdf(data, png)
+    except Exception as e:
+        raise HTTPException(500, f"Could not generate the consent PDF: {e}")
+    q("""UPDATE scheduling.consents
+           SET pdf=%s, reason=%s, lmp_date=%s, weight=%s, height=%s, hcg=%s,
+               status='signed', signed_at=NOW()
+         WHERE id=%s""",
+      (psycopg2.Binary(pdf), reason or None, lmp or None, weight or None, height or None, hcg or None, r["id"]),
+      exec_only=True)
+    return {"ok": True}
 
 _PREF_KINDS = ("off", "unavailable")
 
