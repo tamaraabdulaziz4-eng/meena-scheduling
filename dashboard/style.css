@@ -2484,3 +2484,46 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
   body.mode-report .rsr-slide:last-child { break-after:auto; }
   body.mode-report .rsr-nav, body.mode-report .rsr-dots, body.mode-report .rsr-bar { display:none !important; }
 }
+
+/* ── Radiology consent (Declaration of Non-Pregnancy) ── */
+#consent-overlay { position:fixed; inset:0; z-index:6000; background:rgba(20,16,40,.55);
+  display:flex; align-items:flex-start; justify-content:center; padding:16px; overflow-y:auto; }
+.cn-sheet { background:var(--card,#fff); width:100%; max-width:680px; border-radius:18px; overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.35); margin:auto; }
+.cn-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 20px;
+  background:linear-gradient(135deg,var(--primary),var(--accent)); color:#fff; }
+.cn-title { font-size:19px; font-weight:800; }
+.cn-sub { font-size:12px; opacity:.9; margin-top:2px; }
+.cn-x { background:rgba(255,255,255,.2); border:none; color:#fff; width:34px; height:34px; border-radius:50%;
+  font-size:15px; cursor:pointer; flex:0 0 auto; }
+.cn-body { padding:18px 20px; }
+.cn-patient { display:flex; gap:20px; flex-wrap:wrap; padding:12px 14px; border-radius:12px; background:var(--card-alt); margin-bottom:16px; }
+.cn-patient > div { display:flex; flex-direction:column; }
+.cn-patient span { font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+.cn-patient b { font-size:15px; color:var(--text); }
+.cn-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }
+@media (max-width:520px){ .cn-grid{ grid-template-columns:1fr; } }
+.cn-f { display:flex; flex-direction:column; gap:5px; }
+.cn-f span, .cn-lbl { font-size:12px; font-weight:700; color:var(--muted); }
+.cn-seg { margin-bottom:14px; }
+.cn-seg .seg { margin-top:6px; }
+.cn-declare { border:1.5px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+.cn-declare-h { font-size:14px; font-weight:700; color:var(--text); line-height:1.6; }
+.cn-radio { display:flex; align-items:center; gap:8px; font-size:13.5px; color:var(--text); margin-top:8px; flex-wrap:wrap; }
+.cn-risk { font-size:12.5px; color:#8a5a00; background:rgba(220,150,0,.10); border:1px solid rgba(220,150,0,.35);
+  border-radius:12px; padding:11px 13px; line-height:1.7; margin-bottom:16px; }
+.cn-siglabel { font-size:13px; font-weight:800; color:var(--text); margin-bottom:6px; }
+.cn-sigwrap { position:relative; border:2px dashed var(--border); border-radius:14px; background:#fff; height:200px; }
+.cn-sig { width:100%; height:100%; display:block; touch-action:none; border-radius:12px; }
+.cn-sigclear { position:absolute; top:8px; inset-inline-end:8px; font-size:12px; padding:4px 10px; border:1px solid var(--border);
+  background:var(--card-alt); border-radius:8px; cursor:pointer; color:var(--text); }
+.cn-msg { margin-top:12px; min-height:20px; font-size:13px; }
+.cn-ok { color:#0a7c42; font-weight:700; }
+.cn-err { color:#c0392b; font-weight:600; }
+.cn-foot { display:flex; justify-content:space-between; gap:10px; padding:14px 20px; border-top:1px solid var(--border); background:var(--card-alt); }
+/* Consent bits on the patient-lookup card */
+.ps-consent { margin-top:14px; border-top:1px dashed var(--border); padding-top:12px; }
+.ps-consent-btn.female { box-shadow:0 0 0 3px rgba(220,60,140,.18); }
+.ps-consent-list { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+.ps-consent-row { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12.5px;
+  padding:7px 10px; border:1px solid var(--border); border-radius:10px; }

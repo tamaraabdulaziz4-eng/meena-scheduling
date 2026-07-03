@@ -411,6 +411,31 @@ def init_schema():
                     expires_at TIMESTAMPTZ
                 );""")
             cur.execute("ALTER TABLE scheduling.cd_transfers ADD COLUMN IF NOT EXISTS file_count INT NOT NULL DEFAULT 0;")
+            # Signed radiology consents (e.g. Declaration of Non-Pregnancy). The
+            # completed, signed PDF is stored so it can be viewed/downloaded and filed
+            # into the patient's Siratech/DePACS record.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.consents (
+                    id SERIAL PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT 'non_pregnancy',
+                    file_no TEXT NOT NULL,
+                    mrn TEXT,
+                    patient_name TEXT,
+                    procedure TEXT,
+                    patient_type TEXT,
+                    reason TEXT,
+                    lmp_date TEXT,
+                    physician TEXT,
+                    technologist TEXT,
+                    bill_no TEXT,
+                    site INT,
+                    pdf BYTEA NOT NULL,
+                    filed_siratech BOOLEAN NOT NULL DEFAULT false,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_by_name TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_consents_file ON scheduling.consents(file_no);")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
@@ -6410,6 +6435,107 @@ def handoff_study_info_debug(study_id: int, user=Depends(require_admin)):
     interesting = {k: b.get(k) for k in b.keys()
                    if hint.search(k) and not isinstance(b.get(k), (dict, list))}
     return {"study_id": study_id, "all_keys": sorted(b.keys()), "emergency_category_fields": interesting}
+
+# ---- Radiology consent (Declaration of Non-Pregnancy) ------------------------
+_CONSENT_TYPES = ("outpatient", "er")
+_CONSENT_REASONS = ("not_married", "lmp", "iud")
+
+def _consent_signer(user):
+    """Display name + employee id of the logged-in specialist (the radiology
+    technologist who witnesses the signing), resolved from their linked staff row."""
+    sid = user.get("staff_id")
+    if sid:
+        r = q("SELECT name, employee_id FROM scheduling.staff WHERE id=%s", (sid,), one=True)
+        if r and r.get("name"):
+            return r["name"] + (f" ({r['employee_id']})" if r.get("employee_id") else "")
+    return user.get("username") or "Radiology Specialist"
+
+def _ksa_now():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Riyadh"))
+    except Exception:
+        return datetime.utcnow()
+
+@app.post("/api/consent")
+async def create_consent(request: Request, user=Depends(require_admin)):
+    """Generate the signed Declaration of Non-Pregnancy PDF from the captured form
+    + signature, store it against the patient file, and return its id. The completed
+    PDF can then be viewed/downloaded and filed into the patient's record."""
+    import base64
+    from consent_pdf import generate_consent_pdf
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    file_no = str(b.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "A patient file number is required")
+    name = (b.get("name") or "").strip()
+    patient_type = (b.get("patient_type") or "").strip().lower()
+    if patient_type and patient_type not in _CONSENT_TYPES:
+        raise HTTPException(400, "Invalid patient type")
+    reason = (b.get("reason") or "").strip().lower()
+    if reason and reason not in _CONSENT_REASONS:
+        raise HTTPException(400, "Invalid reason")
+    lmp = (b.get("lmp_date") or "").strip()
+    if reason == "lmp" and not lmp:
+        raise HTTPException(400, "Enter the date of the last menstrual period")
+    sig = b.get("signature") or ""
+    png = None
+    if isinstance(sig, str) and sig.startswith("data:image"):
+        try:
+            png = base64.b64decode(sig.split(",", 1)[1])
+        except Exception:
+            png = None
+    if not png:
+        raise HTTPException(400, "The patient signature is required")
+    now = _ksa_now()
+    tech = _consent_signer(user)
+    data = {
+        "name": name, "mrn": (b.get("mrn") or file_no).strip(),
+        "dob": (b.get("dob") or "").strip(), "procedure": (b.get("procedure") or "").strip(),
+        "weight": (b.get("weight") or "").strip(), "height": (b.get("height") or "").strip(),
+        "hcg": (b.get("hcg") or "").strip(), "patient_type": patient_type,
+        "reason": reason, "lmp_date": lmp, "undersigned": name,
+        "physician": (b.get("physician") or "").strip(), "technologist": tech,
+        "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
+    }
+    try:
+        pdf = generate_consent_pdf(data, png)
+    except Exception as e:
+        raise HTTPException(500, f"Could not generate the consent PDF: {e}")
+    row = q("""INSERT INTO scheduling.consents
+                 (kind, file_no, mrn, patient_name, procedure, patient_type, reason, lmp_date,
+                  physician, technologist, bill_no, site, pdf, created_by, created_by_name)
+               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id, created_at""",
+            (file_no, data["mrn"], name, data["procedure"], patient_type or None, reason or None,
+             lmp or None, data["physician"] or None, tech,
+             (b.get("bill_no") or None), (b.get("site") if isinstance(b.get("site"), int) else None),
+             psycopg2.Binary(pdf), user["id"], tech), one=True)
+    insert_audit(user, "CONSENT_CREATE", file_no,
+                 json.dumps({"id": row["id"], "kind": "non_pregnancy", "procedure": data["procedure"]}))
+    return {"ok": True, "id": row["id"], "created_at": str(row["created_at"])}
+
+@app.get("/api/consent")
+def list_consents(request: Request, user=Depends(require_admin)):
+    """List the signed consents on a patient file (newest first)."""
+    file_no = (request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    rows = q("""SELECT id, kind, procedure, patient_type, reason, created_by_name, created_at
+                FROM scheduling.consents WHERE file_no=%s ORDER BY created_at DESC""", (file_no,))
+    return {"file_no": file_no, "count": len(rows), "consents": rows}
+
+@app.get("/api/consent/{consent_id}/pdf")
+def consent_pdf(consent_id: int, user=Depends(require_admin)):
+    """Download a signed consent PDF."""
+    row = q("SELECT file_no, pdf FROM scheduling.consents WHERE id=%s", (consent_id,), one=True)
+    if not row or row.get("pdf") is None:
+        raise HTTPException(404, "Consent not found")
+    data = bytes(row["pdf"])
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="consent_{consent_id}.pdf"'})
 
 _PREF_KINDS = ("off", "unavailable")
 
