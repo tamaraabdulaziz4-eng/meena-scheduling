@@ -118,16 +118,22 @@ function sideOf(s) {
 const REPORTED_STATUS = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/;
 function isReported(status) { return REPORTED_STATUS.test(String(status || '').toUpperCase()); }
 
-// The file-number (MRN) equality test used as the first match gate. DePACS
-// stores pat_id as the bare MRN OR the MRN with the patient name concatenated
-// ("25097956ELAZIM, WAEL"), so accept the MRN as a leading token but never let a
-// longer/different number slip through (the char after the MRN must be non-digit).
+// The file-number (MRN) equality test used as the first match gate. DePACS is
+// inconsistent about pat_id and stores it three ways:
+//   • the bare MRN                     — "26336282"
+//   • the MRN with the name glued on   — "26336282ELAZIM, WAEL"
+//   • the MRN behind a source prefix   — "SIRA26336282" (the SIRA imaging/accession
+//                                         workflow prepends its own tag)
+// So match the MRN wherever it appears as a WHOLE number — with \d boundaries so a
+// longer or different file number ("263362820", "126336282") can never masquerade
+// as this one, and a name/prefix around it never blocks a legitimate match.
 function sameMrn(patId, mrno) {
   const pid = String(patId == null ? '' : patId).trim();
   const m = String(mrno == null ? '' : mrno).trim();
   if (!pid || !m) return false;
   if (pid === m) return true;
-  return pid.startsWith(m) && !/[0-9]/.test(pid.charAt(m.length));
+  const esc = m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(?<!\\d)' + esc + '(?!\\d)').test(pid);
 }
 
 // ── DePACS (Butterfly) client ─────────────────────────────────────────────────

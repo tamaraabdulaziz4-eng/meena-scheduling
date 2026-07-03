@@ -327,8 +327,13 @@ function _accDbg(obj) {
 }
 
 function pickAccession(...objs) {
+  // ONLY real DICOM-accession field names. `sampleNo` is a comma-separated list of
+  // lab/specimen BARCODES (e.g. "1312030726,1310030726,…"), NOT the DICOM accession
+  // ("SIRA1661") — using it as the accession key risks a wrong-study bind, so it is
+  // deliberately excluded. When no true accession is present the matcher correctly
+  // falls back to modality + body-part + time.
   const keys = ['accessionNumber', 'accessionNo', 'accession_no', 'accession',
-                'accNo', 'barCode', 'barcode', 'sampleNo'];
+                'accNo', 'barCode', 'barcode'];
   for (const o of objs) {
     if (!o) continue;
     for (const k of keys) {
