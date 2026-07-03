@@ -523,7 +523,17 @@ function renderHandoffResults(d) {
         ${allCands.length ? 'studies: ' + escapeHtml(allCands.map(c => `${c.desc}|acc:${c.accession || '—'}|iuid:${c.iuid || '—'}|#${c.studyId}`).join('  ;  ')) : ''}</div>
     </div>`;
   };
-  box.innerHTML = orders.map(o => {
+  const anyReview = orders.some(o => !o.allUnique);
+  // TEMP DEBUG: when nothing matched, dump EVERY DePACS study pulled for this file
+  // (pre-filter) so we can see why the right one was excluded — wrong status, a
+  // different pat_id, or simply not returned. Remove once the reverse flow is proven.
+  const allStudiesDump = (anyReview && Array.isArray(d.allStudies) && d.allStudies.length)
+    ? `<div style="font-size:11px;color:var(--muted);margin:0 0 10px;border:1px dashed var(--border);border-radius:8px;padding:6px 8px;word-break:break-all;line-height:1.8">
+         🗂️ all DePACS studies for file (${d.allStudies.length}):<br>${
+           d.allStudies.map(s => `• ${escapeHtml(s.desc || '(no desc)')} · ${escapeHtml(s.modality || '')} · <b>${escapeHtml(s.status || '?')}</b> · acc:${escapeHtml(s.accession || '—')} · ${escapeHtml(String(s.studyDate || '').slice(0,10))} · pat:${escapeHtml(String(s.patId || ''))} · #${escapeHtml(String(s.studyId))}`).join('<br>')
+         }</div>`
+    : '';
+  box.innerHTML = allStudiesDump + orders.map(o => {
     const tests = (o.tests || []).map(t => testCard(t, o.order.billNo)).join('');
     return `<div style="margin-bottom:10px">
       <div class="ho-lbl" style="margin:6px 0 4px">Order ${escapeHtml(o.order.billNo || '')}
