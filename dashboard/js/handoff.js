@@ -410,6 +410,10 @@ function _isToday(d) {
 }
 async function handoffPollTick() {
   if (!handoff.polling) return;
+  // Stop if the user navigated away from the handoff page — otherwise polling (and
+  // a background auto-write to DePACS) would keep running unsupervised on a page
+  // the user has left.
+  if (typeof currentPage !== 'undefined' && currentPage !== 'handoff') { handoffStopPolling(); return; }
   handoff.pollN += 1;
   try {
     const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
@@ -557,11 +561,13 @@ function renderHandoffResults(d) {
     return;
   }
   const site = (d && d.site) || 0;
+  const filed = handoff.filed || (handoff.filed = {});   // session-level: billNo|serviceId → true
   const testCard = (t, billNo) => {
     const s = t.study || {};
     const rep = t.report || {};
     if (t.decision === 'unique') {
       const sid = (t.test && t.test.invMastServiceId) || '';
+      const isFiled = !!filed[`${billNo}|${sid}`];   // already filed this session → no re-file
       return `<div class="ho-de-box ok" style="display:block">
         <div><b>✅ ${escapeHtml(t.test.serviceName || '')}</b> — report ready</div>
         <div style="font-size:12px;color:var(--muted);margin:3px 0">
@@ -571,35 +577,21 @@ function renderHandoffResults(d) {
         ${rep.preview ? `<textarea class="input" rows="4" readonly style="font-size:12px">${escapeHtml(rep.preview)}${rep.preview.length >= 590 ? '…' : ''}</textarea>
         <button class="btn btn-sm" style="margin-top:6px" onclick="handoffCopyText(this)">📋 Copy report</button>` : ''}
         <div class="ho-actions" style="margin-top:8px">
-          <button class="btn btn-sm btn-primary" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>
+          ${isFiled
+            ? `<button class="btn btn-sm" disabled>✅ Filed</button>`
+            : `<button class="btn btn-sm btn-primary" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>`}
         </div>
         <div class="ho-file-out" style="margin-top:8px"></div>
       </div>`;
     }
     const cands = (t.candidates || []).filter(c => c.bodyMatch && c.bodyMatch.length);
-    const allCands = t.candidates || [];
     return `<div class="ho-de-box" style="display:block;border-color:var(--warn,#b7791f)">
       <div><b>⚠️ ${escapeHtml(t.test.serviceName || '')}</b> — needs manual review</div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(t.reason || t.decision)}.
       ${cands.length ? 'Possible: ' + escapeHtml(cands.map(c => `${c.desc} (#${c.studyId})`).join(', ')) : 'No confident match — do not file automatically.'}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px;word-break:break-all;line-height:1.7">
-        🔎 key: <b>${escapeHtml(t.matchKey || '—')}</b> · order acc: <b>${escapeHtml(t.orderAccession != null ? String(t.orderAccession) : '—')}</b><br>
-        order fields: ${escapeHtml(JSON.stringify((t.rawAcc && t.rawAcc.order) || {}))}<br>
-        detail fields: ${escapeHtml(JSON.stringify((t.rawAcc && t.rawAcc.detail) || {}))}<br>
-        ${allCands.length ? 'studies: ' + escapeHtml(allCands.map(c => `${c.desc}|acc:${c.accession || '—'}|iuid:${c.iuid || '—'}|#${c.studyId}`).join('  ;  ')) : ''}</div>
     </div>`;
   };
-  const anyReview = orders.some(o => !o.allUnique);
-  // TEMP DEBUG: when nothing matched, dump EVERY DePACS study pulled for this file
-  // (pre-filter) so we can see why the right one was excluded — wrong status, a
-  // different pat_id, or simply not returned. Remove once the reverse flow is proven.
-  const allStudiesDump = (anyReview && Array.isArray(d.allStudies) && d.allStudies.length)
-    ? `<div style="font-size:11px;color:var(--muted);margin:0 0 10px;border:1px dashed var(--border);border-radius:8px;padding:6px 8px;word-break:break-all;line-height:1.8">
-         🗂️ all DePACS studies for file (${d.allStudies.length}):<br>${
-           d.allStudies.map(s => `• ${escapeHtml(s.desc || '(no desc)')} · ${escapeHtml(s.modality || '')} · <b>${escapeHtml(s.status || '?')}</b> · acc:${escapeHtml(s.accession || '—')} · ${escapeHtml(String(s.studyDate || '').slice(0,10))} · pat:${escapeHtml(String(s.patId || ''))} · #${escapeHtml(String(s.studyId))}`).join('<br>')
-         }</div>`
-    : '';
-  box.innerHTML = allStudiesDump + orders.map(o => {
+  box.innerHTML = orders.map(o => {
     const tests = (o.tests || []).map(t => testCard(t, o.order.billNo)).join('');
     return `<div style="margin-bottom:10px">
       <div class="ho-lbl" style="margin:6px 0 4px">Order ${escapeHtml(o.order.billNo || '')}
@@ -664,8 +656,10 @@ async function handoffFileConfirm(billNo, serviceId, site, btn) {
           🔎 authorize → HTTP ${escapeHtml(String(a.status != null ? a.status : '—'))}${a.isSuccess != null ? ' · isSuccess:' + escapeHtml(String(a.isSuccess)) : ''}${a.message ? ' · msg: ' + escapeHtml(String(a.message)) : ''}${raw ? '<br>raw: ' + escapeHtml(raw.slice(0, 400)) : ''}</div>`;
       }
       out.innerHTML = `<div class="ho-de-box ok" style="display:block">✅ <b>Filed into Siratech</b>${r.authorized ? ' and <b>authorized</b>' : ' — <b>pending authorization</b> (verify in Siratech)'}.${r.note ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${escapeHtml(r.note)}</div>` : ''}${authDbg}</div>`;
-      // Filed successfully — neutralise this test's File button so a later "Check
-      // report" (natural when working a sibling test) can't re-file the same result.
+      // Filed successfully — record it at SESSION level (keyed by bill+service) so a
+      // later "Check report" that re-renders fresh buttons can't re-file it, and
+      // neutralise the current button immediately.
+      (handoff.filed || (handoff.filed = {}))[`${billNo}|${serviceId}`] = true;
       const card = out.closest('.ho-de-box');
       const fileBtn = card && card.querySelector('.ho-actions .btn-primary');
       if (fileBtn) { fileBtn.disabled = true; fileBtn.textContent = '✅ Filed'; fileBtn.onclick = null; }
