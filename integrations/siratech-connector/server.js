@@ -398,13 +398,30 @@ function pickAccession(...objs) {
   return null;
 }
 
+// The result-entry worklist is per-site, but the UI/caller rarely knows which
+// branch a patient's order lives at. FetchRadiologyDetails is site-agnostic and
+// returns each order with its own siteId, so use it to auto-discover the site when
+// none was pinned — matching the wanted bill when given, else the first order.
+// Returns 0 on any failure so callers fall back to the RESULT_SITE default.
+async function discoverOrderSite(file, wantBillNo) {
+  try {
+    const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } });
+    if (!r || (r.status && r.status >= 400) || r.json == null) return 0;
+    const orders = r.json.data || [];
+    const match = wantBillNo ? orders.find((o) => String(o.billNo) === String(wantBillNo)) : orders[0];
+    const sid = Number((match || {}).siteId);
+    return Number.isFinite(sid) && sid > 0 ? sid : 0;
+  } catch (e) { return 0; }
+}
+
 async function buildMatch(file, wantBillNo, site) {
   await getToken();                                    // ensure logged in (empId)
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
   // A patient's orders live at THEIR branch, not a fixed one — the result-entry
-  // worklist is per-site, so search the order's actual hospitalId when given.
-  const useSite = Number(site) > 0 ? Number(site) : RESULT_SITE;
+  // worklist is per-site. Use the site when pinned, else auto-discover it from the
+  // site-agnostic order list so a caller that doesn't know the branch still matches.
+  const useSite = Number(site) > 0 ? Number(site) : (await discoverOrderSite(file, wantBillNo)) || RESULT_SITE;
 
   // 1) the patient's radiology orders that are awaiting a result (filterResult 0)
   const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
@@ -520,7 +537,9 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   await getToken();
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
-  const useSite = Number(site) > 0 ? Number(site) : RESULT_SITE;
+  // Same per-site worklist rule as buildMatch: honour a pinned site, else discover
+  // the order's real branch (by bill when given) so filing targets the right site.
+  const useSite = Number(site) > 0 ? Number(site) : (await discoverOrderSite(file, billNo)) || RESULT_SITE;
 
   const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
     body: results.radiologySearchBody({ mrno: file, hospitalId: useSite, empId }),
