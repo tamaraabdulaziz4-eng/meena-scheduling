@@ -27,17 +27,22 @@
   @media (max-width:480px){ .grid2 { grid-template-columns:1fr; } }
   .req { color:var(--red); }
   .hint { font-size:12px; color:var(--muted); margin-top:6px; }
-  .filebox { border:2px dashed var(--border); border-radius:14px; padding:18px; text-align:center; background:#fbfdff; cursor:pointer; }
-  .filebox.has { border-color:var(--accent); background:#f2f7ff; }
-  .filebox .fn { font-weight:700; font-size:14px; word-break:break-all; }
-  .filebox .fs { font-size:12px; color:var(--muted); margin-top:3px; }
+  .pickbtn { width:100%; border:2px dashed var(--border); border-radius:14px; padding:16px; text-align:center; background:#fbfdff; cursor:pointer; font-family:inherit; color:var(--primary); }
+  .pickbtn:hover { border-color:var(--accent); background:#f2f7ff; }
+  .pickbtn .big { font-size:26px; }
+  .pickbtn .ttl { font-weight:800; font-size:15px; margin-top:4px; }
+  .pickbtn .sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .orline { text-align:center; font-size:12px; color:var(--muted); font-weight:700; margin:10px 0; }
+  .selbox { border:1.5px solid var(--accent); border-radius:12px; padding:12px 14px; background:#f2f7ff; margin-top:4px; }
+  .selbox .fn { font-weight:700; font-size:14px; word-break:break-all; }
+  .selbox .fs { font-size:12px; color:var(--muted); margin-top:3px; }
+  .selbox .chg { font-size:12px; color:var(--accent); margin-top:6px; cursor:pointer; font-weight:700; }
   .btn2 { width:100%; padding:14px 20px; font-size:16px; font-weight:800; font-family:inherit; color:#fff; border:none;
          border-radius:13px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
          box-shadow:0 8px 20px rgba(37,99,235,.32); }
   .btn2:disabled { opacity:.55; cursor:default; }
   .msg { font-size:13px; padding:11px 13px; border-radius:11px; margin-top:12px; display:none; line-height:1.6; }
   .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
-  .msg.ok  { display:block; background:rgba(0,168,125,.12); color:#067a5b; }
   .prog { margin-top:14px; display:none; }
   .prog.show { display:block; }
   .bar { height:12px; border-radius:999px; background:#e4edff; overflow:hidden; }
@@ -55,7 +60,7 @@
     <div><div class="t">Radiology CD Upload</div><div class="s">Send a patient's imaging CD securely to the main site</div></div>
   </div>
 
-  <div class="note">📀 Make a full copy of the CD as a single <b>ISO</b> file (recommended) or a <b>ZIP</b> of everything on the disc, then upload it below. Do not rename or edit the DICOM files. Max size 4 GB. No patient full name is stored in the link.</div>
+  <div class="note">📀 Easiest: put the CD in the drive and press <b>Choose the CD</b> below, then pick the CD drive (e.g. <b>DVD RW Drive (D:)</b>) → <b>Select Folder</b>. Everything on the disc uploads. The DICOM files are sent unchanged. Max 4 GB. No patient name is stored in the link.</div>
 
   <div class="card" id="form-card">
     <div class="fieldrow">
@@ -78,13 +83,28 @@
       <label>Note <span style="font-weight:500;color:var(--muted)">(optional)</span></label>
       <textarea id="note" rows="2" placeholder="Anything the receiving team should know…"></textarea>
     </div>
+
     <div class="fieldrow">
-      <label>CD image file <span class="req">*</span></label>
-      <div class="filebox" id="filebox" onclick="document.getElementById('file').click()">
-        <div id="fb-empty"><div style="font-size:28px">📁</div><div style="font-weight:700;font-size:14px">Tap to choose an ISO or ZIP file</div><div class="fs">ISO or ZIP · up to 4 GB</div></div>
-        <div id="fb-has" style="display:none"><div class="fn" id="fb-name"></div><div class="fs" id="fb-size"></div><div class="fs" style="color:var(--accent);margin-top:6px">Tap to change</div></div>
+      <label>The CD <span class="req">*</span></label>
+      <div id="pick-empty">
+        <div class="pickbtn" onclick="document.getElementById('folder').click()">
+          <div class="big">📀</div>
+          <div class="ttl">Choose the CD (whole disc / folder)</div>
+          <div class="sub">Pick the CD drive then “Select Folder” — recommended</div>
+        </div>
+        <div class="orline">— or —</div>
+        <div class="pickbtn" style="padding:12px" onclick="document.getElementById('file').click()">
+          <div class="ttl" style="font-size:14px">Upload a ready ISO or ZIP file</div>
+          <div class="sub">If you already made an ISO/ZIP of the disc</div>
+        </div>
       </div>
-      <input id="file" type="file" accept=".iso,.zip,application/zip,application/x-iso9660-image" style="display:none" onchange="onPick()">
+      <div id="pick-has" class="selbox" style="display:none">
+        <div class="fn" id="sel-name"></div>
+        <div class="fs" id="sel-size"></div>
+        <div class="chg" onclick="clearPick()">Change</div>
+      </div>
+      <input id="folder" type="file" webkitdirectory directory multiple style="display:none" onchange="onPickFolder()">
+      <input id="file" type="file" accept=".iso,.zip,application/zip,application/x-iso9660-image" style="display:none" onchange="onPickFile()">
     </div>
 
     <button class="btn2" id="go" onclick="startUpload()">Upload securely</button>
@@ -112,28 +132,52 @@
 const TOKEN = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.search).get('token') || '';
 const $ = (id) => document.getElementById(id);
 const MAX = 4 * 1024 * 1024 * 1024;
-let picked = null, busy = false;
+const MAX_FILES = 20000;
+let picked = null, busy = false;   // { mode:'folder', files, name, size } | { mode:'file', file, size }
 
-function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtSize(n){ if(n>=1073741824) return (n/1073741824).toFixed(2)+' GB'; if(n>=1048576) return (n/1048576).toFixed(1)+' MB'; return (n/1024).toFixed(0)+' KB'; }
-function showMsg(t, cls){ const m=$('msg'); m.className='msg '+(cls||'err'); m.textContent=t; }
+function showMsg(t){ const m=$('msg'); m.className='msg err'; m.textContent=t; }
 function clearMsg(){ $('msg').className='msg'; }
 function extOf(name){ const m=String(name||'').match(/(\.[A-Za-z0-9]+)$/); return m?m[1].toLowerCase():''; }
 
 if (!TOKEN) showMsg('This link is missing its access code. Ask the radiology team for a valid link.');
 
-function onPick(){
-  const f = $('file').files[0];
+function showPicked(name, sub){
+  $('sel-name').textContent = name;
+  $('sel-size').textContent = sub;
+  $('pick-empty').style.display = 'none';
+  $('pick-has').style.display = '';
+}
+function clearPick(){
+  picked = null; $('file').value = ''; $('folder').value = '';
+  $('pick-empty').style.display = ''; $('pick-has').style.display = 'none'; clearMsg();
+}
+
+function onPickFolder(){
   clearMsg();
-  if (!f){ picked=null; $('fb-empty').style.display=''; $('fb-has').style.display='none'; $('filebox').classList.remove('has'); return; }
+  const files = Array.from($('folder').files || []).filter(f => f.size >= 0);
+  if (!files.length){ return; }
+  const total = files.reduce((s, f) => s + f.size, 0);
+  if (files.length > MAX_FILES){ showMsg('That folder has too many files. Use an ISO/ZIP instead.'); $('folder').value=''; return; }
+  if (total > MAX){ showMsg('The disc is larger than the 4 GB limit.'); $('folder').value=''; return; }
+  if (total === 0){ showMsg('No data found on that folder/drive.'); $('folder').value=''; return; }
+  // Name the archive after the top folder (usually the drive/disc), no patient data.
+  const first = files[0].webkitRelativePath || files[0].name;
+  const top = (first.split('/')[0] || 'CD').replace(/[^A-Za-z0-9 _.-]/g, '').trim() || 'CD';
+  picked = { mode:'folder', files, name: top + '.zip', size: total };
+  showPicked('📀 ' + top, files.length + ' files · ' + fmtSize(total));
+}
+
+function onPickFile(){
+  clearMsg();
+  const f = $('file').files[0];
+  if (!f){ return; }
   const ext = extOf(f.name);
   if (ext !== '.iso' && ext !== '.zip'){ showMsg('Only ISO or ZIP files are allowed.'); $('file').value=''; return; }
   if (f.size > MAX){ showMsg('File is larger than the 4 GB limit.'); $('file').value=''; return; }
   if (f.size === 0){ showMsg('That file looks empty.'); $('file').value=''; return; }
-  picked = f;
-  $('fb-name').textContent = f.name;
-  $('fb-size').textContent = fmtSize(f.size) + ' · ' + ext.slice(1).toUpperCase();
-  $('fb-empty').style.display='none'; $('fb-has').style.display=''; $('filebox').classList.add('has');
+  picked = { mode:'file', file:f, size:f.size };
+  showPicked(f.name, fmtSize(f.size) + ' · ' + ext.slice(1).toUpperCase());
 }
 
 async function apiJSON(path, body){
@@ -144,13 +188,12 @@ async function apiJSON(path, body){
   return d;
 }
 
-function putChunk(uploadId, index, blob, onprog){
+function xhrPost(url, blob, headers, onprog){
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const url = '/api/public/cdxfer/chunk?t=' + encodeURIComponent(TOKEN) +
-                '&upload_id=' + encodeURIComponent(uploadId) + '&index=' + index;
     xhr.open('POST', url, true);
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onprog(e.loaded); };
+    for (const k in (headers||{})) xhr.setRequestHeader(k, headers[k]);
+    if (onprog) xhr.upload.onprogress = (e) => { if (e.lengthComputable) onprog(e.loaded); };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else { let m='HTTP '+xhr.status; try{ m = JSON.parse(xhr.responseText).detail || m; }catch(e){} reject(new Error(m)); }
@@ -168,38 +211,55 @@ async function startUpload(){
   const uploader = $('uploader').value.trim();
   if (!file_no){ showMsg('Enter the medical file number.'); return; }
   if (!uploader){ showMsg('Enter your name.'); return; }
-  if (!picked){ showMsg('Choose the ISO or ZIP file to upload.'); return; }
+  if (!picked){ showMsg('Choose the CD (or an ISO/ZIP file) to upload.'); return; }
 
   busy = true; $('go').disabled = true;
   $('prog').classList.add('show');
   const setPct = (p, txt) => { const v=Math.max(0,Math.min(100,p)); $('fill').style.width=v+'%'; $('prog-pct').textContent=Math.floor(v)+'%'; if(txt) $('prog-txt').textContent=txt; };
   setPct(0, 'Starting…');
 
+  const meta = {
+    file_no, uploader,
+    branch: $('branch').value.trim(), exam_type: $('exam_type').value.trim(),
+    exam_date: $('exam_date').value.trim(),
+    patient_initials: $('patient_initials').value.trim(), note: $('note').value.trim(),
+  };
+
   try {
-    const meta = {
-      filename: picked.name, size: picked.size,
-      file_no, uploader,
-      branch: $('branch').value.trim(), exam_type: $('exam_type').value.trim(),
-      exam_date: $('exam_date').value.trim(),
-      patient_initials: $('patient_initials').value.trim(), note: $('note').value.trim(),
-    };
-    const init = await apiJSON('/api/public/cdxfer/init', meta);
-    const chunkSize = init.chunk_size || (8*1024*1024);
-    const total = picked.size;
-    let sent = 0, index = 0;
-    for (let off = 0; off < total; off += chunkSize, index++) {
-      const blob = picked.slice(off, Math.min(off + chunkSize, total));
-      const base = sent;
-      await putChunk(init.upload_id, index, blob, (loaded) => setPct((base + loaded) / total * 100, 'Uploading…'));
-      sent += blob.size;
-      setPct(sent / total * 100, 'Uploading…');
+    let ref;
+    if (picked.mode === 'folder') {
+      const init = await apiJSON('/api/public/cdxfer/init', { ...meta, mode:'folder', filename: picked.name, size: picked.size });
+      const total = picked.size; let sent = 0, i = 0;
+      for (const f of picked.files) {
+        const rel = f.webkitRelativePath || f.name;
+        const base = sent;
+        await xhrPost('/api/public/cdxfer/file?t=' + encodeURIComponent(TOKEN) + '&upload_id=' + encodeURIComponent(init.upload_id),
+          f, { 'X-Rel-Path': encodeURIComponent(rel) },
+          (loaded) => setPct((base + loaded) / total * 100, `Uploading ${i+1}/${picked.files.length}…`));
+        sent += f.size; i++;
+        setPct(sent / total * 100, `Uploading ${i}/${picked.files.length}…`);
+      }
+      setPct(100, 'Packing & finalising…');
+      const fin = await apiJSON('/api/public/cdxfer/finish?upload_id=' + encodeURIComponent(init.upload_id), {});
+      ref = fin.ref || init.ref; $('done-dicom').textContent = fin.dicom_check ? ('Check: ' + fin.dicom_check) : '';
+    } else {
+      const init = await apiJSON('/api/public/cdxfer/init', { ...meta, filename: picked.file.name, size: picked.size });
+      const chunkSize = init.chunk_size || (8*1024*1024);
+      const total = picked.size; let sent = 0, index = 0;
+      for (let off = 0; off < total; off += chunkSize, index++) {
+        const blob = picked.file.slice(off, Math.min(off + chunkSize, total));
+        const base = sent;
+        await xhrPost('/api/public/cdxfer/chunk?t=' + encodeURIComponent(TOKEN) + '&upload_id=' + encodeURIComponent(init.upload_id) + '&index=' + index,
+          blob, null, (loaded) => setPct((base + loaded) / total * 100, 'Uploading…'));
+        sent += blob.size; setPct(sent / total * 100, 'Uploading…');
+      }
+      setPct(100, 'Finalising…');
+      const fin = await apiJSON('/api/public/cdxfer/finish?upload_id=' + encodeURIComponent(init.upload_id), {});
+      ref = fin.ref || init.ref; $('done-dicom').textContent = fin.dicom_check ? ('Check: ' + fin.dicom_check) : '';
     }
-    setPct(100, 'Finalising…');
-    const fin = await apiJSON('/api/public/cdxfer/finish?upload_id=' + encodeURIComponent(init.upload_id), {});
     $('form-card').style.display = 'none';
     $('done-card').style.display = '';
-    $('done-ref').textContent = fin.ref || init.ref;
-    $('done-dicom').textContent = fin.dicom_check ? ('Check: ' + fin.dicom_check) : '';
+    $('done-ref').textContent = ref;
   } catch (e) {
     showMsg(e.message || 'Upload failed. Please try again.');
     $('prog').classList.remove('show');

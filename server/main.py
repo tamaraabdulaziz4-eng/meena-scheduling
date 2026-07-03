@@ -6748,6 +6748,32 @@ def _cdxfer_sniff(path, kind):
     except Exception as e:
         return True, f"Saved (sniff skipped: {e})"
 
+def _cdxfer_safe_relpath(rel):
+    """Sanitise a client-supplied relative path (folder upload) so it can never
+    escape the transfer directory — drop drive letters, '', '.', '..' segments."""
+    rel = (rel or "").replace("\\", "/")
+    parts = []
+    for p in rel.split("/"):
+        p = p.strip()
+        if not p or p in (".", "..") or (len(p) == 2 and p[1] == ":"):
+            continue
+        parts.append(p)
+    return "/".join(parts)
+
+def _cdxfer_remove(stored_name):
+    """Remove a stored artifact — a single file OR a folder-upload directory."""
+    if not stored_name:
+        return
+    p = os.path.join(_cdxfer_dir(), stored_name)
+    try:
+        if os.path.isdir(p):
+            import shutil
+            shutil.rmtree(p, ignore_errors=True)
+        elif os.path.exists(p):
+            os.remove(p)
+    except OSError:
+        pass
+
 @app.post("/api/public/cdxfer/init")
 async def cdxfer_init(request: Request):
     """Start an upload from the branch link: validate the metadata + declared file,
@@ -6757,31 +6783,38 @@ async def cdxfer_init(request: Request):
     b = await request.json()
     if not isinstance(b, dict):
         raise HTTPException(400, "Invalid request body")
+    import secrets, uuid
+    from datetime import datetime, timezone, timedelta
+    mode = (b.get("mode") or "").strip().lower()
     filename = (b.get("filename") or "").strip()
-    ext = _cdxfer_ext(filename)
-    if ext in _CDXFER_BLOCKED_EXT or ext not in _CDXFER_ALLOWED_EXT:
-        raise HTTPException(400, "Only ISO or ZIP CD images are allowed.")
-    kind = "iso" if ext == ".iso" else "zip"
     try:
         size = int(b.get("size") or 0)
     except (TypeError, ValueError):
         raise HTTPException(400, "Invalid file size")
     if size <= 0:
-        raise HTTPException(400, "The file looks empty.")
+        raise HTTPException(400, "The upload looks empty.")
     if size > CDXFER_MAX_BYTES:
-        raise HTTPException(400, f"File too large — the limit is {CDXFER_MAX_BYTES // (1024**3)} GB.")
+        raise HTTPException(400, f"Too large — the limit is {CDXFER_MAX_BYTES // (1024**3)} GB.")
     file_no = (b.get("file_no") or "").strip()[:40]
     uploader = (b.get("uploader") or "").strip()[:80]
     if not file_no or not uploader:
         raise HTTPException(400, "Medical file number and your name are required.")
-    import secrets, uuid
     ref = "CDX-" + secrets.token_hex(4).upper()
     upload_id = secrets.token_urlsafe(18)
-    stored = uuid.uuid4().hex + ext
-    from datetime import datetime, timezone, timedelta
     expires = datetime.now(timezone.utc) + timedelta(hours=CDXFER_TTL_HOURS)
-    # Create the (empty) destination file up front.
-    open(os.path.join(_cdxfer_dir(), stored), "wb").close()
+    if mode == "folder":
+        # Whole-CD (directory) upload: files stream in individually, then finish
+        # packs them into one byte-exact ZIP. stored_name is a working directory.
+        kind = "folder"
+        stored = uuid.uuid4().hex
+        os.makedirs(os.path.join(_cdxfer_dir(), stored), exist_ok=True)
+    else:
+        ext = _cdxfer_ext(filename)
+        if ext in _CDXFER_BLOCKED_EXT or ext not in _CDXFER_ALLOWED_EXT:
+            raise HTTPException(400, "Only ISO or ZIP CD images are allowed.")
+        kind = "iso" if ext == ".iso" else "zip"
+        stored = uuid.uuid4().hex + ext
+        open(os.path.join(_cdxfer_dir(), stored), "wb").close()
     q("""INSERT INTO scheduling.cd_transfers
            (ref, upload_id, file_no, branch, exam_type, exam_date, uploader,
             patient_initials, note, orig_name, stored_name, kind, size_bytes,
@@ -6835,28 +6868,97 @@ async def cdxfer_chunk(request: Request):
     q("UPDATE scheduling.cd_transfers SET size_bytes=%s WHERE id=%s", (total, row["id"]), exec_only=True)
     return {"ok": True, "received": total}
 
+@app.post("/api/public/cdxfer/file")
+async def cdxfer_file(request: Request):
+    """One file of a whole-CD (folder) upload, streamed to its place in the working
+    directory. The relative path (within the chosen folder) comes in X-Rel-Path."""
+    _check_cdxfer_token(request.query_params.get("t") or request.query_params.get("token"))
+    import urllib.parse
+    upload_id = (request.query_params.get("upload_id") or "").strip()
+    row = q("SELECT id, stored_name, size_bytes, status, kind FROM scheduling.cd_transfers WHERE upload_id=%s",
+            (upload_id,), one=True)
+    if not row or row["status"] != "uploading" or row["kind"] != "folder":
+        raise HTTPException(404, "Upload session not found or already finished.")
+    base = os.path.join(_cdxfer_dir(), row["stored_name"])
+    if not os.path.isdir(base):
+        raise HTTPException(410, "Upload session expired — please start again.")
+    rel = _cdxfer_safe_relpath(urllib.parse.unquote(
+        request.headers.get("x-rel-path") or request.query_params.get("path") or ""))
+    if not rel:
+        raise HTTPException(400, "Missing file path.")
+    dest = os.path.join(base, *rel.split("/"))
+    base_real = os.path.realpath(base)
+    if not (os.path.realpath(dest) == base_real or os.path.realpath(dest).startswith(base_real + os.sep)):
+        raise HTTPException(400, "Bad file path.")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    total = row["size_bytes"]
+    with open(dest, "wb") as f:
+        async for part in request.stream():
+            if not part:
+                continue
+            total += len(part)
+            if total > CDXFER_MAX_BYTES:
+                _cdxfer_remove(row["stored_name"])
+                q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
+                raise HTTPException(413, "Total upload exceeds the size limit.")
+            f.write(part)
+    q("UPDATE scheduling.cd_transfers SET size_bytes=%s WHERE id=%s", (total, row["id"]), exec_only=True)
+    return {"ok": True, "received": total}
+
 @app.post("/api/public/cdxfer/finish")
 async def cdxfer_finish(request: Request):
-    """Finalise the upload: verify the file type, run the DICOMDIR sniff, mark ready."""
+    """Finalise the upload: verify the file, run the DICOMDIR sniff, mark ready.
+    A folder upload is packed here into ONE byte-exact (stored, uncompressed) ZIP so
+    everything downstream (download/list/delete) treats it like a normal ZIP."""
     _check_cdxfer_token(request.query_params.get("t") or request.query_params.get("token"))
     upload_id = (request.query_params.get("upload_id") or "").strip()
     row = q("""SELECT id, ref, stored_name, kind, size_bytes, file_no, branch, uploader
                FROM scheduling.cd_transfers WHERE upload_id=%s""", (upload_id,), one=True)
     if not row:
         raise HTTPException(404, "Upload session not found.")
-    path = os.path.join(_cdxfer_dir(), row["stored_name"])
+    from datetime import datetime, timezone
+    base = os.path.join(_cdxfer_dir(), row["stored_name"])
+    if row["kind"] == "folder":
+        # Pack the uploaded directory into a stored (no-compression, byte-exact) ZIP.
+        import zipfile
+        if not os.path.isdir(base):
+            q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
+            raise HTTPException(400, "No files were received.")
+        files = [(os.path.join(r, fn), os.path.relpath(os.path.join(r, fn), base))
+                 for r, _d, fs in os.walk(base) for fn in fs]
+        if not files:
+            _cdxfer_remove(row["stored_name"])
+            q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
+            raise HTTPException(400, "The folder had no files.")
+        zip_stored = row["stored_name"] + ".zip"
+        zip_path = os.path.join(_cdxfer_dir(), zip_stored)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+            for full, arc in files:
+                z.write(full, arc)
+        _cdxfer_remove(row["stored_name"])          # drop the loose files, keep the ZIP
+        actual = os.path.getsize(zip_path)
+        ok, note = _cdxfer_sniff(zip_path, "zip")
+        note = f"{note} ({len(files)} files from folder)"
+        q("""UPDATE scheduling.cd_transfers
+               SET status='ready', kind='zip', stored_name=%s, size_bytes=%s,
+                   uploaded_at=%s, dicom_check=%s WHERE id=%s""",
+          (zip_stored, actual, datetime.now(timezone.utc), note, row["id"]), exec_only=True)
+        insert_audit({"id": None, "username": f"cd-upload:{row['uploader']}", "role": "public",
+                      "branch_name": row["branch"]}, "CDXFER_UPLOAD", row["ref"],
+                     json.dumps({"file_no": row["file_no"], "kind": "folder", "files": len(files), "bytes": actual}))
+        return {"ok": True, "ref": row["ref"], "dicom_check": note}
+    # Single ISO/ZIP file.
+    path = base
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
         raise HTTPException(400, "No data was received.")
     ok, note = _cdxfer_sniff(path, row["kind"])
     if not ok:
-        try: os.remove(path)
-        except OSError: pass
+        _cdxfer_remove(row["stored_name"])
         q("UPDATE scheduling.cd_transfers SET status='failed', dicom_check=%s WHERE id=%s",
           (note, row["id"]), exec_only=True)
         raise HTTPException(400, note)
     actual = os.path.getsize(path)
-    from datetime import datetime, timezone
     q("""UPDATE scheduling.cd_transfers
            SET status='ready', size_bytes=%s, uploaded_at=%s, dicom_check=%s WHERE id=%s""",
       (actual, datetime.now(timezone.utc), note, row["id"]), exec_only=True)
@@ -6908,9 +7010,7 @@ def cdxfer_delete(ref: str, user=Depends(require_admin)):
     row = q("SELECT id, stored_name, file_no FROM scheduling.cd_transfers WHERE ref=%s", (ref,), one=True)
     if not row:
         raise HTTPException(404, "Not found")
-    if row["stored_name"]:
-        try: os.remove(os.path.join(_cdxfer_dir(), row["stored_name"]))
-        except OSError: pass
+    _cdxfer_remove(row["stored_name"])
     q("UPDATE scheduling.cd_transfers SET status='deleted' WHERE id=%s", (row["id"],), exec_only=True)
     insert_audit(user, "CDXFER_DELETE", ref, json.dumps({"file_no": row["file_no"]}))
     return {"ok": True}
@@ -6943,17 +7043,13 @@ def _cdxfer_cleanup_loop():
             for r in (q("""SELECT id, stored_name FROM scheduling.cd_transfers
                            WHERE expires_at < %s AND status NOT IN ('deleted','expired')""",
                         (now,)) or []):
-                if r["stored_name"]:
-                    try: os.remove(os.path.join(_cdxfer_dir(), r["stored_name"]))
-                    except OSError: pass
+                _cdxfer_remove(r["stored_name"])
                 q("UPDATE scheduling.cd_transfers SET status='expired' WHERE id=%s", (r["id"],), exec_only=True)
             # Stalled 'uploading' sessions older than 6h.
             stale = now - timedelta(hours=6)
             for r in (q("""SELECT id, stored_name FROM scheduling.cd_transfers
                            WHERE status='uploading' AND created_at < %s""", (stale,)) or []):
-                if r["stored_name"]:
-                    try: os.remove(os.path.join(_cdxfer_dir(), r["stored_name"]))
-                    except OSError: pass
+                _cdxfer_remove(r["stored_name"])
                 q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (r["id"],), exec_only=True)
         except Exception as e:
             print(f"[cdxfer] cleanup error: {e}")
