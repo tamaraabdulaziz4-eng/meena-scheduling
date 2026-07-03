@@ -296,26 +296,23 @@ function rsBranchPicker() {
       </div>`;
   }
   if (!radstats.branches.length) return '';
-  const all = !radstats.sel || radstats.sel.size === radstats.branches.length;
-  const chips = radstats.branches.map((b) => {
-    const on = all || (radstats.sel && radstats.sel.has(b.siteId));
-    return `<button class="rs-bchip${on ? ' on' : ''}" onclick="rsToggleBranch(${b.siteId})" title="${escapeHtml(b.name)}">${escapeHtml(b.shortName || b.name)}</button>`;
-  }).join('');
+  // Single-select dropdown: "All branches" or one branch (no multi-select chips).
+  const cur = (radstats.sel && radstats.sel.size === 1) ? String([...radstats.sel][0]) : '';
+  const opts = `<option value="">All branches (${radstats.branches.length})</option>` +
+    radstats.branches.map((b) =>
+      `<option value="${b.siteId}"${String(b.siteId) === cur ? ' selected' : ''}>${escapeHtml(b.shortName || b.name)}</option>`).join('');
   return `<div class="rs-branches">
-      <span class="rs-branches-lbl">Branches</span>
-      <button class="rs-bchip rs-ball${all ? ' on' : ''}" onclick="rsAllBranches()">All (${radstats.branches.length})</button>
-      ${chips}
+      <span class="rs-branches-lbl">Branch</span>
+      <select class="rep-select" style="max-width:260px" onchange="rsSelectBranch(this.value)">${opts}</select>
     </div>`;
 }
 
-function rsAllBranches() { radstats.sel = null; rsRenderControls(); rsLoad(); }
-function rsToggleBranch(id) {
-  if (!radstats.sel) radstats.sel = new Set(radstats.branches.map((b) => b.siteId));  // start from "all"
-  if (radstats.sel.has(id)) radstats.sel.delete(id); else radstats.sel.add(id);
-  if (radstats.sel.size === 0) radstats.sel = null;                                    // never allow empty → all
+function rsSelectBranch(v) {
+  radstats.sel = v ? new Set([Number(v)]) : null;   // '' → all branches
   rsRenderControls();
   rsLoad();
 }
+function rsAllBranches() { radstats.sel = null; rsRenderControls(); rsLoad(); }
 
 function rsSetPreset(id) {
   radstats.preset = id;

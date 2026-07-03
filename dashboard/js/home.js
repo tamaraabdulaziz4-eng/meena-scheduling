@@ -58,6 +58,8 @@ async function renderHomePage() {
         </div>
       </div>
     </div>
+    <div id="hm-radstats"></div>
+    <div id="hm-approvals"></div>
     <div class="hm-search">
       <div class="hm-searchbar">
         <span class="hm-search-ic">🔎</span>
@@ -73,31 +75,20 @@ async function renderHomePage() {
       <div id="hm-recent" class="hm-recent"></div>
       <div id="hm-staff-results" class="hm-results"></div>
     </div>
-    <div id="hm-eotm"></div>
-    <div id="hm-actions" class="hm-actions"></div>
-    <div id="hm-radstats"></div>
-    <div id="hm-approvals"></div>
-    <div id="hm-credentials"></div>
-    <div id="hm-onduty"></div>
-    <div id="hm-shiftcheck"></div>`;
+    `;
 
   _hmStartClock();
 
-  // Fire EVERY card's fetch at once — don't make the side cards wait behind the
-  // KPIs/cases call (that serialization is what made on-duty / approvals pop in
-  // late). Each renders itself as soon as its own request lands.
-  renderHomeEotm();
-  renderHomeOnDuty();
-  renderHomeShiftChecks();
-  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) { renderHomeApprovals(); renderHomeCredentials(); renderHomeRadstats(); }
+  // Home is a lean, live operational snapshot: today's radiology across all
+  // branches (auto-refreshing) + the manager's approval queue. On-duty, equipment
+  // checks, and Employee-of-the-Month moved to their own pages (Schedule / Maintenance
+  // / Staff); expiring-credentials and the duplicate count-chips were removed.
+  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) {
+    renderHomeRadstats();
+    renderHomeApprovals();
+  }
   renderHomeRecent();
   _bindHomeSearchShortcut();
-
-  // Pending-action shortcuts (one fast call). The daily-cases overview used to
-  // load here too, but it was slow and held up the admin Home — cases now live
-  // only on the Cases page.
-  const dash = await API.get('/dashboard').catch(() => null);
-  renderHomeActions(dash);
 }
 
 // Shimmer placeholder so a card shows a stable loading state instead of staying
@@ -209,13 +200,19 @@ async function renderHomeCredentials() {
     <div style="margin-top:6px">${rows}</div></div>`;
 }
 
-// Radiology snapshot on Home (managers/admins). Uses a short 7-day window so it's
-// quick, and the connector caches it — it opens instantly if the full page was
-// visited recently. Renders itself when its own request lands; never blocks Home.
+// TODAY's radiology across all branches — the live centrepiece of the manager
+// Home. Auto-refreshes so it reads as a real-time control room. A team lead is
+// scoped to their own branch (fail-closed); managers/superadmin see all branches.
+let _hmRadTimer = null;
+function _hmKsaToday() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) { return new Date().toISOString().slice(0, 10); }
+}
 async function renderHomeRadstats() {
   const box = document.getElementById('hm-radstats');
-  if (!box) return;
-  // A team lead sees their own branch only; managers/superadmin see all branches.
+  if (!box) { if (_hmRadTimer) { clearInterval(_hmRadTimer); _hmRadTimer = null; } return; }
   const isLead = currentUser?.role === 'admin';
   let site = null, scopeName = '';
   if (isLead && typeof rsMySite === 'function') {
@@ -223,43 +220,54 @@ async function renderHomeRadstats() {
     try { mine = await rsMySite(); } catch (e) {}
     if (mine) { site = mine.siteId; scopeName = currentUser?.branch_name || mine.shortName || mine.name; }
     else {
-      // FAIL CLOSED — same as the full stats page: a team lead whose branch we
-      // can't resolve to a HIS site must NOT get an unscoped (all-branch) query.
-      // Show a neutral card and skip the fetch instead of leaking org-wide data.
+      // FAIL CLOSED — a team lead whose branch we can't resolve must NOT get an
+      // unscoped (all-branch) query.
       box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Radiology</div></div>
         <div class="rs-loadnote" style="margin:8px 0 0;color:var(--muted)">Your branch isn't linked to the hospital system yet — ask an admin to link it.</div></div>`;
       return;
     }
   }
-  const title = scopeName ? `Radiology · ${escapeHtml(scopeName)} — 7 days` : 'Radiology — last 7 days';
-  box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">${title}</div></div>
-    <div class="rs-loadnote" style="margin:8px 0 0"><span class="mini-spin"></span> Loading…</div></div>`;
-  const f = (dt) => dt.toISOString().slice(0, 10);
-  const to = new Date(), from = new Date(Date.now() - 6 * 864e5);
-  const q = `from=${f(from)}&to=${f(to)}${site ? `&sites=${site}` : ''}`;
+  if (!box.dataset.loaded) {
+    const t = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
+    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">${t}</div></div>
+      <div class="rs-loadnote" style="margin:8px 0 0"><span class="mini-spin"></span> Loading live data…</div></div>`;
+  }
+  await _hmRadFetch(site, scopeName);
+  // Live auto-refresh; self-stops when the user leaves Home.
+  if (_hmRadTimer) clearInterval(_hmRadTimer);
+  _hmRadTimer = setInterval(() => {
+    if (!document.getElementById('hm-radstats') || (typeof currentPage !== 'undefined' && currentPage !== 'home')) {
+      clearInterval(_hmRadTimer); _hmRadTimer = null; return;
+    }
+    _hmRadFetch(site, scopeName);
+  }, 90000);
+}
+async function _hmRadFetch(site, scopeName) {
+  const box = document.getElementById('hm-radstats');
+  if (!box) return;
+  const today = _hmKsaToday();
+  const q = `from=${today}&to=${today}${site ? `&sites=${site}` : ''}`;
   let d;
-  try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { box.innerHTML = ''; return; }
-  if (!d || !d.ok) { box.innerHTML = ''; return; }
+  try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { return; }   // keep last-good on a blip
+  if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; return; }
+  box.dataset.loaded = '1';
   const total = d.total || 0, emg = (d.priority && d.priority.emergency) || 0;
   const rtn = (d.priority && d.priority.routine) || 0;
-  const aged = (d.aging && d.aging['>7d']) || 0;
   const top = (d.byBranch || []).filter(b => b.count > 0)[0];
+  const upd = _hmClockParts();
+  const title = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
   const kpi = (n, l, cls) => `<div class="hm-rad-kpi${cls ? ' ' + cls : ''}"><b>${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
-  // Last tile: managers get "busiest branch"; a single-branch lead gets "routine".
-  const lastTile = site
-    ? kpi(rtn, 'routine')
-    : `<div class="hm-rad-kpi"><b style="font-size:15px">${top ? escapeHtml(top.name || ('Branch ' + top.site)) : '—'}</b><span>busiest branch</span></div>`;
+  const tiles = [kpi(total, 'requests'), kpi(emg, 'emergency', emg ? 'warn' : ''), kpi(rtn, 'routine')];
+  if (!site) tiles.push(`<div class="hm-rad-kpi"><b style="font-size:15px">${top ? escapeHtml(top.name || ('Branch ' + top.site)) : '—'}</b><span>busiest branch</span></div>`);
   box.innerHTML = `<div class="hm-card">
     <div class="hm-card-head">
-      <div class="hm-card-title">${title}</div>
+      <div class="hm-card-title">${title}
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2BAE66;box-shadow:0 0 0 3px rgba(43,174,102,.18);margin-left:6px;vertical-align:middle"></span></div>
       <button class="action-btn" onclick="showPage('radstats')">Open →</button>
     </div>
-    <div class="hm-rad-kpis">
-      ${kpi(total, 'requests')}
-      ${kpi(emg, 'emergency')}
-      ${kpi(aged, 'pending &gt;7d', aged ? 'warn' : '')}
-      ${lastTile}
-    </div></div>`;
+    <div class="hm-rad-kpis">${tiles.join('')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">🟢 Live · updated ${upd.hm}:${upd.ss} Riyadh</div>
+  </div>`;
 }
 
 async function homeApproveLeave(ids) {
@@ -534,8 +542,8 @@ function ensureEotmModal() {
 }
 
 // ── Equipment checks status (today) ───────────────────────────────────────────
-async function renderHomeShiftChecks() {
-  const box = document.getElementById('hm-shiftcheck');
+async function renderHomeShiftChecks(containerId = 'hm-shiftcheck') {
+  const box = document.getElementById(containerId);
   if (!box) return;
   const today = fmtDate(new Date());
   let d;
@@ -561,8 +569,8 @@ async function renderHomeShiftChecks() {
 }
 
 // ── On duty today: who's on shift right now, per branch, with contact ─────────
-async function renderHomeOnDuty() {
-  const box = document.getElementById('hm-onduty');
+async function renderHomeOnDuty(containerId = 'hm-onduty') {
+  const box = document.getElementById(containerId);
   if (!box) return;
   box.innerHTML = HOME_CARD_SKELETON;
   let d;
