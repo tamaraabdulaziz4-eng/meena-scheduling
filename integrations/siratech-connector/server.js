@@ -314,6 +314,18 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
 // lookup uses `accessionNumber`, the result-entry row historically `accessionNo`),
 // so try them all; without it the matcher falls back to fuzzy body-part matching
 // and goes ambiguous when a patient has several same-region studies in a day.
+// TEMP DEBUG: surface every accession/id-like field so we can find where the
+// linking DICOM accession (e.g. "SIRA1661") actually lives on the order side.
+function _accDbg(obj) {
+  const out = {};
+  for (const k of Object.keys(obj || {})) {
+    if (!/acc|barcode|bill|uid|sira|sample|order|study|pacs/i.test(k)) continue;
+    const v = obj[k];
+    if (v != null && v !== '' && typeof v !== 'object') out[k] = String(v).slice(0, 48);
+  }
+  return out;
+}
+
 function pickAccession(...objs) {
   const keys = ['accessionNumber', 'accessionNo', 'accession_no', 'accession',
                 'accNo', 'barCode', 'barcode', 'sampleNo'];
@@ -378,6 +390,7 @@ async function buildMatch(file, wantBillNo, site) {
           preview: rep.reportText.slice(0, 600) };
       }
       tests.push({ test, decision: m.decision, matchKey: m.key, reason: m.reason, orderAccession: test.accession || null,
+        rawAcc: { detail: _accDbg(t), order: _accDbg(row) },
         study: m.study ? { studyId: m.study.studyId, desc: m.study.desc, modality: m.study.modality, studyDate: m.study.studyDate, accession: m.study.accession } : null,
         candidates: m.candidates, report });
     }
