@@ -471,7 +471,9 @@ async function handoffCheckResults(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
   box.innerHTML = LOADING_HTML;
   try {
-    const d = await API.get(`/radiology/results/match/${encodeURIComponent(handoff.file)}`);
+    const o = handoffOrder();
+    const siteQ = (o && o.siteId != null) ? `?site=${encodeURIComponent(o.siteId)}` : '';   // scope to the patient's branch
+    const d = await API.get(`/radiology/results/match/${encodeURIComponent(handoff.file)}${siteQ}`);
     renderHandoffResults(d);
   } catch (e) {
     box.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div>
