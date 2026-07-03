@@ -6178,6 +6178,20 @@ def radiology_lookup(file_no: str, user=Depends(require_admin)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no), timeout=90)
 
+@app.get("/api/radiology/find")
+def radiology_find(request: Request, user=Depends(require_admin)):
+    """Unified patient lookup: search Siratech by file/MRN, national ID, or phone
+    (the HIS Patient/Search term matches across those) and return the matching
+    patient rows. The caller then opens one to aggregate all their exams via
+    /api/radiology/lookup. Read-only."""
+    import urllib.parse
+    q = (request.query_params.get("q") or "").strip()
+    if not q:
+        raise HTTPException(400, "Enter a file number, national ID, or phone")
+    if len(q) > 60:
+        raise HTTPException(400, "Search term is too long")
+    return _bridge_request("/his/search?q=" + urllib.parse.quote(q), timeout=60)
+
 @app.get("/api/radiology/stats")
 def radiology_stats(
     from_: str = Query("", alias="from"),

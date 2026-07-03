@@ -101,6 +101,9 @@ async function initApp() {
   // Radiology handoff for team leads + managers.
   const handoffNav = document.getElementById('nav-handoff');
   if (handoffNav) handoffNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  // Unified patient / exam lookup for team leads + managers.
+  const patientSearchNav = document.getElementById('nav-patientsearch');
+  if (patientSearchNav) patientSearchNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
   // Radiology statistics for team leads + managers.
   const radstatsNav = document.getElementById('nav-radstats');
   if (radstatsNav) radstatsNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
@@ -174,6 +177,7 @@ function resolvePage(page) {
   if (page === 'reports' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'messages' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'handoff' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'patientsearch' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'cdxfer' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
@@ -206,6 +210,7 @@ async function renderRoute(page) {
     case 'tickets':    await renderTicketsPage(); break;
     case 'reports':    await renderReportsPage(); break;
     case 'handoff':    await renderHandoffPage(); break;
+    case 'patientsearch': renderPatientSearchPage(); break;
     case 'radstats':   await renderRadStatsPage(); break;
     case 'cdxfer':     await renderCdxferPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
