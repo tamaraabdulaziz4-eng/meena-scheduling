@@ -6673,6 +6673,12 @@ def _public_study_belongs_to_file(study_id, file_no):
             return True
     return False
 
+def _public_reports_unavailable():
+    # The public doctor link is unauthenticated — never surface internal config
+    # hints ("Add the Butterfly account in Settings…") or raw vendor error bodies
+    # to it. Collapse any upstream/elite-layer failure to one neutral message.
+    return HTTPException(502, "The reports service is temporarily unavailable. Please try again in a moment.")
+
 def _report_html_to_text(html):
     import re as _re
     t = _re.sub(r"<\s*(br|/p|/div|/tr|/h[1-6]|/li)\s*/?>", "\n", html or "", flags=_re.I)
@@ -6692,7 +6698,10 @@ def public_reports_lookup(request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    rows = _elite_studies_for_file(file_no)
+    try:
+        rows = _elite_studies_for_file(file_no)
+    except HTTPException:
+        raise _public_reports_unavailable()
     studies = [{
         "study_id": s.get("study_id"),
         "pat_name": _elite_name(s.get("pat_name")),
@@ -6715,9 +6724,16 @@ def public_reports_study(study_id: int, request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    if not _public_study_belongs_to_file(study_id, file_no):
+    try:
+        belongs = _public_study_belongs_to_file(study_id, file_no)
+    except HTTPException:
+        raise _public_reports_unavailable()
+    if not belongs:
         raise HTTPException(403, "This report isn't available on this file number.")
-    b = _elite_body(_elite_get(f"/report/get_study_report_info/{study_id}"))
+    try:
+        b = _elite_body(_elite_get(f"/report/get_study_report_info/{study_id}"))
+    except HTTPException:
+        raise _public_reports_unavailable()
     return {"study_id": b.get("study_id"),
             "pat_name": _elite_name(b.get("pat_name")),
             "pat_id": b.get("pat_id"), "pat_age": b.get("pat_age"), "pat_sex": b.get("pat_sex"),
@@ -6735,11 +6751,18 @@ def public_reports_pdf(study_id: int, request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    if not _public_study_belongs_to_file(study_id, file_no):
+    try:
+        belongs = _public_study_belongs_to_file(study_id, file_no)
+    except HTTPException:
+        raise _public_reports_unavailable()
+    if not belongs:
         raise HTTPException(403, "This report isn't available on this file number.")
     try: style = max(1, min(3, int(request.query_params.get("style") or "2")))
     except (TypeError, ValueError): style = 2
-    ct, data = _elite_get(f"/report/open_report_pdf/{study_id}?style={style}", want="raw")
+    try:
+        ct, data = _elite_get(f"/report/open_report_pdf/{study_id}?style={style}", want="raw")
+    except HTTPException:
+        raise _public_reports_unavailable()
     if "pdf" not in (ct or "").lower():
         raise HTTPException(404, "No PDF report available for this study yet")
     return Response(content=data, media_type="application/pdf",
