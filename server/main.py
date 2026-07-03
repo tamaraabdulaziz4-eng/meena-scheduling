@@ -6447,8 +6447,12 @@ async def radiology_results_file(request: Request, user=Depends(require_admin)):
     out = _bridge_request("/his/results/file", method="POST", body=b, timeout=180)
     if b.get("confirm"):
         wrote = isinstance(out, dict) and out.get("wrote")
+        # Record which study was filed to which test, so the write is reconstructable.
+        plan = (out.get("plan") or {}) if isinstance(out, dict) else {}
+        study = (plan.get("study") or {}) if isinstance(plan, dict) else {}
         insert_audit(user, "RADIOLOGY_RESULT_FILE", str(b.get("file")),
                      json.dumps({"billNo": b.get("billNo"), "serviceId": b.get("serviceId"),
+                                 "studyId": study.get("studyId"),
                                  "authorize": b.get("authorize") is not False,
                                  "wrote": bool(wrote),
                                  "authorized": bool(isinstance(out, dict) and out.get("authorized"))}))

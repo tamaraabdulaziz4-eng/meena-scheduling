@@ -579,6 +579,17 @@ app.post('/results/file', requireAuth, async (req, res) => {
     const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId });
     if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
 
+    // On CONFIRM, the study MUST be the same one the human reviewed in the dry-run.
+    // buildFilePlan re-matches fresh, so if a new verified study / corrected accession
+    // changed the result since the dry-run, refuse rather than write to an unreviewed
+    // study. (expectStudyId is the studyId the dry-run returned.)
+    if (confirm && req.body.expectStudyId != null &&
+        plan.study && String(plan.study.studyId) !== String(req.body.expectStudyId)) {
+      return res.json({ ok: true, wrote: false, step: 'changed',
+        plan: { study: { studyId: plan.study.studyId } },
+        note: 'The matched study changed since you reviewed it — re-check the report before filing.' });
+    }
+
     // Trim the heavy report body for the dry-run response (keep a text preview and
     // the PDF size, not the whole base64 blob).
     const rep = plan.report;

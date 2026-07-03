@@ -2,7 +2,7 @@
 //  • Web Push notifications (even when the app is closed).
 //  • Offline support: runtime-caches the app shell so the installed app opens
 //    without a connection after the first online visit.
-const CACHE = 'meena-v27';
+const CACHE = 'meena-v28';
 const CORE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png',
               '/apple-touch-icon.png', '/meena_logo.png', '/meena_logo_transparent.png'];
 

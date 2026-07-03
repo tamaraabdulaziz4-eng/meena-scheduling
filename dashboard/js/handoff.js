@@ -629,7 +629,7 @@ async function handoffFileResult(billNo, serviceId, site, btn) {
         ${rep.pdfOk ? '📄 PDF ' + Math.round((rep.pdfBytes || 0) / 1024) + 'KB' : '⚠️ no PDF'} ·
         range: ${escapeHtml(rng)}</div>
       <div class="ho-actions" style="margin-top:6px">
-        <button class="btn btn-sm btn-primary" onclick='handoffFileConfirm(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(serviceId || ''))}, ${Number(site) || 0}, this)'>✅ Confirm — file + authorize</button>
+        <button class="btn btn-sm btn-primary" onclick='handoffFileConfirm(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(serviceId || ''))}, ${Number(site) || 0}, this, ${JSON.stringify(String(st.studyId || ''))})'>✅ Confirm — file + authorize</button>
         <button class="btn btn-sm btn-ghost" onclick="this.closest('.ho-file-out').innerHTML=''">Cancel</button>
       </div></div>`;
   } catch (e) {
@@ -638,12 +638,16 @@ async function handoffFileResult(billNo, serviceId, site, btn) {
     btn.disabled = false; btn.textContent = orig;
   }
 }
-async function handoffFileConfirm(billNo, serviceId, site, btn) {
+async function handoffFileConfirm(billNo, serviceId, site, btn, expectStudyId) {
   const out = btn.closest('.ho-file-out');
   if (!out) return;
   btn.disabled = true; btn.textContent = 'Filing…';
   try {
-    const r = await API.post('/radiology/results/file', { file: handoff.file, billNo, serviceId, site, confirm: true, authorize: true });
+    const r = await API.post('/radiology/results/file', { file: handoff.file, billNo, serviceId, site, confirm: true, authorize: true, expectStudyId: expectStudyId || undefined });
+    if (r && r.wrote === false && r.step === 'changed') {
+      out.innerHTML = `<div class="ho-note">${escapeHtml(r.note || 'The matched study changed — re-check the report.')}</div>`;
+      return;
+    }
     if (r && r.wrote) {
       // When HIS did NOT confirm the authorization, surface its actual response
       // (status + message + raw) so the reason is visible instead of a blind
