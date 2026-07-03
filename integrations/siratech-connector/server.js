@@ -433,7 +433,7 @@ async function buildMatch(file, wantBillNo, site) {
     throw new Error(`HIS result search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
   }
   const rows = sr.json.data || [];
-  const orderRows = wantBillNo ? rows.filter((r) => r.billNo === wantBillNo) : rows;
+  const orderRows = wantBillNo ? rows.filter((r) => String(r.billNo) === String(wantBillNo)) : rows;
 
   // 2) the patient's VERIFIED DePACS studies (once)
   const studies = await results.depacsStudies(file);
@@ -601,13 +601,39 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
         candidates: m.candidates, writable: false };
     }
   }
+  // ── Cross-bill sibling guard (mirrors buildMatch's file-wide de-dup) ──────────
+  // The same-bill loop above only sees THIS bill's tests. buildMatch de-dups a shared
+  // study across the WHOLE file; the write path must too, or a study uniquely matched
+  // by a test on ANOTHER order for this file would be filed twice — one report PDF on
+  // two result rows (the idempotency check keys on the Siratech test row, not the
+  // DePACS study, so it can't catch this). Scan every OTHER order on the file and
+  // refuse if any test there also resolves uniquely to the same study.
+  for (const orow of rows) {
+    if (String(orow.billNo) === String(row.billNo)) continue;   // same bill handled above
+    let odet = [];
+    try {
+      const odr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+        body: results.radiologyDetailsBody(orow, { hospitalId: useSite, empId }),
+      });
+      odet = (odr.json && odr.json.data) || [];
+    } catch (_e) { odet = []; }
+    const oDate = orow.billDate || orow.visitDate || null;
+    for (const t of odet) {
+      const sm = results.matchStudy({ mrno: orow.mrno, serviceName: t.serviceName, categoryName: t.categoryName, orderDate: oDate, accession: pickAccession(t, orow) }, studies);
+      if (sm.decision === 'unique' && sm.study && String(sm.study.studyId) === String(m.study.studyId)) {
+        return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
+          decision: 'ambiguous', reason: `study #${m.study.studyId} also matches "${t.serviceName}" on bill ${orow.billNo} for this file — refusing to file the same report to two orders; review manually`,
+          candidates: m.candidates, writable: false };
+      }
+    }
+  }
   const report = await results.depacsReport(m.study.studyId);
 
   // The radiology result is template-based: fetch the test's template so we can
   // populate invPatTemplResults (read-only).
   let template = null;
   try {
-    const tr = await hisFetch('/investigation-api/api/v1/ResultEntry/GetTestTemplate?InvMastServiceId=' + encodeURIComponent(target.inv_mast_service_id), { method: 'GET' });
+    const tr = await hisFetch('/investigation-api/api/v1/ResultEntry/GetTestTemplate?InvMastServiceId=' + encodeURIComponent(svcId(target)), { method: 'GET' });
     template = (tr.json && (tr.json.data != null ? tr.json.data : tr.json)) || null;
   } catch (e) { template = { error: String(e.message || e) }; }
 
@@ -657,7 +683,7 @@ app.post('/results/file', requireAuth, async (req, res) => {
       : (DEFAULT_STRING_RANGE === RANGE_NOT_APPLICABLE ? 'not applicable (radiology default)' : 'default');
     const planOut = {
       file: plan.file, site: plan.site, billNo: plan.billNo,
-      target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },
+      target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id != null ? plan.target.inv_mast_service_id : plan.target.invMastserviceId },
       study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate },
       match: plan.match,
       report: { reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes, textPreview: (rep.reportText || '').slice(0, 400) },
@@ -748,9 +774,12 @@ app.post('/results/file', requireAuth, async (req, res) => {
     const sRow = Array.isArray(sData) ? sData[0] : sData;
     const saveMsg = sRow && (sRow.meassge || sRow.message);
     // A HIS reject can arrive as HTTP 200 with isSuccess omitted and a message that
-    // isn't in the old narrow list — treat any recognized error wording as failure so
-    // a rejection is never reported as a successful medical-record write.
-    const REJECT_MSG = /enter template|select .*range|attach|duplicate|already|locked|invalid|object reference|not set|no record|denied|unauthor|error|cannot|failed|fail\b/i;
+    // isn't in the old narrow list — treat recognized rejection wording as failure so
+    // a rejection is never reported as a successful medical-record write. Phrases are
+    // anchored (not bare "error"/"cannot"/"fail") so a benign success line — e.g.
+    // "Saved with 0 errors" or "cannot be undone" — is NOT misread as a rejection,
+    // which would wrongly report a real write as failed and prompt a duplicate re-file.
+    const REJECT_MSG = /enter template|select .*range|please attach|attach .*(report|file|result)|duplicate|already (exist|filed|saved|authoriz|present)|record is locked|is invalid|invalid (input|data|payload|request)|object reference not set|not set to an instance|no record (found|to|exist)|access denied|unauthor|an error (occurred|has|was)|error while|cannot be (saved|processed|completed|authoriz)|failed to (save|authoriz|process|update)|operation failed|save failed/i;
     const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(saveMsg && REJECT_MSG.test(saveMsg));
     if (!saveOk) {
       return res.json({ ok: true, wrote: false, step: 'save', saveStatus: saveRes.status,
