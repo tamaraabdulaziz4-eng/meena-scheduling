@@ -6641,8 +6641,11 @@ def _check_reports_token(token):
 def _study_is_reported(status):
     # One readiness predicate shared by the internal and public report views, so a
     # signed/reviewed/addended report never reads "ready" in one place and "not
-    # verified" in another. Case-insensitive substring match on the DePACS status.
-    return bool(re.search(r"VERIF|COMPLETE|REVIEW|SIGN|ADDEND|APPROV", str(status or ""), re.I))
+    # verified" in another. Whole-word match (\b) on the DePACS status so it does
+    # NOT false-positive on negations/pending states like UNSIGNED, ASSIGNED,
+    # "APPROVAL PENDING" or "PENDING REVIEW".
+    return bool(re.search(r"\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b",
+                          str(status or ""), re.I))
 
 def _public_study_belongs_to_file(study_id, file_no):
     """Guard for the login-free link: a study is only readable through the public

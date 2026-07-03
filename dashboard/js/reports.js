@@ -322,7 +322,7 @@ async function repDoSearch() {
     box.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">${d.count || studies.length} study(ies) for <b>${escapeHtml(studies[0].pat_name || file)}</b></div>` +
       studies.map(s => {
         const dt = s.study_date ? new Date(s.study_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
-        const ready = /VERIF|COMPLETE|REVIEW|SIGN|ADDEND|APPROV/i.test(s.status || '');
+        const ready = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/i.test(s.status || '');
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:13px">${escapeHtml(s.modality || '')} · ${dt}</div>

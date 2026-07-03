@@ -803,7 +803,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // multiple times. Rows without a bill id are kept as-is (their fetch returns
     // nothing, so they can't inflate anything).
     const _seenBill = new Set();
-    const sample = flat
+    const deduped = flat
       .slice()
       .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
       .filter(({ r }) => {
@@ -812,8 +812,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         if (_seenBill.has(id)) return false;
         _seenBill.add(id);
         return true;
-      })
-      .slice(0, STATS_MODALITY_CAP);
+      });
+    const sample = deduped.slice(0, STATS_MODALITY_CAP);
     // ONE bill read per order (GetDueBillDetailsByID). Each line item is checked
     // against the radiology catalog — a match is a real imaging exam, and the
     // catalog also tells us its modality. This gives exam count, modality mix,
@@ -855,7 +855,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       }
     }
     const r2 = (n) => Math.round(n * 100) / 100;
-    const meta = { sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length };
+    // ofTotal/truncated must reflect the DEDUPED bill population the exam/revenue
+    // counts are drawn from — using the raw worklist length would flip exact days
+    // to "≈ estimate" and re-inflate the KPI extrapolation (bills→bills stays
+    // consistent this way).
+    const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length };
     if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
     if (withFinance) financial = {
       ...meta, items, requests: reqWithRad, exams,

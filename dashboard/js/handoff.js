@@ -221,7 +221,7 @@ function hoStep2(b) {
           </div>
         </div>
         <div style="margin-top:13px"><label class="ho-lbl">Clinical indication <span style="font-weight:500">— auto-filled from HIS, edit if needed (written into DePACS)</span></label>
-          <textarea id="ho-history" class="input" rows="4" placeholder="Auto-filled from the order; paste here if empty…" oninput="handoff.history=this.value">${escapeHtml(handoff.history || '')}</textarea></div>
+          <textarea id="ho-history" class="input" rows="4" placeholder="Auto-filled from the order; paste here if empty…" oninput="handoff.history=this.value;handoffSyncMsg()">${escapeHtml(handoff.history || '')}</textarea></div>
       </div>
       ${handoffNav('Back', 'Next', true)}
     </div>`;
