@@ -177,7 +177,10 @@ async function enrichOrder(mrno, o) {
       userId: String(HIS_USER).padStart(8, '0'), hospitalId: o.siteId,
     } });
     const rows = (ris.json && ris.json.data) || [];
-    const row = rows.find((r) => r.billNo === o.billNo) || rows[0];
+    // Only enrich from the RIS row that matches THIS order's bill. The old
+    // `|| rows[0]` fallback borrowed another same-day order's billingStatus / ER
+    // flag / payer / indication when the billNo didn't match — a wrong-data risk.
+    const row = rows.find((r) => r.billNo === o.billNo);
     if (!row) return {};
     let indication = null, reason = null, remarks = null;
     if (row.emrPatDtlsInvOrderId) {
@@ -748,11 +751,18 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
 
   const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
-    const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
-      body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
-    });
-    if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
-    return { site, ok: true, rows: (sr.json.data || []) };
+    try {
+      const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+        body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
+      });
+      if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
+      return { site, ok: true, rows: (sr.json.data || []) };
+    } catch (e) {
+      // A thrown fetch (network/TLS/DNS blip) must be reported as a FAILED branch,
+      // not swallowed into pool's null → skipped silently, which would undercount
+      // the total and present it as complete.
+      return { site, ok: false, rows: [] };
+    }
   });
 
   const returned = [], failed = [], flat = [];
@@ -929,14 +939,27 @@ process.on('uncaughtException', (e) => console.error('uncaughtException:', e && 
 
 // Keep the DEFAULT dashboard view (all branches, last 30 days, full enrichment)
 // pre-computed in the cache, so a manager opening the page gets it instantly
-// instead of waiting for ~1500 per-order bill reads. Runs a bit under the cache
-// TTL so the cache never goes cold. The key matches what the dashboard sends
-// (30-day preset, no sites filter, full=1).
+// instead of waiting for ~1500 per-order bill reads. The cache key is
+// {from,to,sites,withModality,withFinance}, so the warm run must use the EXACT
+// same from/to the dashboard sends — which is the KSA 30-day preset (see the
+// dashboard's rsPresetRange). Using UTC dates here produced a different key, so
+// the warm result was never actually served and managers paid the full cost.
+function _ksaToday() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+function _defaultRange() {                       // mirrors dashboard rsPresetRange('30d')
+  const to = _ksaToday();
+  const [y, mo, da] = to.split('-').map(Number);
+  const base = new Date(Date.UTC(y, mo - 1, da, 12));
+  const from = new Date(base.getTime() - 29 * 864e5).toISOString().slice(0, 10);
+  return { from, to };
+}
 async function warmDefaultStats() {
   try {
-    const today = new Date();
-    const to = today.toISOString().slice(0, 10);
-    const from = new Date(today.getTime() - 29 * 864e5).toISOString().slice(0, 10);
+    const { from, to } = _defaultRange();
     const t0 = Date.now();
     const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
     console.log(`[warm] default stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
@@ -950,5 +973,8 @@ app.listen(PORT, HOST, () => {
     getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
     getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`)).then(warmDefaultStats).catch(() => {});
   }, 4000);
-  setInterval(warmDefaultStats, 240000);   // refresh default cache every 4 min (< 5-min TTL)
+  // Self-scheduling (NOT setInterval): re-warm 4 min AFTER each run finishes, so a
+  // slow run (>4 min of bill reads) can never overlap itself and double the load.
+  const reWarm = () => setTimeout(async () => { await warmDefaultStats(); reWarm(); }, 240000);
+  reWarm();
 });

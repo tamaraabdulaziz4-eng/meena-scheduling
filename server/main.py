@@ -6006,6 +6006,14 @@ def _elite_file_candidates(file_no):
 # today silently dropped those (and any recent) studies from the reports lookup.
 _ELITE_STUDY_END_DATE = "2035-12-31"
 
+def _elite_body(resp):
+    """The 'body' dict from an elite/DePACS response, tolerating non-dict payloads.
+    Some vendor error paths return a JSON list/string/None instead of an object;
+    calling .get('body') on those raises AttributeError → unhandled 500. Always
+    hand back a dict so callers can .get() safely."""
+    b = resp.get("body") if isinstance(resp, dict) else None
+    return b if isinstance(b, dict) else {}
+
 def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
     """DePACS studies for a file number across EVERY SIRA/bare candidate, merged and
     de-duplicated by study_id. We must query all forms (not stop at the first with
@@ -6018,7 +6026,7 @@ def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
     for pid in _elite_file_candidates(file_no):
         r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end_date}"
                        f"&page_size=50&current_page=1&patient_id={urllib.parse.quote(pid)}")
-        for s in ((r.get("body") or {}).get("data")) or []:
+        for s in (_elite_body(r).get("data")) or []:
             sid = s.get("study_id")
             if sid in seen:
                 continue
@@ -6034,11 +6042,16 @@ def reports_config(user=Depends(require_superadmin)):
 @app.put("/api/reports/config")
 async def reports_config_save(request: Request, user=Depends(require_superadmin)):
     b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Invalid request body")
     def _save(col, val):
         q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
              ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (col, val), exec_only=True)
     if "base" in b:     _save("elite_api_base", (b.get("base") or "").strip() or _ELITE_API_DEFAULT)
-    if "username" in b: _save("elite_username", (b.get("username") or "").strip())
+    # Username/password are only written when non-blank — a blank field means "leave
+    # it as-is", so saving just the base can't silently wipe the stored credentials
+    # (which would flip `configured` to false and break every reports/handoff lookup).
+    if (b.get("username") or "").strip(): _save("elite_username", b["username"].strip())
     if (b.get("password") or "").strip(): _save("elite_password", b["password"].strip())
     _elite_token_cache["token"] = None
     insert_audit(user, "REPORTS_CONFIG", "butterfly")
@@ -6062,7 +6075,7 @@ def reports_search(request: Request, user=Depends(require_admin)):
 
 @app.get("/api/reports/study/{study_id}")
 def reports_study(study_id: int, user=Depends(require_admin)):
-    b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
+    b = _elite_body(_elite_get(f"/report/get_study_report_info/{study_id}"))
     return {"study_id": b.get("study_id"), "report_id": b.get("report_id"),
             "pat_name": _elite_name(b.get("pat_name")), "pat_id": b.get("pat_id"),
             "pat_age": b.get("pat_age"), "pat_sex": b.get("pat_sex"),
@@ -6702,7 +6715,7 @@ def public_reports_study(study_id: int, request: Request):
         raise HTTPException(400, "Enter a patient file number")
     if not _public_study_belongs_to_file(study_id, file_no):
         raise HTTPException(403, "This report isn't available on this file number.")
-    b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
+    b = _elite_body(_elite_get(f"/report/get_study_report_info/{study_id}"))
     return {"study_id": b.get("study_id"),
             "pat_name": _elite_name(b.get("pat_name")),
             "pat_id": b.get("pat_id"), "pat_age": b.get("pat_age"), "pat_sex": b.get("pat_sex"),
@@ -7731,18 +7744,19 @@ def _radiology_snapshot_loop():
             ksa = datetime.now(timezone.utc) + timedelta(hours=3)
             for back in range(1, 8):                       # yesterday .. 7 days ago
                 day = (ksa - timedelta(days=back)).strftime('%Y-%m-%d')
-                claimed = q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
-                               ON CONFLICT (key) DO NOTHING RETURNING key""",
-                            (f"radstats_snapshot:{day}", ksa.isoformat()), one=True)
-                if not claimed:
+                # Gate on the actual snapshot ROW, not a separate claim key. The old
+                # claim-before-capture pattern orphaned a day forever if the worker
+                # was killed mid-capture (claim persisted, row never written). The
+                # daily-row PK is the honest idempotency gate; a rare concurrent
+                # double-capture is harmless because the upsert is idempotent.
+                exists = q("SELECT 1 FROM scheduling.radiology_stats_daily WHERE stat_date=%s",
+                           (day,), one=True)
+                if exists:
                     continue
                 try:
                     n = _capture_radiology_day(day)
                     print(f"[radstats] snapshot {day}: {n} requests")
                 except Exception as e:
-                    # Release the claim so a later tick retries this day.
-                    q("DELETE FROM scheduling.app_settings WHERE key=%s",
-                      (f"radstats_snapshot:{day}",), exec_only=True)
                     print(f"[radstats] snapshot {day} failed: {e}")
         except Exception as e:
             print(f"[radstats] loop error: {e}")
