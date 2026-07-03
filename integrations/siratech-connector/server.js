@@ -797,8 +797,14 @@ async function _patientSearch(q, debug) {
     try { r = await hisFetch('/patient-api/api/v1/Patient/Search', { body }); }
     catch (e) { if (debug) tried.push({ field, error: String(e.message || e).slice(0, 120) }); continue; }
     const n = rawCount(r);
-    if (debug) tried.push({ field, rawCount: n });
     const rows = patientsFrom(r);
+    if (debug) {
+      const t = { field, status: r && r.status, rawCount: n };
+      // Only echo the raw body when NO patients came back — so we can read the
+      // endpoint's error / field-name hint without ever leaking patient data.
+      if (!rows.length) t.body = String((r && r.text) || '').slice(0, 300);
+      tried.push(t);
+    }
     if (rows.length) return { patients: rows, matchedBy: field, tried };
   }
   return { patients: [], matchedBy: null, tried };
