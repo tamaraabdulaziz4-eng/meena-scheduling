@@ -849,8 +849,9 @@ const dayOf = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/
 function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unknown' : String(key); const e = map.get(k) || { key: k, name: name || k, count: 0 }; e.count += 1; map.set(k, e); }
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
 
-async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, topDoctors = 15, noCache = false }) {
-  const cacheKey = JSON.stringify({ from, to, sites: (sites || []).slice().sort((a, b) => a - b), withModality, withFinance });
+const STATS_LIST_CAP = Number(process.env.STATS_LIST_CAP || 1500);
+async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, withList = false, topDoctors = 15, noCache = false }) {
+  const cacheKey = JSON.stringify({ from, to, sites: (sites || []).slice().sort((a, b) => a - b), withModality, withFinance, withList });
   if (!noCache) { const cached = statsCacheGet(cacheKey); if (cached) return cached; }
   await getToken();
   const empId = currentEmpId() || '0';
@@ -1007,12 +1008,38 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     };
   }
 
+  // Drill-down list: the individual requests behind the KPI tiles (patient name +
+  // exam), built from rows we already have — no extra HIS calls. Opt-in (withList)
+  // and capped so a wide date range can't return a huge payload. Field names are
+  // probed across spellings; requestKeys exposes the raw row keys (no values) so any
+  // unmapped column can be wired precisely.
+  let requests = null, requestsTruncated = 0, requestKeys = [];
+  if (withList) {
+    if (flat.length) requestKeys = Object.keys(flat[0].r || {});
+    const ordered = flat
+      .slice()
+      .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0));
+    requestsTruncated = ordered.length > STATS_LIST_CAP ? ordered.length : 0;
+    requests = ordered.slice(0, STATS_LIST_CAP).map(({ r, site }) => ({
+      mrno: r.mrno != null ? String(r.mrno) : '',
+      name: clean(firstOf(r, ['patientName', 'patName', 'pat_name', 'fullName', 'patientFullName', 'name']) || ''),
+      exam: clean(firstOf(r, ['serviceName', 'invMastServiceName', 'testName', 'itemName', 'mastServiceName']) || ''),
+      department: (r.departmentName || '').trim() || null,
+      doctor: (r.doctorName || '').trim() || null,
+      branch: branchLabel(site), site,
+      priority: (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) ? 'emergency' : 'routine',
+      date: dayOf(r.billDate || r.visitDate),
+      billNo: r.billNo || null,
+    }));
+  }
+
   const result = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, returned, failed },
     branches: siteList,
     total,
     patients: patientSet.size,
+    requests, requestsTruncated, requestKeys,
     byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), name: e.name, count: e.count })),
     byDepartment: tallyList(byDept).map((e) => ({ name: e.name, count: e.count })),
     byDoctor: tallyList(byDoctor, topDoctors).map((e) => ({ providerId: e.key, name: e.name, count: e.count })),
@@ -1043,8 +1070,9 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
     const full = String(req.query.full || '') === '1';
     const withModality = full || String(req.query.modality || '') === '1';
     const withFinance = full || String(req.query.financial || '') === '1';
+    const withList = String(req.query.list || '') === '1';     // drill-down request rows
     const noCache = String(req.query.nocache || '') === '1';   // Refresh button → truly live
-    const data = await radiologyStats({ from, to, sites, withModality, withFinance, noCache });
+    const data = await radiologyStats({ from, to, sites, withModality, withFinance, withList, noCache });
     return res.json({ ok: true, ...data });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });

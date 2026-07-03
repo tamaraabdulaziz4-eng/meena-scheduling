@@ -204,6 +204,8 @@ async function renderHomeCredentials() {
 // Home. Auto-refreshes so it reads as a real-time control room. A team lead is
 // scoped to their own branch (fail-closed); managers/superadmin see all branches.
 let _hmRadTimer = null;
+let _hmRadData = null;      // last stats payload (incl. the drill-down request rows)
+let _hmRadDrill = '';       // which tile is currently expanded ('' = none)
 function _hmKsaToday() {
   try {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
@@ -246,19 +248,23 @@ async function _hmRadFetch(site, scopeName) {
   const box = document.getElementById('hm-radstats');
   if (!box) return;
   const today = _hmKsaToday();
-  const q = `from=${today}&to=${today}${site ? `&sites=${site}` : ''}`;
+  const q = `from=${today}&to=${today}${site ? `&sites=${site}` : ''}&list=1`;
   let d;
   try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { return; }   // keep last-good on a blip
   if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; return; }
   box.dataset.loaded = '1';
+  _hmRadData = d;
   const total = d.total || 0, emg = (d.priority && d.priority.emergency) || 0;
   const rtn = (d.priority && d.priority.routine) || 0;
   const top = (d.byBranch || []).filter(b => b.count > 0)[0];
   const upd = _hmClockParts();
   const title = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
-  const kpi = (n, l, cls) => `<div class="hm-rad-kpi${cls ? ' ' + cls : ''}"><b>${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
-  const tiles = [kpi(total, 'requests'), kpi(emg, 'emergency', emg ? 'warn' : ''), kpi(rtn, 'routine')];
-  if (!site) tiles.push(`<div class="hm-rad-kpi"><b style="font-size:15px">${top ? escapeHtml(top.name || ('Branch ' + top.site)) : '—'}</b><span>busiest branch</span></div>`);
+  // Tiles are buttons — tapping one lists the actual requests behind it (patient +
+  // exam), filtered to that tile. The active tile is highlighted.
+  const kpi = (n, l, cls, filter) => `<button type="button" class="hm-rad-kpi${cls ? ' ' + cls : ''}${filter && _hmRadDrill === filter ? ' active' : ''}"${filter ? ` onclick="hmRadDrillToggle('${filter}')"` : ''}><b>${Number(n).toLocaleString()}</b><span>${l}</span></button>`;
+  const tiles = [kpi(total, 'requests', '', 'all'), kpi(emg, 'emergency', emg ? 'warn' : '', 'emergency'), kpi(rtn, 'routine', '', 'routine')];
+  if (!site && top) tiles.push(`<button type="button" class="hm-rad-kpi${_hmRadDrill === 'branch:' + top.site ? ' active' : ''}" onclick="hmRadDrillToggle('branch:${top.site}')"><b style="font-size:15px">${escapeHtml(top.name || ('Branch ' + top.site))}</b><span>busiest branch</span></button>`);
+  else if (!site) tiles.push(`<div class="hm-rad-kpi"><b style="font-size:15px">—</b><span>busiest branch</span></div>`);
   box.innerHTML = `<div class="hm-card">
     <div class="hm-card-head">
       <div class="hm-card-title">${title}
@@ -266,7 +272,57 @@ async function _hmRadFetch(site, scopeName) {
       <button class="action-btn" onclick="showPage('radstats')">Open →</button>
     </div>
     <div class="hm-rad-kpis">${tiles.join('')}</div>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px">🟢 Live · updated ${upd.hm}:${upd.ss} Riyadh</div>
+    <div id="hm-rad-drill"></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">🟢 Live · updated ${upd.hm}:${upd.ss} Riyadh · tap a number for the list</div>
+  </div>`;
+  if (_hmRadDrill) hmRadDrillRender();
+}
+
+// Toggle the drill-down list for a tile ('all' | 'emergency' | 'routine' | 'branch:<site>').
+function hmRadDrillToggle(filter) {
+  _hmRadDrill = (_hmRadDrill === filter) ? '' : filter;
+  // Re-highlight the tiles + (re)render the list without a full refetch.
+  document.querySelectorAll('#hm-radstats .hm-rad-kpi').forEach(el => el.classList.remove('active'));
+  hmRadDrillRender();
+}
+function hmRadDrillRender() {
+  const panel = document.getElementById('hm-rad-drill');
+  if (!panel) return;
+  if (!_hmRadDrill) { panel.innerHTML = ''; return; }
+  const d = _hmRadData || {};
+  const all = Array.isArray(d.requests) ? d.requests : null;
+  if (all === null) {
+    panel.innerHTML = `<div class="hm-rad-drillbox" style="color:var(--muted);font-size:12px">The request list isn't available — reopen Home after the next refresh.</div>`;
+    return;
+  }
+  let rows = all, label = 'All requests';
+  if (_hmRadDrill === 'emergency') { rows = all.filter(r => r.priority === 'emergency'); label = 'Emergency requests'; }
+  else if (_hmRadDrill === 'routine') { rows = all.filter(r => r.priority === 'routine'); label = 'Routine requests'; }
+  else if (_hmRadDrill.startsWith('branch:')) {
+    const site = Number(_hmRadDrill.slice(7));
+    rows = all.filter(r => Number(r.site) === site);
+    label = (rows[0] && rows[0].branch) || 'Branch';
+  }
+  // Mark the active tile.
+  document.querySelectorAll('#hm-radstats .hm-rad-kpi').forEach(el => {
+    if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`'${_hmRadDrill}'`)) el.classList.add('active');
+  });
+  const trunc = d.requestsTruncated ? ` · showing first ${all.length} of ${d.requestsTruncated}` : '';
+  const list = rows.length ? rows.map(r => `
+    <button type="button" class="hm-rad-req" onclick="openPatientLookup('${escapeHtml(r.mrno || '')}')">
+      <div class="hm-rad-req-main">
+        <div class="hm-rad-req-name">${escapeHtml(r.name || '(no name)')}</div>
+        <div class="hm-rad-req-sub">${escapeHtml(r.exam || '—')}${r.branch ? ' · ' + escapeHtml(r.branch) : ''}${r.doctor ? ' · ' + escapeHtml(r.doctor) : ''}</div>
+      </div>
+      <div class="hm-rad-req-side">
+        ${r.priority === 'emergency' ? '<span class="badge badge-red">ER</span>' : ''}
+        <span class="hm-rad-req-mrn">${escapeHtml(r.mrno || '')}</span>
+      </div>
+    </button>`).join('') : `<div style="padding:10px;color:var(--muted);font-size:12.5px">No requests in this group.</div>`;
+  panel.innerHTML = `<div class="hm-rad-drillbox">
+    <div class="hm-rad-drill-head">${escapeHtml(label)} · ${rows.length}${trunc}
+      <button class="btn btn-xs btn-ghost" style="float:inline-end" onclick="hmRadDrillToggle('${_hmRadDrill}')">✕ close</button></div>
+    <div class="hm-rad-reqlist">${list}</div>
   </div>`;
 }
 
