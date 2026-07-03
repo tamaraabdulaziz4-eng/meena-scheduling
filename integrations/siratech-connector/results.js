@@ -107,6 +107,17 @@ function sideOf(s) {
   return null;
 }
 
+// A study carries a FINAL, fileable report when its status is any of these. This
+// mirrors server/main.py `_study_is_reported` so the forward flow's notion of
+// "report ready" and the reverse flow's matcher agree on the SAME set of studies.
+// Butterfly emits several terminal labels for a signed report (VERIFIED on this
+// instance today, but APPROVED / SIGNED / COMPLETED / FINAL elsewhere and after
+// addenda); keying the matcher strictly on the single word "VERIFIED" silently
+// drops a freshly-signed study, and the matcher then reports "no candidate" for a
+// report that is plainly ready — the exact review-needed symptom seen in the field.
+const REPORTED_STATUS = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/;
+function isReported(status) { return REPORTED_STATUS.test(String(status || '').toUpperCase()); }
+
 // The file-number (MRN) equality test used as the first match gate. DePACS
 // stores pat_id as the bare MRN OR the MRN with the patient name concatenated
 // ("25097956ELAZIM, WAEL"), so accept the MRN as a leading token but never let a
@@ -233,7 +244,7 @@ function matchStudy(order, studies, { windowBeforeH = 24, windowAfterH = 96 } = 
     return { decision: 'none', key: 'file', candidates: [], reason: `no VERIFIED study found for file ${order.mrno}` };
   }
 
-  const verified = fileStudies.filter((s) => String(s.status).toUpperCase() === 'VERIFIED');
+  const verified = fileStudies.filter((s) => isReported(s.status));
 
   // PRIMARY: accession (deterministic) — only on the REAL DICOM accession.
   if (orderAcc) {

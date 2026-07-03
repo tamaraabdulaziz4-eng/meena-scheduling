@@ -401,7 +401,16 @@ async function buildMatch(file, wantBillNo, site) {
       allUnique: tests.length > 0 && tests.every((t) => t.decision === 'unique'),
     });
   }
-  return { file, empId, site: useSite, studiesFound: studies.length, orders: out, count: out.length };
+  // TEMP DEBUG: the FULL set of DePACS studies pulled for this MRN, pre-filter, so
+  // the UI can show WHY a study was excluded from candidates (wrong status / MRN /
+  // simply absent). This is what distinguishes "matcher too strict" from "study not
+  // there / registered under a different pat_id". Read-only; drop once the reverse
+  // flow is proven in the field.
+  const allStudies = studies.map((s) => ({
+    studyId: s.studyId, desc: s.desc, modality: s.modality, status: s.status,
+    accession: s.accession, studyDate: s.studyDate, patId: s.patId,
+  }));
+  return { file, empId, site: useSite, studiesFound: studies.length, orders: out, count: out.length, allStudies };
 }
 
 app.get('/results/match/:file', requireAuth, async (req, res) => {
