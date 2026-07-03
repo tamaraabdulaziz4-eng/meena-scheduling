@@ -29,10 +29,15 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
+# Always put this file's dir on sys.path so bare sibling imports (webpush,
+# consent_pdf) resolve whether we're launched as the `server.main` package
+# (gunicorn, cwd=/app) or as a standalone script. Under the package launch,
+# `from server import webpush` succeeds but bare `import consent_pdf` would NOT —
+# so the path insert must happen unconditionally, not only in the fallback.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:                                   # local module, same package
     from server import webpush as _webpush
 except Exception:                      # standalone / script import fallback
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import webpush as _webpush
 
 # ── Config ────────────────────────────────────────────────────────────────────
