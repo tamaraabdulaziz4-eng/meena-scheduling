@@ -133,7 +133,7 @@ async function getToken(force = false) {
 }
 
 // ── REST helper (retries once on 401/403 with a fresh login) ──────────────────
-async function hisFetch(path, { method = 'POST', body } = {}) {
+async function hisFetch(path, { method = 'POST', body, headers: extra } = {}) {
   const doCall = async (tok) => {
     const res = await fetch(HIS_BASE + path, {
       method,
@@ -142,6 +142,7 @@ async function hisFetch(path, { method = 'POST', body } = {}) {
         Accept: 'application/json, text/plain, */*',
         Authorization: tok.auth,
         hospitalid: tok.hospitalid,
+        ...(extra || {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -285,6 +286,16 @@ function currentEmpId() {
     const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString('utf8'));
     return payload.nameid || payload.sub || payload.UserId || null;
   } catch (_e) { return null; }
+}
+
+// The EMR patient-search payload needs the logged-in provider id — that's the JWT
+// `sub`/UserName claim (e.g. "00101454"), NOT nameid (which is the internal user id).
+function currentProviderId() {
+  try {
+    const jwt = String(cache.auth || '').replace(/^Bearer\s+/i, '');
+    const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString('utf8'));
+    return payload.sub || payload.UserName || payload.nameid || '';
+  } catch (_e) { return ''; }
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────
@@ -761,57 +772,60 @@ app.post('/results/file', requireAuth, async (req, res) => {
   }
 });
 
-// Patient search — by file/MRN (mrNo, matches MRN + name), or by national ID /
-// Iqama / mobile. The endpoint REQUIRES mrNo (sending another field alone 500s
-// with a NullReference), and — critically — it IGNORES a field name it doesn't
-// recognise, falling through to a broad unfiltered list. So we can't trust "got
-// rows" as a match: an unknown field returns everyone. Instead we measure the
-// broad baseline once, then accept a candidate field only when it NARROWS the
-// result below that baseline (a real ID/phone matches ~1 person). For phone we
-// also verify the returned phone actually matches. `matchedBy` reports the winner.
+// Patient search. Two HIS endpoints, chosen by what the term looks like:
+//   • MRN / name / file number → Patient/Search {mrNo}  (proven, also used elsewhere)
+//   • national ID / Iqama / mobile → the EMR patient-list search the HIS UI itself
+//     uses: POST Patient/EMRSearchPanel/List with a typed payload. The dropdown maps
+//     to {idType, category}: MRNO/Name=1, Saudi ID=2, Iqama ID=3, Citizen ID=4,
+//     Passport=5, Phone Number=6. The value goes in `idNumber`. This endpoint filters
+//     server-side by type, so its rows are the real match (no gu-essing / narrowing).
+const _EMR_SEARCH_PATH = '/patient-api/api/v1/Patient/EMRSearchPanel/List';
+function _emrSearchBody(idType, category, value) {
+  return {
+    deptId: 0, providerId: '', duration: 0,
+    hospitalId: Number(cache.hospitalid) || undefined,
+    nursingStationId: -1, idType, category,
+    dischPatientsAccess: false, genLevelId: 0,
+    idNumber: value, loginProviderId: currentProviderId() || '',
+    patlistType: 'EMR', roomTypeName: '',
+    searchCondition: 'Search', searchConditionValue: 'All',
+    updateGenUserSettings: [],
+  };
+}
+async function _emrSearch(idType, category, value) {
+  const headers = { clienttimezoneoffsetinminutes: '-180', localtimezoneoffsetinminutes: '-180', machinename: 'YARWEB_UI' };
+  try { return await hisFetch(_EMR_SEARCH_PATH, { body: _emrSearchBody(idType, category, value), headers }); }
+  catch (_e) { return null; }
+}
+
 async function _patientSearch(q, debug) {
-  const patientsFrom = (r) => ((r && r.json && r.json.data) || []).slice(0, 25).map(normalizePatient);
-  const rawCount = (r) => (r && r.json && Array.isArray(r.json.data)) ? r.json.data.length : -1;
-  const call = async (body) => { try { return await hisFetch('/patient-api/api/v1/Patient/Search', { body }); } catch (_e) { return null; } };
-  const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
+  const rowsOf = (r) => ((r && r.json && (r.json.data || r.json.Data)) || []);
+  const patientsFrom = (r) => rowsOf(r).slice(0, 25).map(normalizePatient);
+  const rawCount = (r) => { const d = r && r.json && (r.json.data || r.json.Data); return Array.isArray(d) ? d.length : -1; };
   const digits = q.replace(/\D/g, '');
   const isMobile = /^0?5\d{8,9}$/.test(digits);
+  const isId10 = /^[12]\d{9}$/.test(digits);   // 1… = Saudi national ID, 2… = Iqama
   const tried = [];
+  const dbg = (label, r, extra) => { if (debug) tried.push({ field: label, status: r && r.status, rawCount: rawCount(r), keys: (rowsOf(r)[0] ? Object.keys(rowsOf(r)[0]).slice(0, 40) : undefined), ...(extra || {}) }); };
 
-  // 1) Primary: mrNo (MRN + name). If it hits, done.
-  let r = await call({ mrNo: q });
-  if (debug) tried.push({ field: 'mrNo', status: r && r.status, rawCount: rawCount(r) });
-  let rows = patientsFrom(r);
+  // Typed EMR-list search for phone / national ID / Iqama (the HIS UI's own path).
+  const plans = [];
+  if (isMobile) plans.push(['PHONE NUMBER', 6]);
+  else if (isId10) plans.push(...(digits[0] === '1' ? [['SAUDI ID', 2], ['IQAMA ID', 3]] : [['IQAMA ID', 3], ['SAUDI ID', 2]]));
+  for (const [idType, category] of plans) {
+    const r = await _emrSearch(idType, category, q);
+    dbg(`EMR:${idType}`, r);
+    const rows = patientsFrom(r);
+    if (rows.length) return { patients: rows, matchedBy: idType, tried };
+  }
+
+  // MRN / name / file number → the classic Patient/Search.
+  let r;
+  try { r = await hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: q } }); } catch (_e) { r = null; }
+  dbg('mrNo', r);
+  const rows = patientsFrom(r);
   if (rows.length) return { patients: rows, matchedBy: 'mrNo', tried };
 
-  // A non-numeric term (name) only ever goes through mrNo.
-  if (!/^\d{5,}$/.test(digits)) return { patients: [], matchedBy: null, tried };
-
-  // 2) Numeric: measure the ignored-field baseline (mrNo:'' returns the broad list),
-  //    then only accept a candidate that returns FEWER rows than that (it was honoured).
-  const baseRes = await call({ mrNo: '' });
-  const baseline = rawCount(baseRes);
-  if (debug) tried.push({ field: '(baseline mrNo:"")', status: baseRes && baseRes.status, rawCount: baseline });
-
-  const candidates = isMobile
-    ? ['contactNumber', 'mobilePhone', 'mobileNo', 'mobileNumber', 'phone', 'phoneNo']
-    : ['saudiid', 'iqamaId', 'passportId', 'nationalId', 'identityNo', 'idNo', 'nid'];
-  const qTail = onlyDigits(q).slice(-9);   // last 9 digits, to compare phones regardless of leading 0
-
-  let best = null;
-  for (const k of candidates) {
-    const rr = await call({ mrNo: '', [k]: q });
-    const n = rawCount(rr);
-    const rws = patientsFrom(rr);
-    const phoneOk = isMobile && rws.length > 0 && rws.every(p => onlyDigits(p.phone).slice(-9) === qTail);
-    // Honoured = strictly narrower than the ignored-field baseline AND a small,
-    // ID/phone-sized result (not the whole broad list).
-    const narrowed = n > 0 && (baseline < 0 || n < baseline) && n <= 25;
-    const ok = phoneOk || narrowed;
-    if (debug) tried.push({ field: k, status: rr && rr.status, rawCount: n, phoneOk, narrowed });
-    if (ok && !best) { best = { field: k, rows: rws }; if (!debug) break; }
-  }
-  if (best) return { patients: best.rows, matchedBy: best.field, tried };
   return { patients: [], matchedBy: null, tried };
 }
 
