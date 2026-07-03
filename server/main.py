@@ -1614,10 +1614,29 @@ def _notify_leave_progress(lv, new_status, actor):
                             f"Your {lv['leave_type']} leave on {lv['date']} was {new_status}",
                             link="leaves", ntype=new_status)
 
-def leave_coverage_gap(staff_id, date):
+# Rota codes that are NOT a working shift (Off / leave / on-call marker).
+_NONWORK_CODES = ("O", "AL", "SL", "TB", "OC", "")
+def _is_working_code(code):
+    return bool(code) and str(code) not in _NONWORK_CODES
+
+def has_approved_leave(staff_id, date):
+    """True if the staff member has an APPROVED leave on this date. The source of
+    truth is leave_requests — NOT the rota cell, which a manual edit / swap / cover
+    may have overwritten. Used to block writing a working shift onto a leave day
+    (a person can't be 'on approved leave' and 'working' the same day)."""
+    if staff_id is None or not date:
+        return False
+    r = q("""SELECT 1 FROM scheduling.leave_requests
+             WHERE staff_id=%s AND date=%s AND status='approved' LIMIT 1""",
+          (staff_id, date), one=True)
+    return bool(r)
+
+def leave_coverage_gap(staff_id, date, exclude_staff=None):
     """If this staff member is scheduled a *working* shift that day and is the
     only one on it, return that shift code (a coverage gap); else None. Used to
-    warn before an approved leave silently leaves a day uncovered."""
+    warn before an approved leave silently leaves a day uncovered. `exclude_staff`
+    (a set of staff ids) is treated as also-leaving, so a batch that removes two
+    people from the same shift is correctly flagged instead of each masking the other."""
     sched = _schedule_for_leave(staff_id, date)
     if not sched:
         return None
@@ -1627,9 +1646,11 @@ def leave_coverage_gap(staff_id, date):
     code = cur and cur["shift_code"]
     if not code or code in ("O", "AL", "SL", "TB", "OC"):
         return None  # wasn't working that day → no gap
+    excl = list(exclude_staff or [])
+    excl.append(staff_id)
     others = q("""SELECT COUNT(*) AS n FROM scheduling.schedule_entries
-                  WHERE schedule_id=%s AND date=%s AND shift_code=%s AND staff_id<>%s""",
-               (sched["id"], date, code, staff_id), one=True)
+                  WHERE schedule_id=%s AND date=%s AND shift_code=%s AND staff_id <> ALL(%s)""",
+               (sched["id"], date, code, excl), one=True)
     return None if (others and others["n"] > 0) else code
 
 def _current_rota_shift(staff_id, date):
@@ -3386,6 +3407,12 @@ async def save_entry(sid: int, request: Request, user=Depends(require_admin)):
     sched = assert_can_edit_schedule(user, sid)
     sids, codes = schedule_validation_sets(sched)
     check_entry(sched, sids, codes, body.get("staff_id"), body.get("date"), body.get("shift_code", "O"))
+    # Don't silently overwrite an APPROVED leave with a working shift (a person can't
+    # be on approved leave AND working the same day). Overridable with confirm:true.
+    if (_is_working_code(body.get("shift_code", "O")) and not body.get("confirm")
+            and has_approved_leave(body.get("staff_id"), body.get("date"))):
+        raise HTTPException(409, {"error": "This staff member has APPROVED leave on this day — assigning a shift conflicts with their leave. Assign anyway?",
+                                  "confirm_required": "leave_conflict"})
     row = q("""INSERT INTO scheduling.schedule_entries
                (schedule_id,staff_id,date,shift_code,cross_branch_id,is_oncall,note,is_manual)
                VALUES (%s,%s,%s,%s,%s,%s,%s,true)
@@ -3412,6 +3439,18 @@ async def bulk_save_entries(sid: int, request: Request, user=Depends(require_adm
     sids, codes = schedule_validation_sets(sched)
     for e in entries:
         check_entry(sched, sids, codes, e.get("staff_id"), e.get("date"), e.get("shift_code", "O"))
+    # Block (unless confirm) any working shift landing on an APPROVED-leave day.
+    if not body.get("confirm"):
+        clash = [e for e in entries if _is_working_code(e.get("shift_code", "O"))
+                 and has_approved_leave(e.get("staff_id"), e.get("date"))]
+        if clash:
+            names = q("""SELECT id, name FROM scheduling.staff WHERE id = ANY(%s)""",
+                      ([e.get("staff_id") for e in clash],))
+            nm = {r["id"]: r["name"] for r in names}
+            shown = "; ".join(f"{nm.get(e.get('staff_id'), e.get('staff_id'))} {e.get('date')}" for e in clash[:5])
+            more = f" +{len(clash)-5} more" if len(clash) > 5 else ""
+            raise HTTPException(409, {"error": f"These assignments fall on APPROVED leave days: {shown}{more}. Assign anyway?",
+                                      "confirm_required": "leave_conflict"})
     pool = get_pool()
     conn = pool.getconn()
     try:
@@ -3738,9 +3777,13 @@ async def update_leave_status(lid: int, request: Request, user=Depends(require_a
                          f"Approving leaves that shift uncovered — approve anyway?",
                 "confirm_required": "coverage_gap",
             })
-    row = q("""UPDATE scheduling.leave_requests SET status=%s WHERE id=%s
+    # Atomic on the CURRENT status so two concurrent approvals can't both apply
+    # (double audit / double notify). Only the winner proceeds.
+    row = q("""UPDATE scheduling.leave_requests SET status=%s WHERE id=%s AND status=%s
                RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,leave_type,status,note""",
-            (new_status, lid), one=True)
+            (new_status, lid, lv["status"]), one=True)
+    if not row:
+        raise HTTPException(409, "This leave was just actioned by someone else")
     insert_audit(user, f"LEAVE_{new_status.upper()}", f"leave:{lid}", f"{lv['staff_name']} {lv['date']}")
     if new_status == "approved":
         apply_leave_to_schedule(lv["staff_id"], lv["date"], lv["leave_type"])
@@ -3778,14 +3821,25 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_admi
     for lv in rows:
         if not can_access_branch(user, lv["branch_id"]):
             raise HTTPException(403, "Forbidden")
-    # The grouped range shares one stage; decide the target from it (per-actor).
+    # Only act on rows that share the stage of the earliest row — a batch must not
+    # blanket-force mixed states (which would resurrect a rejected day or downgrade
+    # an already-approved one). Rows in a different status are ignored.
     current = rows[0]["status"]
+    rows = [lv for lv in rows if lv["status"] == current]
+    act_ids = [lv["id"] for lv in rows]
     new_status = _leave_decide(user, current, requested)
-    # Coverage gaps only matter at FINAL approval; check BEFORE applying.
+    # Coverage gaps only matter at FINAL approval; check BEFORE applying. The whole
+    # batch is leaving, so each gap check excludes the OTHER batch members on that day
+    # (else two people on the same shift each mask the other → a hidden zero-coverage).
     gaps = []
     if new_status == "approved":
+        from collections import defaultdict
+        leaving_by_date = defaultdict(set)
         for lv in rows:
-            gc = leave_coverage_gap(lv["staff_id"], lv["date"])
+            leaving_by_date[lv["date"]].add(lv["staff_id"])
+        for lv in rows:
+            gc = leave_coverage_gap(lv["staff_id"], lv["date"],
+                                    exclude_staff=leaving_by_date[lv["date"]] - {lv["staff_id"]})
             if gc:
                 gaps.append((lv, gc))
         if gaps and not body.get("confirm"):
@@ -3795,8 +3849,15 @@ async def update_leaves_status_batch(request: Request, user=Depends(require_admi
                 "error": f"These approvals leave shifts uncovered: {shown}{more}. Approve anyway?",
                 "confirm_required": "coverage_gap",
             })
-    q("UPDATE scheduling.leave_requests SET status=%s WHERE id = ANY(%s)",
-      (new_status, ids), exec_only=True)
+    # Atomic per-stage transition: only rows still in `current` move (guards against a
+    # concurrent double-approve). Only the rows we actually flipped get rota-synced.
+    moved = q("""UPDATE scheduling.leave_requests SET status=%s
+                 WHERE id = ANY(%s) AND status=%s RETURNING id""",
+              (new_status, act_ids, current))
+    moved_ids = {r["id"] for r in (moved or [])}
+    rows = [lv for lv in rows if lv["id"] in moved_ids]
+    if not rows:
+        raise HTTPException(409, "These leaves were already actioned")
     for lv in rows:
         _leave_rota_sync(lv, new_status)
     insert_audit(user, f"LEAVE_{new_status.upper()}_BATCH",
@@ -5119,6 +5180,29 @@ def _swap_label(sw):
     sb = q("SELECT name FROM scheduling.staff WHERE id=%s", (sw["staff_b"],), one=True) or {}
     return f"{sa.get('name','?')} ({sw['date_a']}) ↔ {sb.get('name','?')} ({sw['date_b']})"
 
+def _swap_leave_conflict(sw):
+    """Message describing how applying this swap would clash with APPROVED leave
+    (a working shift landing on a leave day, or a leave code being moved between
+    people and orphaning its leave record). None if the swap is safe to apply."""
+    sched = q("""SELECT id FROM scheduling.schedules WHERE branch_id=%s AND year=%s AND month=%s""",
+              (sw["branch_id"], sw["year"], sw["month"]), one=True)
+    if not sched:
+        return None
+    def code(staff, d):
+        r = q("""SELECT shift_code FROM scheduling.schedule_entries
+                 WHERE schedule_id=%s AND staff_id=%s AND date=%s""", (sched["id"], staff, d), one=True)
+        return (r and r["shift_code"]) or "O"
+    ca, cb = code(sw["staff_a"], sw["date_a"]), code(sw["staff_b"], sw["date_b"])
+    probs = []
+    # After the swap staff_a receives cb on date_a, staff_b receives ca on date_b.
+    if _is_working_code(cb) and has_approved_leave(sw["staff_a"], sw["date_a"]):
+        probs.append("the requester is on approved leave that day")
+    if _is_working_code(ca) and has_approved_leave(sw["staff_b"], sw["date_b"]):
+        probs.append("the colleague is on approved leave that day")
+    if ca in ("AL", "SL", "TB") or cb in ("AL", "SL", "TB"):
+        probs.append("one side is a leave day and can't be swapped")
+    return "; ".join(probs) if probs else None
+
 def _apply_swap(sw):
     """Exchange the two cells on the month's schedule (missing cell = Off)."""
     sched = q("""SELECT id FROM scheduling.schedules
@@ -5295,6 +5379,13 @@ async def act_on_swap(swid: int, request: Request, user=Depends(get_current_user
                   (sw["branch_id"], sw["year"], sw["month"]), one=True)
         if not sched:
             raise HTTPException(409, "No schedule exists for this month to apply the swap")
+        # A swap approved days later may now clash with leave approved in the interim.
+        # Validate BEFORE marking approved, so we never leave it approved-but-unapplied.
+        if not body.get("confirm"):
+            lc = _swap_leave_conflict(sw)
+            if lc:
+                raise HTTPException(409, {"error": f"This swap now conflicts with approved leave: {lc}. Apply anyway?",
+                                          "confirm_required": "leave_conflict"})
         # Claim the final approval atomically; only the winner applies the swap.
         claimed = q("""UPDATE scheduling.shift_swaps SET status='approved', mgr_by=%s, mgr_at=NOW()
                        WHERE id=%s AND status='pending_manager' RETURNING id""", (user["id"], swid), one=True)
