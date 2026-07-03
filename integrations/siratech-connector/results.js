@@ -120,12 +120,40 @@ function sameMrn(patId, mrno) {
 }
 
 // ── DePACS (Butterfly) client ─────────────────────────────────────────────────
+// DePACS serves a self-signed cert, so we must talk to it with an https.Agent
+// that has rejectUnauthorized:false. Node 22's global fetch() is undici, which
+// SILENTLY IGNORES the `agent` option (it wants `dispatcher`), so the TLS bypass
+// never applied and every call failed cert verification. Go through the https
+// module directly, which honours `agent` — and get a request timeout for free.
+function dpRequest(url, { method = 'GET', headers = {}, body, timeoutMs = 60000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const payload = body !== undefined && body !== null ? Buffer.from(body) : null;
+    const opts = {
+      method, agent: dpAgent,
+      hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search,
+      headers: { ...headers },
+    };
+    if (payload) opts.headers['Content-Length'] = payload.length;
+    const req = https.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, buffer: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('DePACS request timed out')));
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
 async function dpFetch(path, { method = 'GET', body, token } = {}) {
   const headers = { Accept: 'application/json' };
   if (token) headers.Authorization = 'Token ' + token;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(DEPACS_BASE + path, { method, headers, agent: dpAgent, body: body !== undefined ? JSON.stringify(body) : undefined });
-  const text = await res.text();
+  let payload;
+  if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
+  const res = await dpRequest(DEPACS_BASE + path, { method, headers, body: payload });
+  const text = res.buffer.toString('utf8');
   let json; try { json = JSON.parse(text); } catch (_e) { json = null; }
   return { status: res.status, json, text };
 }
@@ -174,8 +202,8 @@ async function depacsReport(studyId) {
   const info = await dpFetch('/report/get_study_report_info/' + studyId, { token });
   const b = (info.json && info.json.body) || {};
   const text = String(b.report_content || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-  const pdfRes = await fetch(DEPACS_BASE + '/report/open_report_pdf/' + studyId + '?style=2', { headers: { Authorization: 'Token ' + token }, agent: dpAgent });
-  const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
+  const pdfRes = await dpRequest(DEPACS_BASE + '/report/open_report_pdf/' + studyId + '?style=2', { headers: { Authorization: 'Token ' + token } });
+  const pdfBuf = pdfRes.buffer;
   const isPdf = pdfBuf.slice(0, 5).toString() === '%PDF-';
   return {
     reportId: b.report_id || null, patName: b.pat_name || '',

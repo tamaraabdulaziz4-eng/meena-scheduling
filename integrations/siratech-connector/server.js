@@ -797,9 +797,22 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // bill are skipped).
   let modality = null, financial = null;
   if ((withModality || withFinance) && flat.length) {
+    // Dedup by bill (GenPatBillingId) BEFORE the fan-out: several worklist rows can
+    // share one visit bill, and each bill read returns ALL its radiology line items.
+    // Reading the same bill once per row would count its exams/revenue/payer split
+    // multiple times. Rows without a bill id are kept as-is (their fetch returns
+    // nothing, so they can't inflate anything).
+    const _seenBill = new Set();
     const sample = flat
       .slice()
       .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
+      .filter(({ r }) => {
+        const id = String(r.genPatBillingId == null ? '' : r.genPatBillingId);
+        if (!id) return true;
+        if (_seenBill.has(id)) return false;
+        _seenBill.add(id);
+        return true;
+      })
       .slice(0, STATS_MODALITY_CAP);
     // ONE bill read per order (GetDueBillDetailsByID). Each line item is checked
     // against the radiology catalog — a match is a real imaging exam, and the
@@ -812,7 +825,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     });
     const byModCount = new Map(), revByBranch = new Map(), revByMod = new Map();
     let exams = 0, revenue = 0, patient = 0, sponsor = 0, items = 0;
-    let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqWithRad = 0;
+    let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqFree = 0, reqWithRad = 0;
     // EXAM-level payer split (X-ray + US on one order = two exams counted apart).
     let exInsurance = 0, exCash = 0, exCopay = 0, exFree = 0;
     for (const b of bills) {
@@ -831,7 +844,15 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 }; be.revenue += net; revByBranch.set(b.site, be);
         const me = revByMod.get(mod) || { modality: mod, revenue: 0 }; me.revenue += net; revByMod.set(mod, me);
       }
-      if (hasRad) { reqWithRad += 1; if (bPat > 0 && bSpo > 0) reqCopay += 1; else if (bPat > 0) reqCash += 1; else reqInsurance += 1; }
+      if (hasRad) {
+        reqWithRad += 1;
+        // Mirror the exam-level split: a zero-charge order (no patient AND no
+        // sponsor amount) is its own bucket, not silently counted as Insurance.
+        if (bPat > 0 && bSpo > 0) reqCopay += 1;
+        else if (bPat > 0) reqCash += 1;
+        else if (bSpo > 0) reqInsurance += 1;
+        else reqFree += 1;
+      }
     }
     const r2 = (n) => Math.round(n * 100) / 100;
     const meta = { sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length };
@@ -842,7 +863,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         { type: 'Insurance', count: reqInsurance },
         { type: 'Cash / self-pay', count: reqCash },
         { type: 'Insurance + copay', count: reqCopay },
-      ],
+      ].concat(reqFree ? [{ type: 'Zero-charge', count: reqFree }] : []),
       // exam-level split (each X-ray / US counted separately)
       examsByPayer: [
         { type: 'Insurance', count: exInsurance },

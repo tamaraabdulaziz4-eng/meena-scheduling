@@ -6179,10 +6179,14 @@ def radiology_stats_history(
     daily rows in range plus a monthly roll-up. History is built by the daily
     snapshot job (and any manual /snapshot calls)."""
     clauses, params = [], []
-    if (from_ or "").strip():
-        clauses.append("stat_date >= %s"); params.append(from_.strip())
-    if (to or "").strip():
-        clauses.append("stat_date <= %s"); params.append(to.strip())
+    f, t = (from_ or "").strip(), (to or "").strip()
+    for label, val in (("from", f), ("to", t)):
+        if val and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", val):
+            raise HTTPException(400, f"{label} must be YYYY-MM-DD")
+    if f:
+        clauses.append("stat_date >= %s"); params.append(f)
+    if t:
+        clauses.append("stat_date <= %s"); params.append(t)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = q(f"""SELECT stat_date, total, emergency, routine, source, captured_at
                  FROM scheduling.radiology_stats_daily{where} ORDER BY stat_date""",
@@ -6277,7 +6281,8 @@ async def handoff_write_history(request: Request, user=Depends(require_admin)):
         raise HTTPException(400, "Pick a DePACS study to write into")
     if not history:
         raise HTTPException(400, "Add the clinical history first")
-    out = _elite_write_history(int(study_id), history)
+    sid = _int_or_400(study_id, "study_id")
+    out = _elite_write_history(sid, history)
     insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
                  json.dumps({"file_no": (b.get("file_no") or "").strip()}))
     return out
@@ -6633,6 +6638,23 @@ def _check_reports_token(token):
     if not token or token != _reports_token():
         raise HTTPException(403, "Invalid or expired link. Ask the radiology team for a new one.")
 
+def _study_is_reported(status):
+    # One readiness predicate shared by the internal and public report views, so a
+    # signed/reviewed/addended report never reads "ready" in one place and "not
+    # verified" in another. Case-insensitive substring match on the DePACS status.
+    return bool(re.search(r"VERIF|COMPLETE|REVIEW|SIGN|ADDEND|APPROV", str(status or ""), re.I))
+
+def _public_study_belongs_to_file(study_id, file_no):
+    """Guard for the login-free link: a study is only readable through the public
+    endpoints if it is one of the studies on the file number the caller looked up.
+    Without this a link-holder could enumerate study_id 1,2,3… and pull every
+    patient's report (IDOR)."""
+    want = str(study_id)
+    for s in _elite_studies_for_file(file_no):
+        if str(s.get("study_id")) == want:
+            return True
+    return False
+
 def _report_html_to_text(html):
     import re as _re
     t = _re.sub(r"<\s*(br|/p|/div|/tr|/h[1-6]|/li)\s*/?>", "\n", html or "", flags=_re.I)
@@ -6662,7 +6684,7 @@ def public_reports_lookup(request: Request):
         "study_date": s.get("study_date"),
         "status": s.get("study_status"),
         "study_desc": s.get("study_description") or s.get("study_desc"),
-        "reported": str(s.get("study_status") or "").upper() in ("VERIFIED", "APPROVED", "SIGNED", "COMPLETED"),
+        "reported": _study_is_reported(s.get("study_status")),
     } for s in rows]
     studies.sort(key=lambda x: str(x.get("study_date") or ""), reverse=True)
     return {"file_no": file_no, "count": len(studies), "studies": studies}
@@ -6672,6 +6694,11 @@ def public_reports_study(study_id: int, request: Request):
     """Full report text for one study (public link)."""
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    if not _public_study_belongs_to_file(study_id, file_no):
+        raise HTTPException(403, "This report isn't available on this file number.")
     b = (_elite_get(f"/report/get_study_report_info/{study_id}").get("body")) or {}
     return {"study_id": b.get("study_id"),
             "pat_name": _elite_name(b.get("pat_name")),
@@ -6687,6 +6714,11 @@ def public_reports_pdf(study_id: int, request: Request):
     from fastapi import Response
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    if not _public_study_belongs_to_file(study_id, file_no):
+        raise HTTPException(403, "This report isn't available on this file number.")
     try: style = max(1, min(3, int(request.query_params.get("style") or "2")))
     except (TypeError, ValueError): style = 2
     ct, data = _elite_get(f"/report/open_report_pdf/{study_id}?style={style}", want="raw")
