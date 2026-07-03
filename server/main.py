@@ -6318,9 +6318,19 @@ def _elite_fix_date(d):
         return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
     return s[:10]
 
-def _elite_write_history(study_id, history):
+# The handoff is the EMERGENCY radiology flow, so every study we write into is
+# flagged Emergency = ✓ and filed under Category "Others". These are the exact
+# field names + values the Butterfly edit_study_info endpoint uses on this build
+# (confirmed live from get_study_info: emergency_status=true, category_id=3 ↔
+# category="Others"). Overridable if the category mapping ever changes.
+_ELITE_EMERGENCY_CATEGORY_ID = int(os.environ.get("ELITE_EMERGENCY_CATEGORY_ID") or 3)
+_ELITE_EMERGENCY_CATEGORY_NAME = (os.environ.get("ELITE_EMERGENCY_CATEGORY_NAME") or "Others").strip()
+
+def _elite_write_history(study_id, history, set_emergency=True):
     """Write `history` into a study's clinical_history, preserving the other
-    demographic fields the edit endpoint requires (it rejects nulls)."""
+    demographic fields the edit endpoint requires (it rejects nulls). For the
+    handoff (emergency) flow, also flag the study Emergency = ✓ and Category
+    "Others" so the read radiologist sees it prioritised and correctly bucketed."""
     info = _elite_get(f"/study_management/get_study_info/{study_id}")
     b = (info.get("body") or {}) if isinstance(info, dict) else {}
     payload = {
@@ -6332,11 +6342,18 @@ def _elite_write_history(study_id, history):
         "clinical_history": history or "",
         "accession_number": b.get("accession_number") or "",
     }
+    if set_emergency:
+        # Set Emergency + Category. Send both category_id (authoritative) and the
+        # category name so the edit binds regardless of which key it keys on.
+        payload["emergency_status"] = True
+        payload["category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
+        payload["category"] = _ELITE_EMERGENCY_CATEGORY_NAME
     res = _elite_put(f"/study_management/edit_study_info/{study_id}", payload)
     if not (isinstance(res, dict) and res.get("success")):
         detail = (isinstance(res, dict) and (res.get("error") or res.get("message"))) or str(res)[:150]
         raise HTTPException(502, f"Butterfly write failed: {detail}")
-    return {"ok": True, "study_id": study_id}
+    return {"ok": True, "study_id": study_id,
+            "emergency": bool(set_emergency), "category": _ELITE_EMERGENCY_CATEGORY_NAME if set_emergency else None}
 
 @app.get("/api/handoff/config")
 def handoff_config(user=Depends(require_admin)):
@@ -6358,7 +6375,8 @@ async def handoff_write_history(request: Request, user=Depends(require_admin)):
     sid = _int_or_400(study_id, "study_id")
     out = _elite_write_history(sid, history)
     insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
-                 json.dumps({"file_no": (b.get("file_no") or "").strip()}))
+                 json.dumps({"file_no": (b.get("file_no") or "").strip(),
+                             "emergency": True, "category": _ELITE_EMERGENCY_CATEGORY_NAME}))
     return out
 
 @app.get("/api/handoff/study-info-debug/{study_id}")

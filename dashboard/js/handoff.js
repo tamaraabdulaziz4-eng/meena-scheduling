@@ -393,9 +393,10 @@ function handoffChoose(studyId) {
 async function handoffWriteCore() {
   const history = (handoff.history || '').trim();
   const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
-  await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file });
+  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file });
   const res = document.getElementById('ho-result');
-  if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}. Continue to the message →</div>`;
+  const flag = (w && w.emergency) ? ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}` : '';
+  if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}${flag}. Continue to the message →</div>`;
   try {
     const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
     const st = (r.studies || []).find(x => String(x.study_id) === String(handoff.studyId));
