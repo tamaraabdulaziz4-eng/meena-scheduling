@@ -761,14 +761,43 @@ app.post('/results/file', requireAuth, async (req, res) => {
   }
 });
 
-// Name search (partial) — returns light patient rows for a picker.
+// Patient search — by file/MRN, national ID / Iqama, or mobile. The HIS
+// Patient/Search `mrNo` field matches MRN + name but NOT phone/ID, so for a numeric
+// query we also try the ID / mobile field spellings and return the first shape that
+// hits. `matchedBy` reports which field worked (helps confirm the mapping).
+async function _patientSearch(q) {
+  const patientsFrom = (r) => ((r && r.json && r.json.data) || []).slice(0, 25).map(normalizePatient);
+  const digits = q.replace(/\D/g, '');
+  // Build the ordered list of body shapes to try for THIS query.
+  const shapes = [['mrNo', { mrNo: q }]];
+  if (/^\d{6,}$/.test(digits)) {
+    const isMobile = /^0?5\d{8,9}$/.test(digits);
+    const isSaudiId = /^[12]\d{9}$/.test(digits);
+    if (isMobile) {
+      for (const k of ['mobileNo', 'mobilePhone', 'contactNumber', 'phone', 'mobile'])
+        shapes.push([k, { [k]: q }]);
+    }
+    if (isSaudiId || !isMobile) {
+      for (const k of ['iqamaId', 'identityNo', 'nationalId', 'idNo', 'saudiid', 'idNumber'])
+        shapes.push([k, { [k]: q }]);
+    }
+  }
+  for (const [field, body] of shapes) {
+    let r;
+    try { r = await hisFetch('/patient-api/api/v1/Patient/Search', { body }); }
+    catch (e) { continue; }
+    const rows = patientsFrom(r);
+    if (rows.length) return { patients: rows, matchedBy: field };
+  }
+  return { patients: [], matchedBy: null };
+}
+
 app.get('/search', requireAuth, async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (!q) return res.status(400).json({ ok: false, error: 'q is required' });
   try {
-    const r = await hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: q } });
-    const rows = ((r.json && r.json.data) || []).slice(0, 25).map(normalizePatient);
-    return res.json({ ok: true, q, count: rows.length, patients: rows });
+    const { patients, matchedBy } = await _patientSearch(q);
+    return res.json({ ok: true, q, count: patients.length, patients, matchedBy });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }

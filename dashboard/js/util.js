@@ -64,6 +64,10 @@ function _busyEl() {
   return el;
 }
 function showLoader(label = 'Working…') {
+  // During the login welcome splash, don't stack the busy overlay on top of it
+  // (the "Loading…" spinner appearing over the splash). Still track depth so the
+  // paired hideLoader stays balanced.
+  if (window._splashActive) { _busyDepth++; return; }
   const el = _busyEl();
   el.querySelector('.busy-label').textContent = label;
   _busyDepth++;
@@ -172,6 +176,7 @@ function showWelcomeSplash(name) {
   ];
   splash.style.display = 'flex';
   splash.classList.remove('done');
+  window._splashActive = true;   // suppress the busy overlay while the splash is up
   let i = 0;
   statusEl.textContent = messages[0];
   splash._timer = setInterval(() => {
@@ -182,6 +187,7 @@ function showWelcomeSplash(name) {
   }, 1100);
 }
 function hideWelcomeSplash() {
+  window._splashActive = false;
   const splash = document.getElementById('welcome-splash');
   if (!splash) return;
   clearInterval(splash._timer);
