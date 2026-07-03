@@ -18,7 +18,7 @@ const API = {
     // many bill/study reads on an uncached branch/date selection. The backend
     // itself allows up to ~240s, so the client must not abort at 45s and show a
     // false "took too long" while the server is still computing successfully.
-    if (/\/radiology\/(stats|lookup|results\/match)/.test(path)) return 240000;  // 4 min
+    if (/\/radiology\/(stats|lookup|results\/(match|file))/.test(path)) return 240000;  // 4 min
     return 45000;                                                        // 45 s
   },
   async request(method, path, body) {

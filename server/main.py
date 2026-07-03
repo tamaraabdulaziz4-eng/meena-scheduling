@@ -6279,6 +6279,25 @@ def radiology_results_match(file_no: str, user=Depends(require_admin)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/results/match/" + urllib.parse.quote(file_no), timeout=120)
 
+@app.post("/api/radiology/results/file")
+async def radiology_results_file(request: Request, user=Depends(require_admin)):
+    """File a VERIFIED DePACS report PDF back into Siratech's Result Entry and
+    (unless authorize=false) authorize it. DRY-RUN by default: nothing is written
+    unless confirm=true is sent AND the target test resolves to exactly one study.
+    A real write is audited."""
+    b = await request.json()
+    if not isinstance(b, dict) or not str(b.get("file") or "").strip():
+        raise HTTPException(400, "A patient file number is required")
+    out = _bridge_request("/his/results/file", method="POST", body=b, timeout=180)
+    if b.get("confirm"):
+        wrote = isinstance(out, dict) and out.get("wrote")
+        insert_audit(user, "RADIOLOGY_RESULT_FILE", str(b.get("file")),
+                     json.dumps({"billNo": b.get("billNo"), "serviceId": b.get("serviceId"),
+                                 "authorize": b.get("authorize") is not False,
+                                 "wrote": bool(wrote),
+                                 "authorized": bool(isinstance(out, dict) and out.get("authorized"))}))
+    return out
+
 # ---- Butterfly (DePACS) write clinical history into a study ------------------
 def _elite_put(path, body):
     try:
