@@ -378,7 +378,11 @@ async function handoffFindExisting() {
 }
 
 async function handoffStartPolling() {
+  // Re-entrant guard: kill any live loop and bump the generation so an older loop's
+  // in-flight tick (and its auto-write) can't fire alongside this one.
+  handoffStopPolling();
   handoff.polling = true; handoff.pollN = 0; handoff.candidates = null; handoff.matched = null;
+  const gen = (handoff.pollGen = (handoff.pollGen || 0) + 1);
   renderHandoffDE();
   if (!(handoff.baseline instanceof Set)) {
     try {
@@ -386,7 +390,7 @@ async function handoffStartPolling() {
       handoff.baseline = new Set((r.studies || []).map(s => String(s.study_id)));
     } catch (e) { handoff.baseline = new Set(); }
   }
-  handoffPollTick();
+  if (gen === handoff.pollGen && handoff.polling) handoffPollTick(gen);
 }
 function handoffStopPolling(rerender) {
   handoff.polling = false;
@@ -408,8 +412,8 @@ function _isToday(d) {
   }
   return String(d).slice(0, 10) === today;
 }
-async function handoffPollTick() {
-  if (!handoff.polling) return;
+async function handoffPollTick(gen) {
+  if (!handoff.polling || gen !== handoff.pollGen) return;   // superseded loop → exit
   // Stop if the user navigated away from the handoff page — otherwise polling (and
   // a background auto-write to DePACS) would keep running unsupervised on a page
   // the user has left.
@@ -417,7 +421,7 @@ async function handoffPollTick() {
   handoff.pollN += 1;
   try {
     const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
-    if (!handoff.polling) return;   // user pressed Stop while this request was in flight
+    if (!handoff.polling || gen !== handoff.pollGen) return;   // stopped/superseded mid-flight
     handoff.studies = r.studies || [];
     const base = handoff.baseline instanceof Set ? handoff.baseline : new Set();
     let pool = handoff.studies.filter(s => !base.has(String(s.study_id)));
@@ -432,7 +436,7 @@ async function handoffPollTick() {
       return; }
     if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
-  if (!handoff.polling) return;     // stopped during the await — don't re-arm or re-render
+  if (!handoff.polling || gen !== handoff.pollGen) return;   // stopped/superseded — don't re-arm
   if (handoff.pollN >= HO_POLL_MAX) {
     handoff.polling = false;
     const box = document.getElementById('ho-de');
@@ -442,7 +446,7 @@ async function handoffPollTick() {
         <button class="btn btn-sm btn-ghost" onclick="handoffPickAny()">Pick from all studies</button></div>`;
     return;
   }
-  handoff.pollTimer = setTimeout(handoffPollTick, HO_POLL_EVERY_MS);
+  handoff.pollTimer = setTimeout(() => handoffPollTick(gen), HO_POLL_EVERY_MS);
   renderHandoffDE();
 }
 function handoffRepoll() { handoff.matched = null; handoff.studyId = ''; handoff.candidates = null; handoffStartPolling(); }
@@ -462,7 +466,7 @@ function handoffChoose(studyId) {
 async function handoffWriteCore() {
   const history = (handoff.history || '').trim();
   const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
-  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file });
+  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file, priority: handoff.priority });
   const res = document.getElementById('ho-result');
   const flag = (w && w.emergency) ? ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}` : '';
   if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}${flag}. Continue to the message →</div>`;

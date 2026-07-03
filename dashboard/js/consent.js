@@ -56,11 +56,13 @@ function consentSignHere() {
 }
 function consentStartPoll(id) {
   consentStopPoll();
+  let handled = false;   // overlapping in-flight polls must fire onDone/close only once
   _consentPoll = setInterval(async () => {
     if (!document.getElementById('consent-overlay')) { consentStopPoll(); return; }
     try {
       const s = await API.get(`/consent/status/${id}`);
-      if (s && s.status === 'signed') {
+      if (s && s.status === 'signed' && !handled) {
+        handled = true;
         consentStopPoll();
         const box = document.getElementById('cn-poll');
         if (box) box.innerHTML = `<span class="cn-ok">✅ تم التوقيع · Signed</span>
