@@ -167,13 +167,40 @@ function renderPsDetail() {
   if (!orders.length) {
     examBlock = `<div class="card"><div class="empty" style="padding:22px 16px"><p>No radiology exam on this file.</p></div></div>`;
   } else {
-    examBlock = `<div class="ho-lbl" style="margin:16px 0 8px">Radiology exams (${orders.length})</div>` +
-      orders.map((o) => psExamCard(o)).join('');
+    // Newest first — a patient with many visits should read top-down by recency.
+    const sorted = orders.map((o, i) => ({ o, i }))
+      .sort((a, b) => (psOrderTime(b.o) - psOrderTime(a.o)) || (a.i - b.i))
+      .map((x) => x.o);
+    // Collapsible rows keep a long history scannable: only the most recent exam is
+    // expanded by default; the rest show a one-line summary you can tap open.
+    examBlock = `<div class="ho-lbl" style="margin:16px 0 8px">Radiology exams (${sorted.length}) · newest first</div>` +
+      sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
   det.innerHTML = patCard + examBlock;
 }
 
-function psExamCard(o) {
+// Best-effort timestamp for sorting: prefer the order date, fall back to the report
+// date. Handles ISO, dd/mm/yyyy, dd-mm-yyyy and dd-Mon-yyyy; unparseable → 0.
+function psOrderTime(o) {
+  return psParseDate(o && (o.orderedDate || o.reportDate));
+}
+function psParseDate(s) {
+  if (!s) return 0;
+  const str = String(s).trim();
+  let t = Date.parse(str);
+  if (!isNaN(t)) return t;
+  let m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (m) { const y = +m[3] < 100 ? 2000 + +m[3] : +m[3]; t = Date.UTC(y, (+m[2]) - 1, +m[1]); if (!isNaN(t)) return t; }
+  m = str.match(/^(\d{1,2})[\/\-]([A-Za-z]{3})[\/\-](\d{2,4})/);
+  if (m) { t = Date.parse(`${m[1]} ${m[2]} ${m[3]}`); if (!isNaN(t)) return t; }
+  return 0;
+}
+function psToggleExam(btn) {
+  const card = btn.closest('.ps-exam');
+  if (card) card.classList.toggle('open');
+}
+
+function psExamCard(o, open) {
   const imaged = o.imaged || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
   const chips = [
     o.isER ? `<span class="badge badge-red">🚨 ER</span>` : '',
@@ -182,32 +209,39 @@ function psExamCard(o) {
     imaged ? `<span class="badge badge-green">✅ Imaged</span>` : `<span class="badge badge-orange">⏳ Awaiting imaging</span>`,
     o.hasReport ? `<span class="badge badge-green">📄 Report ready</span>` : '',
   ].filter(Boolean).join('');
+  const day = (o.orderedDate || o.reportDate || '').toString().slice(0, 10);
   return `
-    <div class="card ps-exam">
-      <div class="ps-exam-head">
-        <div class="ps-exam-title">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:500">(${escapeHtml(o.modality || '—')})</span></div>
-        <div class="ps-exam-badges">${chips}</div>
-      </div>
-      <div class="ps-sec-l">Where it came from</div>
-      <div class="ps-grid">
-        ${psField('Branch', o.branch)}
-        ${psField('Encounter', o.encounter)}
-        ${psField('Ordering doctor', o.provider)}
-        ${psField('Payer', o.payer)}
-        ${psField('Ordered', o.orderedDate)}
-      </div>
-      <div class="ps-sec-l">Clinical</div>
-      <div class="ps-grid">
-        ${psField('Indication', o.clinicalIndication, { accent: true })}
-        ${psField('Reason for order', o.reasonForOrder)}
-        ${psField('Remarks', o.remarks)}
-      </div>
-      <div class="ps-sec-l">Order &amp; imaging</div>
-      <div class="ps-grid">
-        ${psField('Bill no', o.billNo)}
-        ${psField('Order status', o.status)}
-        ${psField('Accession', o.accessionNumber)}
-        ${psField('Report date', o.reportDate)}
+    <div class="card ps-exam${open ? ' open' : ''}">
+      <button type="button" class="ps-exam-summary" onclick="psToggleExam(this)">
+        <span class="ps-exam-caret">▸</span>
+        <span class="ps-exam-sum-main">
+          <span class="ps-exam-title">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:500">(${escapeHtml(o.modality || '—')})</span></span>
+          ${day ? `<span class="ps-exam-date">${escapeHtml(day)}</span>` : ''}
+        </span>
+        <span class="ps-exam-badges">${chips}</span>
+      </button>
+      <div class="ps-exam-body">
+        <div class="ps-sec-l">Where it came from</div>
+        <div class="ps-grid">
+          ${psField('Branch', o.branch)}
+          ${psField('Encounter', o.encounter)}
+          ${psField('Ordering doctor', o.provider)}
+          ${psField('Payer', o.payer)}
+          ${psField('Ordered', o.orderedDate)}
+        </div>
+        <div class="ps-sec-l">Clinical</div>
+        <div class="ps-grid">
+          ${psField('Indication', o.clinicalIndication, { accent: true })}
+          ${psField('Reason for order', o.reasonForOrder)}
+          ${psField('Remarks', o.remarks)}
+        </div>
+        <div class="ps-sec-l">Order &amp; imaging</div>
+        <div class="ps-grid">
+          ${psField('Bill no', o.billNo)}
+          ${psField('Order status', o.status)}
+          ${psField('Accession', o.accessionNumber)}
+          ${psField('Report date', o.reportDate)}
+        </div>
       </div>
     </div>`;
 }
