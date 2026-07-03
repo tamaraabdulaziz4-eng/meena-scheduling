@@ -488,10 +488,12 @@ function renderHandoffResults(d) {
     box.innerHTML = `<div class="ho-note">No radiology order awaiting a result for this file.</div>`;
     return;
   }
-  const testCard = (t) => {
+  const site = (d && d.site) || 0;
+  const testCard = (t, billNo) => {
     const s = t.study || {};
     const rep = t.report || {};
     if (t.decision === 'unique') {
+      const sid = (t.test && t.test.invMastServiceId) || '';
       return `<div class="ho-de-box ok" style="display:block">
         <div><b>✅ ${escapeHtml(t.test.serviceName || '')}</b> — report ready</div>
         <div style="font-size:12px;color:var(--muted);margin:3px 0">
@@ -500,6 +502,10 @@ function renderHandoffResults(d) {
           ${rep.pdfOk ? ' · 📄 PDF' : ''}</div>
         ${rep.preview ? `<textarea class="input" rows="4" readonly style="font-size:12px">${escapeHtml(rep.preview)}${rep.preview.length >= 590 ? '…' : ''}</textarea>
         <button class="btn btn-sm" style="margin-top:6px" onclick="handoffCopyText(this)">📋 Copy report</button>` : ''}
+        <div class="ho-actions" style="margin-top:8px">
+          <button class="btn btn-sm btn-primary" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>
+        </div>
+        <div class="ho-file-out" style="margin-top:8px"></div>
       </div>`;
     }
     const cands = (t.candidates || []).filter(c => c.bodyMatch && c.bodyMatch.length);
@@ -510,12 +516,66 @@ function renderHandoffResults(d) {
     </div>`;
   };
   box.innerHTML = orders.map(o => {
-    const tests = (o.tests || []).map(testCard).join('');
+    const tests = (o.tests || []).map(t => testCard(t, o.order.billNo)).join('');
     return `<div style="margin-bottom:10px">
       <div class="ho-lbl" style="margin:6px 0 4px">Order ${escapeHtml(o.order.billNo || '')}
         ${o.allUnique ? '<span class="badge badge-green">all matched</span>' : '<span class="badge badge-red">review needed</span>'}</div>
       ${tests}</div>`;
   }).join('');
+}
+
+// Reverse flow · file the matched report PDF back into Siratech + authorize it.
+// Two steps for safety on a live medical record: (1) DRY-RUN shows exactly what
+// will be written; (2) the user confirms → real save + 1st-level authorization.
+async function handoffFileResult(billNo, serviceId, site, btn) {
+  const card = btn.closest('.ho-de-box');
+  const out = card ? card.querySelector('.ho-file-out') : null;
+  if (!out) return;
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Checking…';
+  out.innerHTML = LOADING_HTML;
+  try {
+    const p = await API.post('/radiology/results/file', { file: handoff.file, billNo, serviceId, site, confirm: false });
+    if (p && (p.needsPick || p.writable === false)) {
+      out.innerHTML = `<div class="ho-note">Can't file automatically — ${escapeHtml(p.reason || p.decision || 'not a unique match')}. File it manually in Siratech.</div>`;
+      return;
+    }
+    if (p && p.wrote === false && p.step === 'report') {
+      out.innerHTML = `<div class="ho-note">${escapeHtml(p.note || 'No valid report PDF to file yet.')}</div>`;
+      return;
+    }
+    const plan = (p && p.plan) || {};
+    const tgt = plan.target || {}, st = plan.study || {}, rep = plan.report || {};
+    const rng = plan.range ? `${plan.range.classified || '—'} (${plan.range.source || ''})` : '';
+    out.innerHTML = `<div class="ho-de-box" style="display:block;border-color:var(--accent)">
+      <div style="font-size:12.5px"><b>Ready to file into Siratech + authorize:</b></div>
+      <div style="font-size:12px;color:var(--muted);margin:4px 0">
+        ${escapeHtml(tgt.serviceName || '')} · study #${escapeHtml(String(st.studyId || ''))} ·
+        ${rep.pdfOk ? '📄 PDF ' + Math.round((rep.pdfBytes || 0) / 1024) + 'KB' : '⚠️ no PDF'} ·
+        range: ${escapeHtml(rng)}</div>
+      <div class="ho-actions" style="margin-top:6px">
+        <button class="btn btn-sm btn-primary" onclick='handoffFileConfirm(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(serviceId || ''))}, ${Number(site) || 0}, this)'>✅ Confirm — file + authorize</button>
+        <button class="btn btn-sm btn-ghost" onclick="this.closest('.ho-file-out').innerHTML=''">Cancel</button>
+      </div></div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="empty" style="padding:14px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Check failed')}</p></div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+async function handoffFileConfirm(billNo, serviceId, site, btn) {
+  const out = btn.closest('.ho-file-out');
+  if (!out) return;
+  btn.disabled = true; btn.textContent = 'Filing…';
+  try {
+    const r = await API.post('/radiology/results/file', { file: handoff.file, billNo, serviceId, site, confirm: true, authorize: true });
+    if (r && r.wrote) {
+      out.innerHTML = `<div class="ho-de-box ok" style="display:block">✅ <b>Filed into Siratech</b>${r.authorized ? ' and <b>authorized</b>' : ' — <b>pending authorization</b> (verify in Siratech)'}.${r.note ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${escapeHtml(r.note)}</div>` : ''}</div>`;
+    } else {
+      out.innerHTML = `<div class="ho-note">Not filed — ${escapeHtml((r && (r.note || r.reason || r.step)) || 'unknown reason')}.</div>`;
+    }
+  } catch (e) {
+    out.innerHTML = `<div class="empty" style="padding:14px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Filing failed')}</p></div>`;
+  }
 }
 
 function handoffCopyText(btn) {
