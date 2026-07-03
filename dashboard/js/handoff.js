@@ -468,7 +468,17 @@ async function handoffWriteCore() {
   const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
   const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file, priority: handoff.priority });
   const res = document.getElementById('ho-result');
-  const flag = (w && w.emergency) ? ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}` : '';
+  let flag = '';
+  if (w && w.emergency) {
+    // emergency_confirmed is the read-back result: true = the PACS actually shows
+    // Emergency now; false = the write was ACKed but the flag didn't stick (warn so
+    // staff can set it by hand); null/undefined = couldn't re-read (assume ok).
+    if (w.emergency_confirmed === false) {
+      flag = ` · <b style="color:#c0392b">⚠ Emergency did NOT stick</b> — set it manually in DePACS`;
+    } else {
+      flag = ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}`;
+    }
+  }
   if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}${flag}. Continue to the message →</div>`;
   try {
     const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
