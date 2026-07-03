@@ -6806,19 +6806,34 @@ async def cdxfer_chunk(request: Request):
     path = os.path.join(_cdxfer_dir(), row["stored_name"])
     if not os.path.exists(path):
         raise HTTPException(410, "Upload session expired — please start again.")
-    data = await request.body()
-    if not data:
-        return {"ok": True, "received": row["size_bytes"]}
-    new_size = row["size_bytes"] + len(data)
-    if new_size > CDXFER_MAX_BYTES:
+    # Stream the body to disk incrementally instead of await request.body() (which
+    # would buffer the WHOLE chunk in RAM before any check — a token-holder could
+    # OOM the server with one oversized chunk). Enforce a hard per-request ceiling
+    # and the running total cap as bytes arrive.
+    HARD_CHUNK = 32 * 1024 * 1024   # generous headroom over the 8 MB advisory chunk
+    clen = request.headers.get("content-length")
+    if clen and clen.isdigit() and int(clen) > HARD_CHUNK:
+        raise HTTPException(413, "Chunk too large.")
+    def _abort():
         try: os.remove(path)
         except OSError: pass
         q("UPDATE scheduling.cd_transfers SET status='failed' WHERE id=%s", (row["id"],), exec_only=True)
-        raise HTTPException(413, "File exceeds the size limit.")
+    written, total = 0, row["size_bytes"]
     with open(path, "ab") as f:
-        f.write(data)
-    q("UPDATE scheduling.cd_transfers SET size_bytes=%s WHERE id=%s", (new_size, row["id"]), exec_only=True)
-    return {"ok": True, "received": new_size}
+        async for part in request.stream():
+            if not part:
+                continue
+            written += len(part)
+            total += len(part)
+            if written > HARD_CHUNK:
+                _abort()
+                raise HTTPException(413, "Chunk too large.")
+            if total > CDXFER_MAX_BYTES:
+                _abort()
+                raise HTTPException(413, "File exceeds the size limit.")
+            f.write(part)
+    q("UPDATE scheduling.cd_transfers SET size_bytes=%s WHERE id=%s", (total, row["id"]), exec_only=True)
+    return {"ok": True, "received": total}
 
 @app.post("/api/public/cdxfer/finish")
 async def cdxfer_finish(request: Request):
