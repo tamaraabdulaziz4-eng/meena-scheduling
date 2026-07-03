@@ -51,8 +51,18 @@ const RANGE_NAME_TO_CODE = { normal: 0, abnormal: 1, critical: 2, 'not applicabl
 const RANGE_NOT_APPLICABLE = 3;
 const DEFAULT_STRING_RANGE = Number(process.env.RESULT_STRING_RANGE || RANGE_NOT_APPLICABLE);
 
+// Hard safety: this service reads patient PHI and FILES/AUTHORISES results into
+// the hospital EMR. Never run it unauthenticated on a public interface. Either
+// set CONNECTOR_TOKEN, or bind to loopback (HOST=127.0.0.1) behind a proxy.
+const _isLoopback = (h) => !h || h === '127.0.0.1' || h === 'localhost' || h === '::1';
+if (!_isLoopback(HOST) && !API_TOKEN) {
+  console.error('✗ Refusing to start: bound to ' + HOST + ' with no CONNECTOR_TOKEN. ' +
+                'This connector exposes patient PHI and EMR writes — it must not be open. ' +
+                'Set CONNECTOR_TOKEN, or set HOST=127.0.0.1 and put it behind a proxy.');
+  process.exit(1);
+}
 if (!API_TOKEN) {
-  console.warn('⚠  CONNECTOR_TOKEN is not set — /patient is UNAUTHENTICATED. Set it in production.');
+  console.warn('⚠  CONNECTOR_TOKEN is not set — endpoints are UNAUTHENTICATED (localhost only).');
 }
 if (!HIS_USER || !HIS_PASS) {
   console.error('✗ HIS_USER / HIS_PASS are required. Refusing to start.');
@@ -189,7 +199,7 @@ async function enrichOrder(mrno, o) {
     if (!row) return {};
     let indication = null, reason = null, remarks = null;
     if (row.emrPatDtlsInvOrderId) {
-      const det = await hisFetch('/billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=' + row.emrPatDtlsInvOrderId, { method: 'GET' });
+      const det = await hisFetch('/billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=' + encodeURIComponent(row.emrPatDtlsInvOrderId), { method: 'GET' });
       const dd = (det.json && det.json.data) || {};
       indication = dd.clinicalIndication || null; reason = dd.reasonForOrder || null; remarks = dd.remarks || null;
     }

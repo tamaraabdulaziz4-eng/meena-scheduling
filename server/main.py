@@ -47,7 +47,10 @@ JWT_SECRET   = os.environ.get("JWT_SECRET", "scheduling_secret")
 JWT_ALG      = "HS256"
 JWT_DAYS     = 30
 ADMIN_USER   = os.environ.get("ADMIN_USER", "admin")
-ADMIN_PASS   = os.environ.get("ADMIN_PASS", "admin123")
+# No insecure default — a hardcoded fallback (e.g. "admin123") meant any deploy
+# that forgot to set ADMIN_PASS shipped with a publicly-known superadmin login.
+# When unset, seed_admin() generates a strong random password and logs it once.
+ADMIN_PASS   = os.environ.get("ADMIN_PASS")
 
 # ── DB connection pool ────────────────────────────────────────────────────────
 # One pool per worker process — keeps 2 connections warm, up to 10 max.
@@ -175,6 +178,7 @@ def init_schema():
                     UNIQUE(branch_id, year, month)
                 );
                 ALTER TABLE scheduling.schedules ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT false;
+                ALTER TABLE scheduling.schedules ADD COLUMN IF NOT EXISTS review_note TEXT;
                 CREATE TABLE IF NOT EXISTS scheduling.schedule_entries (
                     id SERIAL PRIMARY KEY,
                     schedule_id INTEGER NOT NULL REFERENCES scheduling.schedules(id) ON DELETE CASCADE,
@@ -948,7 +952,19 @@ def seed_admin():
     existing = q("SELECT id FROM scheduling.users WHERE username=%s", (ADMIN_USER,), one=True)
     if existing:
         return
-    pwd = bcrypt.hashpw(ADMIN_PASS.encode(), bcrypt.gensalt()).decode()
+    admin_pass = ADMIN_PASS
+    if not admin_pass:
+        # No ADMIN_PASS provided — mint a random one-time password instead of a
+        # predictable default. Printed once here so the operator can log in.
+        import secrets
+        admin_pass = secrets.token_urlsafe(18)
+        print("=" * 64)
+        print("  ADMIN_PASS was not set — generated a one-time superadmin password.")
+        print(f"    username: {ADMIN_USER}")
+        print(f"    password: {admin_pass}")
+        print("  Log in and change it immediately, or set ADMIN_PASS and redeploy.")
+        print("=" * 64)
+    pwd = bcrypt.hashpw(admin_pass.encode(), bcrypt.gensalt()).decode()
     q("INSERT INTO scheduling.users (username,password,role) VALUES (%s,%s,'superadmin')",
       (ADMIN_USER, pwd), exec_only=True)
     print(f'Admin user "{ADMIN_USER}" ready.')
@@ -3554,8 +3570,7 @@ async def update_schedule_status(sid: int, request: Request, user=Depends(requir
     if not is_reviewer and status in ("draft","submitted") and current.get("status") in ("reviewed","approved"):
         raise HTTPException(403, "The manager has already reviewed this schedule. Ask the manager to return it before editing.")
 
-    # Make sure the column for the manager's note exists (added lazily).
-    q("ALTER TABLE scheduling.schedules ADD COLUMN IF NOT EXISTS review_note TEXT", exec_only=True)
+    # (review_note column is created in init_schema at startup — no per-request DDL.)
 
     sets = "status=%s, updated_at=NOW()"
     params = [status]
@@ -4407,9 +4422,13 @@ def timeback_balance(request: Request, user=Depends(get_current_user)):
     st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (sid,), one=True)
     if not st:
         raise HTTPException(404, "Staff not found")
-    if user["role"] == "staff" and user.get("staff_id") != sid:
-        raise HTTPException(403, "Forbidden")
-    if user["role"] == "admin" and not can_access_branch(user, st["branch_id"]):
+    # Default-deny: staff may only see their own; every other role must have
+    # access to the target's branch. Previously only "staff" and "admin" were
+    # checked, so a branch-locked "viewer" could read any staffer's balance.
+    if user["role"] == "staff":
+        if user.get("staff_id") != sid:
+            raise HTTPException(403, "Forbidden")
+    elif not can_access_branch(user, st["branch_id"]):
         raise HTTPException(403, "Forbidden")
     return {"staff_id": sid, "balance": _tb_balance(sid)}
 
@@ -4466,8 +4485,13 @@ async def update_timeback_status(tid: int, request: Request, user=Depends(requir
     if not can_access_branch(user, t["branch_id"]):
         raise HTTPException(403, "Forbidden")
     new_status = _leave_decide(user, t["status"], requested)
+    # Guard on the status we just read so two concurrent reviewers can't both
+    # apply a transition (double audit rows / double notifications).
     row = q("""UPDATE scheduling.timeback_claims SET status=%s, reviewed_by=%s, reviewed_at=NOW()
-               WHERE id=%s RETURNING id,status""", (new_status, user["id"], tid), one=True)
+               WHERE id=%s AND status=%s RETURNING id,status""",
+            (new_status, user["id"], tid, t["status"]), one=True)
+    if not row:
+        raise HTTPException(409, "Claim was already updated by someone else")
     insert_audit(user, f"TIMEBACK_{new_status.upper()}", f"claim:{tid}", t["staff_name"])
     notify_staff_member(t["staff_id"], f"Your time-back claim ({t['date']}) was {new_status.replace('_',' ')}",
                         link="leaves", ntype=new_status if new_status in ("approved", "rejected") else "info")

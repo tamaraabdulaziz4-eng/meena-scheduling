@@ -63,7 +63,7 @@ def validate_schedule(schedule: dict, nest_name: str, year: int, month: int,
         if sec_name is None:
             w(f"UNKNOWN PERSON: {p} not in nest config — skipping validation")
             continue
-        allowed = set(NESTS[nest_name]["sections"][sec_name]["allowed_shifts"])
+        allowed = set(nest_cfg["sections"][sec_name].get("allowed_shifts") or [])
 
         al_days = al_days_map.get(p, set())
 
@@ -112,7 +112,7 @@ def validate_schedule(schedule: dict, nest_name: str, year: int, month: int,
         day_type = "weekend" if is_wknd else "weekday"
 
         for sec_name, sec in nest_cfg["sections"].items():
-            coverage_req = sec["coverage"].get(day_type, {})
+            coverage_req = (sec.get("coverage") or {}).get(day_type, {})
             staff_list   = sec["staff"]
 
             shift_counts = {}

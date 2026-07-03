@@ -43,7 +43,11 @@ def parse_al_arg(al_args):
     if not al_args:
         return al
     for item in al_args:
-        name, days_str = item.split(":")
+        if ":" not in item:
+            raise ValueError(
+                f"--al entry {item!r} must be PERSON:days (e.g. WAFA:1,2 or WAFA:1-3)"
+            )
+        name, days_str = item.split(":", 1)
         days = []
         for part in days_str.split(","):
             if "-" in part:
@@ -184,7 +188,7 @@ def assign_dominant_shifts(nest_name: str, year: int = 2026, month: int = 6,
 def generate_schedule(nest_name: str, year: int, month: int,
                       al_schedule: dict = None, prev_tail: dict = None,
                       time_limit: int = 60,
-                      max_consecutive: int = 4,
+                      max_consecutive: int = 5,
                       staff_limits: dict = None,
                       section_limits: dict = None,
                       nest_cfg: dict = None,
@@ -308,10 +312,35 @@ def generate_schedule(nest_name: str, year: int, month: int,
         if not has_exact and not has_coverage and not has_mn_daily:
             free_sections.add(sec_name)
 
+    # Codes that the hard coverage/exact constraints (HC1, below) can *require*.
+    # Each person's decision-variable domain MUST be able to take these codes,
+    # otherwise the coverage constraint is unsatisfiable and the whole nest is
+    # INFEASIBLE (e.g. a section requiring "A:1" when the domain is only M/N/O).
+    required_codes_by_section = {}
+    for sec_name, sec in nest_cfg["sections"].items():
+        req = set()
+        for _dtype, code_map in (sec.get("coverage") or {}).items():
+            if isinstance(code_map, dict):
+                for code, cnt in code_map.items():
+                    if cnt and int(cnt) > 0:
+                        req.add(code)
+        for code, cnt in (sec.get("exact") or {}).items():
+            if cnt and int(cnt) > 0:
+                req.add(code)
+        # keep only codes that are real, configured shift types for this section
+        allowed = set(sec.get("allowed_shifts") or [])
+        required_codes_by_section[sec_name] = {
+            c for c in req if c in code_to_idx and (not allowed or c in allowed)
+        }
+
     for p, sec_name, sec in all_staff:
         shift_var[p] = []
-        # Auto-generate only assigns M, N, or O — user adds other shifts manually
+        # Auto-generate assigns M, N, or O — plus any code that a hard
+        # coverage/exact requirement forces, so those constraints stay solvable.
         auto_allowed = [c for c in sec["allowed_shifts"] if c in AUTO_WORK_SHIFTS]
+        for c in required_codes_by_section.get(sec_name, ()):
+            if c not in auto_allowed:
+                auto_allowed.append(c)
         if not auto_allowed:
             auto_allowed = ["M", "N"]  # fallback if section has no M/N configured
         auto_indices = [code_to_idx[c] for c in auto_allowed] + [o_idx]
@@ -532,8 +561,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 # ship a day with no morning/night cover.
                 if mn_min > 0 and code not in already_covered_codes:
                     model.add(sum(sec_bools(code)) >= mn_min)
-                # Max: only cap if section has more staff than the cap
-                if sec_staff_count > mn_max:
+                # Max: only cap if section has more staff than the cap, and skip
+                # codes already governed by coverage/exact — otherwise the default
+                # cap of 2 can contradict a coverage minimum (e.g. weekday M:3).
+                if sec_staff_count > mn_max and code not in already_covered_codes:
                     model.add(sum(sec_bools(code)) <= mn_max)
 
     # ── Hard Constraint 4: No N → morning shift next day ─────────────────────
@@ -611,6 +642,10 @@ def generate_schedule(nest_name: str, year: int, month: int,
                 model.add(get_bool(p, day, "O") == 0)
 
     # ── Hard Constraint 5: Max consecutive working shifts (per-staff) ───────────
+    # NOTE: counts M/N only. Rest rules do not currently apply to lighter shifts
+    # (A/D/EV/B), so a person can be scheduled on many consecutive non-M/N days
+    # without triggering this limit. See the project's validator, which counts
+    # ALL work shifts — this is a known discrepancy pending a business decision.
     WORK_CODES = list(AUTO_WORK_SHIFTS)  # only M and N
     for p, sec_name, sec in all_staff:
         # Strictest max-consecutive among section / per-staff / branch.
@@ -702,7 +737,11 @@ def generate_schedule(nest_name: str, year: int, month: int,
     for p, sec_name, sec in all_staff:
         limits = staff_limits.get(p, {})
         min_s  = limits.get("min_shifts", 0)
-        max_s  = limits.get("max_shifts", 17)
+        # Default is "no cap" (0). A hidden default of 17 silently capped every
+        # staffer and contradicted HC6b's ~22-day minimum for free sections,
+        # making those sections INFEASIBLE. Overwork is already bounded by the
+        # max-consecutive rule (HC5); an explicit max_shifts still applies below.
+        max_s  = limits.get("max_shifts", 0)
         # Count total work days (M or N) for this person
         work_days = []
         for d in range(n_days):
@@ -940,7 +979,7 @@ def diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff):
         day   = d + 1
         dtype = day_type(year, month, day)
         for sec_name, sec in nest_cfg["sections"].items():
-            coverage = (sec["coverage"] or {}).get(dtype, {})
+            coverage = (sec.get("coverage") or {}).get(dtype, {})
             for code, min_count in coverage.items():
                 if min_count <= 0:
                     continue
@@ -956,6 +995,34 @@ def diagnose_infeasible(nest_name, year, month, al_schedule, n_days, all_staff):
                 if available < min_count:
                     print(f"  ⚠ Day {day} {sec_name}: needs {min_count}×{code}, "
                           f"only {available} available → INFEASIBLE", file=sys.stderr)
+
+    # Monthly capacity check: even when every single day has enough staff, a
+    # section can still be infeasible if total coverage demand over the month
+    # exceeds what the staff can supply once mandatory rest is subtracted (max
+    # ~5 work-days in any 6-day window → each person works at most ~5/6 of days).
+    MAX_CONSEC = 5
+    for sec_name, sec in nest_cfg["sections"].items():
+        cov = sec.get("coverage") or {}
+        # Total staffed-days demanded across the whole month.
+        demand = 0
+        for d in range(n_days):
+            dtype = day_type(year, month, d + 1)
+            demand += sum(max(0, int(c)) for c in (cov.get(dtype) or {}).values())
+        if demand <= 0:
+            continue
+        # Supply: for each staffer, available days (minus AL) capped by the rest rule.
+        supply = 0
+        for p, sn, _ in all_staff:
+            if sn != sec_name:
+                continue
+            al_days = len(al_schedule.get(p, []))
+            avail = max(0, n_days - al_days)
+            supply += avail - (avail // (MAX_CONSEC + 1))  # subtract forced rest days
+        if demand > supply:
+            print(f"  ⚠ {sec_name}: needs {demand} staffed-days this month but "
+                  f"{len([1 for _, sn, _ in all_staff if sn == sec_name])} staff can "
+                  f"supply at most ~{supply} after mandatory rest → INFEASIBLE. "
+                  f"Add staff or reduce daily coverage.", file=sys.stderr)
 
 
 # ── Pretty printing ───────────────────────────────────────────────────────────

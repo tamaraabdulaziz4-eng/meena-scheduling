@@ -184,7 +184,7 @@ function patientPanel(s){
       <div><b>Sex</b><span>${esc(sexEn(s.pat_sex))}</span></div>
       ${age?`<div><b>Age</b><span>${esc(age)}</span></div>`:''}
       <div><b>Study</b><span>${esc(s.study_desc || s.modality || '—')}</span></div>
-      <div><b>Date</b><span>${fmtDate(s.study_date)}</span></div>
+      <div><b>Date</b><span>${esc(fmtDate(s.study_date))}</span></div>
     </div>
     <div class="verify-strong">⚠️ Confirm this is the correct patient and matches the report before relying on it.</div>
   </div>`;
@@ -198,12 +198,12 @@ function renderList(d){
     return;
   }
   const rows = studies.map((s,i) => `
-    <div class="study" onclick="openReport(${s.study_id}, ${i})">
+    <div class="study" onclick="openReport(${esc(JSON.stringify(String(s.study_id)))}, ${i})">
       <div class="rhead">
         <span class="sd">${esc(s.study_desc || s.modality || 'Study')}</span>
         <span class="pill ${s.reported?'ok':'wait'}">${s.reported?'Report ready':'Not verified'}</span>
       </div>
-      <div class="sm">${esc(s.modality||'')} · ${fmtDate(s.study_date)} · ${esc(s.pat_name||'')} · #${s.study_id}</div>
+      <div class="sm">${esc(s.modality||'')} · ${esc(fmtDate(s.study_date))} · ${esc(s.pat_name||'')} · #${esc(String(s.study_id))}</div>
       <div id="rep-${i}"></div>
     </div>`).join('');
   window._studies = studies;
@@ -220,7 +220,7 @@ async function openReport(studyId, i){
   const base = (window._studies||[])[i] || {};
   const fileNo = base.file_used || ($('file').value||'').trim();
   try {
-    const r = await api('/api/public/reports/study/' + studyId + '?file=' + encodeURIComponent(fileNo));
+    const r = await api('/api/public/reports/study/' + encodeURIComponent(studyId) + '?file=' + encodeURIComponent(fileNo));
     stopR();
     // Merge report-info over the list row, but never let a missing/blank field in
     // the report info blank out a good value from the list (name, sex, date) — the
@@ -232,9 +232,9 @@ async function openReport(studyId, i){
       ? `<pre id="txt-${i}">${esc(txt)}</pre>
          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
            <button class="btn ghost" onclick="event.stopPropagation();copyRep(${i},this)">📋 Copy report</button>
-           <a class="btn ghost" style="text-decoration:none" href="/api/public/reports/study/${studyId}/pdf?file=${encodeURIComponent(fileNo)}&t=${encodeURIComponent(TOKEN)}" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>
+           <a class="btn ghost" style="text-decoration:none" href="/api/public/reports/study/${encodeURIComponent(studyId)}/pdf?file=${encodeURIComponent(fileNo)}&t=${encodeURIComponent(TOKEN)}" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>
          </div>
-         <div class="sm" style="margin-top:8px;color:var(--muted)">${r.reviewer?('Radiologist: '+esc(r.reviewer)+' · '):''}${r.report_date?fmtDate(r.report_date):''}</div>`
+         <div class="sm" style="margin-top:8px;color:var(--muted)">${r.reviewer?('Radiologist: '+esc(r.reviewer)+' · '):''}${r.report_date?esc(fmtDate(r.report_date)):''}</div>`
       : `<pre>No approved report text yet for this study.</pre>`);
   } catch(e){
     stopR();
