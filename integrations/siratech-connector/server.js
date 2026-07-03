@@ -761,49 +761,57 @@ app.post('/results/file', requireAuth, async (req, res) => {
   }
 });
 
-// Patient search — by file/MRN, national ID / Iqama, or mobile. The HIS
-// Patient/Search `mrNo` field matches MRN + name but NOT phone/ID, so for a numeric
-// query we also try the ID / mobile field spellings and return the first shape that
-// hits. `matchedBy` reports which field worked (helps confirm the mapping).
+// Patient search — by file/MRN (mrNo, matches MRN + name), or by national ID /
+// Iqama / mobile. The endpoint REQUIRES mrNo (sending another field alone 500s
+// with a NullReference), and — critically — it IGNORES a field name it doesn't
+// recognise, falling through to a broad unfiltered list. So we can't trust "got
+// rows" as a match: an unknown field returns everyone. Instead we measure the
+// broad baseline once, then accept a candidate field only when it NARROWS the
+// result below that baseline (a real ID/phone matches ~1 person). For phone we
+// also verify the returned phone actually matches. `matchedBy` reports the winner.
 async function _patientSearch(q, debug) {
   const patientsFrom = (r) => ((r && r.json && r.json.data) || []).slice(0, 25).map(normalizePatient);
   const rawCount = (r) => (r && r.json && Array.isArray(r.json.data)) ? r.json.data.length : -1;
+  const call = async (body) => { try { return await hisFetch('/patient-api/api/v1/Patient/Search', { body }); } catch (_e) { return null; } };
+  const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
   const digits = q.replace(/\D/g, '');
   const isMobile = /^0?5\d{8,9}$/.test(digits);
-  const isSaudiId = /^[12]\d{9}$/.test(digits);
-  // Patient/Search REQUIRES mrNo: sending only another field 500s with a
-  // NullReference (the backend dereferences mrNo unconditionally). So every
-  // by-phone / by-ID attempt keeps mrNo present (empty) and adds the real filter
-  // beside it. Field names mirror what a patient record actually carries
-  // (saudiid / iqamaId, contactNumber / mobilePhone) first, then other spellings.
-  const withMr = (k) => [k, { mrNo: '', [k]: q }];
-  const shapes = [['mrNo', { mrNo: q }]];
-  if (/^\d{5,}$/.test(digits)) {
-    if (isMobile) {
-      for (const k of ['contactNumber', 'mobilePhone', 'mobileNo', 'mobileNumber', 'phone', 'phoneNo'])
-        shapes.push(withMr(k));
-    }
-    if (isSaudiId || !isMobile) {
-      for (const k of ['saudiid', 'iqamaId', 'passportId', 'nationalId', 'identityNo', 'idNo', 'nid'])
-        shapes.push(withMr(k));
-    }
-  }
   const tried = [];
-  for (const [field, body] of shapes) {
-    let r;
-    try { r = await hisFetch('/patient-api/api/v1/Patient/Search', { body }); }
-    catch (e) { if (debug) tried.push({ field, error: String(e.message || e).slice(0, 120) }); continue; }
-    const n = rawCount(r);
-    const rows = patientsFrom(r);
-    if (debug) {
-      const t = { field, status: r && r.status, rawCount: n };
-      // Only echo the raw body when NO patients came back — so we can read the
-      // endpoint's error / field-name hint without ever leaking patient data.
-      if (!rows.length) t.body = String((r && r.text) || '').slice(0, 300);
-      tried.push(t);
-    }
-    if (rows.length) return { patients: rows, matchedBy: field, tried };
+
+  // 1) Primary: mrNo (MRN + name). If it hits, done.
+  let r = await call({ mrNo: q });
+  if (debug) tried.push({ field: 'mrNo', status: r && r.status, rawCount: rawCount(r) });
+  let rows = patientsFrom(r);
+  if (rows.length) return { patients: rows, matchedBy: 'mrNo', tried };
+
+  // A non-numeric term (name) only ever goes through mrNo.
+  if (!/^\d{5,}$/.test(digits)) return { patients: [], matchedBy: null, tried };
+
+  // 2) Numeric: measure the ignored-field baseline (mrNo:'' returns the broad list),
+  //    then only accept a candidate that returns FEWER rows than that (it was honoured).
+  const baseRes = await call({ mrNo: '' });
+  const baseline = rawCount(baseRes);
+  if (debug) tried.push({ field: '(baseline mrNo:"")', status: baseRes && baseRes.status, rawCount: baseline });
+
+  const candidates = isMobile
+    ? ['contactNumber', 'mobilePhone', 'mobileNo', 'mobileNumber', 'phone', 'phoneNo']
+    : ['saudiid', 'iqamaId', 'passportId', 'nationalId', 'identityNo', 'idNo', 'nid'];
+  const qTail = onlyDigits(q).slice(-9);   // last 9 digits, to compare phones regardless of leading 0
+
+  let best = null;
+  for (const k of candidates) {
+    const rr = await call({ mrNo: '', [k]: q });
+    const n = rawCount(rr);
+    const rws = patientsFrom(rr);
+    const phoneOk = isMobile && rws.length > 0 && rws.every(p => onlyDigits(p.phone).slice(-9) === qTail);
+    // Honoured = strictly narrower than the ignored-field baseline AND a small,
+    // ID/phone-sized result (not the whole broad list).
+    const narrowed = n > 0 && (baseline < 0 || n < baseline) && n <= 25;
+    const ok = phoneOk || narrowed;
+    if (debug) tried.push({ field: k, status: rr && rr.status, rawCount: n, phoneOk, narrowed });
+    if (ok && !best) { best = { field: k, rows: rws }; if (!debug) break; }
   }
+  if (best) return { patients: best.rows, matchedBy: best.field, tried };
   return { patients: [], matchedBy: null, tried };
 }
 
