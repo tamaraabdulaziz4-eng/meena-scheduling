@@ -6268,16 +6268,20 @@ def radiology_stats_snapshot(date: str = Query(...), user=Depends(require_admin)
     return {"ok": True, "date": date, "total": total}
 
 @app.get("/api/radiology/results/match/{file_no}")
-def radiology_results_match(file_no: str, user=Depends(require_admin)):
+def radiology_results_match(file_no: str, request: Request, user=Depends(require_admin)):
     """Reverse handoff: match a patient's radiology order(s)/test(s) to the
     VERIFIED DePACS study that holds the report — the strict, no-guess gate.
     Read-only (never writes). Each test resolves to `unique` / `none` /
-    `ambiguous`; an order is auto-fileable only when every test is `unique`."""
+    `ambiguous`; an order is auto-fileable only when every test is `unique`.
+    `site` scopes the (per-branch) result-entry worklist to the patient's branch —
+    without it the search hits a default branch and finds nothing."""
     import urllib.parse
     file_no = (file_no or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    return _bridge_request("/his/results/match/" + urllib.parse.quote(file_no), timeout=120)
+    site = (request.query_params.get("site") or "").strip()
+    qs = ("?site=" + urllib.parse.quote(site)) if site else ""
+    return _bridge_request("/his/results/match/" + urllib.parse.quote(file_no) + qs, timeout=120)
 
 @app.post("/api/radiology/results/file")
 async def radiology_results_file(request: Request, user=Depends(require_admin)):
