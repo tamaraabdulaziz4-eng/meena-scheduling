@@ -231,7 +231,7 @@ async function psLoadConsents() {
     <div class="ps-consent-row">
       <span>📄 ${escapeHtml(c.kind === 'non_pregnancy' ? 'Non-pregnancy' : c.kind)}${c.procedure ? ' · ' + escapeHtml(c.procedure) : ''}
         <span style="color:var(--muted)">· ${escapeHtml(String(c.created_at || '').slice(0, 16).replace('T', ' '))}${c.created_by_name ? ' · ' + escapeHtml(c.created_by_name) : ''}</span></span>
-      <a class="btn btn-xs" href="/api/consent/${c.id}/pdf" target="_blank" rel="noopener">View</a>
+      <a class="btn btn-xs" href="/api/consent/${c.id}/pdf?file=${encodeURIComponent(p.mrno || '')}" target="_blank" rel="noopener">View</a>
     </div>`).join('');
 }
 
