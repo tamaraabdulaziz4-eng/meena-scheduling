@@ -2,75 +2,91 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#261E4F">
 <title>Meena RIS — Radiology Patient View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
+  /* Meena brand palette — deep purple #261E4F, vivid violet #6B4EFF/#8358FD,
+     airy lavender bg. Mirrors dashboard/style.css so RIS feels like one app. */
   :root{
-    --bg:#f3f5f6; --panel:#fff; --panel-2:#f7f9fa; --ink:#132027; --ink-2:#4a5c66; --ink-3:#7a8b94;
-    --line:#e2e8ea; --line-2:#eef2f3; --accent:#0f7d86; --accent-ink:#0a5a61; --accent-wash:#e2f1f1;
-    --ordered:#6b7a83; --ordered-wash:#eceff0; --performed:#2563a8; --performed-wash:#e5eef8;
-    --read:#b06a06; --read-wash:#faeeda; --verified:#1f7a44; --verified-wash:#e2f2e7;
-    --critical:#c02a35; --critical-wash:#fbe6e7;
-    --shadow:0 1px 2px rgba(19,32,39,.06),0 6px 20px rgba(19,32,39,.05);
+    --primary:#261E4F; --accent:#6B4EFF; --accent2:#8358FD;
+    --bg:#f4f2fc; --card:#EDEBF9; --card-alt:#ffffff; --panel:#ffffff;
+    --text:#261E4F; --ink-2:#4A4570; --muted:#8585A8; --border:#E0DCF5; --border-2:#EEEBFA;
+    --ordered:#8585A8; --ordered-wash:rgba(133,133,168,.12);
+    --performed:#1a7fd4; --performed-wash:rgba(43,159,255,.14);
+    --read:#c9880a; --read-wash:rgba(255,186,73,.16);
+    --verified:#00A87D; --verified-wash:rgba(0,200,150,.14);
+    --critical:#cc4444; --critical-wash:rgba(255,107,107,.14);
+    --shadow:0 1px 2px rgba(38,30,79,.05),0 10px 26px rgba(38,30,79,.07);
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-    --sans:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    --sans:'Poppins',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   }
-  @media (prefers-color-scheme:dark){:root{
-    --bg:#0d1417; --panel:#141d21; --panel-2:#101619; --ink:#e8eef0; --ink-2:#a6b6bd; --ink-3:#6f8189;
-    --line:#243036; --line-2:#1b262b; --accent:#39b3bc; --accent-ink:#7fd6dc; --accent-wash:#12363a;
-    --ordered:#8497a0; --ordered-wash:#1c262b; --performed:#6aa6e6; --performed-wash:#152a3f;
-    --read:#e2a44e; --read-wash:#3a2c14; --verified:#5cc07f; --verified-wash:#153524;
-    --critical:#f0737e; --critical-wash:#3a1618;
-    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.28);}}
-  :root[data-theme="dark"]{
-    --bg:#0d1417; --panel:#141d21; --panel-2:#101619; --ink:#e8eef0; --ink-2:#a6b6bd; --ink-3:#6f8189;
-    --line:#243036; --line-2:#1b262b; --accent:#39b3bc; --accent-ink:#7fd6dc; --accent-wash:#12363a;
-    --ordered:#8497a0; --ordered-wash:#1c262b; --performed:#6aa6e6; --performed-wash:#152a3f;
-    --read:#e2a44e; --read-wash:#3a2c14; --verified:#5cc07f; --verified-wash:#153524;
-    --critical:#f0737e; --critical-wash:#3a1618; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.28);}
-  :root[data-theme="light"]{
-    --bg:#f3f5f6; --panel:#fff; --panel-2:#f7f9fa; --ink:#132027; --ink-2:#4a5c66; --ink-3:#7a8b94;
-    --line:#e2e8ea; --line-2:#eef2f3; --accent:#0f7d86; --accent-ink:#0a5a61; --accent-wash:#e2f1f1;
-    --ordered:#6b7a83; --ordered-wash:#eceff0; --performed:#2563a8; --performed-wash:#e5eef8;
-    --read:#b06a06; --read-wash:#faeeda; --verified:#1f7a44; --verified-wash:#e2f2e7;
-    --critical:#c02a35; --critical-wash:#fbe6e7; --shadow:0 1px 2px rgba(19,32,39,.06),0 6px 20px rgba(19,32,39,.05);}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  body.dark{
+    --primary:#A89EF8; --accent:#7C6BFF; --accent2:#9A8DFF;
+    --bg:#0f0d1e; --card:#1c1a35; --card-alt:#1c1a35; --panel:#1c1a35;
+    --text:#e6edf3; --ink-2:#c4c0e0; --muted:#9B98C0; --border:#2e2b4a; --border-2:#252242;
+    --ordered:#9B98C0; --ordered-wash:rgba(155,152,192,.14);
+    --performed:#5aa9ff; --performed-wash:rgba(43,159,255,.16);
+    --read:#f0b44e; --read-wash:rgba(255,186,73,.16);
+    --verified:#3fd6a3; --verified-wash:rgba(0,200,150,.16);
+    --critical:#ff8080; --critical-wash:rgba(255,107,107,.18);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 26px rgba(0,0,0,.32);
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none;
+    transition:background .2s,color .2s}
   .num{font-variant-numeric:tabular-nums}.mono{font-family:var(--mono)}
-  button{font-family:inherit;cursor:pointer}a{color:var(--accent-ink)}
+  button{font-family:inherit;cursor:pointer}a{color:var(--accent)}
 
-  .top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:12px 22px;
-    background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
-  .brand .dot{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--accent-ink));display:grid;place-items:center;color:#fff;font-size:13px}
-  .brand small{font-weight:500;color:var(--ink-3);letter-spacing:.02em}
-  .search{flex:1;display:flex;align-items:center;gap:8px;max-width:560px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:7px 12px}
-  .search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
-  .search input{flex:1;border:0;background:transparent;color:var(--ink);font-size:14.5px;outline:none}
-  .search .kind{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-ink);background:var(--accent-wash);padding:2px 7px;border-radius:5px;white-space:nowrap}
-  .search svg{color:var(--ink-3);flex-shrink:0}
-  .go{border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;padding:8px 14px}
-  .go:hover{background:var(--accent-ink)}.go:disabled{opacity:.5;cursor:progress}
-  .toggle{margin-left:auto;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);border-radius:8px;padding:7px 10px;font-size:12.5px}
-  main{max-width:1240px;margin:0 auto;padding:20px 22px 60px}
+  /* ── Top bar ── */
+  .top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:11px 18px;padding-top:max(11px,env(safe-area-inset-top));
+    background:color-mix(in srgb,var(--panel) 90%,transparent);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary);letter-spacing:-.01em;white-space:nowrap}
+  .brand .dot{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:grid;place-items:center;color:#fff;font-size:16px;box-shadow:0 6px 14px rgba(107,78,255,.35)}
+  .brand b{font-size:15px}
+  .brand small{display:block;font-weight:500;color:var(--muted);font-size:10.5px;letter-spacing:.02em;margin-top:-2px}
+  .search{order:3;flex:1 1 100%;display:flex;align-items:center;gap:8px;background:var(--card-alt);
+    border:1.5px solid var(--border);border-radius:14px;padding:9px 13px}
+  .search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(107,78,255,.14)}
+  .search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none}
+  .search input::placeholder{color:var(--muted)}
+  .search .kind{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);
+    background:rgba(107,78,255,.12);padding:3px 8px;border-radius:20px;white-space:nowrap}
+  .search svg{color:var(--muted);flex-shrink:0}
+  .go{border:0;border-radius:12px;background:var(--accent);color:#fff;font-weight:600;font-size:13px;padding:9px 16px;white-space:nowrap;transition:transform .1s,background .18s}
+  .go:hover{background:var(--accent2)}.go:active{transform:scale(.95)}.go:disabled{opacity:.5;cursor:progress}
+  .toggle{margin-left:auto;border:1.5px solid var(--border);background:var(--card-alt);color:var(--muted);
+    border-radius:12px;width:38px;height:38px;font-size:15px;display:grid;place-items:center;flex-shrink:0}
+  .toggle:hover{border-color:var(--accent);color:var(--accent)}
+  main{max-width:1240px;margin:0 auto;padding:18px;padding-bottom:60px}
 
-  .banner{border-radius:10px;padding:11px 14px;margin-bottom:14px;font-size:13px;display:none}
-  .banner.err{display:block;background:var(--critical-wash);color:var(--critical);border:1px solid color-mix(in srgb,var(--critical) 30%,transparent)}
-  .banner.warn{display:block;background:var(--read-wash);color:var(--read);border:1px solid color-mix(in srgb,var(--read) 30%,transparent)}
+  .banner{border-radius:12px;padding:11px 14px;margin-bottom:14px;font-size:13px;font-weight:500;display:none}
+  .banner.err{display:block;background:var(--critical-wash);color:var(--critical)}
+  .banner.warn{display:block;background:var(--read-wash);color:var(--read)}
 
-  .patient{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px}
-  .phead{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
-  .avatar{width:46px;height:46px;border-radius:12px;background:var(--accent-wash);color:var(--accent-ink);display:grid;place-items:center;font-weight:700;font-size:18px;flex-shrink:0}
-  .pname{font-size:20px;font-weight:700;letter-spacing:-.015em;line-height:1.2}
+  /* ── Patient band ── */
+  .patient{background:var(--card-alt);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:18px 20px;margin-bottom:14px}
+  .phead{display:flex;align-items:flex-start;gap:15px;flex-wrap:wrap}
+  .avatar{width:50px;height:50px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    color:#fff;display:grid;place-items:center;font-weight:700;font-size:19px;flex-shrink:0;box-shadow:0 6px 14px rgba(107,78,255,.3)}
+  .pname{font-size:21px;font-weight:700;color:var(--primary);letter-spacing:-.015em;line-height:1.2}
   .pname .ar{font-size:15px;color:var(--ink-2);font-weight:600;margin-left:8px}
-  .pmeta{display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:6px;color:var(--ink-2);font-size:13px}
-  .pmeta b{color:var(--ink);font-weight:600}
-  .pmeta .lbl{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-right:5px}
+  .pmeta{display:flex;flex-wrap:wrap;gap:7px 22px;margin-top:8px;color:var(--ink-2);font-size:13px}
+  .pmeta b{color:var(--text);font-weight:600}
+  .pmeta .lbl{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-right:6px;font-weight:600}
 
-  .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
-  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);position:relative;overflow:hidden}
-  .stat .n{font-size:26px;font-weight:750;letter-spacing:-.02em;line-height:1}
-  .stat .k{font-size:11.5px;color:var(--ink-2);margin-top:5px;text-transform:uppercase;letter-spacing:.03em}
+  /* ── Summary stat tiles ── */
+  .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+  .stat{background:var(--card-alt);border:1px solid var(--border);border-radius:16px;padding:13px 15px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .stat .n{font-size:27px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .stat .k{font-size:11px;color:var(--muted);margin-top:6px;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
   .stat .stripe{position:absolute;left:0;top:0;bottom:0;width:4px}
   .stat[data-s=ordered] .n{color:var(--ordered)} .stat[data-s=ordered] .stripe{background:var(--ordered)}
   .stat[data-s=performed] .n{color:var(--performed)} .stat[data-s=performed] .stripe{background:var(--performed)}
@@ -78,97 +94,136 @@
   .stat[data-s=verified] .n{color:var(--verified)} .stat[data-s=verified] .stripe{background:var(--verified)}
   .stat[data-s=critical] .n{color:var(--critical)} .stat[data-s=critical] .stripe{background:var(--critical)}
 
-  .grid{display:grid;grid-template-columns:minmax(340px,1fr) minmax(420px,1.35fr);gap:16px;align-items:start}
-  .col-h{display:flex;align-items:center;gap:10px;margin:2px 2px 10px}
-  .col-h h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2);margin:0}
-  .col-h .count{font-size:12px;color:var(--ink-3);background:var(--line-2);border-radius:20px;padding:1px 9px}
-  .list{display:flex;flex-direction:column;gap:9px}
-  .item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 14px;box-shadow:var(--shadow);cursor:pointer;transition:border-color .12s;position:relative}
-  .item:hover{border-color:var(--accent)}
-  .item.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash),var(--shadow)}
+  /* ── Timeline + detail grid ── */
+  .grid{display:grid;grid-template-columns:minmax(320px,1fr) minmax(400px,1.3fr);gap:16px;align-items:start}
+  .col-h{display:flex;align-items:center;gap:10px;margin:2px 2px 11px}
+  .col-h h2{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0}
+  .col-h .count{font-size:12px;font-weight:600;color:var(--accent);background:rgba(107,78,255,.12);border-radius:20px;padding:2px 10px}
+  .list{display:flex;flex-direction:column;gap:10px}
+  .item{background:var(--card-alt);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:var(--shadow);cursor:pointer;transition:border-color .12s,transform .1s;position:relative}
+  .item:hover{border-color:var(--accent)}.item:active{transform:scale(.99)}
+  .item.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(107,78,255,.16),var(--shadow)}
   .item .r1{display:flex;align-items:center;gap:9px}
-  .mod{font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.02em;color:var(--accent-ink);background:var(--accent-wash);border-radius:6px;padding:3px 7px;min-width:34px;text-align:center}
-  .svc{font-weight:650;letter-spacing:-.01em;flex:1;min-width:0}
-  .item .r2{display:flex;align-items:center;gap:12px;margin-top:7px;color:var(--ink-3);font-size:12px}
-  .item .ind{margin-top:8px;font-size:12.5px;color:var(--ink-2);background:var(--panel-2);border-left:2px solid var(--line);padding:5px 9px;border-radius:0 7px 7px 0}
-  .item .ind span{color:var(--ink-3);text-transform:uppercase;font-size:10px;letter-spacing:.05em;margin-right:5px}
+  .mod{font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.02em;color:var(--accent);
+    background:rgba(107,78,255,.12);border-radius:8px;padding:4px 8px;min-width:36px;text-align:center}
+  .svc{font-weight:600;color:var(--text);letter-spacing:-.01em;flex:1;min-width:0}
+  .item .r2{display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted);font-size:12px;flex-wrap:wrap}
+  .item .ind{margin-top:9px;font-size:12.5px;color:var(--ink-2);background:var(--card);border-radius:10px;padding:7px 11px}
+  .item .ind span{color:var(--muted);text-transform:uppercase;font-size:9.5px;letter-spacing:.05em;margin-right:6px;font-weight:600}
 
-  .pill{font-size:11px;font-weight:650;padding:2px 9px;border-radius:20px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  /* ── Status badges (Meena .badge style) ── */
+  .pill{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.03em;
+    display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
   .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
   .pill.ordered{color:var(--ordered);background:var(--ordered-wash)}
   .pill.performed{color:var(--performed);background:var(--performed-wash)}
   .pill.read{color:var(--read);background:var(--read-wash)}
   .pill.verified{color:var(--verified);background:var(--verified-wash)}
   .pill.critical{color:var(--critical);background:var(--critical-wash)}
-  .pill.inhis{color:var(--accent-ink);background:var(--accent-wash)}
+  .pill.inhis{color:var(--accent);background:rgba(107,78,255,.12)}
   .pill.inhis::before{background:none;content:"✓";width:auto;height:auto;font-size:10px;line-height:1}
   .pill.amb{color:var(--read);background:var(--read-wash)}
   .pill.amb::before{background:none;content:"?";width:auto;height:auto;font-size:11px;font-weight:800;line-height:1}
 
-  .detail{position:sticky;top:74px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
-  .detail .dh{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start}
-  .detail .dh .svc{font-size:17px;font-weight:700;letter-spacing:-.01em}
-  .detail .dh .sub{color:var(--ink-3);font-size:12.5px;margin-top:3px}
+  /* ── Detail panel (desktop side / mobile drawer) ── */
+  .right{min-width:0}
+  .detail{background:var(--card-alt);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+  .right.sticky-wrap{position:sticky;top:78px}
+  .detail .dh{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start}
+  .detail .dh .svc{font-size:17px;font-weight:700;color:var(--primary)}
+  .detail .dh .sub{color:var(--muted);font-size:12.5px;margin-top:3px}
+  .back{display:none;border:1.5px solid var(--border);background:var(--card-alt);color:var(--text);
+    border-radius:11px;padding:7px 12px;font-size:13px;font-weight:600;align-items:center;gap:6px}
   .dbody{padding:16px 18px;display:flex;flex-direction:column;gap:16px}
-  .block .bh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin:0 0 8px}
-  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 16px;font-size:13px}
-  .kv dt{color:var(--ink-3)} .kv dd{margin:0;font-weight:550;text-align:right;word-break:break-word}
-  .indication{background:var(--read-wash);color:var(--ink);border-radius:9px;padding:11px 13px;font-size:13.5px;line-height:1.55}
-  .report{background:var(--panel-2);border:1px solid var(--line-2);border-radius:9px;padding:12px 14px;font-size:12.5px;line-height:1.6;color:var(--ink-2);max-height:230px;overflow:auto;white-space:pre-wrap}
+  .block .bh{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 9px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:13px}
+  .kv dt{color:var(--muted)} .kv dd{margin:0;font-weight:600;text-align:right;word-break:break-word;color:var(--text)}
+  .indication{background:var(--read-wash);color:var(--text);border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.55}
+  .report{background:var(--card);border:1px solid var(--border-2);border-radius:12px;padding:12px 14px;font-size:12.5px;line-height:1.6;color:var(--ink-2);max-height:240px;overflow:auto;white-space:pre-wrap}
   .actions{display:flex;gap:9px;flex-wrap:wrap}
-  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:9px 13px;font-weight:600;font-size:12.5px;display:inline-flex;align-items:center;gap:7px;text-decoration:none}
-  .btn:hover{border-color:var(--accent);color:var(--accent-ink)}
-  .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-  .btn.pri:hover{background:var(--accent-ink)}
+  .btn{border:none;background:var(--accent);color:#fff;border-radius:20px;padding:10px 16px;font-weight:600;font-size:12.5px;
+    display:inline-flex;align-items:center;gap:7px;text-decoration:none;transition:background .18s,transform .1s}
+  .btn:hover{background:var(--accent2)}.btn:active{transform:scale(.95)}
+  .btn.ghost{background:var(--card-alt);border:1.5px solid var(--border);color:var(--text)}
+  .btn.ghost:hover{border-color:var(--accent);color:var(--accent);background:var(--card-alt)}
   .btn[disabled],.btn.off{opacity:.42;cursor:not-allowed;pointer-events:none}
 
-  .legend{margin-top:26px;border-top:1px solid var(--line);padding-top:18px;display:flex;flex-wrap:wrap;gap:10px 24px;align-items:center;font-size:12px;color:var(--ink-2)}
+  .legend{margin-top:26px;border-top:1px solid var(--border);padding-top:18px;display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;font-size:12px;color:var(--ink-2)}
   .legend .lg{display:flex;align-items:center;gap:7px}
-  .note{color:var(--ink-3);font-size:12px;margin-top:14px;line-height:1.6;max-width:74ch}
-  .empty{color:var(--ink-3);text-align:center;padding:60px 20px;font-size:13px}
+  .note{color:var(--muted);font-size:12px;margin-top:14px;line-height:1.6;max-width:74ch}
+  .empty{color:var(--muted);text-align:center;padding:56px 20px;font-size:13.5px}
 
-  /* token gate */
-  .gate{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 82%,#000 8%);backdrop-filter:blur(4px);z-index:50;display:grid;place-items:center;padding:20px}
+  /* ── Token gate ── */
+  .gate{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 78%,#000 10%);backdrop-filter:blur(5px);z-index:50;display:grid;place-items:center;padding:20px}
   .gate.hidden{display:none}
-  .gcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:24px;max-width:400px;width:100%}
-  .gcard h3{margin:0 0 6px;font-size:16px}
-  .gcard p{margin:0 0 14px;color:var(--ink-3);font-size:13px;line-height:1.5}
-  .gcard input{width:100%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:10px 12px;font-family:var(--mono);font-size:13px;outline:none}
-  .gcard input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
-  .gcard .grow{display:flex;gap:9px;margin-top:14px}
-  .gcard button{flex:1;border:0;border-radius:9px;background:var(--accent);color:#fff;font-weight:650;padding:10px}
-  @media (max-width:860px){.grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(3,1fr)}.detail{position:static}.search{max-width:none}}
+  .gcard{background:var(--card-alt);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:26px;max-width:400px;width:100%}
+  .gcard .dot{width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#fff;font-size:22px;margin-bottom:14px;box-shadow:0 6px 14px rgba(107,78,255,.35)}
+  .gcard h3{margin:0 0 6px;font-size:17px;color:var(--primary);font-weight:700}
+  .gcard p{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.5}
+  .gcard input{width:100%;border:1.5px solid var(--border);background:var(--bg);color:var(--text);border-radius:12px;padding:12px 14px;font-family:var(--mono);font-size:13px;outline:none}
+  .gcard input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(107,78,255,.14)}
+  .gcard button{width:100%;border:0;border-radius:12px;background:var(--accent);color:#fff;font-weight:600;font-size:14px;padding:12px;margin-top:14px;transition:background .18s,transform .1s}
+  .gcard button:hover{background:var(--accent2)}.gcard button:active{transform:scale(.98)}
+
+  /* ── Responsive ── */
+  @media (min-width:641px){
+    .search{order:0;flex:1 1 auto;max-width:520px}
+  }
+  @media (max-width:1024px){ .summary{grid-template-columns:repeat(3,1fr)} }
+  @media (max-width:860px){
+    .grid{grid-template-columns:1fr}
+    .right.sticky-wrap{position:static}
+    /* Detail becomes a slide-up drawer on tablet/phone */
+    .right{position:fixed;inset:0;z-index:40;background:var(--bg);overflow:auto;padding:14px;
+      padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(40px,env(safe-area-inset-bottom));
+      transform:translateY(100%);transition:transform .26s cubic-bezier(.4,0,.2,1);visibility:hidden}
+    .right.open{transform:none;visibility:visible}
+    .right .col-h{display:none}
+    .detail{border-radius:16px;box-shadow:none}
+    .back{display:inline-flex;margin-bottom:12px}
+  }
+  @media (max-width:560px){
+    main{padding:14px;padding-bottom:50px}
+    .summary{grid-template-columns:repeat(2,1fr);gap:9px}
+    .stat .n{font-size:23px}
+    .pname{font-size:19px}
+    .patient{padding:16px}
+    .pmeta{gap:6px 16px}
+  }
+  @media (max-width:380px){ .summary{grid-template-columns:1fr 1fr} .go span{display:none} }
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
 </style>
 </head>
 <body>
 <div class="gate" id="gate">
   <div class="gcard">
+    <div class="dot">✚</div>
     <h3>Connector access</h3>
     <p>Paste the connector token to open patient records. It is stored only in this browser.</p>
     <input id="tokin" type="password" placeholder="CONNECTOR_TOKEN" autocomplete="off">
-    <div class="grow"><button onclick="saveToken()">Unlock</button></div>
+    <button onclick="saveToken()">Unlock</button>
   </div>
 </div>
 
 <div class="top">
-  <div class="brand"><span class="dot">✚</span>Meena&nbsp;RIS<small>Radiology&nbsp;Patient&nbsp;View</small></div>
+  <div class="brand"><span class="dot">✚</span><span><b>Meena&nbsp;RIS</b><small>Radiology&nbsp;Patient&nbsp;View</small></span></div>
   <form class="search" id="search" onsubmit="return doSearch(event)">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-    <input id="q" placeholder="Enter MRN, National ID, or phone…" autocomplete="off">
+    <input id="q" placeholder="MRN, National ID, or phone…" autocomplete="off" inputmode="numeric">
     <span class="kind" id="kind">MRN</span>
-    <button class="go" id="gobtn" type="submit">Open</button>
+    <button class="go" id="gobtn" type="submit"><span>Open</span></button>
   </form>
-  <button class="toggle" onclick="toggleTheme()">◐ Theme</button>
+  <button class="toggle" onclick="toggleTheme()" title="Toggle theme">◐</button>
 </div>
 
 <main>
   <div class="banner" id="banner"></div>
   <section id="app"><div class="empty">Enter an MRN, National ID, or phone number to open a patient's radiology record.</div></section>
   <div class="legend" id="legend" style="display:none">
-    <span style="font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;font-size:11px">Status</span>
+    <span style="font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-size:11px">Status</span>
     <span class="lg"><span class="pill ordered">Ordered</span> not yet in PACS</span>
-    <span class="lg"><span class="pill performed">Performed · unread</span> study exists, no report</span>
-    <span class="lg"><span class="pill read">Read · unverified</span> report drafted</span>
+    <span class="lg"><span class="pill performed">Performed</span> study exists, no report</span>
+    <span class="lg"><span class="pill read">Read</span> report drafted</span>
     <span class="lg"><span class="pill verified">Verified</span> signed report</span>
     <span class="lg"><span class="pill inhis">In HIS</span> filed to Siratech</span>
   </div>
@@ -182,6 +237,14 @@ let CUR=null, SELI=0;
 const $=(id)=>document.getElementById(id);
 const el=(h)=>{const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstElementChild;};
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* Theme: default from system, remember choice; toggles Meena's body.dark class. */
+(function initTheme(){
+  const saved=localStorage.getItem("ris_theme");
+  const dark=saved?saved==="dark":matchMedia("(prefers-color-scheme:dark)").matches;
+  if(dark)document.body.classList.add("dark");
+})();
+function toggleTheme(){const d=document.body.classList.toggle("dark");localStorage.setItem("ris_theme",d?"dark":"light");}
 
 if(TOKEN) $("gate").classList.add("hidden");
 function saveToken(){const v=$("tokin").value.trim();if(!v)return;TOKEN=v;localStorage.setItem("ris_token",v);$("gate").classList.add("hidden");$("q").focus();}
@@ -204,14 +267,14 @@ async function api(path,opts){
 async function doSearch(e){e.preventDefault();
   const v=$("q").value.trim();if(!v)return false;
   if(!TOKEN){$("gate").classList.remove("hidden");return false;}
-  banner("");$("gobtn").disabled=true;$("gobtn").textContent="…";
+  banner("");$("gobtn").disabled=true;$("gobtn").innerHTML="…";
   try{
     const r=await api("/ris/data/"+encodeURIComponent(v));
     const data=await r.json();
     if(!r.ok||!data.ok){banner(data.error||("Lookup failed (HTTP "+r.status+")"));renderEmpty();}
     else render(data);
   }catch(err){banner(err.message||String(err));}
-  finally{$("gobtn").disabled=false;$("gobtn").textContent="Open";}
+  finally{$("gobtn").disabled=false;$("gobtn").innerHTML="<span>Open</span>";}
   return false;
 }
 
@@ -241,13 +304,13 @@ function render(data){
     </div></div>`));
   app.appendChild(el(`
     <div class="summary">
-      ${["ordered","performed","read","verified"].map(s=>`<div class="stat" data-s="${s}"><span class="stripe"></span><div class="n num">${c[s]||0}</div><div class="k">${SL[s]}</div></div>`).join("")}
+      ${["ordered","performed","read","verified"].map(s=>`<div class="stat" data-s="${s}"><span class="stripe"></span><div class="n num">${c[s]||0}</div><div class="k">${SL[s].split(" ")[0]}</div></div>`).join("")}
       <div class="stat" data-s="critical"><span class="stripe"></span><div class="n num">${nCrit}</div><div class="k">Critical</div></div>
     </div>`));
   if(!exams.length){app.appendChild(el('<div class="empty">No radiology orders on file for this patient.</div>'));$("legend").style.display="flex";return;}
   const grid=el('<div class="grid"></div>');
-  const left=el(`<div><div class="col-h"><h2>Radiology timeline</h2><span class="count num">${exams.length}</span></div><div class="list" id="list"></div></div>`);
-  const right=el('<div><div class="col-h"><h2>Exam detail</h2></div><div id="detail"></div></div>');
+  const left=el(`<div class="left"><div class="col-h"><h2>Radiology timeline</h2><span class="count num">${exams.length}</span></div><div class="list" id="list"></div></div>`);
+  const right=el('<div class="right sticky-wrap" id="rightcol"><div class="col-h"><h2>Exam detail</h2></div><div id="detail"></div></div>');
   grid.append(left,right);app.appendChild(grid);
   const list=left.querySelector("#list");
   exams.forEach((it,i)=>{
@@ -256,19 +319,23 @@ function render(data){
       <div class="item ${i===SELI?"sel":""}">
         <div class="r1"><span class="mod">${esc(it.modality||"–")}</span><span class="svc">${esc(it.service||"Exam")}</span>${it.isER?'<span class="pill critical">ER</span>':""}</div>
         <div class="r2">
-          <span class="pill ${it.status}">${SL[it.status]}</span>
+          <span class="pill ${it.status}">${SL[it.status].split(" ")[0]}</span>
           ${it.hasReportHIS?'<span class="pill inhis">In HIS</span>':""}
-          ${it.ambiguous?'<span class="pill amb">Verify match</span>':""}
+          ${it.ambiguous?'<span class="pill amb">Verify</span>':""}
           <span class="num" style="margin-left:auto">${esc(fmt(when))}</span>
         </div>
         ${it.indication?`<div class="ind"><span>Indication</span>${esc(it.indication)}</div>`:""}
       </div>`);
-    node.addEventListener("click",()=>{SELI=i;[...list.children].forEach(c=>c.classList.remove("sel"));node.classList.add("sel");renderDetail();});
+    node.addEventListener("click",()=>{SELI=i;[...list.children].forEach(c=>c.classList.remove("sel"));node.classList.add("sel");renderDetail();openDrawer();});
     list.appendChild(node);
   });
   renderDetail();
   $("legend").style.display="flex";$("note").style.display="block";
 }
+
+/* On phones/tablets the detail panel is a slide-up drawer. */
+function openDrawer(){if(window.matchMedia("(max-width:860px)").matches){$("rightcol").classList.add("open");document.body.style.overflow="hidden";}}
+function closeDrawer(){$("rightcol")&&$("rightcol").classList.remove("open");document.body.style.overflow="";}
 
 function fmt(s){if(!s)return"—";const m=String(s).match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
   if(m)return`${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;return String(s);}
@@ -277,11 +344,13 @@ function renderDetail(){
   const it=CUR.exams[SELI];const d=$("detail");const perf=it.status!=="ordered";const st=it.study;
   d.innerHTML="";
   d.appendChild(el(`
-    <div class="detail">
+    <div>
+      <button class="back" onclick="closeDrawer()">‹ Back to timeline</button>
+      <div class="detail">
       <div class="dh"><span class="mod">${esc(it.modality||"–")}</span>
         <div style="flex:1"><div class="svc">${esc(it.service||"Exam")}</div>
           <div class="sub">${esc([it.branch,it.billNo?"Bill "+it.billNo:""].filter(Boolean).join(" · ")||"")}</div></div>
-        <span class="pill ${it.status}">${SL[it.status]}</span>
+        <span class="pill ${it.status}">${SL[it.status].split(" ")[0]}</span>
       </div>
       <div class="dbody">
         <div class="block"><div class="bh">Order</div>
@@ -292,7 +361,7 @@ function renderDetail(){
           </dl>
         </div>
         <div class="block"><div class="bh">Clinical indication</div>
-          <div class="indication">${it.indication?esc(it.indication):'<span style="color:var(--ink-3)">Not recorded in HIS.</span>'}</div>
+          <div class="indication">${it.indication?esc(it.indication):'<span style="color:var(--muted)">Not recorded in HIS.</span>'}</div>
         </div>
         ${perf&&st?`
         <div class="block"><div class="bh">DePACS study</div>
@@ -309,15 +378,16 @@ function renderDetail(){
         </div>`}
         ${it.report?`
         <div class="block"><div class="bh">Report${it.report.reviewer?" · "+(it.status==="verified"?"verified":"draft"):""}</div>
-          ${it.report.reviewer?`<div class="sub" style="color:var(--ink-3);margin-bottom:8px">${esc(it.report.reviewer)}${it.report.reportDate?" · "+esc(fmt(it.report.reportDate)):""}</div>`:""}
+          ${it.report.reviewer?`<div class="sub" style="color:var(--muted);margin-bottom:8px">${esc(it.report.reviewer)}${it.report.reportDate?" · "+esc(fmt(it.report.reportDate)):""}</div>`:""}
           <div class="report">${esc(it.report.text||"(report text unavailable)")}</div>
         </div>`:""}
         <div class="block"><div class="bh">Actions</div>
           <div class="actions">
-            <a class="btn ${it.viewerUrl?"":"off"}" ${it.viewerUrl?`href="${esc(it.viewerUrl)}" target="_blank" rel="noopener"`:""}>🖼 View images in DePACS</a>
-            <button class="btn ${(it.report&&it.report.pdfOk)?"":"off"}" ${(it.report&&it.report.pdfOk)?`onclick="openPdf(${st.studyId})"`:"disabled"}>📄 Open report PDF</button>
+            <a class="btn ghost ${it.viewerUrl?"":"off"}" ${it.viewerUrl?`href="${esc(it.viewerUrl)}" target="_blank" rel="noopener"`:""}>🖼 View images</a>
+            <button class="btn ${(it.report&&it.report.pdfOk)?"":"off"}" ${(it.report&&it.report.pdfOk)?`onclick="openPdf(${st.studyId})"`:"disabled"}>📄 Report PDF</button>
           </div>
         </div>
+      </div>
       </div>
     </div>`));
 }
@@ -331,10 +401,6 @@ async function openPdf(studyId){
     window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000);
   }catch(err){banner("Could not open report PDF: "+(err.message||err));}
 }
-
-function toggleTheme(){const r=document.documentElement;
-  const cur=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
-  r.setAttribute("data-theme",cur==="dark"?"light":"dark");}
 </script>
 </body>
 </html>
