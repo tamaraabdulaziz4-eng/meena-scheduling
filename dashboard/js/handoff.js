@@ -692,17 +692,22 @@ function handoffReset() {
   renderHandoffSteps(); renderHandoffStep();
 }
 
+// Strip emoji / pictographs (and their variation selectors / ZWJ) from a string —
+// used to keep the clinical indication clean text in the WhatsApp message.
+function hoStripEmoji(s) {
+  try { return String(s || '').replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, '').replace(/\s+/g, ' ').trim(); }
+  catch (_e) { return String(s || '').replace(/\s+/g, ' ').trim(); }   // older engines: no \p{…}
+}
 function handoffBuildMsg() {
   // Plain English, no emoji. WhatsApp bold (*..*) on the labels so the group can
-  // scan File / Exam / Priority / Indication at a glance.
+  // scan File / Exam / Priority / Indication at a glance. Branch is intentionally
+  // omitted, and the indication is emoji-stripped so it stays clean clinical text.
   const exam = (document.getElementById('ho-exam')?.value || handoffOrder().service || '').trim();
-  const branch = (document.getElementById('ho-branch')?.value || handoffOrder().branch || '').trim();
-  const indication = (handoff.history || '').trim();
+  const indication = hoStripEmoji(handoff.history || '');
   const prio = handoff.priority === 'emergency' ? 'Emergency' : 'Routine';
   return [
     `*File:* ${handoff.file}`,
     exam ? `*Exam:* ${exam}` : '',
-    branch ? `*Branch:* ${branch}` : '',
     `*Priority:* ${prio}`,
     `*Indication:* ${indication || '-'}`,
   ].filter(Boolean).join('\n');
