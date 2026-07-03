@@ -172,6 +172,11 @@ function renderPsDetail() {
       ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
         ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
         : ''}
+      <div class="ps-consent">
+        <button class="btn btn-primary ps-consent-btn${psIsFemale(p) ? ' female' : ''}" onclick="psStartConsent()">
+          🖊️ ${psIsFemale(p) ? 'Non-pregnancy consent · إقرار عدم الحمل' : 'New consent · كونسينت'}</button>
+        <div id="ps-consent-list" class="ps-consent-list"></div>
+      </div>
     </div>`;
 
   let examBlock;
@@ -188,6 +193,46 @@ function renderPsDetail() {
       sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
   det.innerHTML = patCard + examBlock;
+  psLoadConsents();
+}
+
+// Female detection (the non-pregnancy consent is female-specific) — accept English
+// and Arabic spellings; unknown gender → not auto-highlighted (staff can still open it).
+function psIsFemale(p) {
+  const g = String((p && p.gender) || '').toLowerCase();
+  return g.startsWith('f') || g.includes('female') || g.includes('انث') || g.includes('أنث') || g.includes('امرأ');
+}
+// Launch the consent with ALL the patient's data pre-registered on it — she only
+// reads, picks the reason, and signs. Procedure/type/physician come from the most
+// recent exam so the form matches what she's about to have done.
+function psStartConsent() {
+  const d = psState.lookup || {};
+  const p = d.patient || {};
+  const orders = (d.orders || []).map((o, i) => ({ o, i }))
+    .sort((a, b) => (psOrderTime(b.o) - psOrderTime(a.o)) || (a.i - b.i)).map((x) => x.o);
+  const top = orders[0] || {};
+  openConsent({
+    file_no: p.mrno || '', mrno: p.mrno || '', name: p.name || '', dob: p.dob || '',
+    weight: p.weight || '', height: p.height || '',
+    procedure: top.service || '', patient_type: top.isER ? 'er' : 'outpatient',
+    physician: top.provider || '', bill_no: top.billNo || '', site: top.siteId || null,
+  }, () => psLoadConsents());
+}
+async function psLoadConsents() {
+  const box = document.getElementById('ps-consent-list');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await API.get(`/consent?file_no=${encodeURIComponent(p.mrno)}`); } catch (e) { box.innerHTML = ''; return; }
+  const list = (d && d.consents) || [];
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = list.map((c) => `
+    <div class="ps-consent-row">
+      <span>📄 ${escapeHtml(c.kind === 'non_pregnancy' ? 'Non-pregnancy' : c.kind)}${c.procedure ? ' · ' + escapeHtml(c.procedure) : ''}
+        <span style="color:var(--muted)">· ${escapeHtml(String(c.created_at || '').slice(0, 16).replace('T', ' '))}${c.created_by_name ? ' · ' + escapeHtml(c.created_by_name) : ''}</span></span>
+      <a class="btn btn-xs" href="/api/consent/${c.id}/pdf" target="_blank" rel="noopener">View</a>
+    </div>`).join('');
 }
 
 // Best-effort timestamp for sorting: prefer the order date, fall back to the report
