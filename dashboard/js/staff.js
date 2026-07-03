@@ -37,9 +37,11 @@ function renderStaffPage() {
     ${canEdit ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
       <button class="btn btn-sm" onclick="printStaffDirectory()">🖨️ PDF</button>
       <button class="btn btn-sm" onclick="exportStaffCsv()">⬇️ Export CSV</button></div>` : ''}
+    <div id="staff-eotm"></div>
     <div id="staff-pending"></div>
     <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
 
+  if (typeof renderHomeEotm === 'function') renderHomeEotm('staff-eotm');   // Employee of the Month moved here from Home
   if (canEdit) renderPendingRegs();
   const container = document.getElementById('staff-branch-sections');
   if (!allStaff.length) {

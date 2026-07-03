@@ -28,7 +28,9 @@ async function renderEquipmentPage() {
       ${canPickBranch ? `<select id="eq-branch" class="rep-select" style="max-width:220px"></select>` : '<div></div>'}
       ${_eqIsAdmin() ? `<button class="btn btn-sm btn-primary" onclick="openEqModal()">+ Add device</button>` : ''}
     </div>
+    <div id="eq-checks"></div>
     <div id="eq-list">${LOADING_HTML}</div>`;
+  if (typeof renderHomeShiftChecks === 'function') renderHomeShiftChecks('eq-checks');   // "Equipment checks today" moved here from Home
   if (canPickBranch) {
     try { if (!allBranches.length) await loadBranches(); } catch (e) {}
     const sel = document.getElementById('eq-branch');

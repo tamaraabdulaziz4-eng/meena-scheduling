@@ -99,11 +99,14 @@ async function renderSchedulePage() {
 
     <div class="stats-row" id="schedule-stats"></div>
 
+    <div id="sched-onduty" style="margin-bottom:14px"></div>
+
     <div class="rota-wrap" id="rota-wrap">${LOADING_HTML}</div>
 
     <div class="legend" id="shift-legend" style="margin-top:20px"></div>`;
 
   document.getElementById('month-label').textContent = monthLabel(scheduleYear, scheduleMonth);
+  if (typeof renderHomeOnDuty === 'function') renderHomeOnDuty('sched-onduty');   // "On duty today" moved here from Home
   await loadScheduleData();
 }
 
