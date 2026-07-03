@@ -6119,19 +6119,40 @@ def _elite_ssl_ctx():
     c = ssl.create_default_context(); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
     return c
 
-def _elite_request(method, path, token=None, body=None, want="json", timeout=30):
+def _elite_request(method, path, token=None, body=None, form=None, want="json", timeout=30):
     import urllib.request, urllib.error
     url = _elite_cfg()["base"] + path
-    data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Accept": "*/*"}
-    if body is not None: headers["Content-Type"] = "application/json"
+    if form is not None:
+        # Some Butterfly endpoints (e.g. study/update_study_stats) take multipart
+        # form-data, not JSON. Build the body by hand so we don't add a dependency.
+        import uuid
+        boundary = "----MeenaBoundary" + uuid.uuid4().hex
+        parts = []
+        for k, v in form.items():
+            if v is None:
+                continue
+            parts.append("--" + boundary)
+            parts.append(f'Content-Disposition: form-data; name="{k}"')
+            parts.append("")
+            parts.append(str(v))
+        parts.append("--" + boundary + "--")
+        parts.append("")
+        data = "\r\n".join(parts).encode("utf-8")
+        headers["Content-Type"] = "multipart/form-data; boundary=" + boundary
+    else:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        if body is not None: headers["Content-Type"] = "application/json"
     if token: headers["Authorization"] = "Token " + token
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_elite_ssl_ctx()) as resp:
             raw = resp.read()
-            return (resp.getheader("Content-Type", ""), raw) if want == "raw" \
-                else json.loads(raw.decode("utf-8", "replace"))
+            if want == "raw":
+                return (resp.getheader("Content-Type", ""), raw)
+            txt = raw.decode("utf-8", "replace").strip()
+            # A 2xx with an empty body (some PUTs) is a success, not a parse error.
+            return json.loads(txt) if txt else {"success": True}
     except urllib.error.HTTPError as e:
         raise HTTPException(502, f"Reports service {e.code}: {e.read().decode('utf-8','replace')[:200]}")
     except Exception as e:
@@ -6514,6 +6535,15 @@ def _elite_put(path, body):
             return _elite_request("PUT", path, token=_elite_login(), body=body)
         raise
 
+def _elite_put_form(path, form):
+    try:
+        return _elite_request("PUT", path, token=_elite_token(), form=form)
+    except HTTPException as e:
+        if getattr(e, "status_code", 0) == 502 and ("401" in str(e.detail) or "403" in str(e.detail)):
+            _elite_token_cache["token"] = None
+            return _elite_request("PUT", path, token=_elite_login(), form=form)
+        raise
+
 def _elite_fix_date(d):
     s = str(d or "")
     if re.fullmatch(r"\d{8}", s):      # 19590110 -> 1959-01-10 (API wants YYYY-MM-DD)
@@ -6521,53 +6551,33 @@ def _elite_fix_date(d):
     return s[:10]
 
 # The handoff is the EMERGENCY radiology flow, so every study we write into is
-# flagged Emergency = ✓ and filed under Category "Others". These are the exact
-# field names + values the Butterfly edit_study_info endpoint uses on this build
-# (confirmed live from get_study_info: emergency_status=true, category_id=3 ↔
-# category="Others"). Overridable if the category mapping ever changes.
+# flagged Emergency = ✓ and filed under Category "Others". Confirmed live from the
+# Butterfly UI's own request: PUT study/update_study_stats/{id} (multipart) with
+# emergency_status=1 and study_category_id=3 (↔ "Others"). Overridable via env.
 _ELITE_EMERGENCY_CATEGORY_ID = int(os.environ.get("ELITE_EMERGENCY_CATEGORY_ID") or 3)
 _ELITE_EMERGENCY_CATEGORY_NAME = (os.environ.get("ELITE_EMERGENCY_CATEGORY_NAME") or "Others").strip()
 
 def _elite_write_history(study_id, history, set_emergency=True):
-    """Write `history` into a study's clinical_history, preserving the other
-    demographic fields the edit endpoint requires (it rejects nulls). For the
-    handoff (emergency) flow, also flag the study Emergency = ✓ and Category
-    "Others" so the read radiologist sees it prioritised and correctly bucketed."""
-    info = _elite_get(f"/study_management/get_study_info/{study_id}")
-    b = (info.get("body") or {}) if isinstance(info, dict) else {}
-    # edit_study_info REPLACES these fields, so a transient/empty read would blank the
-    # patient's demographics + accession. Refuse to write unless the read clearly
-    # returned this study's patient (pat_id AND pat_name present).
-    if not ((b.get("pat_id") or "").strip() and (b.get("pat_name") or "").strip()):
-        raise HTTPException(502, "Butterfly study info unavailable — not writing (would risk blanking the record). Try again.")
-    payload = {
-        "patient_name": b.get("pat_name") or "",
-        "patient_id": b.get("pat_id") or "",
-        "patient_sex": b.get("pat_sex") or "",
-        "patient_birthdate": _elite_fix_date(b.get("pat_birthdate")),
-        "study_desc": b.get("study_desc") or "",
-        "clinical_history": history or "",
-        "accession_number": b.get("accession_number") or "",
-    }
+    """Write `history` into a study's clinical_history via the same endpoint the
+    Butterfly UI uses — PUT study/update_study_stats/{id} (multipart form-data).
+    For the handoff (emergency) flow, also flag Emergency = ✓ and Category "Others"
+    (emergency_status=1, study_category_id=3) so the read radiologist sees it
+    prioritised and correctly bucketed. Unlike the old edit_study_info call, this
+    endpoint only touches these fields — it never requires (or risks blanking) the
+    patient demographics."""
+    form = {"clinical_history": history or ""}
     if set_emergency:
-        # Set Emergency + Category. This build's edit endpoint doesn't always key on the
-        # same names get_study_info reads back, so send every plausible spelling/format —
-        # the endpoint ignores keys it doesn't recognise, and one of them binds.
-        payload["emergency_status"] = True
-        payload["is_emergency"] = True
-        payload["emergency"] = True
-        payload["category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
-        payload["study_category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
-        payload["category"] = _ELITE_EMERGENCY_CATEGORY_NAME
-        payload["study_category"] = _ELITE_EMERGENCY_CATEGORY_NAME
-    res = _elite_put(f"/study_management/edit_study_info/{study_id}", payload)
-    if not (isinstance(res, dict) and res.get("success")):
-        detail = (isinstance(res, dict) and (res.get("error") or res.get("message"))) or str(res)[:150]
+        form["emergency_status"] = 1
+        form["study_category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
+    res = _elite_put_form(f"/study/update_study_stats/{study_id}", form)
+    # _elite_put_form raises on any non-2xx, so reaching here means the PUT was
+    # accepted. Only treat it as a failure if the body carries an explicit error
+    # (the success-envelope key varies between Butterfly endpoints).
+    if isinstance(res, dict) and (res.get("success") is False or res.get("error")):
+        detail = res.get("error") or res.get("message") or "update rejected"
         raise HTTPException(502, f"Butterfly write failed: {detail}")
-    # Don't trust success=true — some builds ACK the edit but silently drop the
-    # emergency/category flags if the field name is off. Read the study back and
-    # report what actually stuck, so the UI can show a truthful state (and we learn
-    # the real field name from production instead of guessing forever).
+    # Read the study back and confirm the flag actually stuck, so the UI can show a
+    # truthful state rather than trusting success=true.
     emerg_ok = None
     if set_emergency:
         try:
