@@ -280,7 +280,7 @@ function matchStudy(order, studies, { windowBeforeH = 24, windowAfterH = 96 } = 
 }
 
 function candOf(s) {
-  return { studyId: s.studyId, desc: s.desc, studyDate: s.studyDate, modality: s.modality, accession: s.accession };
+  return { studyId: s.studyId, desc: s.desc, studyDate: s.studyDate, modality: s.modality, accession: s.accession, iuid: s.iuid };
 }
 
 // ── Siratech Result Entry (needs the shared hisFetch from server.js) ──────────

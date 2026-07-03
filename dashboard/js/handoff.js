@@ -516,9 +516,11 @@ function renderHandoffResults(d) {
       <div><b>⚠️ ${escapeHtml(t.test.serviceName || '')}</b> — needs manual review</div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(t.reason || t.decision)}.
       ${cands.length ? 'Possible: ' + escapeHtml(cands.map(c => `${c.desc} (#${c.studyId})`).join(', ')) : 'No confident match — do not file automatically.'}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px">
-        🔎 key: <b>${escapeHtml(t.matchKey || '—')}</b> · order acc: <b>${escapeHtml(t.orderAccession != null ? String(t.orderAccession) : '—')}</b>
-        ${allCands.length ? ' · studies: ' + escapeHtml(allCands.map(c => (c.accession || '—') + ' #' + c.studyId).join(', ')) : ''}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px;word-break:break-all;line-height:1.7">
+        🔎 key: <b>${escapeHtml(t.matchKey || '—')}</b> · order acc: <b>${escapeHtml(t.orderAccession != null ? String(t.orderAccession) : '—')}</b><br>
+        order fields: ${escapeHtml(JSON.stringify((t.rawAcc && t.rawAcc.order) || {}))}<br>
+        detail fields: ${escapeHtml(JSON.stringify((t.rawAcc && t.rawAcc.detail) || {}))}<br>
+        ${allCands.length ? 'studies: ' + escapeHtml(allCands.map(c => `${c.desc}|acc:${c.accession || '—'}|iuid:${c.iuid || '—'}|#${c.studyId}`).join('  ;  ')) : ''}</div>
     </div>`;
   };
   box.innerHTML = orders.map(o => {
