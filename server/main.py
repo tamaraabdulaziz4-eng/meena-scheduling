@@ -6337,7 +6337,10 @@ def radiology_find(request: Request, user=Depends(require_admin)):
         raise HTTPException(400, "Enter a file number, national ID, or phone")
     if len(q) > 60:
         raise HTTPException(400, "Search term is too long")
-    return _bridge_request("/his/search?q=" + urllib.parse.quote(q), timeout=60)
+    # debug=1 asks the connector to report which HIS search field matched (or the
+    # per-field attempts when nothing hit) — used to pin the phone/ID field name.
+    dbg = "&debug=1" if (request.query_params.get("debug") or "").strip() == "1" else ""
+    return _bridge_request("/his/search?q=" + urllib.parse.quote(q) + dbg, timeout=60)
 
 def _rad_scope_site(user):
     """Branch isolation for radiology ("كل فرع لفرعه"). Returns the HIS site id a

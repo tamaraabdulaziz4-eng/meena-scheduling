@@ -765,39 +765,54 @@ app.post('/results/file', requireAuth, async (req, res) => {
 // Patient/Search `mrNo` field matches MRN + name but NOT phone/ID, so for a numeric
 // query we also try the ID / mobile field spellings and return the first shape that
 // hits. `matchedBy` reports which field worked (helps confirm the mapping).
-async function _patientSearch(q) {
+async function _patientSearch(q, debug) {
   const patientsFrom = (r) => ((r && r.json && r.json.data) || []).slice(0, 25).map(normalizePatient);
+  const rawCount = (r) => (r && r.json && Array.isArray(r.json.data)) ? r.json.data.length : -1;
   const digits = q.replace(/\D/g, '');
-  // Build the ordered list of body shapes to try for THIS query.
+  const isMobile = /^0?5\d{8,9}$/.test(digits);
+  const isSaudiId = /^[12]\d{9}$/.test(digits);
+  // Build the ordered list of body shapes to try for THIS query. `mrNo` is the
+  // documented search field (MRN + name). Phone/ID use different field names that
+  // vary by build, plus many .NET HIS builds expose a single free-text search
+  // param — so for a numeric query we try the dedicated field spellings AND the
+  // generic search-term names, stopping at the first that returns rows.
   const shapes = [['mrNo', { mrNo: q }]];
-  if (/^\d{6,}$/.test(digits)) {
-    const isMobile = /^0?5\d{8,9}$/.test(digits);
-    const isSaudiId = /^[12]\d{9}$/.test(digits);
+  if (/^\d{5,}$/.test(digits)) {
     if (isMobile) {
-      for (const k of ['mobileNo', 'mobilePhone', 'contactNumber', 'phone', 'mobile'])
+      for (const k of ['mobileNo', 'mobilePhone', 'contactNumber', 'phone', 'mobile', 'mobileNumber', 'phoneNo'])
         shapes.push([k, { [k]: q }]);
     }
     if (isSaudiId || !isMobile) {
-      for (const k of ['iqamaId', 'identityNo', 'nationalId', 'idNo', 'saudiid', 'idNumber'])
+      for (const k of ['iqamaId', 'identityNo', 'nationalId', 'idNo', 'saudiid', 'idNumber', 'nationalID', 'identityNumber', 'nid'])
         shapes.push([k, { [k]: q }]);
     }
+    // Generic single free-text search field (matches across MRN/name/phone/ID on
+    // builds that have it) — last resort so it never masks a dedicated-field hit.
+    for (const k of ['searchText', 'searchValue', 'keyword', 'searchTerm', 'term', 'filterText', 'search'])
+      shapes.push([k, { [k]: q }]);
   }
+  const tried = [];
   for (const [field, body] of shapes) {
     let r;
     try { r = await hisFetch('/patient-api/api/v1/Patient/Search', { body }); }
-    catch (e) { continue; }
+    catch (e) { if (debug) tried.push({ field, error: String(e.message || e).slice(0, 120) }); continue; }
+    const n = rawCount(r);
+    if (debug) tried.push({ field, rawCount: n });
     const rows = patientsFrom(r);
-    if (rows.length) return { patients: rows, matchedBy: field };
+    if (rows.length) return { patients: rows, matchedBy: field, tried };
   }
-  return { patients: [], matchedBy: null };
+  return { patients: [], matchedBy: null, tried };
 }
 
 app.get('/search', requireAuth, async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (!q) return res.status(400).json({ ok: false, error: 'q is required' });
+  const debug = String(req.query.debug || '') === '1';
   try {
-    const { patients, matchedBy } = await _patientSearch(q);
-    return res.json({ ok: true, q, count: patients.length, patients, matchedBy });
+    const { patients, matchedBy, tried } = await _patientSearch(q, debug);
+    const out = { ok: true, q, count: patients.length, patients, matchedBy };
+    if (debug) out.tried = tried;   // per-field attempts (which body shape hit)
+    return res.json(out);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
