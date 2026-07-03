@@ -43,6 +43,33 @@ function hoModalityMatches(study, order) {
   if (!a || !b) return true;
   return a === b;
 }
+// Body-part tokens (light client mirror of the connector's bodyTokens): drop the
+// modality/view/laterality filler and keep the anatomy words, so we can tell a
+// CHEST study apart from a KNEE study when both are the same modality (XR).
+const HO_STOP = new Set(['XR', 'CT', 'MR', 'MRI', 'US', 'THE', 'AND', 'VIEW', 'VIEWS', 'AP',
+  'PA', 'LAT', 'LATERAL', 'OBLIQUE', 'OBLIQUES', 'LT', 'RT', 'LEFT', 'RIGHT', 'BILATERAL',
+  'BILAT', 'BOTH', 'WITH', 'WITHOUT', 'CONTRAST', 'SERIES', 'STUDY', 'SCAN', 'PLAIN',
+  'ROUTINE', 'PORTABLE', 'STANDING', 'ERECT', 'SUPINE', 'ONE', 'TWO', 'THREE']);
+function hoBodyTokens(s) {
+  let t = ' ' + String(s || '').toUpperCase().replace(/[^A-Z]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  t = t.replace(/\bLUMBO\s?SACRAL\b/g, ' LUMBAR SPINE ').replace(/\bABDO?\b/g, ' ABDOMEN ').replace(/\bCXR\b/g, ' CHEST ');
+  return [...new Set(t.split(/\s+/).filter((w) => w.length > 2 && !HO_STOP.has(w)))];
+}
+function hoBodyOverlap(study, order) {
+  const a = hoBodyTokens((study && (study.study_desc || study.desc)) || '');
+  const b = hoBodyTokens((order && order.service) || '');
+  if (!a.length || !b.length) return false;   // no anatomy to compare → can't confirm
+  return a.some((t) => b.includes(t));
+}
+// Is an arrived study safe to bind to THIS order? Modality must match; and when the
+// patient has more than one exam on file (the wrong-study-write risk), the body part
+// must also line up. A single-exam file has no sibling to confuse it, so modality
+// alone suffices (keeps auto-write working even when DePACS leaves study_desc blank).
+function hoStudyMatchesOrder(study, order) {
+  if (!hoModalityMatches(study, order)) return false;
+  if (handoffOrders().length <= 1) return true;
+  return hoBodyOverlap(study, order);
+}
 
 function renderHandoffPage() {
   setTopbar('Radiology handoff', 'One patient, step by step');
@@ -281,13 +308,17 @@ function renderHandoffDE() {
     if (num) { num.classList.add('done'); num.textContent = '✓'; }
     const s = handoff.matched;
     const modMismatch = !hoModalityMatches(s, o);
+    const bodyDoubt = !modMismatch && !hoStudyMatchesOrder(s, o);   // same modality, but body-part didn't confirm (multi-exam file)
+    const suspect = modMismatch || bodyDoubt;
     box.innerHTML = `
-      <div class="ho-de-box ${modMismatch ? '' : 'ok'}"${modMismatch ? ' style="border-color:var(--warn,#b7791f)"' : ''}>
+      <div class="ho-de-box ${suspect ? '' : 'ok'}"${suspect ? ' style="border-color:var(--warn,#b7791f)"' : ''}>
         <div style="font-weight:700;color:var(--text)">🖼️ ${escapeHtml(s.modality || '')}${s.study_date ? ' · ' + escapeHtml(String(s.study_date).slice(0,16).replace('T',' ')) : ''}${s.study_desc ? ' · ' + escapeHtml(s.study_desc) : ''}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">study #${escapeHtml(String(s.study_id))}${s.status ? ' · ' + escapeHtml(s.status) : ''} · order: <b>${escapeHtml(o.service || '')}</b> (${escapeHtml(o.modality || '')})</div>
         <div style="font-size:12px;color:var(--muted);margin-top:4px">Current history: ${escapeHtml(s.history || '—')}</div>
         ${modMismatch
           ? `<div class="ho-note" style="color:var(--warn,#b7791f)">⚠️ This study is <b>${escapeHtml(hoNormMod(s.modality))}</b> but the order is <b>${escapeHtml(hoNormMod(o.modality))}</b> — likely a different exam. Did not auto-write. Confirm it's the right study before writing.</div>`
+          : bodyDoubt
+          ? `<div class="ho-note" style="color:var(--warn,#b7791f)">⚠️ This file has more than one exam and we couldn't confirm this study is the <b>${escapeHtml(o.service || 'ordered')}</b> exam. Did not auto-write. Verify the study matches the order before writing.</div>`
           : `<div class="ho-note">⚠️ Make sure this is the exam you just sent before writing.</div>`}
       </div>
       <div class="ho-actions">
@@ -388,11 +419,12 @@ async function handoffPollTick() {
     let pool = handoff.studies.filter(s => !base.has(String(s.study_id)));
     if (!pool.length) pool = handoff.studies.filter(s => _isToday(s.study_date));
     if (pool.length === 1) { handoff.matched = pool[0]; handoff.studyId = String(pool[0].study_id); handoffStopPolling(); renderHandoffDE();
-      // Auto-write ONLY when the arrived study's modality matches the picked order.
-      // On a multi-exam sitting the wrong-modality study can land first; auto-writing
-      // it would bind this order's indication + Emergency flag to the wrong exam. On a
-      // mismatch we leave it selected (with a warning) so the user writes it manually.
-      if ((handoff.history || '').trim() && hoModalityMatches(pool[0], handoffOrder())) handoffAutoWrite();
+      // Auto-write ONLY when the arrived study safely matches the picked order
+      // (modality + — when the patient has other exams — body part). On a multi-exam
+      // sitting a same-modality wrong-body study (XR chest vs XR knee) can land first;
+      // auto-writing it would bind this order's indication + Emergency flag to the
+      // wrong exam. On any doubt we leave it selected (with a warning) for manual write.
+      if ((handoff.history || '').trim() && hoStudyMatchesOrder(pool[0], handoffOrder())) handoffAutoWrite();
       return; }
     if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
@@ -632,6 +664,11 @@ async function handoffFileConfirm(billNo, serviceId, site, btn) {
           🔎 authorize → HTTP ${escapeHtml(String(a.status != null ? a.status : '—'))}${a.isSuccess != null ? ' · isSuccess:' + escapeHtml(String(a.isSuccess)) : ''}${a.message ? ' · msg: ' + escapeHtml(String(a.message)) : ''}${raw ? '<br>raw: ' + escapeHtml(raw.slice(0, 400)) : ''}</div>`;
       }
       out.innerHTML = `<div class="ho-de-box ok" style="display:block">✅ <b>Filed into Siratech</b>${r.authorized ? ' and <b>authorized</b>' : ' — <b>pending authorization</b> (verify in Siratech)'}.${r.note ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${escapeHtml(r.note)}</div>` : ''}${authDbg}</div>`;
+      // Filed successfully — neutralise this test's File button so a later "Check
+      // report" (natural when working a sibling test) can't re-file the same result.
+      const card = out.closest('.ho-de-box');
+      const fileBtn = card && card.querySelector('.ho-actions .btn-primary');
+      if (fileBtn) { fileBtn.disabled = true; fileBtn.textContent = '✅ Filed'; fileBtn.onclick = null; }
     } else {
       out.innerHTML = `<div class="ho-note">Not filed — ${escapeHtml((r && (r.note || r.reason || r.step)) || 'unknown reason')}.</div>`;
     }

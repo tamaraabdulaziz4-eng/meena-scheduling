@@ -410,6 +410,33 @@ async function buildMatch(file, wantBillNo, site) {
       allUnique: tests.length > 0 && tests.every((t) => t.decision === 'unique'),
     });
   }
+
+  // ── Sibling-study de-dup ─────────────────────────────────────────────────────
+  // Two tests on the same bill must NEVER both resolve to the SAME DePACS study —
+  // the body-part gate is a subset match, so a single terse study ("XR SHOULDER")
+  // can legitimately match two overlapping tests ("XR SHOULDER" + "XR SHOULDER 3
+  // VIEWS"). Filing both would attach ONE report PDF to two result rows — the exact
+  // wrong-outcome this module exists to prevent. If a study is claimed by more than
+  // one unique-matched test (across the whole file), demote ALL claimants to manual
+  // review so neither auto-files; a human then decides which test the report belongs to.
+  const studyClaims = new Map();
+  for (const o of out) for (const t of o.tests) {
+    if (t.decision === 'unique' && t.study && t.study.studyId != null) {
+      const k = String(t.study.studyId);
+      studyClaims.set(k, (studyClaims.get(k) || 0) + 1);
+    }
+  }
+  for (const o of out) {
+    for (const t of o.tests) {
+      if (t.decision === 'unique' && t.study && studyClaims.get(String(t.study.studyId)) > 1) {
+        t.decision = 'ambiguous';
+        t.matchKey = 'sibling-conflict';
+        t.reason = `study #${t.study.studyId} also matched another exam on this file — refusing to file the same report to two results; review manually`;
+        t.report = null;
+      }
+    }
+    o.allUnique = o.tests.length > 0 && o.tests.every((t) => t.decision === 'unique');
+  }
   // TEMP DEBUG: the FULL set of DePACS studies pulled for this MRN, pre-filter, so
   // the UI can show WHY a study was excluded from candidates (wrong status / MRN /
   // simply absent). This is what distinguishes "matcher too strict" from "study not
@@ -555,8 +582,13 @@ app.post('/results/file', requireAuth, async (req, res) => {
       for (const k of CHILD_ARRAYS) if (!Array.isArray(row[k])) row[k] = [];
       return row;
     });
+    // Re-find the target row in the normalised set by its unique id pair. NEVER fall
+    // back to details[0] — on a multi-test bill that would silently file the report
+    // into the WRONG (first) test. If the target can't be re-found (shouldn't happen,
+    // it came from plan.details), abort rather than write to the wrong row.
     const tgt = details.find((d) => d.invPatTestResultId === plan.target.invPatTestResultId
-      && String(d.inv_mast_service_id) === String(plan.target.inv_mast_service_id)) || details[0];
+      && String(d.inv_mast_service_id) === String(plan.target.inv_mast_service_id));
+    if (!tgt) throw new Error('target test row not found in details after normalisation — refusing to file to avoid the wrong test');
     details.forEach((d) => { d.isSelected = d === tgt; });
 
     // auditUser is the padded 8-digit employee code the SPA sends (e.g. "00101454").
