@@ -5,9 +5,18 @@
 // billing and imaging/report status) into one screen. Read-only.
 
 let psState = { q: '', patients: null, loading: false, sel: null, lookup: null, reqSeq: 0 };
+let psPendingQuery = '';   // set by openPatientLookup() so the page auto-searches on open
+
+// Deep-link into this page for a specific file/MRN (e.g. from the Home drill-down).
+function openPatientLookup(q) {
+  psPendingQuery = String(q || '').trim();
+  if (typeof showPage === 'function') showPage('patientsearch');
+}
 
 function renderPatientSearchPage() {
   setTopbar('Patient lookup', 'Find a patient and see all their exams in one place');
+  // Honour a pending deep-link query (from a Home tile / request row).
+  if (psPendingQuery) { psState = { ...psState, q: psPendingQuery, patients: null, sel: null, lookup: null }; }
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Lookup', 'Patient / exam lookup', 'Search by file number, national ID, or phone — then see the patient and every radiology exam, fully aggregated')}
@@ -23,6 +32,8 @@ function renderPatientSearchPage() {
     <div id="ps-detail"></div>`;
   if (psState.patients) renderPsResults();
   if (psState.lookup) renderPsDetail();
+  // Auto-run a deep-link search once the input is on screen.
+  if (psPendingQuery) { psPendingQuery = ''; psSearch(); }
 }
 
 async function psSearch() {

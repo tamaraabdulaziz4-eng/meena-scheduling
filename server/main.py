@@ -6200,15 +6200,19 @@ def radiology_stats(
     modality: str = Query(""),
     financial: str = Query(""),
     full: str = Query(""),
+    list_: str = Query("", alias="list"),
     nocache: str = Query(""),
     user=Depends(require_admin),
 ):
     """Live hospital-wide radiology-request statistics for managers, from Siratech
     HIS via the connector. Read-only. Sliced by branch, ordering department,
     ordering doctor, priority, pending-age and daily trend. `modality=1` adds an
-    exact (bounded, sampled) modality mix via per-order detail calls."""
+    exact (bounded, sampled) modality mix via per-order detail calls. `list=1` adds
+    the individual request rows (patient + exam) behind the counts, for drill-down."""
     import urllib.parse
     q = {}
+    if (list_ or "").strip() == "1":
+        q["list"] = "1"
     if (from_ or "").strip():
         q["from"] = from_.strip()
     if (to or "").strip():
