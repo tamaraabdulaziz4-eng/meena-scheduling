@@ -6361,6 +6361,20 @@ async def handoff_write_history(request: Request, user=Depends(require_admin)):
                  json.dumps({"file_no": (b.get("file_no") or "").strip()}))
     return out
 
+@app.get("/api/handoff/study-info-debug/{study_id}")
+def handoff_study_info_debug(study_id: int, user=Depends(require_admin)):
+    """TEMP read-only diagnostic: reveal which fields the Butterfly study-info body
+    carries for Emergency status and Category, so the handoff write can set them by
+    their real names on THIS build. Returns the full key list, plus the values of any
+    field whose name hints at emergency/category/status/priority — PHI values (name,
+    birthdate, id) are NOT echoed. Read-only; never writes."""
+    info = _elite_get(f"/study_management/get_study_info/{study_id}")
+    b = (info.get("body") or {}) if isinstance(info, dict) else {}
+    hint = re.compile(r"emerg|categ|priorit|urgen|amala|stat\b|flag|stat_", re.I)
+    interesting = {k: b.get(k) for k in b.keys()
+                   if hint.search(k) and not isinstance(b.get(k), (dict, list))}
+    return {"study_id": study_id, "all_keys": sorted(b.keys()), "emergency_category_fields": interesting}
+
 _PREF_KINDS = ("off", "unavailable")
 
 @app.get("/api/preferences")
