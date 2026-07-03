@@ -308,6 +308,25 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
 // holds the report — the strict, no-guess gate. READ-ONLY: it never writes.
 // GET /results/match/:file            → match every pending order for the file
 // POST /results/match {file, billNo}  → match one specific order (by bill no)
+// The DICOM accession (e.g. "SIRA1661") is Siratech-generated when the order is
+// imaged and is the SAME value DePACS stores in accession_number — the perfect
+// 1:1 key. But the HIS exposes it under different names per endpoint (the patient
+// lookup uses `accessionNumber`, the result-entry row historically `accessionNo`),
+// so try them all; without it the matcher falls back to fuzzy body-part matching
+// and goes ambiguous when a patient has several same-region studies in a day.
+function pickAccession(...objs) {
+  const keys = ['accessionNumber', 'accessionNo', 'accession_no', 'accession',
+                'accNo', 'barCode', 'barcode', 'sampleNo'];
+  for (const o of objs) {
+    if (!o) continue;
+    for (const k of keys) {
+      const v = o[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+  }
+  return null;
+}
+
 async function buildMatch(file, wantBillNo, site) {
   await getToken();                                    // ensure logged in (empId)
   const empId = currentEmpId();
@@ -347,7 +366,7 @@ async function buildMatch(file, wantBillNo, site) {
       const test = {
         serviceName: t.serviceName || null, categoryName: t.categoryName || null,
         invPatTestResultId: t.invPatTestResultId,
-        accession: t.accessionNo || null, orderDate,
+        accession: pickAccession(t, row), orderDate,
         invMastServiceId: t.inv_mast_service_id, orderId: t.emR_PAT_DTLS_INV_ORDER_ID || null,
       };
       const m = results.matchStudy({ mrno: row.mrno, serviceName: test.serviceName, categoryName: test.categoryName, orderDate, accession: test.accession }, studies);
@@ -358,7 +377,7 @@ async function buildMatch(file, wantBillNo, site) {
           reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes,
           preview: rep.reportText.slice(0, 600) };
       }
-      tests.push({ test, decision: m.decision, matchKey: m.key, reason: m.reason,
+      tests.push({ test, decision: m.decision, matchKey: m.key, reason: m.reason, orderAccession: test.accession || null,
         study: m.study ? { studyId: m.study.studyId, desc: m.study.desc, modality: m.study.modality, studyDate: m.study.studyDate, accession: m.study.accession } : null,
         candidates: m.candidates, report });
     }
@@ -424,7 +443,7 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
       tests: details.map((t) => ({ serviceName: t.serviceName, categoryName: t.categoryName, invMastServiceId: t.inv_mast_service_id, invPatTestResultId: t.invPatTestResultId })) };
   }
 
-  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: target.accessionNo || null }, studies);
+  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: pickAccession(target, row) }, studies);
   if (m.decision !== 'unique') {
     return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName }, decision: m.decision, reason: m.reason, candidates: m.candidates, writable: false };
   }
