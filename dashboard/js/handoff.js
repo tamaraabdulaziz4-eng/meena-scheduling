@@ -511,10 +511,14 @@ function renderHandoffResults(d) {
       </div>`;
     }
     const cands = (t.candidates || []).filter(c => c.bodyMatch && c.bodyMatch.length);
+    const allCands = t.candidates || [];
     return `<div class="ho-de-box" style="display:block;border-color:var(--warn,#b7791f)">
       <div><b>⚠️ ${escapeHtml(t.test.serviceName || '')}</b> — needs manual review</div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(t.reason || t.decision)}.
       ${cands.length ? 'Possible: ' + escapeHtml(cands.map(c => `${c.desc} (#${c.studyId})`).join(', ')) : 'No confident match — do not file automatically.'}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px">
+        🔎 key: <b>${escapeHtml(t.matchKey || '—')}</b> · order acc: <b>${escapeHtml(t.orderAccession != null ? String(t.orderAccession) : '—')}</b>
+        ${allCands.length ? ' · studies: ' + escapeHtml(allCands.map(c => (c.accession || '—') + ' #' + c.studyId).join(', ')) : ''}</div>
     </div>`;
   };
   box.innerHTML = orders.map(o => {
