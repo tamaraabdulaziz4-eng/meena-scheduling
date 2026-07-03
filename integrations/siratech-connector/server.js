@@ -869,7 +869,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // counts are drawn from — using the raw worklist length would flip exact days
     // to "≈ estimate" and re-inflate the KPI extrapolation (bills→bills stays
     // consistent this way).
-    const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length };
+    // catalogLoaded lets the dashboard tell "genuinely 0 radiology exams" apart
+    // from "the radiology catalog failed to load, so every line item was skipped
+    // and everything reads 0" — otherwise a transient catalog outage looks like a
+    // real zero day.
+    const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length, catalogLoaded: catalog.size > 0 };
     if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
     if (withFinance) financial = {
       ...meta, items, requests: reqWithRad, exams,

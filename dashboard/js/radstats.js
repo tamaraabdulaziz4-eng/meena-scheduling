@@ -604,16 +604,22 @@ function rsRenderBody() {
   // Exams is per-exam; when only a sample was priced we scale it to the total so
   // it isn't misleadingly smaller than the request count.
   let examsVal = '<span class="rs-pending">…</span>';
-  if (m) examsVal = m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0);
+  // catalogLoaded===false → the exam catalog failed to load, so exams/revenue are a
+  // false 0. Show "—" rather than a misleading zero.
+  if (m) examsVal = m.catalogLoaded === false ? '—'
+    : (m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0));
   // Insurance-covered: exact when everything was priced, else scaled to the total
   // (a sample of 800 vs 1,118 must NOT read as "the rest are unpaid").
   let coveredVal = '<span class="rs-pending">…</span>', coveredSub = '';
   if (f) {
-    const priced = f.requests || 0;
-    const cov = ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count || 0;
-    const share = priced ? cov / priced : 0;
-    if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
-    else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
+    if (f.catalogLoaded === false) { coveredVal = '—'; coveredSub = 'catalog unavailable'; }
+    else {
+      const priced = f.requests || 0;
+      const cov = ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count || 0;
+      const share = priced ? cov / priced : 0;
+      if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
+      else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
+    }
   }
 
   const kpis = `
@@ -701,6 +707,7 @@ function rsModalityInner() {
       <button class="btn btn-primary btn-sm" onclick="rsLoadModality()">Load modality mix</button>
     </div>`;
   }
+  if (m.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — the modality mix can't be computed right now. <button class="btn btn-sm" onclick="rsLoad(false, true)">Refresh</button></div>`;
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
   const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: RS_MOD_COLOR[x.modality] || '#94a3b8' }));
   return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
@@ -724,6 +731,7 @@ function rsFinancialInner() {
       <button class="btn btn-primary btn-sm" onclick="rsLoadFinancial()">Load revenue</button>
     </div>`;
   }
+  if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — revenue &amp; payer split can't be computed right now. <button class="btn btn-sm" onclick="rsLoad(false, true)">Refresh</button></div>`;
   const PAYER_COLOR = { 'Insurance': '#6B4EFF', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
   const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: PAYER_COLOR[p.type] || '#94a3b8' }));
   const payerDonut = rsDonut(payerSegs, { centerVal: f.requests || 0, centerLabel: 'requests' });

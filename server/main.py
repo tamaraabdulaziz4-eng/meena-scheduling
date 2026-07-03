@@ -6555,7 +6555,8 @@ def _downtime_throttle():
     _downtime_pub_hits.append(now)
 
 def _check_downtime_token(token):
-    if not token or token != _downtime_token():
+    import secrets
+    if not token or not secrets.compare_digest(str(token), str(_downtime_token())):
         raise HTTPException(403, "Invalid or expired link. Ask your team lead for a new one.")
 
 @app.get("/api/public/downtime/info")
@@ -6648,7 +6649,8 @@ def _reports_throttle():
     _reports_pub_hits.append(now)
 
 def _check_reports_token(token):
-    if not token or token != _reports_token():
+    import secrets
+    if not token or not secrets.compare_digest(str(token), str(_reports_token())):
         raise HTTPException(403, "Invalid or expired link. Ask the radiology team for a new one.")
 
 def _study_is_reported(status):
@@ -7733,7 +7735,7 @@ def _radiology_snapshot_loop():
     """Once a day, store a snapshot of the *previous* KSA day's radiology stats so
     the month/quarter comparisons have history. We capture yesterday (fully
     settled) rather than today, and back-fill up to 7 recent missing days so a
-    weekend restart doesn't leave gaps. The per-day claim + PK make it run once
+    weekend restart doesn't leave gaps. The per-day row check + PK make it run once
     even across gunicorn workers."""
     import time
     from datetime import datetime, timezone, timedelta
