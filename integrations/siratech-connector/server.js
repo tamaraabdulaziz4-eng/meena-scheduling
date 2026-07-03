@@ -237,8 +237,25 @@ function normalizeOrder(o, ext) {
   };
 }
 
+// First non-empty value across a list of candidate field names (HIS field naming
+// is inconsistent, so we probe several spellings for each attribute).
+function firstOf(o, keys) {
+  for (const k of keys) {
+    const v = o[k];
+    if (v != null && String(v).trim() !== '') return v;
+  }
+  return null;
+}
 function normalizePatient(p) {
   if (!p) return null;
+  const height = firstOf(p, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
+  const weight = firstOf(p, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
+  let bmi = firstOf(p, ['bmi', 'BMI', 'bodyMassIndex']);
+  const hN = Number(height), wN = Number(weight);
+  if (bmi == null && Number.isFinite(hN) && hN > 0 && Number.isFinite(wN) && wN > 0) {
+    const m = hN > 3 ? hN / 100 : hN;                 // height given in cm vs m
+    bmi = Math.round((wN / (m * m)) * 10) / 10;
+  }
   return {
     mrno: p.mrno || '',
     name: clean(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`),
@@ -249,6 +266,13 @@ function normalizePatient(p) {
     dob: p.dob ? String(p.dob).slice(0, 10) : '',
     nationalId: p.saudiid || p.iqamaId || p.passportId || null,
     nationality: p.countryName || '',
+    // ── clinically-relevant extras (best-effort; present only if the HIS row has them) ──
+    height: height != null ? String(height) : null,
+    weight: weight != null ? String(weight) : null,
+    bmi: bmi != null ? String(bmi) : null,
+    bloodGroup: firstOf(p, ['bloodGroup', 'bloodGroupName', 'blood_group', 'bloodgroup']),
+    allergy: firstOf(p, ['allergy', 'allergies', 'allergyName', 'knownAllergies', 'drugAllergy']),
+    maritalStatus: firstOf(p, ['maritalStatus', 'maritalStatusName']),
     isBilled: !!p.isBilled,
   };
 }
@@ -300,8 +324,13 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
     // Enrich each order with its clinical indication + billing/ER status.
     const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
     const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
-    const patient = normalizePatient(((pat && pat.json && pat.json.data) || [])[0]);
-    return res.json({ ok: true, file, patient, orders, count: orders.length, fetchedAt: new Date().toISOString() });
+    const rawPatient = ((pat && pat.json && pat.json.data) || [])[0] || null;
+    const patient = normalizePatient(rawPatient);
+    // TEMP DEBUG (read-only, key NAMES only — no PHI values): reveal which fields the
+    // HIS patient row actually carries, so we can wire any missing clinical attribute
+    // (height/weight/blood group/allergy) to its real field name. Drop once mapped.
+    const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
+    return res.json({ ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }

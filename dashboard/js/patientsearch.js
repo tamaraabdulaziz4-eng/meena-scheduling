@@ -102,31 +102,65 @@ function psField(label, val, opts) {
   </div>`;
 }
 
+function psInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '؟';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+// A big, glanceable stat tile (height / weight / BMI / blood group).
+function psTile(label, value, unit) {
+  const v = (value == null || String(value).trim() === '') ? '' : String(value);
+  if (!v) return '';
+  return `<div class="ps-tile">
+    <div class="ps-tile-v">${escapeHtml(v)}${unit ? `<span class="ps-tile-u">${escapeHtml(unit)}</span>` : ''}</div>
+    <div class="ps-tile-l">${escapeHtml(label)}</div>
+  </div>`;
+}
+
 function renderPsDetail() {
   const det = document.getElementById('ps-detail');
   if (!det) return;
   const d = psState.lookup || {};
   const p = d.patient || {};
   const orders = d.orders || [];
+  const tiles = [
+    psTile('Height', p.height, p.height && Number(p.height) > 3 ? 'cm' : ''),
+    psTile('Weight', p.weight, p.weight ? 'kg' : ''),
+    psTile('BMI', p.bmi, ''),
+    psTile('Blood', p.bloodGroup, ''),
+  ].filter(Boolean).join('');
+  // Contrast-safety: a known allergy must be impossible to miss on a radiology screen.
+  const allergyAlert = p.allergy
+    ? `<div class="ps-alert">⚠️ <b>Allergy:</b> ${escapeHtml(p.allergy)}</div>` : '';
   const patCard = `
-    <div class="card">
-      <div class="ps-pt-head">
-        <div>
+    <div class="card ps-pt-card">
+      <div class="ps-id">
+        <div class="ps-avatar">${escapeHtml(psInitials(p.name || p.nameArabic))}</div>
+        <div class="ps-id-main">
           <div class="ps-pt-name">${escapeHtml(p.name || '—')}</div>
           ${p.nameArabic ? `<div class="ps-pt-ar">${escapeHtml(p.nameArabic)}</div>` : ''}
+          <div class="ps-id-chips">
+            ${p.gender ? `<span class="ps-chip ps-chip-strong">${escapeHtml(p.gender)}</span>` : ''}
+            ${p.age ? `<span class="ps-chip">${escapeHtml(p.age)}</span>` : ''}
+            ${p.nationality ? `<span class="ps-chip">${escapeHtml(p.nationality)}</span>` : ''}
+          </div>
         </div>
-        <div class="ps-pt-badges">
-          ${p.gender ? `<span class="badge">${escapeHtml(p.gender)}</span>` : ''}
-          ${p.age ? `<span class="badge">${escapeHtml(p.age)}</span>` : ''}
+        <div class="ps-id-mrn">
+          <div class="ps-id-mrn-l">FILE / MRN</div>
+          <div class="ps-id-mrn-v">${escapeHtml(p.mrno || '—')}</div>
         </div>
       </div>
-      <div class="ps-grid" style="margin-top:10px">
-        ${psField('File / MRN', p.mrno, { always: true })}
+      ${allergyAlert}
+      ${tiles ? `<div class="ps-tiles">${tiles}</div>` : ''}
+      <div class="ps-grid ps-idgrid">
         ${psField('National ID / Iqama', p.nationalId)}
         ${psField('Phone', p.phone)}
         ${psField('Date of birth', p.dob)}
-        ${psField('Nationality', p.nationality)}
+        ${psField('Marital status', p.maritalStatus)}
       </div>
+      ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
+        ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
+        : ''}
     </div>`;
 
   let examBlock;
