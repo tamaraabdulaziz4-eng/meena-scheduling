@@ -94,13 +94,21 @@ function bodyTokens(s) {
 // Laterality of an exam name → 'L' | 'R' | 'B' | null. Only whole-word matches
 // (so "RIB" is never read as right, "SILVER" never as left).
 function sideOf(s) {
-  const words = String(s || '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/);
+  const raw = String(s || '').toUpperCase();
+  const words = raw.replace(/[^A-Z ]/g, ' ').split(/\s+/);
   let l = false, r = false, b = false;
   for (const w of words) {
     if (w === 'LEFT' || w === 'LT') l = true;
     else if (w === 'RIGHT' || w === 'RT') r = true;
     else if (w === 'BILATERAL' || w === 'BILAT' || w === 'BOTH') b = true;
   }
+  // This DePACS instance also uses a compact "R."/"L." laterality prefix for
+  // EXTREMITIES ("X R.KNEE", "L.SHOULDER"). Read it so a right-knee study can't
+  // pass the side gate against a left-knee order. `L.` is overloaded — it also
+  // means LUMBAR for the spine ("X L.SPNE") — so treat `L.` as "left" ONLY when it
+  // is NOT immediately a spine token (SP…). `R.` is unambiguous (no spine region R).
+  if (/\bR\.\s*[A-Z]/.test(raw)) r = true;
+  if (/\bL\.\s*(?!SP)[A-Z]/.test(raw)) l = true;
   if (b || (l && r)) return 'B';
   if (l) return 'L';
   if (r) return 'R';
@@ -188,9 +196,26 @@ async function dpToken(force = false) {
 // All VERIFIED studies for an MRN, enriched with the report description (which the
 // list endpoint leaves blank — it lives in the per-study report info).
 async function depacsStudies(mrno) {
-  const token = await dpToken();
-  const r = await dpFetch(`/study/get_studies?start_date=2015-01-01&end_date=2035-12-31&page_size=100&current_page=1&patient_id=${encodeURIComponent(mrno)}`, { token });
-  const rows = (r.json && r.json.body && r.json.body.data) || [];
+  // Page through ALL studies (not just the first 100) so a high-volume patient's
+  // recent/reported study can't fall off the end and read as "no report".
+  let token = await dpToken();
+  const qs = (page) => `/study/get_studies?start_date=2015-01-01&end_date=2035-12-31&page_size=100&current_page=${page}&patient_id=${encodeURIComponent(mrno)}`;
+  const fetchPage = async (page) => {
+    let r = await dpFetch(qs(page), { token });
+    if (r.status === 401) { token = await dpToken(true); r = await dpFetch(qs(page), { token }); }  // token lapsed → refresh once
+    // A DePACS error must surface as an error — NEVER as an empty list, which would
+    // wrongly tell staff the patient has no imaging/report when DePACS was unreachable.
+    if (!r || (r.status && r.status >= 400) || r.json == null) {
+      throw new Error(`DePACS study lookup failed (HTTP ${r ? r.status : 'unreachable'})`);
+    }
+    return (r.json && r.json.body && r.json.body.data) || [];
+  };
+  const rows = [];
+  for (let page = 1; page <= 20; page++) {          // hard cap 2000 studies
+    const batch = await fetchPage(page);
+    rows.push(...batch);
+    if (batch.length < 100) break;                  // last page
+  }
   const out = [];
   for (const s of rows) {
     let desc = s.study_desc || '';

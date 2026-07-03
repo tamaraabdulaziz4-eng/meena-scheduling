@@ -534,6 +534,19 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
   if (m.decision !== 'unique') {
     return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName }, decision: m.decision, reason: m.reason, candidates: m.candidates, writable: false };
   }
+  // Sibling-study guard on the WRITE path (mirrors buildMatch): if ANOTHER test on
+  // this bill also resolves uniquely to the SAME DePACS study, filing would attach
+  // one report to two result rows. Refuse — a human must decide which test owns it.
+  for (const t of details) {
+    if (t === target) continue;
+    if (String(t.inv_mast_service_id) === String(target.inv_mast_service_id)) continue;
+    const sm = results.matchStudy({ mrno: row.mrno, serviceName: t.serviceName, categoryName: t.categoryName, orderDate, accession: pickAccession(t, row) }, studies);
+    if (sm.decision === 'unique' && sm.study && String(sm.study.studyId) === String(m.study.studyId)) {
+      return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
+        decision: 'ambiguous', reason: `study #${m.study.studyId} also matches "${t.serviceName}" on this bill — file manually to the correct test`,
+        candidates: m.candidates, writable: false };
+    }
+  }
   const report = await results.depacsReport(m.study.studyId);
 
   // The radiology result is template-based: fetch the test's template so we can
