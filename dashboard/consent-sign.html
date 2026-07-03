@@ -92,7 +92,9 @@ function render(d){
   show(
     // The REAL Meena form, pre-filled with her data — she reads the actual document.
     '<div class="card"><div class="formlbl">اقرئي النموذج · Read the form</div>'
-    + '<img class="formimg" src="/api/public/consent/'+encodeURIComponent(TOKEN)+'/form.png?ts='+Date.now()+'" alt="نموذج الإقرار"></div>'
+    + '<img class="formimg" src="/api/public/consent/'+encodeURIComponent(TOKEN)+'/form.png?ts='+Date.now()+'" alt="نموذج الإقرار"'
+    + ' onerror="this.style.display=\'none\';var w=document.getElementById(\'formerr\');if(w)w.style.display=\'block\';">'
+    + '<div id="formerr" class="msg err" style="display:none">تعذّر تحميل صورة النموذج · Could not load the form image. الرجاء إبلاغ الأخصائي.</div></div>'
 
     + '<div class="card">'
     + '<h2>اختاري السبب · <span style="font-weight:500;color:var(--mut)">Select the reason</span></h2>'

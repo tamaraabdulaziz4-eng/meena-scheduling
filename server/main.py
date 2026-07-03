@@ -6819,6 +6819,23 @@ def public_consent_get(token: str):
             "patient_type": r.get("patient_type") or "", "branch": r.get("branch") or "",
             "weight": r.get("weight") or "", "height": r.get("height") or ""}
 
+@app.get("/api/public/consent-selftest")
+def public_consent_selftest():
+    """No-PHI health check for the consent form renderer: renders the official form
+    with dummy data so we can confirm PyMuPDF works on THIS server (the patient's
+    form.png is broken when this fails). Returns the byte size on success or the
+    real error on failure. Safe to expose — no patient data involved."""
+    try:
+        from consent_pdf import render_consent_png
+        png = render_consent_png({"name": "TEST", "mrn": "0", "dob": "", "procedure": "TEST",
+                                  "weight": "", "height": "", "patient_type": "", "physician": "",
+                                  "technologist": ""})
+        return {"ok": True, "png_bytes": len(png)}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": f"{type(e).__name__}: {e}",
+                "trace": traceback.format_exc()[-800:]}
+
 @app.get("/api/public/consent/{token}/form.png")
 def public_consent_form_image(token: str):
     """Render the OFFICIAL Meena form pre-filled with the patient's data as an image,
