@@ -42,16 +42,11 @@ _CHECKS = {
 _SIG_RECT = (215, 618, 340, 653)
 
 
-def generate_consent_pdf(data, signature_png=None):
-    """data: dict of string field values (see _FIELDS keys) plus booleans for the
-    checkboxes ('outpatient'/'er'/'not_married'/'lmp'/'iud'). `not_pregnant`,
-    `risks` and `read` are always marked (the patient is signing the declaration).
-    signature_png: PNG bytes of the captured signature (optional).
-    Returns the completed PDF as bytes."""
-    import fitz  # PyMuPDF
-
-    doc = fitz.open(_TEMPLATE)
-    page = doc[0]
+def _stamp(page, data, signature_png=None, mark_declaration=True):
+    """Stamp the patient data + checkmarks (+ optional signature image) onto a page
+    of the official template. `mark_declaration` marks the always-affirmed boxes
+    (not-pregnant / risks / read) — set False for a blank read-only preview."""
+    import fitz
 
     def put(point, text, size=9):
         if text is None:
@@ -64,8 +59,9 @@ def generate_consent_pdf(data, signature_png=None):
     for key, point in _FIELDS.items():
         put(point, data.get(key))
 
-    # Checkboxes the signature always affirms, plus the ones chosen.
-    marks = {"not_pregnant", "risks", "read"}
+    marks = set()
+    if mark_declaration:
+        marks |= {"not_pregnant", "risks", "read"}
     if data.get("patient_type") == "er":
         marks.add("er")
     elif data.get("patient_type") == "outpatient":
@@ -84,6 +80,26 @@ def generate_consent_pdf(data, signature_png=None):
         except Exception:
             pass  # a bad/empty signature must not fail the whole document
 
+
+def generate_consent_pdf(data, signature_png=None):
+    """Complete, signed consent PDF (bytes). `data`: field values + checkbox choices
+    (see _FIELDS/_CHECKS). `signature_png`: PNG bytes of the captured signature."""
+    import fitz  # PyMuPDF
+    doc = fitz.open(_TEMPLATE)
+    _stamp(doc[0], data, signature_png)
     out = doc.tobytes()
     doc.close()
     return out
+
+
+def render_consent_png(data, scale=2.0):
+    """Render the OFFICIAL form (page 1) pre-filled with the patient's data as a PNG
+    image, so the patient sees the real Meena form on her phone before signing. No
+    signature is stamped; the declaration boxes are shown ticked."""
+    import fitz
+    doc = fitz.open(_TEMPLATE)
+    _stamp(doc[0], data, signature_png=None, mark_declaration=True)
+    pix = doc[0].get_pixmap(matrix=fitz.Matrix(scale, scale))
+    png = pix.tobytes("png")
+    doc.close()
+    return png

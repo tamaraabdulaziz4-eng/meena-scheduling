@@ -53,6 +53,8 @@
   .done .big{ font-size:56px; } .done .t{ font-size:20px; font-weight:800; margin-top:8px; }
   .done .s{ color:var(--mut); margin-top:6px; direction:ltr; }
   .foot{ text-align:center; color:var(--mut); font-size:11px; margin-top:16px; direction:ltr; }
+  .formlbl{ font-size:13px; font-weight:800; color:var(--pri); margin-bottom:8px; }
+  .formimg{ width:100%; height:auto; display:block; border:1px solid var(--line); border-radius:10px; }
 </style>
 </head>
 <body>
@@ -87,36 +89,22 @@ function load(){
 }
 
 function render(d){
-  var isER = (d.patient_type==='er');
   show(
-    '<div class="card"><div class="sum">'
-    + row('المريضة · Patient', d.name, false)
-    + row('الملف · File', d.mrn||d.file_no, true)
-    + (d.dob?row('الميلاد · DOB', d.dob, true):'')
-    + row('الإجراء · Procedure', d.procedure||'—', false)
-    + (d.branch?row('الفرع · Branch', d.branch, false):'')
-    + row('النوع · Type', isER?'طوارئ · ER':'مراجعة · Outpatient', false)
-    + '</div></div>'
+    // The REAL Meena form, pre-filled with her data — she reads the actual document.
+    '<div class="card"><div class="formlbl">اقرئي النموذج · Read the form</div>'
+    + '<img class="formimg" src="/api/public/consent/'+encodeURIComponent(TOKEN)+'/form.png?ts='+Date.now()+'" alt="نموذج الإقرار"></div>'
 
     + '<div class="card">'
-    + '<div class="decl">أقر بأني لست حامل أثناء عمل فحص الأشعة.<span class="en">I declare I am not pregnant during the exam.</span></div>'
-    + '<h2 style="margin-top:14px">بسبب · <span style="font-weight:500;color:var(--mut)">Because</span></h2>'
+    + '<h2>اختاري السبب · <span style="font-weight:500;color:var(--mut)">Select the reason</span></h2>'
     + opt('not_married','لست متزوجة','Not married')
     + opt('lmp','تاريخ آخر دورة شهرية','Last menstrual period')
     + '<div class="lmp" id="lmpwrap"><input type="date" id="lmp"></div>'
     + opt('iud','مانع الحمل اللولب','IUD')
     + '</div>'
 
-    + '<div class="card"><h2>قياسات (اختياري) · <span style="font-weight:500;color:var(--mut)">Vitals (optional)</span></h2>'
-    + '<div class="vitals">'
-    + '<div class="field"><div class="lab">الوزن · Weight (kg)</div><input id="weight" inputmode="decimal" value="'+esc(d.weight)+'"></div>'
-    + '<div class="field"><div class="lab">الطول · Height (cm)</div><input id="height" inputmode="decimal" value="'+esc(d.height)+'"></div>'
-    + '</div></div>'
-
-    + '<div class="card"><div class="risk">أدرك أن هذا الإجراء يستخدم الأشعة المؤيّنة وقد يعرّض الجنين للمخاطر، وأوافق على إجرائه.'
-    + '<span class="en">I understand this procedure uses ionizing radiation which may pose a risk to a fetus, and I consent to it.</span></div></div>'
-
     + '<div class="card"><h2>التوقيع · <span style="font-weight:500;color:var(--mut)">Signature</span></h2>'
+    + '<div class="decl" style="margin-bottom:12px;font-size:13.5px">بالتوقيع أدناه، أقرّ بأني قرأت النموذج أعلاه ولست حامل، وأوافق على إجراء الفحص.'
+    + '<span class="en">By signing, I confirm I have read the form above, I am not pregnant, and I consent to the exam.</span></div>'
     + '<div class="sigbox"><canvas id="sig"></canvas><button type="button" class="sigclear" onclick="clearSig()">مسح · Clear</button></div>'
     + '<div class="hint">وقّعي هنا بإصبعك · sign with your finger</div>'
     + '<button class="btn" id="save" onclick="submitSign()">حفظ الإقرار · Submit</button>'
@@ -162,9 +150,7 @@ function submitSign(){
   msg.textContent='';
   fetch('/api/public/consent/'+encodeURIComponent(TOKEN)+'/sign',{
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ signature:c.toDataURL('image/png'), reason:reason, lmp_date:lmp,
-      weight:(document.getElementById('weight')||{}).value||'', height:(document.getElementById('height')||{}).value||'',
-      hcg:'' })
+    body:JSON.stringify({ signature:c.toDataURL('image/png'), reason:reason, lmp_date:lmp, hcg:'' })
   }).then(function(r){
     if(!r.ok) return r.json().then(function(d){ throw new Error((d&&d.detail)||('HTTP '+r.status)); });
     return r.json();
