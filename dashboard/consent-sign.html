@@ -126,7 +126,10 @@ function pickReason(val){
 function initPad(){
   var c=document.getElementById('sig'); if(!c) return;
   var r=c.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
-  c.width=Math.round(r.width*dpr); c.height=Math.round(r.height*dpr);
+  // Guarantee a non-zero backing store even if the element isn't laid out yet —
+  // a 0-size canvas makes toDataURL throw on some engines.
+  var w=Math.round((r.width||c.offsetWidth||320))*dpr, h=Math.round((r.height||c.offsetHeight||200))*dpr;
+  c.width=w; c.height=h;
   var ctx=c.getContext('2d'); ctx.scale(dpr,dpr);
   ctx.lineWidth=2.4; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#12227a';
   function pos(e){ var b=c.getBoundingClientRect(), t=e.touches?e.touches[0]:e; return {x:t.clientX-b.left, y:t.clientY-b.top}; }
@@ -146,16 +149,21 @@ function submitSign(){
   var lmp=(document.getElementById('lmp')||{}).value||'';
   if(reason==='lmp' && !lmp){ msg.className='msg err'; msg.textContent='أدخلي تاريخ آخر دورة · Enter the last menstrual period'; return; }
   var c=document.getElementById('sig');
+  var sigData;
+  try { sigData=c.toDataURL('image/png'); }
+  catch(err){ msg.className='msg err'; msg.textContent='تعذّر قراءة التوقيع على هذا المتصفح — جرّبي متصفح آخر. ('+esc(err&&err.message||'')+')'; return; }
+  if(!sigData || sigData.length<200){ msg.className='msg err'; msg.textContent='التوقيع فارغ، أعيدي المحاولة · Signature empty'; return; }
   var btn=document.getElementById('save'); btn.disabled=true; var t0=btn.textContent; btn.textContent='جارٍ الحفظ…';
   msg.textContent='';
   fetch('/api/public/consent/'+encodeURIComponent(TOKEN)+'/sign',{
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ signature:c.toDataURL('image/png'), reason:reason, lmp_date:lmp, hcg:'' })
+    body:JSON.stringify({ signature:sigData, reason:reason, lmp_date:lmp, hcg:'' })
   }).then(function(r){
-    if(!r.ok) return r.json().then(function(d){ throw new Error((d&&d.detail)||('HTTP '+r.status)); });
+    // Show the true error even when the body isn't JSON (proxy/HTML error page).
+    if(!r.ok){ return r.text().then(function(t){ var m; try{ m=JSON.parse(t).detail; }catch(e){ m=t; } throw new Error(m||('HTTP '+r.status)); }); }
     return r.json();
   }).then(function(){ doneView(); }).catch(function(e){
-    btn.disabled=false; btn.textContent=t0; msg.className='msg err'; msg.textContent=esc(e.message||'تعذّر الحفظ');
+    btn.disabled=false; btn.textContent=t0; msg.className='msg err'; msg.textContent=esc((e&&e.message)||'تعذّر الحفظ');
   });
 }
 

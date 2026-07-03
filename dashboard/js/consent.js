@@ -171,7 +171,10 @@ function consentInitPad() {
     const r = c.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     // Preserve nothing on resize (fresh pad); set backing store to CSS size * dpr.
-    c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+    // Fall back to non-zero dims if the element isn't laid out yet (a 0-size canvas
+    // makes toDataURL throw on some engines).
+    c.width = Math.round((r.width || c.offsetWidth || 320) * dpr);
+    c.height = Math.round((r.height || c.offsetHeight || 180) * dpr);
     const ctx = c.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#12227a';
@@ -207,7 +210,10 @@ async function consentSave(btn) {
   const lmp = (document.getElementById('cn-lmp') || {}).value || '';
   if (reason === 'lmp' && !lmp) { if (msg) msg.innerHTML = `<span class="cn-err">Enter the last menstrual period date · أدخلي تاريخ آخر دورة</span>`; return; }
   const c = document.getElementById('cn-sig');
-  const signature = c ? c.toDataURL('image/png') : '';
+  let signature = '';
+  try { signature = c ? c.toDataURL('image/png') : ''; }
+  catch (err) { if (msg) msg.innerHTML = `<span class="cn-err">Couldn't read the signature on this browser — try another. (${escapeHtml(err.message || '')})</span>`; return; }
+  if (!signature || signature.length < 200) { if (msg) msg.innerHTML = `<span class="cn-err">Signature empty — please sign again · التوقيع فارغ</span>`; return; }
   const payload = {
     file_no: p.file_no || p.mrno || '',
     mrn: p.mrno || p.file_no || '',
