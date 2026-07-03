@@ -2,7 +2,7 @@
 //  • Web Push notifications (even when the app is closed).
 //  • Offline support: runtime-caches the app shell so the installed app opens
 //    without a connection after the first online visit.
-const CACHE = 'meena-v33';
+const CACHE = 'meena-v34';
 const CORE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png',
               '/apple-touch-icon.png', '/meena_logo.png', '/meena_logo_transparent.png'];
 
@@ -31,9 +31,16 @@ self.addEventListener('fetch', event => {
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).then(res => {
-        caches.open(CACHE).then(c => c.put('/', res.clone())).catch(() => {});
+        // Only cache the real app shell ('/'), and only a good (2xx) response.
+        // Previously EVERY navigation was stored under '/', so opening a public
+        // page (e.g. /reports-public.html) or hitting an error page overwrote
+        // the shell and broke the next offline launch.
+        if (url.pathname === '/' && res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put('/', copy)).catch(() => {});
+        }
         return res;
-      }).catch(() => caches.match('/').then(r => r || caches.match(req)))
+      }).catch(() => caches.match(req).then(r => r || caches.match('/')))
     );
     return;
   }

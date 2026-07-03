@@ -38,7 +38,7 @@ const https = require('https');
 const dpAgent = new https.Agent({ rejectUnauthorized: false });
 
 const DEPACS_BASE = (process.env.DEPACS_BASE || 'https://test-api.diagnosticselite.net:10443/api/v1').replace(/\/+$/, '');
-const DEPACS_USER = process.env.DEPACS_USER || 'Meenahealth3';
+const DEPACS_USER = process.env.DEPACS_USER || '';   // set via env — no hardcoded service account
 const DEPACS_PASS = process.env.DEPACS_PASS || '';
 
 // ── small helpers ─────────────────────────────────────────────────────────────

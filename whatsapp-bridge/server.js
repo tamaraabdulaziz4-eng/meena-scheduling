@@ -198,10 +198,23 @@ app.get('/session', requireAuth, (_req, res) => {
 // Auth via ?token=<BRIDGE_API_TOKEN> (so it works from a plain browser URL).
 app.get('/qr', async (req, res) => {
   if (API_TOKEN) {
-    const t = String(req.query.token || '');
-    const a = Buffer.from(t), b = Buffer.from(API_TOKEN);
+    const fromQuery = String(req.query.token || '');
+    const cookies = Object.fromEntries(
+      (req.headers.cookie || '').split(';')
+        .map((c) => c.trim().split('='))
+        .filter((p) => p[0])
+        .map((p) => [p[0], decodeURIComponent(p.slice(1).join('='))]));
+    const supplied = fromQuery || String(cookies.qr_token || '');
+    const a = Buffer.from(supplied), b = Buffer.from(API_TOKEN);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       return res.status(401).send('Unauthorized — add ?token=YOUR_BRIDGE_API_TOKEN');
+    }
+    // Token was passed in the URL: stash it in an httpOnly cookie and redirect to
+    // the clean URL so it doesn't persist in browser history, proxy access logs,
+    // Referer headers, or the page's own 15s meta-refresh.
+    if (fromQuery) {
+      res.cookie('qr_token', fromQuery, { httpOnly: true, sameSite: 'strict', maxAge: 10 * 60 * 1000 });
+      return res.redirect(303, '/qr');
     }
   }
   const wrap = (inner) => `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -311,5 +324,11 @@ if (HTTP_ONLY) {
   console.log('BRIDGE_HTTP_ONLY=1 — WhatsApp client disabled (health + /his proxy only, no Chromium).');
 } else {
   client = buildClient();
-  client.initialize();
+  // If the very first init fails (e.g. a transient Chromium launch error) the
+  // watchdog ignores the 'starting' state, so without this catch the bridge
+  // would stay stuck forever. Schedule a reconnect just like every other path.
+  client.initialize().catch((e) => {
+    console.error('initial client.initialize() failed:', e && e.message);
+    scheduleReconnect('init-failed');
+  });
 }

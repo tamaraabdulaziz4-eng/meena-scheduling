@@ -435,6 +435,13 @@ function _goToLogin() {
 async function doLogout() {
   await API.post('/auth/logout').catch(() => {});
   currentUser = null;
+  // Clear per-user client state so the next user on a shared workstation can't
+  // read the previous user's data (recently-viewed staff names, last branch…).
+  // `theme` is a device preference, so it's intentionally left in place.
+  try {
+    ['hmRecentStaff', 'lastBranchId'].forEach(k => localStorage.removeItem(k));
+    sessionStorage.clear();
+  } catch (e) {}
   _goToLogin();
 }
 
