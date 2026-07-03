@@ -6477,6 +6477,11 @@ def _elite_write_history(study_id, history, set_emergency=True):
     "Others" so the read radiologist sees it prioritised and correctly bucketed."""
     info = _elite_get(f"/study_management/get_study_info/{study_id}")
     b = (info.get("body") or {}) if isinstance(info, dict) else {}
+    # edit_study_info REPLACES these fields, so a transient/empty read would blank the
+    # patient's demographics + accession. Refuse to write unless the read clearly
+    # returned this study's patient (pat_id AND pat_name present).
+    if not ((b.get("pat_id") or "").strip() and (b.get("pat_name") or "").strip()):
+        raise HTTPException(502, "Butterfly study info unavailable — not writing (would risk blanking the record). Try again.")
     payload = {
         "patient_name": b.get("pat_name") or "",
         "patient_id": b.get("pat_id") or "",
@@ -6629,11 +6634,15 @@ def list_consents(request: Request, user=Depends(require_admin)):
     return {"file_no": file_no, "count": len(rows), "consents": rows}
 
 @app.get("/api/consent/{consent_id}/pdf")
-def consent_pdf(consent_id: int, user=Depends(require_admin)):
-    """Download a signed consent PDF."""
+def consent_pdf(consent_id: int, request: Request, user=Depends(require_admin)):
+    """Download a signed consent PDF. Bound to the file number so a sequential id
+    alone can't enumerate other patients' consents (must know the patient file)."""
     row = q("SELECT file_no, pdf FROM scheduling.consents WHERE id=%s", (consent_id,), one=True)
     if not row or row.get("pdf") is None:
         raise HTTPException(404, "Consent not found")
+    file_q = (request.query_params.get("file") or "").strip()
+    if not file_q or file_q != (row.get("file_no") or ""):
+        raise HTTPException(403, "Provide the matching patient file number to view this consent")
     data = bytes(row["pdf"])
     return Response(content=data, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="consent_{consent_id}.pdf"'})
@@ -6727,6 +6736,10 @@ def public_consent_form_image(token: str):
     so she reads the real document on her phone before signing (token-gated)."""
     from consent_pdf import render_consent_png
     r = _consent_by_token(token)
+    # Once signed, the token must stop revealing the patient's data (it may live on in
+    # a QR photo / browser history / proxy logs for the rest of its TTL).
+    if (r.get("status") or "") == "signed":
+        raise HTTPException(410, "This consent has already been signed.")
     data = {
         "name": r.get("patient_name") or "", "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
@@ -6760,8 +6773,10 @@ async def public_consent_sign(token: str, request: Request):
     if reason == "lmp" and not lmp:
         raise HTTPException(400, "Enter the date of the last menstrual period")
     sig = b.get("signature") or ""
+    if not isinstance(sig, str) or len(sig) > 3_000_000:   # ~2MB PNG ceiling
+        raise HTTPException(400, "Signature is missing or too large")
     png = None
-    if isinstance(sig, str) and sig.startswith("data:image"):
+    if sig.startswith("data:image"):
         try:
             png = base64.b64decode(sig.split(",", 1)[1])
         except Exception:
@@ -6784,12 +6799,16 @@ async def public_consent_sign(token: str, request: Request):
         pdf = generate_consent_pdf(data, png)
     except Exception as e:
         raise HTTPException(500, f"Could not generate the consent PDF: {e}")
-    q("""UPDATE scheduling.consents
-           SET pdf=%s, reason=%s, lmp_date=%s, weight=%s, height=%s, hcg=%s,
-               status='signed', signed_at=NOW()
-         WHERE id=%s""",
-      (psycopg2.Binary(pdf), reason or None, lmp or None, weight or None, height or None, hcg or None, r["id"]),
-      exec_only=True)
+    # Atomic one-time burn: only the first submission wins (guards a concurrent
+    # double-sign from overwriting the stored PDF).
+    done = q("""UPDATE scheduling.consents
+                  SET pdf=%s, reason=%s, lmp_date=%s, weight=%s, height=%s, hcg=%s,
+                      status='signed', signed_at=NOW()
+                WHERE id=%s AND status <> 'signed' RETURNING id""",
+             (psycopg2.Binary(pdf), reason or None, lmp or None, weight or None, height or None, hcg or None, r["id"]),
+             one=True)
+    if not done:
+        raise HTTPException(409, "This consent has already been signed.")
     return {"ok": True}
 
 _PREF_KINDS = ("off", "unavailable")

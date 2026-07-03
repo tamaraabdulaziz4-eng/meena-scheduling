@@ -64,7 +64,7 @@ function consentStartPoll(id) {
         consentStopPoll();
         const box = document.getElementById('cn-poll');
         if (box) box.innerHTML = `<span class="cn-ok">✅ تم التوقيع · Signed</span>
-          <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${id}/pdf" target="_blank" rel="noopener">View PDF</a>`;
+          <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${id}/pdf?file=${encodeURIComponent((_consent.prefill && (_consent.prefill.file_no || _consent.prefill.mrno)) || '')}" target="_blank" rel="noopener">View PDF</a>`;
         const done = _consent.onDone;
         if (typeof done === 'function') done(id);
         setTimeout(closeConsent, 2500);
@@ -235,7 +235,7 @@ async function consentSave(btn) {
     const r = await API.post('/consent', payload);
     if (r && r.ok) {
       if (msg) msg.innerHTML = `<span class="cn-ok">✅ Consent saved · تم الحفظ</span>
-        <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${r.id}/pdf" target="_blank" rel="noopener">View PDF</a>`;
+        <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${r.id}/pdf?file=${encodeURIComponent(payload.file_no || '')}" target="_blank" rel="noopener">View PDF</a>`;
       const done = _consent.onDone;
       setTimeout(() => { closeConsent(); if (typeof done === 'function') done(r.id); }, 900);
     } else {
