@@ -850,6 +850,9 @@ function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unkn
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
 
 const STATS_LIST_CAP = Number(process.env.STATS_LIST_CAP || 1500);
+// How many unique bills we read to fill in exam names for the drill-down list.
+// Bounds latency on a wide date range; today's per-branch volume is well under this.
+const STATS_LIST_ENRICH_CAP = Number(process.env.STATS_LIST_ENRICH_CAP || 120);
 async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, withList = false, topDoctors = 15, noCache = false }) {
   const cacheKey = JSON.stringify({ from, to, sites: (sites || []).slice().sort((a, b) => a - b), withModality, withFinance, withList });
   if (!noCache) { const cached = statsCacheGet(cacheKey); if (cached) return cached; }
@@ -1023,14 +1026,48 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     requests = ordered.slice(0, STATS_LIST_CAP).map(({ r, site }) => ({
       mrno: r.mrno != null ? String(r.mrno) : '',
       name: clean(firstOf(r, ['patientName', 'patName', 'pat_name', 'fullName', 'patientFullName', 'name']) || ''),
-      exam: clean(firstOf(r, ['serviceName', 'invMastServiceName', 'testName', 'itemName', 'mastServiceName']) || ''),
+      // The worklist row is bill-level and leaves serviceName blank; the exam names
+      // live in the bill line items, filled in by the enrichment pass below.
+      exam: clean(firstOf(r, ['serviceName', 'invMastServiceName', 'testName', 'mastServiceName']) || ''),
+      category: (r.categoryName || '').trim() || null,
       department: (r.departmentName || '').trim() || null,
       doctor: (r.doctorName || '').trim() || null,
       branch: branchLabel(site), site,
       priority: (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) ? 'emergency' : 'routine',
       date: dayOf(r.billDate || r.visitDate),
       billNo: r.billNo || null,
+      gpbId: r.genPatBillingId != null ? String(r.genPatBillingId) : '',
     }));
+    // Exam-name enrichment: the actual exam(s) live in the bill's line items, not on
+    // the worklist row. Read each unique bill once (bounded) and attach the radiology
+    // item names (matched against the catalog, so labs/drugs on the bill are skipped).
+    const needExam = requests.filter((x) => !x.exam && x.gpbId);
+    const uniqueBills = [...new Set(needExam.map((x) => x.gpbId))].slice(0, STATS_LIST_ENRICH_CAP);
+    if (uniqueBills.length) {
+      const catalog = await getRadCatalog().catch(() => new Map());
+      const bills = await pool(uniqueBills, STATS_MODALITY_CONCURRENCY, async (gpbId) => {
+        const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(gpbId), { method: 'GET' });
+        return { gpbId, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
+      });
+      const examByBill = new Map();
+      for (const b of bills) {
+        if (!b || !Array.isArray(b.items)) continue;
+        const names = [];
+        for (const it of b.items) {
+          if (!catalog.get(normName(it.itemName))) continue;   // radiology line items only
+          const nm = clean(it.itemName || '');
+          if (nm && !names.includes(nm)) names.push(nm);
+        }
+        if (names.length) examByBill.set(b.gpbId, names.join(' · '));
+      }
+      for (const x of requests) {
+        if (!x.exam && examByBill.has(x.gpbId)) x.exam = examByBill.get(x.gpbId);
+        if (!x.exam && x.category) x.exam = x.category;   // fallback to the exam category
+        delete x.gpbId;                                   // internal-only
+      }
+    } else {
+      for (const x of requests) { if (!x.exam && x.category) x.exam = x.category; delete x.gpbId; }
+    }
   }
 
   const result = {
