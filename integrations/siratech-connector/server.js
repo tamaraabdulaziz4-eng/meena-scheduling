@@ -177,7 +177,10 @@ async function enrichOrder(mrno, o) {
       userId: String(HIS_USER).padStart(8, '0'), hospitalId: o.siteId,
     } });
     const rows = (ris.json && ris.json.data) || [];
-    const row = rows.find((r) => r.billNo === o.billNo) || rows[0];
+    // Only enrich from the RIS row that matches THIS order's bill. The old
+    // `|| rows[0]` fallback borrowed another same-day order's billingStatus / ER
+    // flag / payer / indication when the billNo didn't match — a wrong-data risk.
+    const row = rows.find((r) => r.billNo === o.billNo);
     if (!row) return {};
     let indication = null, reason = null, remarks = null;
     if (row.emrPatDtlsInvOrderId) {
@@ -748,11 +751,18 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
 
   const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
-    const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
-      body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
-    });
-    if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
-    return { site, ok: true, rows: (sr.json.data || []) };
+    try {
+      const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+        body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
+      });
+      if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
+      return { site, ok: true, rows: (sr.json.data || []) };
+    } catch (e) {
+      // A thrown fetch (network/TLS/DNS blip) must be reported as a FAILED branch,
+      // not swallowed into pool's null → skipped silently, which would undercount
+      // the total and present it as complete.
+      return { site, ok: false, rows: [] };
+    }
   });
 
   const returned = [], failed = [], flat = [];
@@ -797,10 +807,23 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // bill are skipped).
   let modality = null, financial = null;
   if ((withModality || withFinance) && flat.length) {
-    const sample = flat
+    // Dedup by bill (GenPatBillingId) BEFORE the fan-out: several worklist rows can
+    // share one visit bill, and each bill read returns ALL its radiology line items.
+    // Reading the same bill once per row would count its exams/revenue/payer split
+    // multiple times. Rows without a bill id are kept as-is (their fetch returns
+    // nothing, so they can't inflate anything).
+    const _seenBill = new Set();
+    const deduped = flat
       .slice()
       .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
-      .slice(0, STATS_MODALITY_CAP);
+      .filter(({ r }) => {
+        const id = String(r.genPatBillingId == null ? '' : r.genPatBillingId);
+        if (!id) return true;
+        if (_seenBill.has(id)) return false;
+        _seenBill.add(id);
+        return true;
+      });
+    const sample = deduped.slice(0, STATS_MODALITY_CAP);
     // ONE bill read per order (GetDueBillDetailsByID). Each line item is checked
     // against the radiology catalog — a match is a real imaging exam, and the
     // catalog also tells us its modality. This gives exam count, modality mix,
@@ -812,7 +835,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     });
     const byModCount = new Map(), revByBranch = new Map(), revByMod = new Map();
     let exams = 0, revenue = 0, patient = 0, sponsor = 0, items = 0;
-    let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqWithRad = 0;
+    let reqInsurance = 0, reqCash = 0, reqCopay = 0, reqFree = 0, reqWithRad = 0;
     // EXAM-level payer split (X-ray + US on one order = two exams counted apart).
     let exInsurance = 0, exCash = 0, exCopay = 0, exFree = 0;
     for (const b of bills) {
@@ -831,10 +854,26 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         const be = revByBranch.get(b.site) || { site: b.site, name: branchLabel(b.site), revenue: 0 }; be.revenue += net; revByBranch.set(b.site, be);
         const me = revByMod.get(mod) || { modality: mod, revenue: 0 }; me.revenue += net; revByMod.set(mod, me);
       }
-      if (hasRad) { reqWithRad += 1; if (bPat > 0 && bSpo > 0) reqCopay += 1; else if (bPat > 0) reqCash += 1; else reqInsurance += 1; }
+      if (hasRad) {
+        reqWithRad += 1;
+        // Mirror the exam-level split: a zero-charge order (no patient AND no
+        // sponsor amount) is its own bucket, not silently counted as Insurance.
+        if (bPat > 0 && bSpo > 0) reqCopay += 1;
+        else if (bPat > 0) reqCash += 1;
+        else if (bSpo > 0) reqInsurance += 1;
+        else reqFree += 1;
+      }
     }
     const r2 = (n) => Math.round(n * 100) / 100;
-    const meta = { sampled: sample.length, ofTotal: flat.length, truncated: flat.length > sample.length };
+    // ofTotal/truncated must reflect the DEDUPED bill population the exam/revenue
+    // counts are drawn from — using the raw worklist length would flip exact days
+    // to "≈ estimate" and re-inflate the KPI extrapolation (bills→bills stays
+    // consistent this way).
+    // catalogLoaded lets the dashboard tell "genuinely 0 radiology exams" apart
+    // from "the radiology catalog failed to load, so every line item was skipped
+    // and everything reads 0" — otherwise a transient catalog outage looks like a
+    // real zero day.
+    const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length, catalogLoaded: catalog.size > 0 };
     if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
     if (withFinance) financial = {
       ...meta, items, requests: reqWithRad, exams,
@@ -842,7 +881,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         { type: 'Insurance', count: reqInsurance },
         { type: 'Cash / self-pay', count: reqCash },
         { type: 'Insurance + copay', count: reqCopay },
-      ],
+      ].concat(reqFree ? [{ type: 'Zero-charge', count: reqFree }] : []),
       // exam-level split (each X-ray / US counted separately)
       examsByPayer: [
         { type: 'Insurance', count: exInsurance },
@@ -904,14 +943,27 @@ process.on('uncaughtException', (e) => console.error('uncaughtException:', e && 
 
 // Keep the DEFAULT dashboard view (all branches, last 30 days, full enrichment)
 // pre-computed in the cache, so a manager opening the page gets it instantly
-// instead of waiting for ~1500 per-order bill reads. Runs a bit under the cache
-// TTL so the cache never goes cold. The key matches what the dashboard sends
-// (30-day preset, no sites filter, full=1).
+// instead of waiting for ~1500 per-order bill reads. The cache key is
+// {from,to,sites,withModality,withFinance}, so the warm run must use the EXACT
+// same from/to the dashboard sends — which is the KSA 30-day preset (see the
+// dashboard's rsPresetRange). Using UTC dates here produced a different key, so
+// the warm result was never actually served and managers paid the full cost.
+function _ksaToday() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+function _defaultRange() {                       // mirrors dashboard rsPresetRange('30d')
+  const to = _ksaToday();
+  const [y, mo, da] = to.split('-').map(Number);
+  const base = new Date(Date.UTC(y, mo - 1, da, 12));
+  const from = new Date(base.getTime() - 29 * 864e5).toISOString().slice(0, 10);
+  return { from, to };
+}
 async function warmDefaultStats() {
   try {
-    const today = new Date();
-    const to = today.toISOString().slice(0, 10);
-    const from = new Date(today.getTime() - 29 * 864e5).toISOString().slice(0, 10);
+    const { from, to } = _defaultRange();
     const t0 = Date.now();
     const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
     console.log(`[warm] default stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
@@ -925,5 +977,8 @@ app.listen(PORT, HOST, () => {
     getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
     getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`)).then(warmDefaultStats).catch(() => {});
   }, 4000);
-  setInterval(warmDefaultStats, 240000);   // refresh default cache every 4 min (< 5-min TTL)
+  // Self-scheduling (NOT setInterval): re-warm 4 min AFTER each run finishes, so a
+  // slow run (>4 min of bill reads) can never overlap itself and double the load.
+  const reWarm = () => setTimeout(async () => { await warmDefaultStats(); reWarm(); }, 240000);
+  reWarm();
 });

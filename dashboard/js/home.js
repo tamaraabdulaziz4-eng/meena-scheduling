@@ -219,8 +219,17 @@ async function renderHomeRadstats() {
   const isLead = currentUser?.role === 'admin';
   let site = null, scopeName = '';
   if (isLead && typeof rsMySite === 'function') {
-    try { const mine = await rsMySite(); if (mine) { site = mine.siteId; scopeName = currentUser?.branch_name || mine.shortName || mine.name; } }
-    catch (e) {}
+    let mine = null;
+    try { mine = await rsMySite(); } catch (e) {}
+    if (mine) { site = mine.siteId; scopeName = currentUser?.branch_name || mine.shortName || mine.name; }
+    else {
+      // FAIL CLOSED — same as the full stats page: a team lead whose branch we
+      // can't resolve to a HIS site must NOT get an unscoped (all-branch) query.
+      // Show a neutral card and skip the fetch instead of leaking org-wide data.
+      box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Radiology</div></div>
+        <div class="rs-loadnote" style="margin:8px 0 0;color:var(--muted)">Your branch isn't linked to the hospital system yet — ask an admin to link it.</div></div>`;
+      return;
+    }
   }
   const title = scopeName ? `Radiology · ${escapeHtml(scopeName)} — 7 days` : 'Radiology — last 7 days';
   box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">${title}</div></div>

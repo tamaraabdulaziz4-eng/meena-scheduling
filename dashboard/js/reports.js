@@ -317,11 +317,12 @@ async function repDoSearch() {
   box.innerHTML = LOADING_HTML;
   try {
     const d = await API.get(`/reports/search?file_no=${encodeURIComponent(file)}`);
-    if (!d.studies.length) { box.innerHTML = `<div class="rep-empty">No studies found for file ${escapeHtml(file)}.</div>`; return; }
-    box.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">${d.count} study(ies) for <b>${escapeHtml(d.studies[0].pat_name || file)}</b></div>` +
-      d.studies.map(s => {
+    const studies = d.studies || [];
+    if (!studies.length) { box.innerHTML = `<div class="rep-empty">No studies found for file ${escapeHtml(file)}.</div>`; return; }
+    box.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">${d.count || studies.length} study(ies) for <b>${escapeHtml(studies[0].pat_name || file)}</b></div>` +
+      studies.map(s => {
         const dt = s.study_date ? new Date(s.study_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
-        const ready = /VERIF|COMPLETE|REVIEW|ADDEND/i.test(s.status || '');
+        const ready = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/i.test(s.status || '');
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:13px">${escapeHtml(s.modality || '')} · ${dt}</div>

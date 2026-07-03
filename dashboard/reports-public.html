@@ -217,17 +217,22 @@ async function openReport(studyId, i){
   slot.innerHTML = loaderHTML('ld-rep-'+i);
   slot.dataset.open = '1';
   const stopR = cycle('ld-rep-'+i, ['Loading report…', 'Fetching from PACS…', 'Preparing the report…']);
+  const base = (window._studies||[])[i] || {};
+  const fileNo = base.file_used || ($('file').value||'').trim();
   try {
-    const r = await api('/api/public/reports/study/' + studyId);
+    const r = await api('/api/public/reports/study/' + studyId + '?file=' + encodeURIComponent(fileNo));
     stopR();
-    const base = (window._studies||[])[i] || {};
-    const pat = {...base, ...r};
+    // Merge report-info over the list row, but never let a missing/blank field in
+    // the report info blank out a good value from the list (name, sex, date) — the
+    // identity panel is exactly what the doctor is told to verify.
+    const clean = Object.fromEntries(Object.entries(r).filter(([,v]) => v != null && v !== ''));
+    const pat = {...base, ...clean};
     const txt = (r.report_text||'').trim();
     slot.innerHTML = patientPanel(pat) + (txt
       ? `<pre id="txt-${i}">${esc(txt)}</pre>
          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
            <button class="btn ghost" onclick="event.stopPropagation();copyRep(${i},this)">📋 Copy report</button>
-           <a class="btn ghost" style="text-decoration:none" href="/api/public/reports/study/${studyId}/pdf?t=${encodeURIComponent(TOKEN)}" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>
+           <a class="btn ghost" style="text-decoration:none" href="/api/public/reports/study/${studyId}/pdf?file=${encodeURIComponent(fileNo)}&t=${encodeURIComponent(TOKEN)}" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>
          </div>
          <div class="sm" style="margin-top:8px;color:var(--muted)">${r.reviewer?('Radiologist: '+esc(r.reviewer)+' · '):''}${r.report_date?fmtDate(r.report_date):''}</div>`
       : `<pre>No approved report text yet for this study.</pre>`);

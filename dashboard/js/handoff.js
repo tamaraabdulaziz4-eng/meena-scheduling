@@ -221,7 +221,7 @@ function hoStep2(b) {
           </div>
         </div>
         <div style="margin-top:13px"><label class="ho-lbl">Clinical indication <span style="font-weight:500">— auto-filled from HIS, edit if needed (written into DePACS)</span></label>
-          <textarea id="ho-history" class="input" rows="4" placeholder="Auto-filled from the order; paste here if empty…" oninput="handoff.history=this.value">${escapeHtml(handoff.history || '')}</textarea></div>
+          <textarea id="ho-history" class="input" rows="4" placeholder="Auto-filled from the order; paste here if empty…" oninput="handoff.history=this.value;handoffSyncMsg()">${escapeHtml(handoff.history || '')}</textarea></div>
       </div>
       ${handoffNav('Back', 'Next', true)}
     </div>`;
@@ -287,8 +287,34 @@ function renderHandoffDE() {
          <button class="btn btn-sm btn-ghost" onclick="handoffStopPolling(true)">Stop</button></div>`
     : `<div class="ho-actions" style="margin-top:0">
          <button class="btn btn-primary" onclick="handoffStartPolling()">✅ Images sent — find the study</button>
-         <button class="btn btn-sm btn-ghost" onclick="handoffStartPolling()">It's already there</button>
+         <button class="btn btn-sm btn-ghost" onclick="handoffFindExisting()">It's already there</button>
        </div>`;
+}
+
+// "It's already there": the exam was imaged earlier (even a previous day), so a
+// baseline-diff poll would never surface it (it's in the baseline, and _isToday
+// only rescues same-day studies). Fetch the studies and let the user pick from
+// what's actually on the file, instead of dead-ending in the 3-minute timeout.
+async function handoffFindExisting() {
+  handoffStopPolling();
+  handoff.matched = null; handoff.studyId = ''; handoff.candidates = null;
+  const box = document.getElementById('ho-de');
+  if (box) box.innerHTML = LOADING_HTML;
+  try {
+    const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
+    handoff.studies = r.studies || [];
+  } catch (e) {
+    if (box) box.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div>
+      <p>${escapeHtml(e.message || 'Could not load studies')}</p>
+      <div class="ho-actions" style="margin-top:8px"><button class="btn btn-sm btn-primary" onclick="handoffFindExisting()">Try again</button></div></div>`;
+    return;
+  }
+  if (!(handoff.studies || []).length) {
+    if (box) box.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">No studies on this file in DePACS yet.</div>
+      <div class="ho-actions" style="margin-top:0"><button class="btn btn-primary" onclick="handoffStartPolling()">Wait for images</button></div>`;
+    return;
+  }
+  handoffPickAny();   // one study → auto-select; several → list them to choose
 }
 
 async function handoffStartPolling() {
@@ -309,14 +335,25 @@ function handoffStopPolling(rerender) {
 }
 function _isToday(d) {
   if (!d) return false;
-  const t = new Date();
-  return String(d).slice(0, 10) === `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  // DePACS timestamps studies in KSA (UTC+3), so "today" must be the KSA calendar
+  // day — comparing against the browser's local/UTC day mis-judged studies near
+  // midnight KSA.
+  let today;
+  try {
+    today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) {
+    const t = new Date();
+    today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  }
+  return String(d).slice(0, 10) === today;
 }
 async function handoffPollTick() {
   if (!handoff.polling) return;
   handoff.pollN += 1;
   try {
     const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
+    if (!handoff.polling) return;   // user pressed Stop while this request was in flight
     handoff.studies = r.studies || [];
     const base = handoff.baseline instanceof Set ? handoff.baseline : new Set();
     let pool = handoff.studies.filter(s => !base.has(String(s.study_id)));
@@ -326,6 +363,7 @@ async function handoffPollTick() {
       return; }
     if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
+  if (!handoff.polling) return;     // stopped during the await — don't re-arm or re-render
   if (handoff.pollN >= HO_POLL_MAX) {
     handoff.polling = false;
     const box = document.getElementById('ho-de');
@@ -417,7 +455,13 @@ function hoStep4(b) {
         <button class="btn btn-primary" onclick="handoffReset()">Done · new patient</button>
       </div>
     </div>`;
-  handoffSyncMsg(true);
+  // Build the message once from the details; do NOT force-rebuild on re-entry.
+  // Step-2 inputs are gone by now, so rebuilding would fall back to order values
+  // and silently discard both manual edits and any step-2 exam/branch tweaks made
+  // while leaving and returning to this step.
+  if (!handoff.msgEdited && !(handoff.msg || '').trim()) handoff.msg = handoffBuildMsg();
+  const m = document.getElementById('ho-message');
+  if (m) m.value = handoff.msg;
 }
 
 // ── Reverse flow · match the finished report to the right order/exam ──────────

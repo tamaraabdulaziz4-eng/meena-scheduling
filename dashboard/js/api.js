@@ -14,6 +14,11 @@ const API = {
   // clear error instead of an endless spinner.
   _timeoutFor(path) {
     if (/\/(generate|autofill-cross-cover)/.test(path)) return 180000;  // 3 min
+    // Radiology endpoints proxy to the HIS/DePACS connector, which fans out over
+    // many bill/study reads on an uncached branch/date selection. The backend
+    // itself allows up to ~240s, so the client must not abort at 45s and show a
+    // false "took too long" while the server is still computing successfully.
+    if (/\/radiology\/(stats|lookup|results\/match)/.test(path)) return 240000;  // 4 min
     return 45000;                                                        // 45 s
   },
   async request(method, path, body) {

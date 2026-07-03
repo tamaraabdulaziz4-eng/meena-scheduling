@@ -26,13 +26,26 @@ const RS_PRESETS = [
 
 function rsFmtDate(d) { return d.toISOString().slice(0, 10); }
 
+// Today's calendar date in KSA (Asia/Riyadh, UTC+3) as YYYY-MM-DD. Using UTC
+// made the "Today" preset — and the end of every range — resolve to *yesterday*
+// between 00:00 and 03:00 KSA, silently dropping today's orders even though the
+// on-screen clock (also KSA) showed today.
+function rsKsaToday() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+
 function rsPresetRange(id) {
-  const now = new Date();
-  const end = rsFmtDate(now);
+  const end = rsKsaToday();                                 // YYYY-MM-DD in KSA
+  const [y, mo, da] = end.split('-').map(Number);
+  const base = new Date(Date.UTC(y, mo - 1, da, 12));       // noon-UTC anchor for safe whole-day math
+  const minus = (n) => rsFmtDate(new Date(base.getTime() - n * 864e5));
   if (id === 'today') return { from: end, to: end };
-  if (id === '7d') return { from: rsFmtDate(new Date(now.getTime() - 6 * 864e5)), to: end };
+  if (id === '7d') return { from: minus(6), to: end };
   if (id === 'month') return { from: end.slice(0, 8) + '01', to: end };
-  return { from: rsFmtDate(new Date(now.getTime() - 29 * 864e5)), to: end }; // 30d
+  return { from: minus(29), to: end };                      // 30d
 }
 
 async function renderRadStatsPage() {
@@ -58,6 +71,11 @@ async function renderRadStatsPage() {
   rsRenderControls();
   rsStartClock();
   rsBindTips();                        // live cursor-following tooltips
+  if (radstats.leadUnmatched) {        // fail-closed lead → explain, don't fetch org-wide data
+    rsHideOverlay();
+    rsRenderUnmatched();
+    return;
+  }
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
   else rsShowOverlay();                // first load → full-screen branded loader
   if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
@@ -218,10 +236,31 @@ async function rsApplyLeadScope() {
     radstats.branches = await rsBranchListCached();      // so the label resolves
     radstats.sel = new Set([mine.siteId]);
     radstats.leadLocked = true;
+    radstats.leadUnmatched = false;
     radstats.leadBranchName = currentUser?.branch_name || mine.shortName || mine.name;
   } else {
-    radstats.leadLocked = false;                          // couldn't match → show all (safe fallback)
+    // FAIL CLOSED. A team lead whose Meena branch name we can't resolve to a HIS
+    // site must NOT fall through to org-wide data for all 14 branches. Pin to an
+    // impossible site so every query (stats, refresh, monthly report) returns
+    // nothing, and flag it so the UI explains why instead of leaking or blanking.
+    radstats.branches = await rsBranchListCached();
+    radstats.sel = new Set([-1]);
+    radstats.leadLocked = true;
+    radstats.leadUnmatched = true;
+    radstats.leadBranchName = currentUser?.branch_name || 'your branch';
   }
+}
+
+function rsRenderUnmatched() {
+  const b = document.getElementById('rs-body');
+  if (!b) return;
+  b.innerHTML = `<div class="card" style="text-align:center;padding:34px 20px">
+    <div style="font-size:34px">🔒</div>
+    <div style="font-weight:800;margin-top:8px">Your branch isn't linked yet</div>
+    <div style="color:var(--muted);font-size:13px;margin-top:6px;max-width:440px;margin-inline:auto;line-height:1.6">
+      We couldn't match <b>${escapeHtml(radstats.leadBranchName || 'your branch')}</b> to a branch in the hospital
+      system, so its statistics can't be shown here. Please ask an administrator to link your branch.</div>
+  </div>`;
 }
 
 function rsRenderControls() {
@@ -308,6 +347,11 @@ function rsStartAuto() {
 function rsStopAuto() { if (radstats.timer) { clearInterval(radstats.timer); radstats.timer = null; } }
 
 async function rsLoad(silent, force) {
+  // Every control (preset, branch toggle, "All", custom dates, auto-refresh) fires
+  // rsLoad. A slow selection could resolve AFTER a newer, faster one and overwrite
+  // it — body showing branch A while the controls say "All". Stamp each request and
+  // ignore any response that isn't the most recent.
+  const myReq = (radstats._reqSeq = (radstats._reqSeq || 0) + 1);
   radstats.loading = true;
   radstats.lastError = '';
   if (!silent) rsRenderControls();
@@ -321,17 +365,21 @@ async function rsLoad(silent, force) {
   if (force) q.set('nocache', '1');    // Refresh button → skip cache, pull truly live now
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
+    if (myReq !== radstats._reqSeq) return;   // superseded by a newer selection — drop this stale result
     radstats.data = d;
     radstats.modData = d.modality || null;   // arrives together — no separate/late panels
     radstats.finData = d.financial || null;
     radstats.modError = ''; radstats.finError = '';
   } catch (e) {
+    if (myReq !== radstats._reqSeq) return;
     radstats.lastError = (e && e.message) || 'Could not load statistics';
   } finally {
-    radstats.loading = false;
-    rsHideOverlay();                    // everything in → dismiss the full-screen loader
-    rsRenderControls();
-    rsRenderBody();
+    if (myReq === radstats._reqSeq) {   // only the latest request owns the UI state
+      radstats.loading = false;
+      rsHideOverlay();                  // everything in → dismiss the full-screen loader
+      rsRenderControls();
+      rsRenderBody();
+    }
   }
 }
 
@@ -556,16 +604,22 @@ function rsRenderBody() {
   // Exams is per-exam; when only a sample was priced we scale it to the total so
   // it isn't misleadingly smaller than the request count.
   let examsVal = '<span class="rs-pending">…</span>';
-  if (m) examsVal = m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0);
+  // catalogLoaded===false → the exam catalog failed to load, so exams/revenue are a
+  // false 0. Show "—" rather than a misleading zero.
+  if (m) examsVal = m.catalogLoaded === false ? '—'
+    : (m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0));
   // Insurance-covered: exact when everything was priced, else scaled to the total
   // (a sample of 800 vs 1,118 must NOT read as "the rest are unpaid").
   let coveredVal = '<span class="rs-pending">…</span>', coveredSub = '';
   if (f) {
-    const priced = f.requests || 0;
-    const cov = ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count || 0;
-    const share = priced ? cov / priced : 0;
-    if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
-    else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
+    if (f.catalogLoaded === false) { coveredVal = '—'; coveredSub = 'catalog unavailable'; }
+    else {
+      const priced = f.requests || 0;
+      const cov = ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count || 0;
+      const share = priced ? cov / priced : 0;
+      if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
+      else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
+    }
   }
 
   const kpis = `
@@ -653,6 +707,7 @@ function rsModalityInner() {
       <button class="btn btn-primary btn-sm" onclick="rsLoadModality()">Load modality mix</button>
     </div>`;
   }
+  if (m.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — the modality mix can't be computed right now. <button class="btn btn-sm" onclick="rsLoad(false, true)">Refresh</button></div>`;
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
   const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: RS_MOD_COLOR[x.modality] || '#94a3b8' }));
   return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
@@ -676,6 +731,7 @@ function rsFinancialInner() {
       <button class="btn btn-primary btn-sm" onclick="rsLoadFinancial()">Load revenue</button>
     </div>`;
   }
+  if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — revenue &amp; payer split can't be computed right now. <button class="btn btn-sm" onclick="rsLoad(false, true)">Refresh</button></div>`;
   const PAYER_COLOR = { 'Insurance': '#6B4EFF', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
   const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: PAYER_COLOR[p.type] || '#94a3b8' }));
   const payerDonut = rsDonut(payerSegs, { centerVal: f.requests || 0, centerLabel: 'requests' });
