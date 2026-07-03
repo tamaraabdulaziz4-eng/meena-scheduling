@@ -6556,7 +6556,10 @@ def _downtime_throttle():
 
 def _check_downtime_token(token):
     import secrets
-    if not token or not secrets.compare_digest(str(token), str(_downtime_token())):
+    # Compare as bytes: compare_digest raises TypeError on non-ASCII str operands,
+    # and the token comes straight from a client query param (scanners/mangled links
+    # send arbitrary bytes) — that must be a clean 403, not a 500.
+    if not token or not secrets.compare_digest(str(token).encode(), str(_downtime_token()).encode()):
         raise HTTPException(403, "Invalid or expired link. Ask your team lead for a new one.")
 
 @app.get("/api/public/downtime/info")
@@ -6650,7 +6653,9 @@ def _reports_throttle():
 
 def _check_reports_token(token):
     import secrets
-    if not token or not secrets.compare_digest(str(token), str(_reports_token())):
+    # Compare as bytes — compare_digest raises TypeError on non-ASCII str operands,
+    # and this token is a raw client query param; a bad token must 403, not 500.
+    if not token or not secrets.compare_digest(str(token).encode(), str(_reports_token()).encode()):
         raise HTTPException(403, "Invalid or expired link. Ask the radiology team for a new one.")
 
 def _study_is_reported(status):
