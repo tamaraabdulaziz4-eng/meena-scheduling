@@ -4054,6 +4054,14 @@ async def request_cover(lid: int, request: Request, user=Depends(get_current_use
     # Place the shift on the covering person's sheet when we have a real shift and
     # the assigner can edit that branch (reviewers can edit any branch).
     if code and code not in ("O", "AL", "SL", "TB") and can_access_branch(user, cand["branch_id"]):
+        # Don't silently overwrite the covering person's own shift (would leave THEIR
+        # branch short) or an approved-leave day. Overridable with confirm:true.
+        if not body.get("confirm"):
+            cur = _current_rota_shift(cand["id"], date)   # their working shift, or None
+            if cur or has_approved_leave(cand["id"], date):
+                raise HTTPException(409, {
+                    "error": f"{cand['name']} already has {'a shift (' + cur + ')' if cur else 'approved leave'} on {date} — covering would overwrite it. Assign anyway?",
+                    "confirm_required": "cover_conflict"})
         cross = lv["branch_id"] if cand["branch_id"] != lv["branch_id"] else None
         home_sid = _get_or_create_schedule_id(cand["branch_id"], y, m, user["id"])
         q("""INSERT INTO scheduling.schedule_entries
@@ -9665,6 +9673,11 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
     conn = pool.getconn()
     try:
         with conn.cursor() as cur:
+            # Serialize generations for THIS schedule: two managers hitting Generate at
+            # once for the same branch/month would otherwise interleave delete/insert
+            # and clobber each other. The lock is held to commit, so the second waits
+            # and then writes cleanly on top rather than mid-transaction.
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(schedule["id"]),))
             if ok_staff_ids:
                 # Keep manual cells (only solver-owned cells are cleared) — unless
                 # this is a "fresh generate" that deliberately ignores manual edits.
