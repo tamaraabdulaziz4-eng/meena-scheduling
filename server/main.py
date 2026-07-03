@@ -6630,6 +6630,26 @@ def public_consent_get(token: str):
             "patient_type": r.get("patient_type") or "", "branch": r.get("branch") or "",
             "weight": r.get("weight") or "", "height": r.get("height") or ""}
 
+@app.get("/api/public/consent/{token}/form.png")
+def public_consent_form_image(token: str):
+    """Render the OFFICIAL Meena form pre-filled with the patient's data as an image,
+    so she reads the real document on her phone before signing (token-gated)."""
+    from consent_pdf import render_consent_png
+    r = _consent_by_token(token)
+    data = {
+        "name": r.get("patient_name") or "", "mrn": r.get("mrn") or r.get("file_no") or "",
+        "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
+        "weight": r.get("weight") or "", "height": r.get("height") or "",
+        "patient_type": r.get("patient_type") or "", "physician": r.get("physician") or "",
+        "technologist": r.get("technologist") or "",
+    }
+    try:
+        png = render_consent_png(data)
+    except Exception as e:
+        raise HTTPException(500, f"Could not render the form: {e}")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
 @app.post("/api/public/consent/{token}/sign")
 async def public_consent_sign(token: str, request: Request):
     """The patient submits her signed consent from her phone. One-time: the token is
