@@ -291,6 +291,13 @@ def init_schema():
             # A target branch (e.g. Y3) that's staffed by importing General staff
             # from same-city sharing branches: how many it needs each working day.
             cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS cover_need_per_day INTEGER NOT NULL DEFAULT 0;")
+            # Branch isolation for radiology ("كل فرع لفرعه"): the Siratech HIS site
+            # id that this Meena branch maps to. When set, branch-locked team leads
+            # (role=admin) only see this site's radiology stats/requests — never
+            # another branch's PHI. superadmin/manager stay organisation-wide.
+            # Left NULL until the owner confirms each branch's HIS site number, so
+            # nothing is silently restricted before the mapping exists.
+            cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS siratech_site_id INTEGER;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -2718,7 +2725,7 @@ def health():
 
 @app.get("/api/branches")
 def list_branches(user=Depends(get_current_user)):
-    return q("SELECT id,name,city,shares_staff,cover_need_per_day,created_at FROM scheduling.branches ORDER BY name")
+    return q("SELECT id,name,city,shares_staff,cover_need_per_day,siratech_site_id,created_at FROM scheduling.branches ORDER BY name")
 
 @app.post("/api/branches")
 async def create_branch(request: Request, user=Depends(require_superadmin)):
@@ -2736,16 +2743,22 @@ async def create_branch(request: Request, user=Depends(require_superadmin)):
 @app.put("/api/branches/{bid}")
 async def update_branch(bid: int, request: Request, user=Depends(require_superadmin)):
     body = await request.json()
-    cur = q("SELECT name,city,shares_staff,cover_need_per_day FROM scheduling.branches WHERE id=%s", (bid,), one=True)
+    cur = q("SELECT name,city,shares_staff,cover_need_per_day,siratech_site_id FROM scheduling.branches WHERE id=%s", (bid,), one=True)
     if not cur: raise HTTPException(404, "Not found")
     name = (body.get("name") or cur["name"]).strip()
     city = body.get("city") if "city" in body else cur["city"]
     if isinstance(city, str): city = city.strip() or None
     shares = bool(body["shares_staff"]) if "shares_staff" in body else cur["shares_staff"]
     need = max(0, int(body["cover_need_per_day"])) if "cover_need_per_day" in body else cur["cover_need_per_day"]
-    row = q("""UPDATE scheduling.branches SET name=%s, city=%s, shares_staff=%s, cover_need_per_day=%s
-               WHERE id=%s RETURNING id,name,city,shares_staff,cover_need_per_day""",
-            (name, city, shares, need, bid), one=True)
+    # HIS site number that scopes this branch's radiology view (NULL = unmapped/no restriction).
+    if "siratech_site_id" in body:
+        sv = body.get("siratech_site_id")
+        site_id = int(sv) if str(sv).strip() not in ("", "None", "null") else None
+    else:
+        site_id = cur["siratech_site_id"]
+    row = q("""UPDATE scheduling.branches SET name=%s, city=%s, shares_staff=%s, cover_need_per_day=%s, siratech_site_id=%s
+               WHERE id=%s RETURNING id,name,city,shares_staff,cover_need_per_day,siratech_site_id""",
+            (name, city, shares, need, site_id, bid), one=True)
     insert_audit(user, "UPDATE_BRANCH", name, f"city={city or '-'} shares={shares} need={need}")
     return row
 
@@ -6326,6 +6339,25 @@ def radiology_find(request: Request, user=Depends(require_admin)):
         raise HTTPException(400, "Search term is too long")
     return _bridge_request("/his/search?q=" + urllib.parse.quote(q), timeout=60)
 
+def _rad_scope_site(user):
+    """Branch isolation for radiology ("كل فرع لفرعه"). Returns the HIS site id a
+    branch-locked team lead is confined to, or None for organisation-wide access.
+
+    · superadmin / manager  → None (see every branch — they run the whole group)
+    · everyone else (admin team lead) → their branch's siratech_site_id, IF mapped.
+      If the branch has no site id yet (owner hasn't confirmed the number), we can't
+      safely narrow them, so return None rather than lock them out of everything —
+      the restriction switches on per branch the moment its site id is set."""
+    role = (user or {}).get("role")
+    if role in ("superadmin", "manager"):
+        return None
+    bid = (user or {}).get("branch_id")
+    if not bid:
+        return None
+    row = q("SELECT siratech_site_id FROM scheduling.branches WHERE id=%s", (bid,), one=True)
+    sid = row and row.get("siratech_site_id")
+    return int(sid) if sid else None
+
 @app.get("/api/radiology/stats")
 def radiology_stats(
     from_: str = Query("", alias="from"),
@@ -6351,7 +6383,13 @@ def radiology_stats(
         q["from"] = from_.strip()
     if (to or "").strip():
         q["to"] = to.strip()
-    if (sites or "").strip():
+    # Branch isolation: a branch-locked team lead is confined to their own HIS site —
+    # override whatever `sites` the client asked for so they can't read another
+    # branch's requests. superadmin/manager (scope None) keep the client's picker.
+    scope = _rad_scope_site(user)
+    if scope is not None:
+        q["sites"] = str(scope)
+    elif (sites or "").strip():
         q["sites"] = sites.strip()
     if (modality or "").strip() == "1":
         q["modality"] = "1"
@@ -6504,17 +6542,37 @@ def _elite_write_history(study_id, history, set_emergency=True):
         "accession_number": b.get("accession_number") or "",
     }
     if set_emergency:
-        # Set Emergency + Category. Send both category_id (authoritative) and the
-        # category name so the edit binds regardless of which key it keys on.
+        # Set Emergency + Category. This build's edit endpoint doesn't always key on the
+        # same names get_study_info reads back, so send every plausible spelling/format —
+        # the endpoint ignores keys it doesn't recognise, and one of them binds.
         payload["emergency_status"] = True
+        payload["is_emergency"] = True
+        payload["emergency"] = True
         payload["category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
+        payload["study_category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
         payload["category"] = _ELITE_EMERGENCY_CATEGORY_NAME
+        payload["study_category"] = _ELITE_EMERGENCY_CATEGORY_NAME
     res = _elite_put(f"/study_management/edit_study_info/{study_id}", payload)
     if not (isinstance(res, dict) and res.get("success")):
         detail = (isinstance(res, dict) and (res.get("error") or res.get("message"))) or str(res)[:150]
         raise HTTPException(502, f"Butterfly write failed: {detail}")
+    # Don't trust success=true — some builds ACK the edit but silently drop the
+    # emergency/category flags if the field name is off. Read the study back and
+    # report what actually stuck, so the UI can show a truthful state (and we learn
+    # the real field name from production instead of guessing forever).
+    emerg_ok = None
+    if set_emergency:
+        try:
+            chk = _elite_get(f"/study_management/get_study_info/{study_id}")
+            cb = (chk.get("body") or {}) if isinstance(chk, dict) else {}
+            es = cb.get("emergency_status")
+            emerg_ok = (es is True) or (str(es).strip().lower() in ("true", "1", "yes"))
+        except Exception:
+            emerg_ok = None  # readback failed — leave unknown rather than claim success
     return {"ok": True, "study_id": study_id,
-            "emergency": bool(set_emergency), "category": _ELITE_EMERGENCY_CATEGORY_NAME if set_emergency else None}
+            "emergency": bool(set_emergency),
+            "emergency_confirmed": emerg_ok,
+            "category": _ELITE_EMERGENCY_CATEGORY_NAME if set_emergency else None}
 
 @app.get("/api/handoff/config")
 def handoff_config(user=Depends(require_admin)):
@@ -6534,10 +6592,13 @@ async def handoff_write_history(request: Request, user=Depends(require_admin)):
     if not history:
         raise HTTPException(400, "Add the clinical history first")
     sid = _int_or_400(study_id, "study_id")
-    # Flag Emergency + Category only when the handoff is actually an emergency — the
-    # step-2 Routine/Emergency toggle must drive this, not a hardcoded True (a routine
-    # study shouldn't jump the radiologist's priority worklist).
-    emergency = (str(b.get("priority") or "").lower() == "emergency") or (b.get("emergency") is True)
+    # The handoff IS the emergency radiology hand-off, so flag Emergency ✓ + Category
+    # "Others" by default. Only skip when the staff explicitly marked the study Routine
+    # (priority == 'routine' with no emergency override) — a deliberate downgrade, not
+    # the default. This is why "Emergency wasn't ticked": a normal order defaults to
+    # priority='routine', which previously suppressed the flag.
+    prio = str(b.get("priority") or "").lower()
+    emergency = (b.get("emergency") is True) or (prio != "routine")
     out = _elite_write_history(sid, history, set_emergency=emergency)
     insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
                  json.dumps({"file_no": (b.get("file_no") or "").strip(),
