@@ -18,6 +18,32 @@ const HO_POLL_EVERY_MS = 5000;
 const HO_POLL_MAX = 36;            // ~3 minutes
 const HO_STEPS = ['Patient', 'Details', 'DePACS', 'Message'];
 
+// Modality normaliser (mirror of the connector's results.normMod): DX/CR/DR→XR,
+// MRI→MR, etc. Used to guard the auto-write — when a patient is imaged for several
+// exams in one sitting, studies land in DePACS one at a time, and we must NOT
+// auto-write the picked order's indication into a study of a DIFFERENT modality
+// (e.g. the chest study landing first while you're handling the abdomen order).
+const HO_MOD_MAP = { DX: 'XR', CR: 'XR', DR: 'XR', XR: 'XR', CT: 'CT', MR: 'MR', MRI: 'MR', US: 'US', MG: 'MG', NM: 'NM', PT: 'PT', XA: 'XA' };
+function hoNormMod(m) {
+  const s = String(m || '').toUpperCase().trim();
+  if (HO_MOD_MAP[s]) return HO_MOD_MAP[s];
+  if (/X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
+  if (/ULTRA\s?SOUND|SONOGRAM|\bUS\b/.test(s)) return 'US';
+  if (/\bCT\b|COMPUTED\s+TOMOG/.test(s)) return 'CT';
+  if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
+  if (/MAMMOG|\bMG\b/.test(s)) return 'MG';
+  return s;
+}
+// Does an arrived DePACS study match the modality of the order being handed off?
+// Unknown/blank on either side → treat as a match (don't block on missing data);
+// only a CONFIRMED mismatch (both known and different) blocks the silent auto-write.
+function hoModalityMatches(study, order) {
+  const a = hoNormMod(study && study.modality);
+  const b = hoNormMod(order && order.modality);
+  if (!a || !b) return true;
+  return a === b;
+}
+
 function renderHandoffPage() {
   setTopbar('Radiology handoff', 'One patient, step by step');
   handoffStopPolling();
@@ -254,12 +280,15 @@ function renderHandoffDE() {
   if (handoff.matched) {
     if (num) { num.classList.add('done'); num.textContent = '✓'; }
     const s = handoff.matched;
+    const modMismatch = !hoModalityMatches(s, o);
     box.innerHTML = `
-      <div class="ho-de-box ok">
+      <div class="ho-de-box ${modMismatch ? '' : 'ok'}"${modMismatch ? ' style="border-color:var(--warn,#b7791f)"' : ''}>
         <div style="font-weight:700;color:var(--text)">🖼️ ${escapeHtml(s.modality || '')}${s.study_date ? ' · ' + escapeHtml(String(s.study_date).slice(0,16).replace('T',' ')) : ''}${s.study_desc ? ' · ' + escapeHtml(s.study_desc) : ''}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">study #${escapeHtml(String(s.study_id))}${s.status ? ' · ' + escapeHtml(s.status) : ''} · order: <b>${escapeHtml(o.service || '')}</b> (${escapeHtml(o.modality || '')})</div>
         <div style="font-size:12px;color:var(--muted);margin-top:4px">Current history: ${escapeHtml(s.history || '—')}</div>
-        <div class="ho-note">⚠️ Make sure this is the exam you just sent before writing.</div>
+        ${modMismatch
+          ? `<div class="ho-note" style="color:var(--warn,#b7791f)">⚠️ This study is <b>${escapeHtml(hoNormMod(s.modality))}</b> but the order is <b>${escapeHtml(hoNormMod(o.modality))}</b> — likely a different exam. Did not auto-write. Confirm it's the right study before writing.</div>`
+          : `<div class="ho-note">⚠️ Make sure this is the exam you just sent before writing.</div>`}
       </div>
       <div class="ho-actions">
         <button class="btn btn-primary" onclick="handoffWrite(this)">Write indication to DePACS</button>
@@ -359,7 +388,11 @@ async function handoffPollTick() {
     let pool = handoff.studies.filter(s => !base.has(String(s.study_id)));
     if (!pool.length) pool = handoff.studies.filter(s => _isToday(s.study_date));
     if (pool.length === 1) { handoff.matched = pool[0]; handoff.studyId = String(pool[0].study_id); handoffStopPolling(); renderHandoffDE();
-      if ((handoff.history || '').trim()) handoffAutoWrite();   // full DE linkage: write the indication automatically
+      // Auto-write ONLY when the arrived study's modality matches the picked order.
+      // On a multi-exam sitting the wrong-modality study can land first; auto-writing
+      // it would bind this order's indication + Emergency flag to the wrong exam. On a
+      // mismatch we leave it selected (with a warning) so the user writes it manually.
+      if ((handoff.history || '').trim() && hoModalityMatches(pool[0], handoffOrder())) handoffAutoWrite();
       return; }
     if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
