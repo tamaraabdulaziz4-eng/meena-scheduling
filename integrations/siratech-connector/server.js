@@ -771,25 +771,22 @@ async function _patientSearch(q, debug) {
   const digits = q.replace(/\D/g, '');
   const isMobile = /^0?5\d{8,9}$/.test(digits);
   const isSaudiId = /^[12]\d{9}$/.test(digits);
-  // Build the ordered list of body shapes to try for THIS query. `mrNo` is the
-  // documented search field (MRN + name). Phone/ID use different field names that
-  // vary by build, plus many .NET HIS builds expose a single free-text search
-  // param — so for a numeric query we try the dedicated field spellings AND the
-  // generic search-term names, stopping at the first that returns rows.
+  // Patient/Search REQUIRES mrNo: sending only another field 500s with a
+  // NullReference (the backend dereferences mrNo unconditionally). So every
+  // by-phone / by-ID attempt keeps mrNo present (empty) and adds the real filter
+  // beside it. Field names mirror what a patient record actually carries
+  // (saudiid / iqamaId, contactNumber / mobilePhone) first, then other spellings.
+  const withMr = (k) => [k, { mrNo: '', [k]: q }];
   const shapes = [['mrNo', { mrNo: q }]];
   if (/^\d{5,}$/.test(digits)) {
     if (isMobile) {
-      for (const k of ['mobileNo', 'mobilePhone', 'contactNumber', 'phone', 'mobile', 'mobileNumber', 'phoneNo'])
-        shapes.push([k, { [k]: q }]);
+      for (const k of ['contactNumber', 'mobilePhone', 'mobileNo', 'mobileNumber', 'phone', 'phoneNo'])
+        shapes.push(withMr(k));
     }
     if (isSaudiId || !isMobile) {
-      for (const k of ['iqamaId', 'identityNo', 'nationalId', 'idNo', 'saudiid', 'idNumber', 'nationalID', 'identityNumber', 'nid'])
-        shapes.push([k, { [k]: q }]);
+      for (const k of ['saudiid', 'iqamaId', 'passportId', 'nationalId', 'identityNo', 'idNo', 'nid'])
+        shapes.push(withMr(k));
     }
-    // Generic single free-text search field (matches across MRN/name/phone/ID on
-    // builds that have it) — last resort so it never masks a dedicated-field hit.
-    for (const k of ['searchText', 'searchValue', 'keyword', 'searchTerm', 'term', 'filterText', 'search'])
-      shapes.push([k, { [k]: q }]);
   }
   const tried = [];
   for (const [field, body] of shapes) {
