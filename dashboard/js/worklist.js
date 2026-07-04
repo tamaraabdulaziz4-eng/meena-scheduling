@@ -19,18 +19,22 @@ function wlTodayLocal() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function wlShiftDay(delta) {
-  const [y, m, d] = wlState.day.split('-').map(Number);
+  const base = wlState.day || wlTodayLocal();   // shifting from "Recent" starts at today
+  const [y, m, d] = base.split('-').map(Number);
   const dt = new Date(y, m - 1, d + delta);
   wlState.day = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  wlState.seenEmerg = null;            // different day = different set; no false alarm
-  const inp = document.getElementById('wl-day'); if (inp) inp.value = wlState.day;
+  wlState.seenEmerg = null;            // different scope = different set; no false alarm
+  wlSyncDayControls();
   wlLoad(true);
 }
-function wlSetDay(v) { if (!v) return; wlState.day = v; wlState.seenEmerg = null; wlLoad(true); }
-function wlGoToday() {
-  wlState.day = wlTodayLocal(); wlState.seenEmerg = null;
-  const i = document.getElementById('wl-day'); if (i) i.value = wlState.day;
-  wlLoad(true);
+function wlSetDay(v) { if (!v) return; wlState.day = v; wlState.seenEmerg = null; wlSyncDayControls(); wlLoad(true); }
+// "Recent" = the rolling default (no date pin) → shows today + every still-pending
+// prior-day order, so nothing pending vanishes at midnight.
+function wlGoRecent() { wlState.day = null; wlState.seenEmerg = null; wlSyncDayControls(); wlLoad(true); }
+function wlSyncDayControls() {
+  const i = document.getElementById('wl-day'); if (i) i.value = wlState.day || '';
+  const rb = document.getElementById('wl-recent-btn');
+  if (rb) rb.className = 'btn btn-sm ' + (wlState.day ? 'btn-ghost' : 'btn-primary');
 }
 
 // A new EMERGENCY order arriving is the one event a radiology operator must not
@@ -95,7 +99,8 @@ function wlToggleAlert() {
 
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — file the ready ones');
-  if (!wlState.day) wlState.day = wlTodayLocal();
+  // Default view = rolling recent window (keeps today + every still-pending prior-day
+  // order). day === null means "recent/all pending"; picking a date drills to that day.
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result — emergency first, oldest first')}
@@ -103,10 +108,10 @@ async function renderWorklistPage() {
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <div style="display:flex;gap:4px;align-items:center">
+          <button id="wl-recent-btn" class="btn btn-sm ${wlState.day ? 'btn-ghost' : 'btn-primary'}" onclick="wlGoRecent()" title="All still-pending orders (recent)">Recent</button>
           <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(-1)" title="Previous day">◀</button>
-          <input type="date" id="wl-day" class="input" value="${wlState.day}" onchange="wlSetDay(this.value)" style="width:150px">
+          <input type="date" id="wl-day" class="input" value="${wlState.day || ''}" onchange="wlSetDay(this.value)" style="width:140px" title="Drill down to one day">
           <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(1)" title="Next day">▶</button>
-          <button class="btn btn-sm btn-ghost" onclick="wlGoToday()" title="Jump to today">Today</button>
         </div>
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
@@ -198,17 +203,23 @@ async function wlEnrichModality() {
   qs.set('modality', '1');
   try {
     const d = await API.get('/radiology/worklist?' + qs.toString());
-    const mod = new Map();
-    for (const it of (d.items || [])) if (it.genPatBillingId != null && it.modality) mod.set(String(it.genPatBillingId), it.modality);
-    if (mod.size && wlState.data && Array.isArray(wlState.data.items)) {
+    // Key by genPatBillingId, falling back to bill/MRN so a row without a billing id
+    // still gets its modality + exam.
+    const rowKey = (it) => (it.genPatBillingId != null ? 'g' + it.genPatBillingId : it.billNo ? 'b' + it.billNo : 'm' + it.mrno);
+    const enr = new Map();
+    for (const it of (d.items || [])) if (it.modality || it.exam) enr.set(rowKey(it), { modality: it.modality, exam: it.exam });
+    if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
       let changed = false;
       for (const it of wlState.data.items) {
-        const m = mod.get(String(it.genPatBillingId));
-        if (m && it.modality !== m) { it.modality = m; changed = true; }
+        const e = enr.get(rowKey(it));
+        if (e) {
+          if (e.modality && it.modality !== e.modality) { it.modality = e.modality; changed = true; }
+          if (e.exam && it.exam !== e.exam) { it.exam = e.exam; changed = true; }
+        }
       }
       if (changed && document.getElementById('wl-body')) wlRender();
     }
-  } catch (e) { /* modality is best-effort — leave badges empty on failure */ }
+  } catch (e) { /* modality/exam is best-effort — leave empty on failure */ }
   finally { _wlModBusy = false; }
 }
 
@@ -299,6 +310,7 @@ function wlRow(it, i) {
       <div style="flex:1;min-width:200px">
         <div style="font-weight:700">${escapeHtml(it.patientName || '—')}
           <span style="color:var(--muted);font-weight:500">· ${escapeHtml(it.mrno)}</span></div>
+        ${it.exam ? `<div style="font-size:13px;font-weight:600;color:var(--text,#1a1a2e);margin-top:3px">🩻 ${escapeHtml(it.exam)}</div>` : ''}
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${escapeHtml(it.branch || '')}${it.department ? ' · ' + escapeHtml(it.department) : ''}${it.doctorName ? ' · ' + escapeHtml(it.doctorName) : ''}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">

@@ -110,6 +110,9 @@ async function initApp() {
   // Radiology RIS worklist for team leads + managers.
   const worklistNav = document.getElementById('nav-worklist');
   if (worklistNav) worklistNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  // "Radiology" section label — visible whenever the radiology cluster is.
+  const radSection = document.getElementById('nav-section-radiology');
+  if (radSection) radSection.style.display = ['admin','manager','superadmin'].includes(role) ? 'block' : 'none';
   // Radiology order lifecycle board for team leads + managers.
   const ordersNav = document.getElementById('nav-orders');
   if (ordersNav) ordersNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';

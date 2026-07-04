@@ -6711,9 +6711,12 @@ async def radiology_autofile_set(request: Request, user=Depends(require_superadm
                              "sites": get_setting("rad_autofile_sites", "")}))
     return radiology_autofile_get(user=user)
 
-# Default worklist look-back (days) when the client picks no date — a live board is
-# "today", not an archive. The dashboard drives a per-day picker (from=to=day).
-_RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
+# Default worklist look-back (days) when the client picks no date. A worklist is a
+# work queue: it must keep TODAY's orders AND every still-pending order from recent
+# days (a pending order must not vanish at midnight just because the date rolled).
+# So the default is a rolling multi-day window; the dashboard day-picker is an opt-in
+# drill-down to a single day, not the default view.
+_RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 3)
 
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_admin)):
