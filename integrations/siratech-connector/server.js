@@ -931,24 +931,33 @@ async function _patientSearch(q, debug) {
   const rowsOf = (r) => ((r && r.json && (r.json.data || r.json.Data)) || []);
   const patientsFrom = (r) => rowsOf(r).slice(0, 25).map(normalizePatient);
   const rawCount = (r) => { const d = r && r.json && (r.json.data || r.json.Data); return Array.isArray(d) ? d.length : -1; };
-  const digits = q.replace(/\D/g, '');
-  const isMobile = /^0?5\d{8,9}$/.test(digits);
-  const isId10 = /^[12]\d{9}$/.test(digits);   // 1… = Saudi national ID, 2… = Iqama
   const tried = [];
   const dbg = (label, r, extra) => { if (debug) tried.push({ field: label, status: r && r.status, rawCount: rawCount(r), keys: (rowsOf(r)[0] ? Object.keys(rowsOf(r)[0]).slice(0, 40) : undefined), ...(extra || {}) }); };
 
-  // Typed EMR-list search for phone / national ID / Iqama (the HIS UI's own path).
+  const digits = q.replace(/\D/g, '');
+  // Saudi mobile → normalise to local 05XXXXXXXX whatever the user typed:
+  // +9665…, 009665…, 9665…, 05…, or bare 5…  (core is always 5 + 8 digits).
+  const mob = digits.match(/^(?:00)?(?:966)?0?(5\d{8})$/);
+  const mobileLocal = mob ? '0' + mob[1] : null;        // 05XXXXXXXX
+  const isSaudiId = /^1\d{9}$/.test(digits);             // Saudi national ID starts 1
+  const isIqama = /^2\d{9}$/.test(digits);               // Iqama starts 2
+
+  // Typed EMR-list search (the HIS UI's own path) for phone / national ID / Iqama —
+  // server-side filtered by type, so the rows are the real match. Send the NORMALISED
+  // value, and for a mobile try both 05… and 5… forms in case the HIS stored it bare.
   const plans = [];
-  if (isMobile) plans.push(['PHONE NUMBER', 6]);
-  else if (isId10) plans.push(...(digits[0] === '1' ? [['SAUDI ID', 2], ['IQAMA ID', 3]] : [['IQAMA ID', 3], ['SAUDI ID', 2]]));
-  for (const [idType, category] of plans) {
-    const r = await _emrSearch(idType, category, q);
-    dbg(`EMR:${idType}`, r);
+  if (mobileLocal) plans.push(['PHONE NUMBER', 6, mobileLocal], ['PHONE NUMBER', 6, mobileLocal.slice(1)]);
+  else if (isSaudiId) plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
+  else if (isIqama) plans.push(['IQAMA ID', 3, digits], ['SAUDI ID', 2, digits]);
+  for (const [idType, category, value] of plans) {
+    const r = await _emrSearch(idType, category, value);
+    dbg(`EMR:${idType}:${value}`, r);
     const rows = patientsFrom(r);
     if (rows.length) return { patients: rows, matchedBy: idType, tried };
   }
 
-  // MRN / name / file number → the classic Patient/Search.
+  // MRN / file number / name → the classic Patient/Search (also the fallback when a
+  // typed lookup found nothing, so a plain file number always resolves).
   let r;
   try { r = await hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: q } }); } catch (_e) { r = null; }
   dbg('mrNo', r);

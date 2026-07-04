@@ -19,10 +19,10 @@ function renderPatientSearchPage() {
   if (psPendingQuery) { psState = { ...psState, q: psPendingQuery, patients: null, sel: null, lookup: null }; }
   const c = document.getElementById('content');
   c.innerHTML = `
-    ${pageHero('Lookup', 'Patient / exam lookup', 'Search by file number, national ID, or phone — then see the patient and every radiology exam, fully aggregated')}
+    ${pageHero('Lookup', 'Patient / exam lookup', 'Search by file number, national ID, Iqama, or mobile — then see the patient and every radiology exam, fully aggregated')}
     <div class="card">
       <div style="display:flex;gap:9px;flex-wrap:wrap">
-        <input id="ps-q" class="input" placeholder="File / MRN · National ID · Phone" value="${escapeHtml(psState.q)}"
+        <input id="ps-q" class="input" placeholder="File / MRN · National ID · Iqama · Mobile" value="${escapeHtml(psState.q)}"
                style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter')psSearch()">
         <button class="btn btn-primary" onclick="psSearch()">Search</button>
       </div>
