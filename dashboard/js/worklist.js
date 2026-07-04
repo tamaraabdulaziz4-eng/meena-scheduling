@@ -256,9 +256,11 @@ async function wlEnrich(silent) {
   if (_wlEnrichBusy) return;
   const items = (wlState.data && wlState.data.items) || [];
   if (!items.length) return;
-  const anyMissing = items.some((it) => !it.stage);
+  const anyMissing = items.some((it) => !it.stage || !it.exam);
   if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 120000)) return;
   _wlEnrichBusy = true;
+  // Show the loading shimmer on the not-yet-filled cells while this pass runs.
+  if (anyMissing) { wlState.enriching = true; if (document.getElementById('wl-body')) wlRender(); }
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
   qs.set('from', wlState.from); qs.set('to', wlState.to);
@@ -276,19 +278,23 @@ async function wlEnrich(silent) {
       if (it.stage) wlState.stageCache.set(k, it.stage);
     }
     if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
-      let changed = false;
       for (const it of wlState.data.items) {
         const k = wlRowKey(it); if (!k) continue;
         const e = enr.get(k);
         if (!e) continue;
-        if (e.modality && it.modality !== e.modality) { it.modality = e.modality; changed = true; }
-        if (e.exam && it.exam !== e.exam) { it.exam = e.exam; changed = true; }
-        if (e.stage && it.stage !== e.stage) { it.stage = e.stage; changed = true; }
+        if (e.modality && it.modality !== e.modality) it.modality = e.modality;
+        if (e.exam && it.exam !== e.exam) it.exam = e.exam;
+        if (e.stage && it.stage !== e.stage) it.stage = e.stage;
       }
-      if (changed && document.getElementById('wl-body')) wlRender();
     }
   } catch (e) { /* best-effort */ }
-  finally { _wlEnrichBusy = false; }
+  finally {
+    _wlEnrichBusy = false;
+    // Settle: turn the shimmer off and repaint with whatever filled in (rows still
+    // empty after this pass fall back to "—" — that's the connector's per-order cap).
+    wlState.enriching = false;
+    if (document.getElementById('wl-body')) wlRender();
+  }
 }
 
 // Pipeline stage → badge. Each stage is detected from a specific signal:
@@ -390,14 +396,19 @@ function wlRow(it, i) {
     : it.stage === 'imaged' ? 'background:rgba(224,168,0,0.10);' : '';
   const edge = it.emergency ? 'box-shadow:inset 3px 0 0 var(--danger,#E25555);' : '';
   const age = wlAge(it.ageHours);
+  // While the background HIS enrichment is still running, show a loading shimmer for
+  // exam/type/stage instead of a bare "—" so the board reads as "loading", not broken.
+  const p = wlState.enriching;
+  const sh = (w) => `<span class="wl-shimmer" style="width:${w}px"></span>`;
+  const dash = '<span style="color:var(--muted)">—</span>';
   return `<tr style="${tint}${edge}">
     <td style="color:var(--muted)">${i + 1}</td>
     <td><div style="font-weight:700">${escapeHtml(it.patientName || '—')}</div>
       <div style="font-size:11px;color:var(--muted)">${escapeHtml(it.mrno || '')}${it.branch ? ' · ' + escapeHtml(it.branch) : ''}${it.doctorName ? ' · ' + escapeHtml(it.doctorName) : ''}</div></td>
-    <td>${it.exam ? escapeHtml(it.exam) : '<span style="color:var(--muted)">—</span>'}</td>
-    <td>${wlModBadges(it.modality) || '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${it.exam ? escapeHtml(it.exam) : (p ? sh(90) : dash)}</td>
+    <td>${wlModBadges(it.modality) || (p ? sh(34) : dash)}</td>
     <td>${it.emergency ? '<span class="badge badge-red">Emergency</span>' : '<span class="badge">Routine</span>'}</td>
-    <td>${wlStageBadge(it.stage)}</td>
+    <td>${it.stage ? wlStageBadge(it.stage) : (p ? sh(64) : wlStageBadge(null))}</td>
     <td>${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}</td>
     <td>${wlConsentEl(it)}</td>
     <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>

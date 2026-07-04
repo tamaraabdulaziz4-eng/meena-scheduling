@@ -1998,6 +1998,16 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
   gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .rep-empty { text-align: center; color: var(--muted); padding: 34px 12px; font-size: 13px; }
 
+/* Worklist "loading" shimmer — a soft animated placeholder for cells whose data
+   (exam / modality / stage) is still being fetched, so the board reads as loading
+   rather than showing bare dashes. */
+.wl-shimmer { display:inline-block; height:11px; border-radius:6px; vertical-align:middle;
+  background: linear-gradient(90deg, var(--border) 25%, rgba(127,127,140,.10) 37%, var(--border) 63%);
+  background-size: 400% 100%; animation: wlsh 1.3s ease infinite; }
+@keyframes wlsh { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+/* Date pickers read left-to-right even on an Arabic phone, so the numerals line up. */
+input[type="date"].input { direction: ltr; text-align: left; font-variant-numeric: tabular-nums; }
+
 /* Generic input/select (used by modals that aren't inside .form-field) */
 .input { border: 1.5px solid var(--border); border-radius: 11px; padding: 9px 13px;
   font-size: 13px; outline: none; background: var(--card-alt); color: var(--text);
