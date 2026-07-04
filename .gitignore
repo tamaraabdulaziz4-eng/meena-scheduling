@@ -17,3 +17,6 @@ sidebar_options.png
 
 # Throwaway design mockups/previews
 mockups/
+
+# Production seed — real staff + bcrypt admin hashes. Never track (keep local only).
+seed_prod.sql

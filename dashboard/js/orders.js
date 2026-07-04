@@ -147,13 +147,40 @@ function odWhen(iso) {
 }
 
 const OD_STEP_ORDER = { ordered: 0, reported: 1, filed: 2 };
+// "Stuck" thresholds (hours): a report verified but not filed for this long almost
+// always means the match was ambiguous and needs a human; an order with no report
+// for this long is a slow read worth chasing. Emergencies get tighter limits.
+const OD_STUCK_REPORT_H = 3, OD_STUCK_REPORT_EMERG_H = 1;
+const OD_STUCK_ORDER_H = 24, OD_STUCK_ORDER_EMERG_H = 4;
+function odHoursSince(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? (Date.now() - t) / 36e5 : null;
+}
+// Returns an "attention" flag for an order still in-flight, else null.
+function odAttention(o) {
+  if (o.state === 'reported') {
+    const h = odHoursSince(o.reportedAt);
+    const lim = o.emergency ? OD_STUCK_REPORT_EMERG_H : OD_STUCK_REPORT_H;
+    if (h != null && h >= lim) return { label: `needs filing · ${odHrs(h)}`, cls: 'badge-red' };
+  } else if (o.state === 'ordered') {
+    const h = odHoursSince(o.orderedAt);
+    const lim = o.emergency ? OD_STUCK_ORDER_EMERG_H : OD_STUCK_ORDER_H;
+    if (h != null && h >= lim) return { label: `no report · ${odHrs(h)}`, cls: 'badge-orange' };
+  }
+  return null;
+}
+
 function odRow(o) {
   const step = OD_STEP_ORDER[o.state] ?? 0;
   const emerg = o.emergency;
+  const att = odAttention(o);
   const stateBadge = o.state === 'filed' ? '<span class="badge badge-green">Filed</span>'
     : o.state === 'reported' ? '<span class="badge badge-orange">Reported</span>'
       : '<span class="badge">Ordered</span>';
-  return `<div class="card" style="margin-bottom:8px;padding:12px${emerg ? ';border-left:3px solid var(--danger,#E25555)' : ''}">
+  const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--warn,#e0a800)') : null;
+  const border = attBorder || (emerg ? 'var(--danger,#E25555)' : null);
+  return `<div class="card" style="margin-bottom:8px;padding:12px${border ? ';border-left:3px solid ' + border : ''}">
     <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
         <div style="font-weight:700">${escapeHtml(o.patientName || '—')}
@@ -163,6 +190,7 @@ function odRow(o) {
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
+        ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
         ${stateBadge}
       </div>
     </div>
