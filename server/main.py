@@ -856,6 +856,8 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_state ON scheduling.radiology_orders(state);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_mrno ON scheduling.radiology_orders(mrno);")
+            # Imaging modality (CT/US/XR/MR/MG) captured from the worklist when known.
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS modality TEXT;")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -6538,8 +6540,8 @@ def _rad_upsert_orders(items):
             ready = it.get("readyToFile") is True
             q("""INSERT INTO scheduling.radiology_orders
                     (site, mrno, bill_no, gen_pat_billing_id, patient_name, department, doctor,
-                     emergency, ordered_at, state, reported_at)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     emergency, ordered_at, state, reported_at, modality)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                  ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                     site=EXCLUDED.site, mrno=EXCLUDED.mrno, bill_no=EXCLUDED.bill_no,
                     patient_name=EXCLUDED.patient_name, department=EXCLUDED.department, doctor=EXCLUDED.doctor,
@@ -6549,12 +6551,14 @@ def _rad_upsert_orders(items):
                                WHEN EXCLUDED.state='reported' THEN 'reported'
                                ELSE scheduling.radiology_orders.state END,
                     reported_at=COALESCE(scheduling.radiology_orders.reported_at, EXCLUDED.reported_at),
+                    modality=COALESCE(EXCLUDED.modality, scheduling.radiology_orders.modality),
                     updated_at=NOW()""",
               (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), int(gpb),
                it.get("patientName"), it.get("department"), it.get("doctorName"),
                bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),
                "reported" if ready else "ordered",
-               (datetime.now(timezone.utc) if ready else None)),
+               (datetime.now(timezone.utc) if ready else None),
+               (it.get("modality") or None)),
               exec_only=True)
             n += 1
         except Exception:
@@ -6597,7 +6601,7 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
         clauses.append("mrno=%s"); params.append(mr)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = q(f"""SELECT gen_pat_billing_id, site, mrno, bill_no, patient_name, department, doctor,
-                        emergency, state, study_id, service_id,
+                        emergency, state, study_id, service_id, modality,
                         ordered_at, reported_at, filed_at, updated_at,
                         EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
                         EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
@@ -6613,7 +6617,7 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
         "genPatBillingId": r["gen_pat_billing_id"], "site": r["site"], "mrno": r["mrno"],
         "billNo": r["bill_no"], "patientName": r["patient_name"], "department": r["department"],
         "doctor": r["doctor"], "emergency": r["emergency"], "state": r["state"],
-        "studyId": r["study_id"], "serviceId": r["service_id"],
+        "studyId": r["study_id"], "serviceId": r["service_id"], "modality": r["modality"],
         "orderedAt": _iso(r["ordered_at"]), "reportedAt": _iso(r["reported_at"]), "filedAt": _iso(r["filed_at"]),
         "tatReportH": _r1(r["tat_report_h"]), "tatFileH": _r1(r["tat_file_h"]), "tatTotalH": _r1(r["tat_total_h"]),
     } for r in rows]
@@ -6669,7 +6673,7 @@ def radiology_worklist(request: Request, user=Depends(require_admin)):
         qs["sites"] = str(scope)
     elif (p.get("sites") or "").strip():
         qs["sites"] = p.get("sites").strip()
-    for k in ("from", "to", "ready", "readyLimit", "nocache"):
+    for k in ("from", "to", "ready", "readyLimit", "modality", "nocache"):
         if (p.get(k) or "").strip():
             qs[k] = p.get(k).strip()
     query = ("?" + urllib.parse.urlencode(qs)) if qs else ""

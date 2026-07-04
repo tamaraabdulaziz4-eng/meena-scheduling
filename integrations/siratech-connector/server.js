@@ -545,8 +545,15 @@ app.post('/results/match', requireAuth, async (req, res) => {
 const WORKLIST_CACHE_TTL = Number(process.env.WORKLIST_CACHE_TTL_MS || 60000);
 const worklistCache = new Map();
 
-async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, noCache = false }) {
-  const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit });
+// Cap on how many worklist rows we enrich with real modality per request. The
+// modality isn't on the RadiologySearch row (departmentName is the ordering clinic,
+// not the imaging modality), so each needs a RadiologyDetails call — bounded and
+// concurrent so the board stays fast. Emergency-first sort means the ones that
+// matter most are enriched first.
+const WORKLIST_MODALITY_CAP = Number(process.env.WORKLIST_MODALITY_CAP || 80);
+
+async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, noCache = false }) {
+  const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality });
   if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < WORKLIST_CACHE_TTL) return e.data; }
   await getToken();
   const empId = currentEmpId() || '0';
@@ -586,11 +593,32 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         emergency, priority: emergency ? 'Emergency' : 'Routine',
         billNo: r.billNo || null, genPatBillingId: r.genPatBillingId,
         orderedDate: r.billDate || r.visitDate || null, ageHours, tatStatus: r.tatStatus,
+        modality: null,      // filled below only when modality=1
         readyToFile: null,   // filled below only when ready=1
+        __row: r, __site: s.site,   // kept for enrichment; stripped before return
       });
     }
   }
   items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+
+  // Real modality (CT / US / XR / MR / MG) per order — bounded, concurrent, best-effort.
+  if (modality && items.length) {
+    const targets = items.slice(0, WORKLIST_MODALITY_CAP);
+    await pool(targets, 6, async (it) => {
+      try {
+        const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
+          body: results.radiologyDetailsBody(it.__row, { hospitalId: it.__site, empId }),
+        });
+        const det = (dr.json && dr.json.data) || [];
+        const mods = [];
+        for (const t of det) {
+          const m = results.normMod(t.categoryName || t.serviceName || '');
+          if (m && !mods.includes(m)) mods.push(m);
+        }
+        it.modality = mods.length ? mods.join(', ') : null;
+      } catch (e) { /* leave modality null on any per-order failure */ }
+    });
+  }
 
   if (ready && items.length) {
     const seen = new Set(), targets = [];
@@ -603,11 +631,13 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     for (const it of items) if (byMrn.has(it.mrno)) it.readyToFile = byMrn.get(it.mrno);
   }
 
+  for (const it of items) { delete it.__row; delete it.__site; }   // strip enrichment scratch
   const data = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, failed },
     total: items.length, emergency: items.filter((i) => i.emergency).length,
     readyChecked: ready ? Math.min(readyLimit, new Set(items.map((i) => i.mrno)).size) : 0,
+    modalityChecked: modality ? Math.min(WORKLIST_MODALITY_CAP, items.length) : 0,
     items, generatedAt: new Date().toISOString(),
   };
   worklistCache.set(key, { data, ts: Date.now() });
@@ -622,8 +652,9 @@ app.get('/worklist', requireAuth, async (req, res) => {
     const to = String(req.query.to || '').trim() || null;
     const ready = String(req.query.ready || '') === '1';
     const readyLimit = Math.max(1, Math.min(60, Number(req.query.readyLimit) || 25));
+    const modality = String(req.query.modality || '') === '1';
     const noCache = String(req.query.nocache || '') === '1';
-    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, noCache })) });
+    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, noCache })) });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
