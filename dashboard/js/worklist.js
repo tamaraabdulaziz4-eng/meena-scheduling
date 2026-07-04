@@ -155,8 +155,9 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <input id="wl-search" class="input" placeholder="🔍 Find patient — file # / ID / iqama / mobile"
-               style="min-width:230px;flex:1" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
+        <input id="wl-search" class="input" placeholder="🔍 Type file # to filter — or full ID / iqama / mobile"
+               style="min-width:230px;flex:1" inputmode="numeric" autocomplete="off"
+               oninput="wlLiveFilter(this.value)" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
         <button class="btn btn-sm btn-ghost" onclick="wlLoad(true)" title="Refresh now">↻</button>
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
@@ -335,17 +336,18 @@ function wlRender() {
   if (!body) return;
   // A cross-branch search result view is showing — don't let a live refresh clobber it.
   if (wlState.searchView) return;
-  // On-board search filter: show only the matching patient(s) from THIS board, with a
-  // banner to clear back. Consent + Check are on the row — no jump to another page.
+  // Live typeahead: as the operator types digits, filter the board to the MRNs that
+  // START WITH what's typed (prefix), so the patient narrows down live — no need to
+  // type the whole number or press Enter. Consent + Check stay on the row.
   if (wlState.filter) {
     const f = wlState.filter;
-    const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '') === f);
+    const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(f));
     const banner = `<div style="display:flex;align-items:center;gap:8px;margin:2px 2px 12px">
-      <span style="font-weight:700">Showing ${match.length} result${match.length !== 1 ? 's' : ''} for "${escapeHtml(f)}"</span>
+      <span style="font-weight:700">${match.length} on this board starting with "${escapeHtml(f)}"</span>
       <button class="btn btn-sm btn-ghost" onclick="wlClearFilter()">← Back to full board</button></div>`;
     body.innerHTML = banner + (match.length
       ? wlTable(match)
-      : `<div class="empty" style="padding:20px"><p>This patient is no longer on the board (report may have been filed).</p></div>`);
+      : `<div class="empty" style="padding:20px"><p>No patient on this board starts with "${escapeHtml(f)}".${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
     return;
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
@@ -472,25 +474,34 @@ function wlOpenHandoff(mrno) {
   showPage('handoff');
 }
 
-// Search behaves like the RIS panel's search: it FILTERS the current board first, so
-// the patient (with their consent + Check right there) stays on the worklist instead
-// of jumping to another page. Only if the file isn't on this board does it do a
-// TARGETED cross-branch find — and only for a real identifier (file / national ID /
-// iqama / mobile, numeric ≥6 digits), never a browse of the whole hospital.
+// Live typeahead as the operator types: filter the board to MRNs that START WITH the
+// typed digits. Empty box → back to the full board. Purely local (no network), so it
+// updates on every keystroke.
+function wlLiveFilter(v) {
+  const digits = String(v || '').replace(/\D/g, '');
+  wlState.searchView = false;
+  wlState.filter = digits || null;
+  wlRender();
+}
+
+// Enter: the live prefix filter already narrows the board. If the typed number
+// matches nobody on THIS board, do a TARGETED cross-branch find (real identifier,
+// ≥6 digits) — the patient's exam was ordered at another branch.
 async function wlSearch(q) {
   q = (q || '').trim();
   if (!q) return;
   const digits = q.replace(/\D/g, '');
-  if (digits.length < 6) {
-    if (typeof toast === 'function') toast('Enter a full file # / ID / iqama / mobile — search never lists everyone', 'err');
-    return;
-  }
-  // 1) On THIS board? Filter in place — consent + everything is right here.
+  if (!digits) return;
+  // On THIS board (prefix)? The live filter is already showing them — keep it.
   const items = (wlState.data && wlState.data.items) || [];
-  if (items.some((it) => String(it.mrno || '').replace(/\D/g, '') === digits)) {
+  if (items.some((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(digits))) {
     wlState.searchView = false; wlState.filter = digits; wlRender(); return;
   }
-  // 2) Not on the board → targeted cross-branch find, shown with consent (no jump).
+  // Not on this board → cross-branch find needs a full identifier.
+  if (digits.length < 6) {
+    if (typeof toast === 'function') toast('Nobody on this board. Type the full file # / ID / iqama / mobile to search other branches', 'err');
+    return;
+  }
   try {
     const d = await API.get('/radiology/find?q=' + encodeURIComponent(q));
     const pts = (d && d.patients) || [];
