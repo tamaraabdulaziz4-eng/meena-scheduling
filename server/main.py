@@ -8294,11 +8294,16 @@ def _check_reports_token(token):
 def _study_is_reported(status):
     # One readiness predicate shared by the internal and public report views, so a
     # signed/reviewed/addended report never reads "ready" in one place and "not
-    # verified" in another. Whole-word match (\b) on the DePACS status so it does
-    # NOT false-positive on negations/pending states like UNSIGNED, ASSIGNED,
-    # "APPROVAL PENDING" or "PENDING REVIEW".
-    return bool(re.search(r"\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b",
-                          str(status or ""), re.I))
+    # verified" in another. Mirrors the connector's isReported: reject any draft /
+    # interim / negated state FIRST (NOT VERIFIED, NON-VERIFIED, TO BE VERIFIED,
+    # PARTIALLY VERIFIED, PENDING FINAL, UNSIGNED, …) — a bare \b whitelist match on
+    # the positive word alone false-positives on "NOT VERIFIED"/"PENDING FINAL".
+    s = str(status or "").upper()
+    if re.search(r"\bNOT\b|\bNON[\s-]?(VERIFIED|SIGNED|APPROVED|REPORTED|REVIEWED|COMPLETE)|\bTO\s+BE\b|"
+                 r"\bPARTIAL|\bPENDING\b|\bPRELIM|\bDRAFT\b|\bAWAIT|\bINCOMPLETE\b|IN[\s-]?PROGRESS|"
+                 r"UN-?(VERIFIED|SIGNED|APPROVED|REVIEWED|COMPLETED)", s):
+        return False
+    return bool(re.search(r"\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b", s))
 
 def _public_study_belongs_to_file(study_id, file_no):
     """Guard for the login-free link: a study is only readable through the public
