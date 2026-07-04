@@ -6850,6 +6850,25 @@ async def radiology_results_file(request: Request, user=Depends(require_admin)):
     b = await request.json()
     if not isinstance(b, dict) or not str(b.get("file") or "").strip():
         raise HTTPException(400, "A patient file number is required")
+    # Ride the patient's signed non-pregnancy consent along with the report so BOTH
+    # land on her Siratech file in one filing (the connector attaches it as a second
+    # genFileAttachments entry, named on its own). Only on a real write (confirm).
+    consent_id = None
+    if b.get("confirm") and not b.get("consentPdf"):
+        try:
+            crow = q("""SELECT id, pdf, patient_name, created_at FROM scheduling.consents
+                        WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
+                        ORDER BY created_at DESC LIMIT 1""",
+                     (str(b.get("file")).strip(),), one=True)
+            if crow and crow.get("pdf"):
+                import base64 as _b64
+                b["consentPdf"] = _b64.b64encode(bytes(crow["pdf"])).decode("ascii")
+                _cdt = crow["created_at"].strftime("%Y-%m-%d") if crow.get("created_at") else ""
+                _parts = [p for p in ["Consent Non Pregnancy", (crow.get("patient_name") or "").strip(), _cdt] if p]
+                b["consentName"] = " - ".join(_parts) + ".pdf"
+                consent_id = crow["id"]
+        except Exception:
+            consent_id = None
     out = _bridge_request("/his/results/file", method="POST", body=b, timeout=180)
     if b.get("confirm"):
         wrote = isinstance(out, dict) and out.get("wrote")
@@ -6870,6 +6889,12 @@ async def radiology_results_file(request: Request, user=Depends(require_admin)):
         if wrote and gpb:
             try:
                 _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"])
+            except Exception:
+                pass
+        if wrote and consent_id:
+            try:
+                q("UPDATE scheduling.consents SET filed_siratech=true WHERE id=%s",
+                  (consent_id,), exec_only=True)
             except Exception:
                 pass
     return out

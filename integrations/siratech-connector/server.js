@@ -74,7 +74,7 @@ if (!HIS_USER || !HIS_PASS) {
 }
 
 const app = express();
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '8mb' }));   // room for a base64 consent PDF on /results/file
 
 // ── token cache + single-flight login ────────────────────────────────────────
 let cache = { auth: '', hospitalid: '', ts: 0 };
@@ -935,7 +935,19 @@ app.post('/results/file', requireAuth, async (req, res) => {
     tgt.isTemplateResultEntered = 0;
     tgt.stringRange = stringRange;
     tgt.isfileAttachmentExists = 1;
-    tgt.genFileAttachments = [attachment];
+    // Attach the report AND — when Meena passes one — the patient's signed
+    // non-pregnancy consent, so BOTH land on the patient's Siratech file in a single
+    // filing (same genFileAttachments mechanism). The consent keeps its own name.
+    const attachments = [attachment];
+    if (typeof req.body.consentPdf === 'string' && req.body.consentPdf.length > 100) {
+      attachments.push({
+        ...attachment,
+        fileName: (req.body.consentName || 'Consent Non Pregnancy.pdf'),
+        attachedfile: req.body.consentPdf, attachedFile: req.body.consentPdf,
+        genFileAttachmentsId: -2,
+      });
+    }
+    tgt.genFileAttachments = attachments;
 
     const td = {
       resultEntryDetailsResponse: details,

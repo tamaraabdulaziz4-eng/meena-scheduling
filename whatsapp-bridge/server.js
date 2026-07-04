@@ -39,7 +39,7 @@ if (!API_TOKEN) {
 }
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '8mb' }));   // /his/* proxies result-file bodies that may carry a base64 consent PDF
 
 // Lightweight rate limit on /send so a leaked token can't be used to blast
 // messages from the account. Tune with SEND_RATE_PER_MIN (default 30/min).
