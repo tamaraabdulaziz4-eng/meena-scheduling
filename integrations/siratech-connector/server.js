@@ -642,8 +642,26 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     }
     return '';
   };
-  let _risKeysLogged = false;   // one-time: reveal real field names if the service guess misses
+  const risStatusOf = (row) => {
+    for (const k of ['risOrderStatus', 'resultStatus', 'risStatus', 'radiologyStatus', 'status']) {
+      const v = row && row[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  // Map the HIS's RIS status text → our 3 pipeline stages, for a FAST preliminary
+  // stage (the accurate, PACS-grounded stage still refines the top rows below when
+  // ready=1). Conservative: only a clearly-final status counts as "report ready".
+  const risStageOf = (status) => {
+    const s = String(status || '').toLowerCase();
+    if (!s) return null;
+    if (/\b(verif|report|sign|approv|final|released|authenticat)/.test(s)) return 'reported';
+    if (/(complet|perform|imag|acquir|dictat|transcrib|prelim|scan|exam)/.test(s)) return 'imaged';
+    return 'ordered';   // ordered / scheduled / registered / arrived / booked / pending
+  };
+  let _risKeysLogged = false;   // one-time: reveal real field names if a guess misses
   const risByBill = new Map();
+  const _risStatuses = new Set();
   await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
       const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
@@ -656,15 +674,20 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
       if (!_risKeysLogged && rows.length) { _risKeysLogged = true; console.log('[worklist] FetchRISPanel row keys:', Object.keys(rows[0]).join(',')); }
       for (const row of rows) {
         if (row.billNo == null) continue;
-        const svc = risServiceOf(row);
-        if (svc) risByBill.set(String(row.billNo), svc);
+        const st = risStatusOf(row);
+        if (st) _risStatuses.add(st);
+        risByBill.set(String(row.billNo), { svc: risServiceOf(row), status: st });
       }
     } catch (e) { /* fall back to the per-order RadiologyDetails pass below */ }
   });
+  if (_risStatuses.size) console.log('[worklist] distinct risOrderStatus:', [..._risStatuses].join(' | '));
   let risFilled = 0;
   for (const it of items) {
-    const svc = risByBill.get(String(it.billNo));
-    if (svc) { it.exam = svc; it.modality = results.normMod(svc) || null; risFilled++; }
+    const r = risByBill.get(String(it.billNo));
+    if (!r) continue;
+    if (r.svc) { it.exam = r.svc; it.modality = results.normMod(r.svc) || null; risFilled++; }
+    const st = risStageOf(r.status);
+    if (st) it.stage = st;   // fast preliminary stage; refined by the DePACS check below
   }
 
   // Fallback: any rows the RIS panel didn't cover (or if the service field guess
