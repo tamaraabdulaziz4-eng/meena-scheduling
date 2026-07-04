@@ -110,6 +110,9 @@ async function initApp() {
   // Radiology RIS worklist for team leads + managers.
   const worklistNav = document.getElementById('nav-worklist');
   if (worklistNav) worklistNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  // Radiology order lifecycle board for team leads + managers.
+  const ordersNav = document.getElementById('nav-orders');
+  if (ordersNav) ordersNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
   // Radiology CD transfers for team leads + managers.
   const cdxferNav = document.getElementById('nav-cdxfer');
   if (cdxferNav) cdxferNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
@@ -216,6 +219,7 @@ async function renderRoute(page) {
     case 'patientsearch': renderPatientSearchPage(); break;
     case 'radstats':   await renderRadStatsPage(); break;
     case 'worklist':   await renderWorklistPage(); break;
+    case 'orders':     await renderOrdersPage(); break;
     case 'cdxfer':     await renderCdxferPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
     case 'messages':   await renderMessagesPage(); break;
@@ -236,7 +240,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','radstats','cdxfer','branches','shifts','users','audit']);
+  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','radstats','cdxfer','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
