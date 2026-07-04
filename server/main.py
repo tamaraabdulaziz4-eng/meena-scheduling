@@ -9261,6 +9261,16 @@ def start_scheduler():
     # (the atomic per-day claim keeps the actual send single).
     if os.environ.get("SMTP_CAPTURE") or os.environ.get("DISABLE_SCHEDULER"):
         return
+    # Auto-file runs by itself and hidden (owner's directive): the moment a report is
+    # VERIFIED it's filed into Siratech and the patient drops off the worklist — no
+    # human, no UI. Turn it on ONCE (idempotent) rather than forcing it every boot, so
+    # it stays controllable via the superadmin API afterwards without being re-forced.
+    try:
+        if get_setting("rad_autofile_forced_on") != "1":
+            set_setting("rad_autofile_enabled", "1")
+            set_setting("rad_autofile_forced_on", "1")
+    except Exception:
+        pass
     import threading
     threading.Thread(target=_cases_reminder_loop, daemon=True).start()
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
