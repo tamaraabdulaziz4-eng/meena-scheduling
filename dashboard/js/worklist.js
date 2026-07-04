@@ -130,7 +130,7 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <input id="wl-search" class="input" placeholder="🔍 مريض من فرع ثاني؟ اكتب رقم الملف / الهوية / الإقامة / الجوال"
+        <input id="wl-search" class="input" placeholder="🔍 Find patient — file # / ID / iqama / mobile"
                style="min-width:230px;flex:1" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
         <button class="btn btn-sm btn-ghost" onclick="wlLoad(true)" title="Refresh now">↻</button>
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
@@ -251,16 +251,17 @@ async function wlEnrich(silent) {
   finally { _wlEnrichBusy = false; }
 }
 
-// The RIS pipeline stages, in order. Each is detected from a specific signal:
+// Pipeline stage → badge. Each stage is detected from a specific signal:
 //   ordered  — order line present in Siratech, no images yet
-//   imaged   — a study exists in DePACS/PACS (scan performed), not yet reported
-//   reported — the DePACS study is VERIFIED (signed report) → auto-file will file it
-// (once filed in Siratech the order drops off this board entirely).
-const WL_STAGES = [
-  { key: 'reported', label: '✅ Report ready', color: '#2e9e6b' },
-  { key: 'imaged',   label: '📷 Imaged — awaiting report', color: '#e0a800' },
-  { key: 'ordered',  label: '📋 Ordered — awaiting imaging', color: '#6b7280' },
-];
+//   imaged   — a study exists in DePACS/PACS (scan done), not yet reported
+//   reported — the DePACS study is VERIFIED (signed) → auto-file files it and it
+//              then drops off this board on its own.
+function wlStageBadge(stage) {
+  if (stage === 'reported') return '<span class="badge badge-green" title="Report signed — auto-file will file it, then it leaves the board">✅ Report ready</span>';
+  if (stage === 'imaged')   return '<span class="badge badge-orange" title="Scan done — awaiting the report">📷 Imaged</span>';
+  if (stage === 'ordered')  return '<span class="badge" title="Ordered — awaiting imaging">📋 Ordered</span>';
+  return '<span class="badge" style="opacity:.55">…</span>';
+}
 
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
@@ -286,24 +287,19 @@ function wlRender() {
     return;
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
-  const haveStages = items.some((it) => it.stage);
-  if (!haveStages) { body.innerHTML = items.map((it, i) => wlRow(it, i)).join(''); return; }
-  let html = '', idx = 0;
-  for (const st of WL_STAGES) {
-    const group = items.filter((it) => (it.stage || 'imaged') === st.key);
-    if (!group.length) continue;
-    html += `<div style="display:flex;align-items:center;gap:8px;margin:14px 2px 8px">
-      <span style="font-weight:700;color:${st.color}">${st.label}</span>
-      <span class="badge" style="background:${st.color};color:#fff">${group.length}</span>
-      <div style="flex:1;height:1px;background:var(--border,#e5e5ea)"></div></div>`;
-    html += group.map((it) => wlRow(it, idx++)).join('');
-  }
-  const rest = items.filter((it) => !it.stage);
-  if (rest.length) {
-    html += `<div style="font-size:12px;color:var(--muted);margin:14px 2px 8px">Not checked yet (${rest.length})</div>`;
-    html += rest.map((it) => wlRow(it, idx++)).join('');
-  }
-  body.innerHTML = html;
+  body.innerHTML = wlTable(items);
+}
+
+// Compact RIS-panel table — mirrors Siratech's own RIS panel: one flat, sorted list
+// (emergency first, then oldest first), a row per order.
+function wlTable(items) {
+  return `<div class="table-wrap"><table class="wl-table" style="width:100%">
+    <thead><tr>
+      <th style="width:34px">#</th><th>Patient</th><th>Exam</th><th>Type</th>
+      <th>Priority</th><th>Stage</th><th>Age</th><th>Consent</th><th></th>
+    </tr></thead>
+    <tbody>${items.map((it, i) => wlRow(it, i)).join('')}</tbody>
+  </table></div>`;
 }
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }
@@ -345,50 +341,35 @@ function wlConsent(mrno, name, exam, doctor, branch) {
 }
 
 function wlRow(it, i) {
-  const readyBadge = it.stage === 'reported' ? `<span class="badge badge-green">✅ report ready</span>`
-    : it.stage === 'imaged' ? `<span class="badge badge-orange">📷 awaiting report</span>`
-      : it.stage === 'ordered' ? `<span class="badge">📋 awaiting imaging</span>` : '';
+  // A patient who already has images in DePACS is tinted "almost done": amber once
+  // imaged (awaiting report), green once the report is verified (auto-file will file
+  // it and it drops off the board). Emergency rows get a red left edge.
+  const tint = it.stage === 'reported' ? 'background:rgba(46,158,107,0.10);'
+    : it.stage === 'imaged' ? 'background:rgba(224,168,0,0.10);' : '';
+  const edge = it.emergency ? 'box-shadow:inset 3px 0 0 var(--danger,#E25555);' : '';
   const age = wlAge(it.ageHours);
-  // Highlight a patient who ALREADY has images in DePACS: the scan is done, so the
-  // row is tinted "almost finished" — it's just waiting for the report, then auto-file
-  // files it and the patient drops off on their own. imaged = amber, report-ready = green.
-  const tint = it.stage === 'reported' ? ';background:rgba(46,158,107,0.12)'
-    : it.stage === 'imaged' ? ';background:rgba(224,168,0,0.12)' : '';
-  const leftBorder = it.emergency ? ';border-left:3px solid var(--danger,#E25555)'
-    : it.stage === 'reported' ? ';border-left:3px solid #2e9e6b'
-      : it.stage === 'imaged' ? ';border-left:3px solid #e0a800' : '';
-  const doneHint = it.stage === 'imaged'
-    ? `<div style="font-size:11px;color:#b5850a;margin-top:2px">📷 تم التصوير — بانتظار التقرير، يُرفع تلقائياً ويختفي</div>`
-    : it.stage === 'reported'
-      ? `<div style="font-size:11px;color:#1f7a52;margin-top:2px">✅ التقرير جاهز — يُرفع تلقائياً الآن ويختفي</div>` : '';
-  return `<div class="card wl-card" style="margin-bottom:8px;padding:12px${tint}${leftBorder}">
-    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
-      <div style="flex:1;min-width:200px">
-        <div style="font-weight:700">${escapeHtml(it.patientName || '—')}
-          <span style="color:var(--muted);font-weight:500">· ${escapeHtml(it.mrno)}</span></div>
-        ${it.exam ? `<div style="font-size:13px;font-weight:600;color:var(--text,#1a1a2e);margin-top:3px">🩻 ${escapeHtml(it.exam)}</div>` : ''}
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">${escapeHtml(it.branch || '')}${it.doctorName ? ' · 👨‍⚕️ ' + escapeHtml(it.doctorName) : ''}</div>
-        ${doneHint}
-      </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-        ${wlModBadges(it.modality)}
-        ${wlConsentEl(it)}
-        ${it.emergency ? '<span class="badge badge-red">Emergency</span>' : '<span class="badge">Routine</span>'}
-        ${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}
-        ${readyBadge}
-        <button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${it.site || 0}, this)">Check</button>
-      </div>
-    </div>
-    <div class="wl-detail" id="wl-d-${i}" style="display:none;margin-top:10px"></div>
-  </div>`;
+  return `<tr style="${tint}${edge}">
+    <td style="color:var(--muted)">${i + 1}</td>
+    <td><div style="font-weight:700">${escapeHtml(it.patientName || '—')}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(it.mrno || '')}${it.branch ? ' · ' + escapeHtml(it.branch) : ''}${it.doctorName ? ' · ' + escapeHtml(it.doctorName) : ''}</div></td>
+    <td>${it.exam ? escapeHtml(it.exam) : '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${wlModBadges(it.modality) || '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${it.emergency ? '<span class="badge badge-red">Emergency</span>' : '<span class="badge">Routine</span>'}</td>
+    <td>${wlStageBadge(it.stage)}</td>
+    <td>${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}</td>
+    <td>${wlConsentEl(it)}</td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${it.site || 0}, this)">Check</button></td>
+  </tr>
+  <tr id="wl-dr-${i}" style="display:none"><td colspan="9" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${i}"></div></td></tr>`;
 }
 
-// Read-only drill: match the finished DePACS report(s) to this patient's order(s).
+// Read-only drill: expand a detail row that matches the finished DePACS report(s) to
+// this patient's order(s).
 async function wlToggle(i, mrno, site, btn) {
-  const box = document.getElementById('wl-d-' + i);
-  if (!box) return;
-  if (box.style.display === 'block') { box.style.display = 'none'; btn.textContent = 'Check'; return; }
-  box.style.display = 'block'; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
+  const row = document.getElementById('wl-dr-' + i), box = document.getElementById('wl-d-' + i);
+  if (!row || !box) return;
+  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = 'Check'; return; }
+  row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
   try {
     const d = await API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`);
     box.innerHTML = wlMatch(d);
@@ -432,7 +413,7 @@ async function wlSearch(q) {
   if (!q) return;
   const digits = q.replace(/\D/g, '');
   if (digits.length < 6) {
-    if (typeof toast === 'function') toast('اكتب رقم ملف / هوية / إقامة / جوال كامل — البحث لا يعرض الكل', 'err');
+    if (typeof toast === 'function') toast('Enter a full file # / ID / iqama / mobile — search never lists everyone', 'err');
     return;
   }
   // 1) On THIS board? Filter in place — consent + everything is right here.
@@ -444,7 +425,7 @@ async function wlSearch(q) {
   try {
     const d = await API.get('/radiology/find?q=' + encodeURIComponent(q));
     const pts = (d && d.patients) || [];
-    if (!pts.length) { if (typeof toast === 'function') toast('ما فيه مريض بهذا الرقم على أي فرع', 'err'); return; }
+    if (!pts.length) { if (typeof toast === 'function') toast('No patient with this number on any branch', 'err'); return; }
     wlShowMatches(pts);
   } catch (e) { if (typeof toast === 'function') toast(e.message || 'Search failed', 'err'); }
 }
@@ -472,6 +453,6 @@ function wlShowMatches(pts) {
       <div style="display:flex;gap:6px;align-items:center">${consent}
         <button class="btn btn-sm btn-primary" onclick="wlOpenHandoff('${jsAttr(mrn)}')">Open →</button></div></div>`;
   }).join('');
-  body.innerHTML = `<div style="margin:6px 2px 10px;font-weight:700">${pts.length} من فروع أخرى — اختر المريض</div>${rows}
+  body.innerHTML = `<div style="margin:6px 2px 10px;font-weight:700">${pts.length} found on other branches — pick the patient</div>${rows}
     <button class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="wlClearFilter()">← Back to worklist</button>`;
 }

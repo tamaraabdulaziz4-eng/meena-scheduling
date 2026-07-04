@@ -148,8 +148,12 @@ async function initApp() {
   if (typeof loadTicketsBadge === 'function') loadTicketsBadge();
   // Unacknowledged action-required circulars badge (everyone).
   if (typeof loadAnnouncementsBadge === 'function') loadAnnouncementsBadge();
-  // Staff land on their own schedule; everyone else on the Home dashboard.
-  window._defaultPage = isStaff ? 'myschedule' : 'home';
+  // Landing page: a radiology operator (team lead / manager / full admin) opens
+  // straight onto the Worklist — the one screen they live in — instead of Home.
+  // Staff land on their own schedule; any other role falls back to the schedule.
+  window._defaultPage = isStaff ? 'myschedule'
+    : ['admin', 'manager', 'superadmin'].includes(role) ? 'worklist'
+      : 'schedule';
 
   // Load global data. Staff don't need the full roster up front (only the swap
   // modal does, and it lazy-loads it) — so don't make them wait on it before the
