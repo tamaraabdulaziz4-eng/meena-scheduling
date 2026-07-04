@@ -135,7 +135,7 @@ function wlCheckNewEmergencies(items) {
 }
 
 async function renderWorklistPage() {
-  setTopbar('Radiology worklist', 'Orders awaiting a result — emergency first, oldest first');
+  setTopbar('Radiology worklist', 'Orders awaiting a result — emergency first, newest first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
   const c = document.getElementById('content');
@@ -330,15 +330,17 @@ function wlRender() {
   body.innerHTML = wlTable(items);
 }
 
-// Compact RIS-panel table — mirrors Siratech's own RIS panel: one flat, sorted list
-// (emergency first, then oldest first), a row per order.
+// Compact RIS-panel table — a flat list, NEWEST first (lowest age on top), with
+// emergencies pinned above routine so a STAT order is never buried.
 function wlTable(items) {
+  const rows = items.slice().sort((a, b) =>
+    (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
   return `<div class="table-wrap"><table class="wl-table" style="width:100%">
     <thead><tr>
       <th style="width:34px">#</th><th>Patient</th><th>Exam</th><th>Type</th>
       <th>Priority</th><th>Stage</th><th>Age</th><th>Consent</th><th></th>
     </tr></thead>
-    <tbody>${items.map((it, i) => wlRow(it, i)).join('')}</tbody>
+    <tbody>${rows.map((it, i) => wlRow(it, i)).join('')}</tbody>
   </table></div>`;
 }
 
