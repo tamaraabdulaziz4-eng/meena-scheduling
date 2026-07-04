@@ -128,7 +128,9 @@ const REPORTED_STATUS = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM
 // all contain a positive token but describe a DRAFT that must NEVER be filed. Reject
 // any status carrying a negation/draft marker FIRST (purely additive — a plain
 // "VERIFIED" still passes), so the auto-filer can't push an unsigned report.
-const NOT_REPORTED = /\bNOT\b|\bPENDING\b|\bPRELIM|\bDRAFT\b|\bAWAIT|\bINCOMPLETE\b|IN[\s-]?PROGRESS|UN-?(VERIFIED|SIGNED|APPROVED|REVIEWED|COMPLETED)/;
+// Also reject the "not-quite-final" pre-states that carry a positive token but are
+// NOT a signed report: NON-VERIFIED, "TO BE VERIFIED", PARTIALLY VERIFIED.
+const NOT_REPORTED = /\bNOT\b|\bNON[\s-]?(VERIFIED|SIGNED|APPROVED|REPORTED|REVIEWED|COMPLETE)|\bTO\s+BE\b|\bPARTIAL|\bPENDING\b|\bPRELIM|\bDRAFT\b|\bAWAIT|\bINCOMPLETE\b|IN[\s-]?PROGRESS|UN-?(VERIFIED|SIGNED|APPROVED|REVIEWED|COMPLETED)/;
 function isReported(status) {
   const s = String(status || '').toUpperCase();
   if (NOT_REPORTED.test(s)) return false;
