@@ -95,6 +95,7 @@ function openUserModal(id) {
   document.getElementById('user-password').value  = '';
   document.getElementById('user-email').value     = u?.email || '';
   document.getElementById('user-email-notif').checked = u ? (u.email_notifications !== false) : true;
+  const ru = document.getElementById('user-raduse'); if (ru) ru.checked = !!(u && (u.can_use_radiology || u.can_file_radiology));
   const rf = document.getElementById('user-radfile'); if (rf) rf.checked = !!(u && u.can_file_radiology);
   document.getElementById('user-role').value      = u?.role || 'viewer';
   document.getElementById('user-pw-hint').style.display = id ? 'inline' : 'none';
@@ -138,10 +139,22 @@ function toggleUserBranch() {
     (['superadmin','manager'].includes(role) || isStaff) ? 'none' : 'flex';
   const sw = document.getElementById('user-staff-wrap');
   if (sw) sw.style.display = isStaff ? 'block' : 'none';
-  // The radiology-filing privilege only matters for a staff member (team leads and
-  // up can always file); hide it for other roles.
+  // The radiology privileges only matter for a staff member (team leads and up have
+  // radiology by role); hide them for other roles.
+  const uw = document.getElementById('user-raduse-wrap');
+  if (uw) uw.style.display = isStaff ? 'block' : 'none';
   const rw = document.getElementById('user-radfile-wrap');
   if (rw) rw.style.display = isStaff ? 'block' : 'none';
+}
+// Filing implies access — enabling "can use" is required to file, and ticking file
+// auto-ticks use.
+function onRadUseToggle() {
+  const ru = document.getElementById('user-raduse'), rf = document.getElementById('user-radfile');
+  if (ru && rf && !ru.checked) rf.checked = false;   // no access → can't file
+}
+function onRadFileToggle() {
+  const ru = document.getElementById('user-raduse'), rf = document.getElementById('user-radfile');
+  if (ru && rf && rf.checked) ru.checked = true;     // filing implies access
 }
 async function saveUser() {
   const msg      = document.getElementById('user-msg');
@@ -161,7 +174,10 @@ async function saveUser() {
                    email_notifications: !!document.getElementById('user-email-notif').checked };
     if (role === 'staff') {
       body.staff_id = Number(staff_id);
-      body.can_file_radiology = !!document.getElementById('user-radfile')?.checked;
+      const canFile = !!document.getElementById('user-radfile')?.checked;
+      // Filing implies access — never store "can file" without "can use".
+      body.can_use_radiology = !!document.getElementById('user-raduse')?.checked || canFile;
+      body.can_file_radiology = canFile;
     }
     if (password) body.password = password;
 

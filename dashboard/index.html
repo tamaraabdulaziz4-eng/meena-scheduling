@@ -974,12 +974,19 @@
           <label>Linked staff member *</label>
           <select id="user-staff"><option value="">Select staff…</option></select>
         </div>
+        <div class="form-field" id="user-raduse-wrap" style="display:none">
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="user-raduse" style="width:auto" onchange="onRadUseToggle()">
+            <span>Can use the radiology worklist</span>
+          </label>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Off by default — grant this to let this staff member see and work the radiology worklist (scoped to their branch).</div>
+        </div>
         <div class="form-field" id="user-radfile-wrap" style="display:none">
           <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
-            <input type="checkbox" id="user-radfile" style="width:auto">
-            <span>Can file radiology results into the HIS</span>
+            <input type="checkbox" id="user-radfile" style="width:auto" onchange="onRadFileToggle()">
+            <span>…and can file results into the HIS</span>
           </label>
-          <div style="font-size:12px;color:var(--muted);margin-top:2px">Off by default — a staff member can view the worklist &amp; sign consent, but only files reports if you enable this.</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">A further step — they can view &amp; sign consent without this; enable it only for people who should file reports.</div>
         </div>
         <div class="msg" id="user-msg"></div>
       </div>
