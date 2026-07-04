@@ -1,12 +1,18 @@
 // ── Audit Log page ────────────────────────────────────────────────────────────
 async function renderAuditPage() {
   setTopbar('Audit Log', 'System activity history');
-  showLoader('Loading audit log…');
+  // Paint the shell + inline loader INSTANTLY so the page switches on click, then
+  // fill the table when the data lands (was: blank/global spinner until the fetch
+  // returned, which felt like the button did nothing).
+  const c = document.getElementById('content');
+  c.innerHTML = `
+    ${pageHero('System activity history', 'Audit Log', 'recent events')}
+    <div id="audit-body">${LOADING_HTML}</div>`;
+  const body = document.getElementById('audit-body');
   try {
     const logs = await API.get('/audit');
-    const c = document.getElementById('content');
-    c.innerHTML = `
-      ${pageHero('System activity history', 'Audit Log', `<b>${logs.length}</b> recent event${logs.length !== 1 ? 's' : ''}`)}
+    if (currentPage !== 'audit' || !document.getElementById('audit-body')) return;   // navigated away
+    body.innerHTML = `
       <div class="table-wrap">
         <table>
           <thead><tr><th>Time</th><th>User</th><th>Role</th><th>Branch</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
@@ -23,6 +29,6 @@ async function renderAuditPage() {
         </table>
       </div>`;
   } catch (err) {
-    document.getElementById('content').innerHTML = `<div class="empty"><p>${err.message}</p></div>`;
-  } finally { hideLoader(); }
+    if (body) body.innerHTML = `<div class="empty"><p>${escapeHtml(err.message)}</p></div>`;
+  }
 }

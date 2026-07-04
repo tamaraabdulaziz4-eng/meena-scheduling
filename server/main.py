@@ -87,22 +87,33 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
             # EVERY query. A dropped/stale connection raises OperationalError on
             # execute (handled below with a retry + pool rebuild), and the generic
             # except rolls back so connections are always returned to the pool clean.
+            #
+            # Run the single statement in autocommit: the server commits it implicitly
+            # in the SAME round-trip, so we avoid the separate COMMIT round-trip that
+            # doubled latency on every query (a big deal against a remote Neon DB —
+            # ~2x fewer round-trips per read). Multi-statement transactions never use
+            # this helper (they take pool.getconn() directly and do manual
+            # commit/rollback), and we always hand the connection back with autocommit
+            # OFF, so their atomicity is unaffected.
+            conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 if exec_only:
-                    conn.commit()
-                    pool.putconn(conn)
-                    return None
-                conn.commit()
-                if one:
+                    result = None
+                elif one:
                     row = cur.fetchone()
-                    pool.putconn(conn)
-                    return dict(row) if row else None
-                rows = [dict(r) for r in cur.fetchall()]
-                pool.putconn(conn)
-                return rows
+                    result = dict(row) if row else None
+                else:
+                    result = [dict(r) for r in cur.fetchall()]
+            conn.autocommit = False
+            pool.putconn(conn)
+            return result
         except psycopg2.OperationalError:
             # Connection is dead — discard it and retry with a new one
+            try:
+                conn.autocommit = False
+            except Exception:
+                pass
             try:
                 pool.putconn(conn, close=True)
             except Exception:
@@ -120,6 +131,7 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
                 raise   # third attempt also failed, give up
         except Exception:
             try:
+                conn.autocommit = False
                 conn.rollback()
                 pool.putconn(conn)
             except Exception:
