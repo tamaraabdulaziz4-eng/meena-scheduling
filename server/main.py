@@ -108,8 +108,11 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
             conn.autocommit = False
             pool.putconn(conn)
             return result
-        except psycopg2.OperationalError:
-            # Connection is dead — discard it and retry with a new one
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            # Connection is dead (Neon dropped the idle SSL conn, or it was already
+            # closed) — discard it and retry with a fresh one. InterfaceError
+            # ("connection already closed") is a sibling of OperationalError and must
+            # be retried the same way, not fall through to the generic handler.
             try:
                 conn.autocommit = False
             except Exception:
@@ -130,10 +133,19 @@ def q(sql, params=(), *, one=False, many=False, exec_only=False):
             if attempt == 2:
                 raise   # third attempt also failed, give up
         except Exception:
+            # A query error (constraint violation, etc.). The connection is usually
+            # fine after a rollback, so return it healthy; but if the rollback itself
+            # raises (dead connection), discard it closed. Either way the connection
+            # MUST go back to the pool — putconn is in its OWN try so a failing
+            # rollback can never leak it.
+            bad = False
             try:
                 conn.autocommit = False
                 conn.rollback()
-                pool.putconn(conn)
+            except Exception:
+                bad = True
+            try:
+                pool.putconn(conn, close=bad)
             except Exception:
                 pass
             raise

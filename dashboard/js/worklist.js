@@ -29,12 +29,14 @@ function wlCanSwitchBranch() {
   return typeof currentUser !== 'undefined' && currentUser && ['manager', 'superadmin'].includes(currentUser.role);
 }
 
-// One canonical per-order key (billing id → bill no → MRN). Used for the modality
-// cache, the enrichment merge, and the emergency seen-set, so they never disagree.
+// One canonical per-order key for the modality/stage caches and the enrichment
+// merge. Only a genuinely unique id counts — billing id or bill no. If BOTH are
+// absent we return null and the caller skips caching/merging that row, rather than
+// fall back to mrno+date (two same-day orders for one patient would collide and swap
+// each other's modality/stage). Keyless rows just re-enrich each pass — no swap.
 function wlRowKey(it) {
   return it.genPatBillingId != null ? 'g' + it.genPatBillingId
-    : it.billNo ? 'b' + it.billNo
-      : 'm' + (it.mrno || '') + '|' + (it.orderedDate || '');
+    : it.billNo ? 'b' + it.billNo : null;
 }
 
 // Local (KSA) date as YYYY-MM-DD — the operator is in KSA so the browser's local
@@ -45,6 +47,13 @@ function wlTodayLocal() {
 }
 // day === null → "live": today + every still-pending prior-day order (nothing
 // pending vanishes at midnight). Picking a date drills to exactly that day.
+// Leaving a search: changing day/branch must drop any active on-board filter or
+// cross-branch match view, else the new board is fetched but never painted (the
+// searchView guard blocks it) or the old MRN filter re-applies to the new day.
+function wlExitSearch() {
+  wlState.filter = null; wlState.searchView = false;
+  const s = document.getElementById('wl-search'); if (s) s.value = '';
+}
 function wlShiftDay(delta) {
   const base = wlState.day || wlTodayLocal();
   const [y, m, d] = base.split('-').map(Number);
@@ -52,15 +61,15 @@ function wlShiftDay(delta) {
   const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   // Stepping forward onto today returns to the live rolling view.
   wlState.day = (iso >= wlTodayLocal()) ? null : iso;
-  wlState.seenEmerg = null;
+  wlState.seenEmerg = null; wlExitSearch();
   wlSyncDayControls();
   wlLoad(true);
 }
 function wlSetDay(v) {
   wlState.day = (!v || v >= wlTodayLocal()) ? null : v;   // today (or blank) = live
-  wlState.seenEmerg = null; wlSyncDayControls(); wlLoad(true);
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
 }
-function wlToday() { wlState.day = null; wlState.seenEmerg = null; wlSyncDayControls(); wlLoad(true); }
+function wlToday() { wlState.day = null; wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true); }
 function wlSyncDayControls() {
   const i = document.getElementById('wl-day'); if (i) i.value = wlState.day || wlTodayLocal();
   const t = document.getElementById('wl-today-btn');
@@ -172,7 +181,7 @@ function wlStartTimer() {
 
 // Changing the branch shows a different set — re-seed the emergency baseline so
 // switching scope never fires a false "new emergency" alarm.
-function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlLoad(); }
+function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlExitSearch(); wlLoad(); }
 
 async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
@@ -192,9 +201,17 @@ async function wlLoad(force, silent) {
     wlRender();
     wlEnrich(silent);                             // background: fill stage + modality for unknown rows
   } catch (e) {
-    if (!silent && !wlState.filter) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
-      <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
-      <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
+    if (!silent) {
+      // In a search view, replacing the body with a retry card would wipe the results —
+      // surface the failure as a toast instead so the operator still sees the error.
+      if (wlState.filter || wlState.searchView) {
+        if (typeof toast === 'function') toast(e.message || 'Refresh failed', 'err');
+      } else {
+        body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
+          <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
+          <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
+      }
+    }
   } finally { wlState.loading = false; }
 }
 
@@ -205,22 +222,26 @@ function wlHydrate() {
   const items = (wlState.data && wlState.data.items) || [];
   for (const it of items) {
     const k = wlRowKey(it);
+    if (!k) continue;                              // keyless row → never restore from cache (collision-safe)
     if (!it.modality && !it.exam) { const c = wlState.modCache.get(k); if (c) { it.modality = c.modality; it.exam = c.exam; } }
     if (!it.stage) { const s = wlState.stageCache.get(k); if (s) it.stage = s; }
   }
 }
 
 // Background pass: fetch the board WITH ready=1 (pipeline stage) + modality=1 (exam +
-// modality) — the heavy per-order HIS work — and merge it onto the visible rows. On a
-// silent live refresh it only runs when there's a row we don't yet have a stage for (a
-// new arrival), so a steady board stays light; a manual/explicit load always refreshes
-// stages. Never blocks the board; caches results so future paints are instant.
+// modality) — the heavy per-order HIS work — and merge it onto the visible rows.
+// Always runs on a manual/explicit load; on a silent live refresh it runs when a new
+// row still lacks a stage OR it's been >2 min since the last enrich — so pipeline
+// progress (ordered→imaged→report-ready) actually keeps updating on the live board,
+// while a steady board stays light. Never blocks paint; caches results so paints are
+// instant. Cache-restored stages are refreshed by the periodic re-check.
 let _wlEnrichBusy = false;
 async function wlEnrich(silent) {
   if (_wlEnrichBusy) return;
   const items = (wlState.data && wlState.data.items) || [];
   if (!items.length) return;
-  if (silent && items.every((it) => it.stage)) return;   // steady board, nothing new → no heavy call
+  const anyMissing = items.some((it) => !it.stage);
+  if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 120000)) return;
   _wlEnrichBusy = true;
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
@@ -228,10 +249,12 @@ async function wlEnrich(silent) {
   qs.set('ready', '1'); qs.set('modality', '1');
   try {
     const d = await API.get('/radiology/worklist?' + qs.toString());
+    wlState.lastEnrich = Date.now();
     if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); }
     const enr = new Map();
     for (const it of (d.items || [])) {
       const k = wlRowKey(it);
+      if (!k) continue;                            // keyless → don't cache/merge (collision-safe)
       enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
       if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
       if (it.stage) wlState.stageCache.set(k, it.stage);
@@ -239,7 +262,8 @@ async function wlEnrich(silent) {
     if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
       let changed = false;
       for (const it of wlState.data.items) {
-        const e = enr.get(wlRowKey(it));
+        const k = wlRowKey(it); if (!k) continue;
+        const e = enr.get(k);
         if (!e) continue;
         if (e.modality && it.modality !== e.modality) { it.modality = e.modality; changed = true; }
         if (e.exam && it.exam !== e.exam) { it.exam = e.exam; changed = true; }
@@ -282,7 +306,7 @@ function wlRender() {
       <span style="font-weight:700">Showing ${match.length} result${match.length !== 1 ? 's' : ''} for "${escapeHtml(f)}"</span>
       <button class="btn btn-sm btn-ghost" onclick="wlClearFilter()">← Back to full board</button></div>`;
     body.innerHTML = banner + (match.length
-      ? match.map((it, i) => wlRow(it, i)).join('')
+      ? wlTable(match)
       : `<div class="empty" style="padding:20px"><p>This patient is no longer on the board (report may have been filed).</p></div>`);
     return;
   }
@@ -358,7 +382,7 @@ function wlRow(it, i) {
     <td>${wlStageBadge(it.stage)}</td>
     <td>${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}</td>
     <td>${wlConsentEl(it)}</td>
-    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${it.site || 0}, this)">Check</button></td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
   </tr>
   <tr id="wl-dr-${i}" style="display:none"><td colspan="9" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${i}"></div></td></tr>`;
 }

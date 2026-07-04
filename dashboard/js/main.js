@@ -193,6 +193,8 @@ function resolvePage(page) {
   if (page === 'patientsearch' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'cdxfer' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'worklist' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'orders' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';
