@@ -333,9 +333,20 @@ app.get('/health', (_req, res) => {
 
 // Look up a patient's radiology orders by file (MRN) number.
 app.get('/patient/:file', requireAuth, async (req, res) => {
-  const file = String(req.params.file || '').trim();
+  let file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   try {
+    // Accept ANY identifier, not just the MRN: if the input is a mobile / national ID
+    // / iqama, resolve it to the real MRN first (the same unified search the lookup
+    // page uses), so every search box finds the patient the same way.
+    const _d = file.replace(/\D/g, '');
+    const _looksNonMrn = /^(?:00)?(?:966)?0?5\d{8}$/.test(_d) || /^[12]\d{9}$/.test(_d);
+    if (_looksNonMrn) {
+      try {
+        const s = await _patientSearch(file);
+        if (s && s.patients && s.patients.length && s.patients[0].mrno) file = String(s.patients[0].mrno);
+      } catch (e) { /* fall through and try the raw value as an MRN */ }
+    }
     // Independent calls — a hiccup in patient-search must not lose the orders
     // (and vice-versa), so settle both and use whatever came back.
     const [radR, patR] = await Promise.allSettled([
