@@ -345,8 +345,13 @@ function wlConsentEl(it) {
   return `<button class="btn btn-sm" style="background:#e0a800;color:#fff;border:none" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}')">⚠ Consent needed</button>`;
 }
 function wlConsent(mrno, name, exam) {
-  if (typeof openConsent !== 'function') { if (typeof toast === 'function') toast('Consent module unavailable', 'err'); return; }
-  openConsent({ file_no: mrno, mrno: mrno, mrn: mrno, name: name, procedure: exam }, () => wlLoad(true));
+  // QR flow: her data is pre-printed on the official form, the patient scans the QR,
+  // opens it on HER OWN phone, reads, agrees and signs, and it reflects straight back
+  // here (the board refreshes to ✓ Consent). Falls back to sign-on-this-device.
+  const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: name, procedure: exam };
+  if (typeof openConsentQR === 'function') { openConsentQR(prefill, () => wlLoad(true)); return; }
+  if (typeof openConsent === 'function') { openConsent(prefill, () => wlLoad(true)); return; }
+  if (typeof toast === 'function') toast('Consent module unavailable', 'err');
 }
 
 function wlRow(it, i) {
