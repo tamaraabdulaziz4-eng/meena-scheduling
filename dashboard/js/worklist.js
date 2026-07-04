@@ -6,7 +6,25 @@
 // clinical write path lives in one place.
 
 let wlState = { branches: [], site: '', ready: false, data: null, loading: false, timer: null, autofile: null,
-                seenEmerg: null, alert: (localStorage.getItem('wl_alert') !== '0'), day: null };
+                seenEmerg: null, alert: (localStorage.getItem('wl_alert') !== '0'), day: null,
+                // Persistent modality/exam cache (keyed per order) so a live refresh never
+                // re-runs the heavy per-order HIS enrichment for rows we've already resolved —
+                // the board updates instantly and only genuinely-new orders trigger the slow pass.
+                modCache: new Map() };
+
+// Org-wide roles (superadmin/manager) can point the board at any branch; a branch
+// team lead is server-scoped to their own branch, so the picker is locked for them.
+function wlCanSwitchBranch() {
+  return typeof currentUser !== 'undefined' && currentUser && ['manager', 'superadmin'].includes(currentUser.role);
+}
+
+// One canonical per-order key (billing id → bill no → MRN). Used for the modality
+// cache, the enrichment merge, and the emergency seen-set, so they never disagree.
+function wlRowKey(it) {
+  return it.genPatBillingId != null ? 'g' + it.genPatBillingId
+    : it.billNo ? 'b' + it.billNo
+      : 'm' + (it.mrno || '') + '|' + (it.orderedDate || '');
+}
 
 // Live board: refresh on a timer so a newly-arrived order shows up without the
 // operator touching anything (the whole point — they never open Siratech).
@@ -132,16 +150,27 @@ async function renderWorklistPage() {
       </div>
     </div>
     <div id="wl-body"></div>`;
-  try {
-    const b = await API.get('/radiology/branches');
-    wlState.branches = (b && b.branches) || [];
-    const sel = document.getElementById('wl-branch');
-    if (sel) for (const br of wlState.branches) {
-      const o = document.createElement('option');
-      o.value = br.siteId; o.textContent = br.shortName || br.name || ('Branch ' + br.siteId);
-      sel.appendChild(o);
-    }
-  } catch (e) { /* branch picker is optional; team leads are auto-scoped server-side */ }
+  // Only org-wide roles can switch the board between branches; a branch team lead is
+  // scoped to their own branch server-side, so we DON'T offer them a picker that the
+  // server would silently ignore — we lock it and point them at the search box (which
+  // finds a patient across every branch). This is the "per-branch" control done right.
+  const canSwitch = wlCanSwitchBranch();
+  const sel = document.getElementById('wl-branch');
+  if (sel && !canSwitch) {
+    sel.disabled = true;
+    sel.title = 'You see your own branch. To find a patient from another branch, use the search box.';
+    if (sel.options[0]) sel.options[0].textContent = 'Your branch';
+  } else {
+    try {
+      const b = await API.get('/radiology/branches');
+      wlState.branches = (b && b.branches) || [];
+      if (sel) for (const br of wlState.branches) {
+        const o = document.createElement('option');
+        o.value = br.siteId; o.textContent = br.shortName || br.name || ('Branch ' + br.siteId);
+        sel.appendChild(o);
+      }
+    } catch (e) { /* branch picker is optional; superadmin/manager can still see all */ }
+  }
   wlLoadAutofile();
   wlLoad();
   wlStartTimer();
@@ -181,9 +210,10 @@ async function wlLoad(force, silent) {
     // modality in the background — a per-order HIS call for ~80 rows is too slow
     // to block the first paint.
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
+    wlHydrateModality();                          // paint known modality/exam instantly from cache
     wlRender();
     if (silent) wlLoadAutofile();               // keep the auto-file banner fresh too
-    wlEnrichModality();                          // fills the modality badges when ready
+    wlEnrichModality();                          // fills only the rows still missing modality
   } catch (e) {
     if (!silent) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
@@ -191,12 +221,30 @@ async function wlLoad(force, silent) {
   } finally { wlState.loading = false; }
 }
 
+// Paint modality/exam onto the freshly-loaded (fast, modality-less) board straight
+// from the persistent cache, so a live refresh shows the badges INSTANTLY without
+// waiting on — or even firing — the slow enrichment pass for rows we already know.
+function wlHydrateModality() {
+  const items = (wlState.data && wlState.data.items) || [];
+  for (const it of items) {
+    if (it.modality || it.exam) continue;          // the board already carried it
+    const c = wlState.modCache.get(wlRowKey(it));
+    if (c) { if (c.modality) it.modality = c.modality; if (c.exam) it.exam = c.exam; }
+  }
+}
+
 // Second pass: fetch the same worklist with modality=1 (slow — a RadiologyDetails
-// call per order) and merge the modality onto the already-rendered rows. Never
-// blocks the board; if it fails or times out the rows just show no modality badge.
+// call per order) and merge the modality onto the already-rendered rows. Skipped
+// entirely when every visible row is already resolved (from the cache) — so on a
+// steady board the 45s live refresh is light and instant, and the heavy HIS fan-out
+// only runs when a genuinely new, unseen order appears. Never blocks the board; if
+// it fails or times out the rows just keep whatever modality they already had.
 let _wlModBusy = false;
 async function wlEnrichModality() {
   if (_wlModBusy) return;
+  const items = (wlState.data && wlState.data.items) || [];
+  const needed = items.some((it) => !it.modality && !it.exam);
+  if (!needed) return;                              // nothing new to resolve → no heavy call
   _wlModBusy = true;
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
@@ -205,15 +253,17 @@ async function wlEnrichModality() {
   qs.set('modality', '1');
   try {
     const d = await API.get('/radiology/worklist?' + qs.toString());
-    // Key by genPatBillingId, falling back to bill/MRN so a row without a billing id
-    // still gets its modality + exam.
-    const rowKey = (it) => (it.genPatBillingId != null ? 'g' + it.genPatBillingId : it.billNo ? 'b' + it.billNo : 'm' + it.mrno);
+    if (wlState.modCache.size > 2000) wlState.modCache.clear();   // bound memory on a long-lived kiosk
     const enr = new Map();
-    for (const it of (d.items || [])) if (it.modality || it.exam) enr.set(rowKey(it), { modality: it.modality, exam: it.exam });
+    for (const it of (d.items || [])) if (it.modality || it.exam) {
+      const k = wlRowKey(it), v = { modality: it.modality, exam: it.exam };
+      enr.set(k, v);
+      wlState.modCache.set(k, v);                   // remember it so future refreshes stay light
+    }
     if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
       let changed = false;
       for (const it of wlState.data.items) {
-        const e = enr.get(rowKey(it));
+        const e = enr.get(wlRowKey(it));
         if (e) {
           if (e.modality && it.modality !== e.modality) { it.modality = e.modality; changed = true; }
           if (e.exam && it.exam !== e.exam) { it.exam = e.exam; changed = true; }
