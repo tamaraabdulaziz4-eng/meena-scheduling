@@ -1099,8 +1099,16 @@ async function _patientSearch(q, debug) {
     // 5… forms, in case the number is stored without the leading 0.
     for (const cat of [6, 7, 8, 4, 5, 9, 10, 11]) plans.push(['PHONE NUMBER', cat, mobileLocal]);
     for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, mobileLocal.slice(1)]);
-  } else if (isSaudiId) plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
-  else if (isIqama) plans.push(['IQAMA ID', 3, digits], ['SAUDI ID', 2, digits]);
+  } else if (isSaudiId) {
+    // National ID category 2 is confirmed working on this HIS; keep it first, iqama as fallback.
+    plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
+  } else if (isIqama) {
+    // Iqama (non-Saudi, starts 2): the category id may differ by build like phone did.
+    // An iqama value only matches an ID field, so try the plausible id categories and
+    // use the FIRST that returns rows (self-healing). Include 2 in case this HIS uses
+    // ONE id field for both Saudi ID and iqama.
+    for (const cat of [3, 2, 4, 7, 8, 9, 10, 11]) plans.push(['IQAMA ID', cat, digits]);
+  }
   for (const [idType, category, value] of plans) {
     const r = await _emrSearch(idType, category, value);
     dbg(`EMR:${idType}:${value}`, r);
