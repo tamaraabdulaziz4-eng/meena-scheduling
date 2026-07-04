@@ -639,31 +639,30 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   }
 
   if (ready && items.length) {
-    const seen = new Set(), mrnos = [];
-    for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); mrnos.push(it.mrno); if (mrnos.length >= readyLimit) break; } }
-    // Authoritative per-ORDER pipeline stage straight from Siratech (one
-    // FetchRadiologyDetails call per patient — no DePACS guessing, and per-bill so a
-    // patient's two orders can't smear each other):
-    //   • reported → the HIS already has a radiology report (hasRadiologyRepot)
-    //   • imaged   → an accession exists (study performed / in PACS)
-    //   • ordered  → placed, not yet imaged (e.g. cpoeStatusDescription "Scheduled")
+    const seen = new Set(), targets = [];
+    for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= readyLimit) break; } }
+    // Pipeline stage PER BILL, derived from DePACS via the matcher (the operator's
+    // "report ready" = a VERIFIED report exists in DePACS ready to file — NOT the
+    // Siratech hasRadiologyRepot flag, which only flips once the result is filed BACK
+    // into the HIS and by then the order has already left this board). Per-bill (not
+    // per-patient) so a patient's two orders can't smear each other's stage:
+    //   • reported → a verified study uniquely matches this order (ready to file)
+    //   • imaged   → a study exists for this order in PACS but isn't file-ready yet
+    //   • ordered  → nothing in PACS for this order
     const byBill = new Map();
-    await pool(mrnos, 6, async (mrno) => {
+    await pool(targets, 6, async (it) => {
       try {
-        const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
-        for (const o of ((dr.json && dr.json.data) || [])) {
-          const imaged = o.accessionNumber != null && String(o.accessionNumber).trim() !== '';
-          const hasReport = !!o.hasRadiologyRepot;
-          byBill.set(String(o.billNo), {
-            stage: hasReport ? 'reported' : (imaged ? 'imaged' : 'ordered'),
-            hasReport, imaged, reportDate: o.reportDate || null, hisStatus: o.cpoeStatusDescription || null,
-          });
+        const m = await buildMatch(it.mrno, null, it.site);
+        for (const o of (m.orders || [])) {
+          const ready = !!o.allUnique;
+          const hasStudy = (o.tests || []).some((t) => t.study || (t.candidates && t.candidates.length));
+          byBill.set(String(o.order.billNo), { stage: ready ? 'reported' : (hasStudy ? 'imaged' : 'ordered'), ready });
         }
       } catch (e) { /* skip this patient — leave stage unknown */ }
     });
     for (const it of items) {
       const e = byBill.get(String(it.billNo));
-      if (e) { it.readyToFile = e.hasReport; it.stage = e.stage; it.imaged = e.imaged; it.reportDate = e.reportDate; it.hisStatus = e.hisStatus; }
+      if (e) { it.readyToFile = e.ready; it.stage = e.stage; }
     }
   }
 
