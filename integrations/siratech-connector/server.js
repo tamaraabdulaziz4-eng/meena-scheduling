@@ -624,12 +624,54 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   }
   items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
 
-  // Real modality (CT / US / XR / MR / MG) AND the requested procedure(s) — the
-  // exam + body part (e.g. "US ABDOMEN", "CT CHEST", "XR L-SPINE"), which is what a
-  // real RIS worklist shows. Both come from the same per-order RadiologyDetails call
-  // — bounded, concurrent, best-effort.
+  // ── Exam + modality the RIS-panel way (fast, ALL rows, one call per site) ──────
+  // Siratech's own RIS panel (FetchRISPanel) returns the Service (exam) for EVERY
+  // order in a SINGLE call per site — which is why it's instant. We do the same:
+  // one FetchRISPanel per site, map billNo → service, and derive modality from the
+  // service name. This fills exam+modality for the WHOLE board up front, replacing
+  // the slow, capped per-order RadiologyDetails fan-out. Runs on every load (incl.
+  // the fast one) so the exam column is populated immediately, like the RIS panel.
+  const risFromDay = (from || fromISO.slice(0, 10));
+  const risToDay = (to || toISO.slice(0, 10));
+  const risServiceOf = (row) => {
+    for (const k of ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
+                     'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
+                     'invServiceName', 'invmastServiceName', 'ServiceName']) {
+      const v = row && row[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  let _risKeysLogged = false;   // one-time: reveal real field names if the service guess misses
+  const risByBill = new Map();
+  await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+    try {
+      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+        mrno: '', fromDate: risFromDay + 'T00:00:00', toDate: risToDay + 'T23:59:59',
+        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+        serviceCategoryId: 0, emrPatRisPanelId: 0,
+        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+      } });
+      const rows = (rp.json && rp.json.data) || [];
+      if (!_risKeysLogged && rows.length) { _risKeysLogged = true; console.log('[worklist] FetchRISPanel row keys:', Object.keys(rows[0]).join(',')); }
+      for (const row of rows) {
+        if (row.billNo == null) continue;
+        const svc = risServiceOf(row);
+        if (svc) risByBill.set(String(row.billNo), svc);
+      }
+    } catch (e) { /* fall back to the per-order RadiologyDetails pass below */ }
+  });
+  let risFilled = 0;
+  for (const it of items) {
+    const svc = risByBill.get(String(it.billNo));
+    if (svc) { it.exam = svc; it.modality = results.normMod(svc) || null; risFilled++; }
+  }
+
+  // Fallback: any rows the RIS panel didn't cover (or if the service field guess
+  // missed) get the old per-order RadiologyDetails lookup — bounded and concurrent —
+  // only requested when modality=1, and only for rows still missing an exam.
   if (modality && items.length) {
-    const targets = items.slice(0, WORKLIST_MODALITY_CAP);
+    const targets = items.filter((it) => !it.exam).slice(0, WORKLIST_MODALITY_CAP);
     await pool(targets, 6, async (it) => {
       try {
         const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
@@ -643,8 +685,8 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
           const ex = (t.serviceName || '').trim();
           if (ex && !exams.includes(ex)) exams.push(ex);
         }
-        it.modality = mods.length ? mods.join(', ') : null;
-        it.exam = exams.length ? exams.join(' · ') : null;
+        if (mods.length) it.modality = mods.join(', ');
+        if (exams.length) it.exam = exams.join(' · ');
       } catch (e) { /* leave modality/exam null on any per-order failure */ }
     });
   }
