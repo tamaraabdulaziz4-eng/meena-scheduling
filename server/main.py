@@ -6754,9 +6754,29 @@ def radiology_worklist(request: Request, user=Depends(require_admin)):
     try:
         if isinstance(data, dict):
             _rad_upsert_orders(data.get("items"))
+            _annotate_worklist_consent(data.get("items"))
     except Exception:
         pass
     return data
+
+def _annotate_worklist_consent(items):
+    """Flag which worklist patients already have a SIGNED consent on file, so the board
+    can prompt for a female patient's non-pregnancy consent BEFORE imaging. One query
+    for the whole board."""
+    if not isinstance(items, list) or not items:
+        return
+    files = list({str(it.get("mrno")) for it in items if it.get("mrno")})
+    if not files:
+        return
+    try:
+        rows = q("""SELECT DISTINCT file_no FROM scheduling.consents
+                    WHERE file_no = ANY(%s) AND status='signed' AND pdf IS NOT NULL""",
+                 (files,)) or []
+        have = {r["file_no"] for r in rows}
+        for it in items:
+            it["consentOnFile"] = str(it.get("mrno")) in have
+    except Exception:
+        pass
 
 @app.get("/api/radiology/stats/history")
 def radiology_stats_history(

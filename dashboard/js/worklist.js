@@ -333,6 +333,22 @@ function wlModBadges(modality) {
   }).join(' ');
 }
 
+// A female patient needs a signed non-pregnancy consent BEFORE imaging. Detect
+// female from the HIS gender, and surface the consent state right on the board.
+function wlIsFemale(g) {
+  const s = String(g || '').trim().toLowerCase();
+  return s.startsWith('f') || /أنث|انث/.test(s);
+}
+function wlConsentEl(it) {
+  if (!wlIsFemale(it.gender)) return '';
+  if (it.consentOnFile) return '<span class="badge badge-green" title="Non-pregnancy consent signed">✓ Consent</span>';
+  return `<button class="btn btn-sm" style="background:#e0a800;color:#fff;border:none" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}')">⚠ Consent needed</button>`;
+}
+function wlConsent(mrno, name, exam) {
+  if (typeof openConsent !== 'function') { if (typeof toast === 'function') toast('Consent module unavailable', 'err'); return; }
+  openConsent({ file_no: mrno, mrno: mrno, mrn: mrno, name: name, procedure: exam }, () => wlLoad(true));
+}
+
 function wlRow(it, i) {
   const readyBadge = it.readyToFile === true ? `<span class="badge badge-green">report ready</span>`
     : it.readyToFile === false ? `<span class="badge badge-orange">awaiting report</span>` : '';
@@ -347,6 +363,7 @@ function wlRow(it, i) {
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${wlModBadges(it.modality)}
+        ${wlConsentEl(it)}
         ${it.emergency ? '<span class="badge badge-red">Emergency</span>' : '<span class="badge">Routine</span>'}
         ${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}
         ${readyBadge}
