@@ -475,17 +475,25 @@ function handoffChoose(studyId) {
 async function handoffWriteCore() {
   const history = (handoff.history || '').trim();
   const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
-  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file, priority: handoff.priority });
+  // Pass the selected order's accession so the server stamps it onto the DePACS study.
+  // That turns the later result-filing match from a fuzzy body-part guess into a
+  // deterministic accession key (blank is fine — the server just skips the stamp).
+  const accession = (handoffOrder().accessionNumber != null ? String(handoffOrder().accessionNumber).trim() : '');
+  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file, priority: handoff.priority, accession });
   const res = document.getElementById('ho-result');
   let flag = '';
+  // Surface a stamped accession so staff know the return-match is now deterministic.
+  if (w && w.accession_stamped && w.accession_stamped.stamped && w.accession_stamped.accession) {
+    flag += ` · <b>Accession ${escapeHtml(String(w.accession_stamped.accession))} linked</b>`;
+  }
   if (w && w.emergency) {
     // emergency_confirmed is the read-back result: true = the PACS actually shows
     // Emergency now; false = the write was ACKed but the flag didn't stick (warn so
     // staff can set it by hand); null/undefined = couldn't re-read (assume ok).
     if (w.emergency_confirmed === false) {
-      flag = ` · <b style="color:#c0392b">⚠ Emergency did NOT stick</b> — set it manually in DePACS`;
+      flag += ` · <b style="color:#c0392b">⚠ Emergency did NOT stick</b> — set it manually in DePACS`;
     } else {
-      flag = ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}`;
+      flag += ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}`;
     }
   }
   if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}${flag}. Continue to the message →</div>`;

@@ -7091,6 +7091,79 @@ def _elite_write_history(study_id, history, set_emergency=True):
             "emergency_confirmed": emerg_ok,
             "category": _ELITE_EMERGENCY_CATEGORY_NAME if set_emergency else None}
 
+def _elite_stamp_accession(study_id, accession):
+    """Stamp the Siratech order's accession number onto the Butterfly study so the
+    REVERSE flow (result filing, integrations/siratech-connector) can bind the finished
+    report to the order by its deterministic PRIMARY key (accession) instead of falling
+    back to the fuzzy modality+body-part+time matcher that flags multi-fit studies as
+    ambiguous and kicks them to manual review.
+
+    This is done at handoff — a human has just confirmed which DePACS study belongs to
+    this order — which is exactly the moment we can safely assert the link.
+
+    Butterfly only exposes accession via `study_management/edit_study_info`, which is a
+    FULL replace of the study's patient/description fields. So we read the study back
+    first and echo EVERY other field verbatim, changing ONLY accession_number — never
+    blanking demographics. Best-effort: never raises (the history write is the primary
+    action). Returns a small status dict describing what happened.
+
+    Field names verified against the Butterfly bundle: get_study_info body carries
+    snake_case pat_id / pat_name / pat_sex / pat_birthdate / study_desc /
+    clinical_history / accession_number; edit_study_info expects patient_name /
+    patient_id / patient_sex / patient_birthdate / study_desc / clinical_history /
+    accession_number."""
+    acc = str(accession or "").strip()
+    if not acc:
+        return {"stamped": False, "reason": "no accession on the order"}
+    try:
+        info = _elite_get(f"/study_management/get_study_info/{study_id}")
+        b = (info.get("body") or {}) if isinstance(info, dict) else {}
+    except Exception as e:
+        return {"stamped": False, "reason": f"couldn't read study info: {str(e)[:120]}"}
+    cur_acc = str(b.get("accession_number") or "").strip()
+    cur_desc = str(b.get("study_desc") or "").strip()
+    # Idempotent: the study already carries this accession → nothing to write.
+    if cur_acc == acc:
+        return {"stamped": True, "changed": False, "reason": "already set", "accession": acc}
+    # Distinguish what's currently parked in accession_number. On this DePACS instance
+    # the field is overloaded: it's EITHER a real DICOM accession ("SIRA1661" — a compact
+    # token, no spaces, carries digits) OR, when study_desc is blank, the exam-description
+    # stub ("X L.SPNE", "T SPINE" — has whitespace / no digits). We must protect the
+    # former and may relocate the latter.
+    cur_is_real_acc = bool(cur_acc) and (not re.search(r"\s", cur_acc)) and bool(re.search(r"\d", cur_acc))
+    # Never clobber a REAL pre-existing accession that differs from ours — that would
+    # risk mis-linking the study. Refuse and let the fuzzy matcher handle it.
+    if cur_is_real_acc:
+        return {"stamped": False, "reason": f"study already has a different accession ({cur_acc})"}
+    # edit_study_info is a full replace; refuse unless we can echo the core demographics
+    # back verbatim. A blank patient_id/patient_name would corrupt the medical record,
+    # so a missing read-back aborts the stamp rather than risking a destructive write.
+    pat_id = b.get("pat_id"); pat_name = b.get("pat_name")
+    if not (str(pat_id or "").strip() and str(pat_name or "").strip()):
+        return {"stamped": False, "reason": "study demographics unreadable — refused to edit"}
+    # If accession_number was holding the exam-description stub (study_desc blank),
+    # promote it into its proper field before we overwrite accession with the real key —
+    # no worklist regression, and the description lands where the radiologist reads it.
+    study_desc = cur_desc
+    if not study_desc and cur_acc:
+        study_desc = cur_acc
+    edit = {
+        "patient_name": pat_name,
+        "patient_id": pat_id,
+        "patient_sex": b.get("pat_sex") or "",
+        "patient_birthdate": _elite_fix_date(b.get("pat_birthdate")),
+        "study_desc": study_desc,
+        "clinical_history": b.get("clinical_history") or "",
+        "accession_number": acc,
+    }
+    try:
+        res = _elite_put(f"/study_management/edit_study_info/{study_id}", edit)
+    except HTTPException as e:
+        return {"stamped": False, "reason": str(getattr(e, "detail", e))[:200]}
+    if isinstance(res, dict) and (res.get("success") is False or res.get("error")):
+        return {"stamped": False, "reason": (res.get("error") or "edit rejected")}
+    return {"stamped": True, "changed": True, "reason": "accession written", "accession": acc}
+
 @app.get("/api/handoff/config")
 def handoff_config(user=Depends(require_radiology)):
     c = _elite_cfg()
@@ -7116,11 +7189,21 @@ async def handoff_write_history(request: Request, user=Depends(require_radiology
     # priority='routine', which previously suppressed the flag.
     prio = str(b.get("priority") or "").lower()
     emergency = (b.get("emergency") is True) or (prio != "routine")
+    # Stamp the order's accession onto the study FIRST (via edit_study_info) so a later
+    # emergency-flag read-back in _elite_write_history stays authoritative. The stamp is
+    # best-effort and never raises — a failure here must not block writing the history,
+    # which is the primary action. accession comes from the Siratech order the staff
+    # selected in the handoff UI; blank is fine (older orders aren't billed/accessioned
+    # yet) and simply skips the stamp, leaving the fuzzy matcher as the fallback.
+    acc_result = _elite_stamp_accession(sid, b.get("accession"))
     out = _elite_write_history(sid, history, set_emergency=emergency)
+    out["accession_stamped"] = acc_result
     insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
                  json.dumps({"file_no": (b.get("file_no") or "").strip(),
                              "emergency": bool(emergency),
-                             "category": _ELITE_EMERGENCY_CATEGORY_NAME if emergency else None}))
+                             "category": _ELITE_EMERGENCY_CATEGORY_NAME if emergency else None,
+                             "accession": (str(b.get("accession") or "").strip() or None),
+                             "accession_stamped": bool(acc_result.get("stamped"))}))
     return out
 
 @app.get("/api/handoff/study-info-debug/{study_id}")
