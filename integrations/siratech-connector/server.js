@@ -757,6 +757,8 @@ app.post('/results/file', requireAuth, async (req, res) => {
       : (DEFAULT_STRING_RANGE === RANGE_NOT_APPLICABLE ? 'not applicable (radiology default)' : 'default');
     const planOut = {
       file: plan.file, site: plan.site, billNo: plan.billNo,
+      // RIS Phase 2 — the durable order key so Meena can bind order ↔ study on file.
+      genPatBillingId: plan.target.genPatBillingId != null ? plan.target.genPatBillingId : (plan.searchRow && plan.searchRow.genPatBillingId),
       target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },
       study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate },
       match: plan.match,

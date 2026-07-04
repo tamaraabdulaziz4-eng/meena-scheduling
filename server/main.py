@@ -827,6 +827,36 @@ def init_schema():
                     captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
 
+            # ── RIS Phase 2: per-order lifecycle state + turnaround (TAT) + the durable
+            # study binding. One row per radiology order (gen_pat_billing_id). Populated
+            # from the live worklist (ordered → reported) and stamped 'filed' with the
+            # bound DePACS study id when the report is filed. Real DICOM accession is
+            # null on this HIS, so study_id IS the binding — once set it is the
+            # deterministic link, no re-guessing.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_orders (
+                    id             BIGSERIAL PRIMARY KEY,
+                    site           INTEGER,
+                    mrno           TEXT NOT NULL,
+                    bill_no        TEXT,
+                    gen_pat_billing_id BIGINT UNIQUE,
+                    patient_name   TEXT,
+                    department     TEXT,
+                    doctor         TEXT,
+                    emergency      BOOLEAN NOT NULL DEFAULT false,
+                    ordered_at     TIMESTAMPTZ,
+                    state          TEXT NOT NULL DEFAULT 'ordered',   -- ordered | reported | filed
+                    study_id       BIGINT,                            -- the bound DePACS study
+                    service_id     TEXT,
+                    reported_at    TIMESTAMPTZ,
+                    filed_at       TIMESTAMPTZ,
+                    filed_by       INTEGER,
+                    first_seen     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_state ON scheduling.radiology_orders(state);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_mrno ON scheduling.radiology_orders(mrno);")
+
             conn.commit()
     print("Scheduling schema ready.")
 
@@ -6477,6 +6507,116 @@ def radiology_branches(user=Depends(require_admin)):
     used to populate the branch picker so all branches show by name."""
     return _bridge_request("/his/stats/branches", timeout=90)
 
+# ── RIS Phase 2 — order lifecycle state store + durable study binding ──────────
+def _rad_ts(s):
+    """Parse a HIS/worklist timestamp (ISO-ish, maybe no tz) → datetime or None."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00")[:19].replace(" ", "T"))
+    except Exception:
+        return None
+
+def _rad_upsert_orders(items):
+    """Persist/refresh order lifecycle from a worklist payload (one row per
+    gen_pat_billing_id): stamp ordered_at on first sight, promote to 'reported' when a
+    verified report is ready, never downgrade a 'filed' order. Best-effort — a bad row
+    is skipped, never fails the request."""
+    if not isinstance(items, list):
+        return 0
+    n = 0
+    for it in items:
+        try:
+            gpb = it.get("genPatBillingId")
+            if not gpb:
+                continue
+            ready = it.get("readyToFile") is True
+            q("""INSERT INTO scheduling.radiology_orders
+                    (site, mrno, bill_no, gen_pat_billing_id, patient_name, department, doctor,
+                     emergency, ordered_at, state, reported_at)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
+                    site=EXCLUDED.site, mrno=EXCLUDED.mrno, bill_no=EXCLUDED.bill_no,
+                    patient_name=EXCLUDED.patient_name, department=EXCLUDED.department, doctor=EXCLUDED.doctor,
+                    emergency=EXCLUDED.emergency,
+                    ordered_at=COALESCE(scheduling.radiology_orders.ordered_at, EXCLUDED.ordered_at),
+                    state=CASE WHEN scheduling.radiology_orders.state='filed' THEN 'filed'
+                               WHEN EXCLUDED.state='reported' THEN 'reported'
+                               ELSE scheduling.radiology_orders.state END,
+                    reported_at=COALESCE(scheduling.radiology_orders.reported_at, EXCLUDED.reported_at),
+                    updated_at=NOW()""",
+              (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), int(gpb),
+               it.get("patientName"), it.get("department"), it.get("doctorName"),
+               bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),
+               "reported" if ready else "ordered",
+               (datetime.now(timezone.utc) if ready else None)),
+              exec_only=True)
+            n += 1
+        except Exception:
+            continue
+    return n
+
+def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id):
+    """Record the durable binding (order ↔ DePACS study) + 'filed' state when a report
+    is filed into Siratech. The bound study_id is the deterministic link going forward."""
+    if not gen_pat_billing_id:
+        return
+    try:
+        q("""UPDATE scheduling.radiology_orders
+                SET state='filed', filed_at=NOW(), filed_by=%s,
+                    study_id=COALESCE(%s, study_id),
+                    service_id=COALESCE(%s, service_id),
+                    reported_at=COALESCE(reported_at, NOW()), updated_at=NOW()
+              WHERE gen_pat_billing_id=%s""",
+          (user_id, study_id, (str(service_id) if service_id is not None else None), int(gen_pat_billing_id)),
+          exec_only=True)
+    except Exception:
+        pass
+
+@app.get("/api/radiology/orders")
+def radiology_orders(request: Request, user=Depends(require_admin)):
+    """RIS Phase 2 — the persisted order lifecycle store with turnaround (TAT) in
+    hours. Filter by state / site / mrno. Team leads are scoped to their branch."""
+    p = request.query_params
+    clauses, params = [], []
+    scope = _rad_scope_site(user)
+    if scope is not None:
+        clauses.append("site=%s"); params.append(scope)
+    elif (p.get("site") or "").strip().isdigit():
+        clauses.append("site=%s"); params.append(int(p.get("site")))
+    st = (p.get("state") or "").strip()
+    if st in ("ordered", "reported", "filed"):
+        clauses.append("state=%s"); params.append(st)
+    mr = (p.get("mrno") or "").strip()
+    if mr:
+        clauses.append("mrno=%s"); params.append(mr)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = q(f"""SELECT gen_pat_billing_id, site, mrno, bill_no, patient_name, department, doctor,
+                        emergency, state, study_id, service_id,
+                        ordered_at, reported_at, filed_at, updated_at,
+                        EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
+                        EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
+                        EXTRACT(EPOCH FROM (COALESCE(filed_at, NOW()) - ordered_at))/3600 AS tat_total_h
+                 FROM scheduling.radiology_orders{where}
+                 ORDER BY (state='filed') ASC, emergency DESC, ordered_at ASC NULLS LAST
+                 LIMIT 500""", tuple(params))
+    def _iso(v):
+        return v.isoformat() if v is not None else None
+    def _r1(v):
+        return round(float(v), 1) if v is not None else None
+    orders = [{
+        "genPatBillingId": r["gen_pat_billing_id"], "site": r["site"], "mrno": r["mrno"],
+        "billNo": r["bill_no"], "patientName": r["patient_name"], "department": r["department"],
+        "doctor": r["doctor"], "emergency": r["emergency"], "state": r["state"],
+        "studyId": r["study_id"], "serviceId": r["service_id"],
+        "orderedAt": _iso(r["ordered_at"]), "reportedAt": _iso(r["reported_at"]), "filedAt": _iso(r["filed_at"]),
+        "tatReportH": _r1(r["tat_report_h"]), "tatFileH": _r1(r["tat_file_h"]), "tatTotalH": _r1(r["tat_total_h"]),
+    } for r in rows]
+    by_state = {}
+    for r in rows:
+        by_state[r["state"]] = by_state.get(r["state"], 0) + 1
+    return {"ok": True, "count": len(orders), "byState": by_state, "orders": orders}
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_admin)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -6496,9 +6636,18 @@ def radiology_worklist(request: Request, user=Depends(require_admin)):
     for k in ("from", "to", "ready", "readyLimit", "nocache"):
         if (p.get(k) or "").strip():
             qs[k] = p.get(k).strip()
-    q = ("?" + urllib.parse.urlencode(qs)) if qs else ""
+    query = ("?" + urllib.parse.urlencode(qs)) if qs else ""
     heavy = p.get("ready") == "1"
-    return _bridge_request("/his/worklist" + q, timeout=240 if heavy else 90)
+    data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 90)
+    # RIS Phase 2: persist the lifecycle store off the live board. Best-effort — a DB
+    # hiccup never breaks the worklist view. On a ?ready=1 pass readyToFile is known,
+    # so orders promote ordered → reported here.
+    try:
+        if isinstance(data, dict):
+            _rad_upsert_orders(data.get("items"))
+    except Exception:
+        pass
+    return data
 
 @app.get("/api/radiology/stats/history")
 def radiology_stats_history(
@@ -6578,12 +6727,22 @@ async def radiology_results_file(request: Request, user=Depends(require_admin)):
         # Record which study was filed to which test, so the write is reconstructable.
         plan = (out.get("plan") or {}) if isinstance(out, dict) else {}
         study = (plan.get("study") or {}) if isinstance(plan, dict) else {}
+        # RIS Phase 2: the connector surfaces the order key (genPatBillingId) on the plan;
+        # accept it from the request too. Stamp the durable order ↔ study binding on a
+        # real write.
+        gpb = b.get("genPatBillingId") or plan.get("genPatBillingId") or study.get("genPatBillingId")
         insert_audit(user, "RADIOLOGY_RESULT_FILE", str(b.get("file")),
                      json.dumps({"billNo": b.get("billNo"), "serviceId": b.get("serviceId"),
+                                 "genPatBillingId": gpb,
                                  "studyId": study.get("studyId"),
                                  "authorize": b.get("authorize") is not False,
                                  "wrote": bool(wrote),
                                  "authorized": bool(isinstance(out, dict) and out.get("authorized"))}))
+        if wrote and gpb:
+            try:
+                _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"])
+            except Exception:
+                pass
     return out
 
 # ---- Butterfly (DePACS) write clinical history into a study ------------------
