@@ -6704,7 +6704,9 @@ def radiology_worklist(request: Request, user=Depends(require_admin)):
         if (p.get(k) or "").strip():
             qs[k] = p.get(k).strip()
     query = ("?" + urllib.parse.urlencode(qs)) if qs else ""
-    heavy = p.get("ready") == "1"
+    # ready=1 (per-patient match) and modality=1 (per-order RadiologyDetails) both do
+    # heavy per-order HIS work — give them the long timeout.
+    heavy = p.get("ready") == "1" or p.get("modality") == "1"
     data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 90)
     # RIS Phase 2: persist the lifecycle store off the live board. Best-effort — a DB
     # hiccup never breaks the worklist view. On a ?ready=1 pass readyToFile is known,
