@@ -116,8 +116,8 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
-          <input type="checkbox" id="wl-ready" onchange="wlToggleReady()"> Check report-ready (slower)
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)" title="Group by pipeline stage: Ordered → Imaged → Report ready (checks DePACS, slower)">
+          <input type="checkbox" id="wl-ready" onchange="wlToggleReady()"> Show stage (slower)
         </label>
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
           <input type="checkbox" id="wl-live" checked onchange="wlToggleLive()"> Live
@@ -270,6 +270,17 @@ function wlWhen(iso) {
   } catch (e) { return ''; }
 }
 
+// The RIS pipeline stages, in order. Each is detected from a specific signal:
+//   ordered  — order line present in Siratech (RadiologySearch filterResult=0), no images yet
+//   imaged   — a study exists in DePACS/PACS for the patient (scan performed), not yet reported
+//   reported — the DePACS study is VERIFIED (signed report) → ready to file into Siratech
+// (filed/done = result entered in Siratech → the order drops off this board entirely)
+const WL_STAGES = [
+  { key: 'reported', label: '✅ Report ready — file it', color: '#2e9e6b' },
+  { key: 'imaged',   label: '📷 Imaged — awaiting report', color: '#e0a800' },
+  { key: 'ordered',  label: '📋 Ordered — awaiting imaging', color: '#6b7280' },
+];
+
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);   // chime on any genuinely new emergency order
@@ -280,7 +291,28 @@ function wlRender() {
   const body = document.getElementById('wl-body');
   if (!body) return;
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
-  body.innerHTML = items.map((it, i) => wlRow(it, i)).join('');
+  // If pipeline stages are known (the "Show stage" / ready pass ran), SEGMENT the
+  // board into Ordered → Imaged → Report-ready sections so the operator sees where
+  // every order is. Otherwise render a flat list.
+  const haveStages = items.some((it) => it.stage);
+  if (!haveStages) { body.innerHTML = items.map((it, i) => wlRow(it, i)).join(''); return; }
+  let html = '', idx = 0;
+  for (const st of WL_STAGES) {
+    const group = items.filter((it) => (it.stage || 'imaged') === st.key);
+    if (!group.length) continue;
+    html += `<div style="display:flex;align-items:center;gap:8px;margin:14px 2px 8px">
+      <span style="font-weight:700;color:${st.color}">${st.label}</span>
+      <span class="badge" style="background:${st.color};color:#fff">${group.length}</span>
+      <div style="flex:1;height:1px;background:var(--border,#e5e5ea)"></div></div>`;
+    html += group.map((it) => wlRow(it, idx++)).join('');
+  }
+  // Anything with an unknown stage (beyond the checked cap) goes last, unlabeled.
+  const rest = items.filter((it) => !it.stage);
+  if (rest.length) {
+    html += `<div style="font-size:12px;color:var(--muted);margin:14px 2px 8px">Not checked yet (${rest.length})</div>`;
+    html += rest.map((it) => wlRow(it, idx++)).join('');
+  }
+  body.innerHTML = html;
 }
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }

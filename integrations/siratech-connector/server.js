@@ -606,6 +606,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         modality: null,      // filled below only when modality=1
         exam: null,          // the requested procedure(s) — body part, filled with modality=1
         readyToFile: null,   // filled below only when ready=1
+        stage: null,         // ordered | imaged | reported — pipeline stage, filled when ready=1
         __row: r, __site: s.site,   // kept for enrichment; stripped before return
       });
     }
@@ -640,12 +641,20 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   if (ready && items.length) {
     const seen = new Set(), targets = [];
     for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= readyLimit) break; } }
+    // Derive the pipeline STAGE for each patient from DePACS (reusing the match work):
+    //   • reported → a verified report is ready to file (some order allUnique)
+    //   • imaged   → images exist in PACS but no verified report yet (studiesFound>0)
+    //   • ordered  → order placed, nothing in PACS yet (no studies)
     const matched = await pool(targets, 6, async (it) => {
-      try { const m = await buildMatch(it.mrno, null, it.site); return { mrno: it.mrno, anyReady: (m.orders || []).some((o) => o.allUnique) }; }
-      catch (e) { return { mrno: it.mrno, anyReady: null }; }
+      try {
+        const m = await buildMatch(it.mrno, null, it.site);
+        const anyReady = (m.orders || []).some((o) => o.allUnique);
+        const stage = anyReady ? 'reported' : ((m.studiesFound || 0) > 0 ? 'imaged' : 'ordered');
+        return { mrno: it.mrno, anyReady, stage };
+      } catch (e) { return { mrno: it.mrno, anyReady: null, stage: null }; }
     });
-    const byMrn = new Map(matched.filter(Boolean).map((x) => [x.mrno, x.anyReady]));
-    for (const it of items) if (byMrn.has(it.mrno)) it.readyToFile = byMrn.get(it.mrno);
+    const byMrn = new Map(matched.filter(Boolean).map((x) => [x.mrno, x]));
+    for (const it of items) if (byMrn.has(it.mrno)) { it.readyToFile = byMrn.get(it.mrno).anyReady; it.stage = byMrn.get(it.mrno).stage; }
   }
 
   for (const it of items) { delete it.__row; delete it.__site; }   // strip enrichment scratch
