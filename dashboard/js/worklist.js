@@ -5,13 +5,18 @@
 // the actual file+authorize is handed off to the trusted Handoff wizard so the
 // clinical write path lives in one place.
 
-let wlState = { branches: [], site: '', ready: false, data: null, loading: false };
+let wlState = { branches: [], site: '', ready: false, data: null, loading: false, timer: null, autofile: null };
+
+// Live board: refresh on a timer so a newly-arrived order shows up without the
+// operator touching anything (the whole point — they never open Siratech).
+const WL_REFRESH_MS = 45000;
 
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — file the ready ones');
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result — emergency first, oldest first')}
+    <div id="wl-autofile"></div>
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <select id="wl-branch" class="input" style="min-width:180px" onchange="wlOnBranch()">
@@ -19,6 +24,9 @@ async function renderWorklistPage() {
         </select>
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
           <input type="checkbox" id="wl-ready" onchange="wlToggleReady()"> Check report-ready (slower)
+        </label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
+          <input type="checkbox" id="wl-live" checked onchange="wlToggleLive()"> Live
         </label>
         <button class="btn btn-sm btn-primary" onclick="wlLoad(true)">↻ Refresh</button>
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
@@ -35,17 +43,33 @@ async function renderWorklistPage() {
       sel.appendChild(o);
     }
   } catch (e) { /* branch picker is optional; team leads are auto-scoped server-side */ }
+  wlLoadAutofile();
   wlLoad();
+  wlStartTimer();
+}
+
+function wlStartTimer() {
+  if (wlState.timer) clearInterval(wlState.timer);
+  wlState.timer = setInterval(() => {
+    // Page navigated away → the board is gone; stop polling and free the timer.
+    if (!document.getElementById('wl-body')) { clearInterval(wlState.timer); wlState.timer = null; return; }
+    if (document.hidden) return;               // don't poll a backgrounded tab
+    wlLoad(false, true);                        // silent refresh — never blanks the board
+  }, WL_REFRESH_MS);
+}
+function wlToggleLive() {
+  if (document.getElementById('wl-live').checked) wlStartTimer();
+  else if (wlState.timer) { clearInterval(wlState.timer); wlState.timer = null; }
 }
 
 function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlLoad(); }
 function wlToggleReady() { wlState.ready = document.getElementById('wl-ready').checked; wlLoad(true); }
 
-async function wlLoad(force) {
+async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
   if (!body || wlState.loading) return;
   wlState.loading = true;
-  body.innerHTML = LOADING_HTML;
+  if (!silent) body.innerHTML = LOADING_HTML;   // silent = timer refresh, keep the board visible
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
   if (wlState.ready) qs.set('ready', '1');
@@ -53,11 +77,59 @@ async function wlLoad(force) {
   try {
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
     wlRender();
+    if (silent) wlLoadAutofile();               // keep the auto-file banner fresh too
   } catch (e) {
-    body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
+    if (!silent) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
       <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
   } finally { wlState.loading = false; }
+}
+
+// Auto-file status banner: shows whether the platform is filing verified reports
+// into Siratech on its own. Superadmin gets an on/off switch; everyone else sees
+// the live state so they know the board self-clears.
+async function wlLoadAutofile() {
+  const host = document.getElementById('wl-autofile');
+  if (!host) return;
+  try { wlState.autofile = await API.get('/radiology/autofile/config'); }
+  catch (e) { host.innerHTML = ''; return; }
+  const a = wlState.autofile || {};
+  const on = !!a.enabled;
+  const isSuper = (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'superadmin');
+  const last = a.lastFiledAt ? `Last auto-filed ${escapeHtml(a.lastFiledFile || '')} · ${wlWhen(a.lastFiledAt)}` : 'Nothing auto-filed yet';
+  const toggle = isSuper
+    ? `<button class="btn btn-sm ${on ? 'btn-ghost' : 'btn-primary'}" onclick="wlSetAutofile(${on ? 'false' : 'true'})">${on ? 'Turn OFF' : 'Turn ON'}</button>`
+    : '';
+  host.innerHTML = `<div class="card" style="margin-bottom:12px;padding:12px;border-left:3px solid ${on ? 'var(--success,#2e9e6b)' : 'var(--muted,#888)'}">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div style="font-size:20px">${on ? '🟢' : '⚪'}</div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-weight:700">Auto-file ${on ? 'is ON' : 'is OFF'}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">
+          ${on ? `Verified reports are filed into Siratech automatically every ${Math.round((a.everySec||180)/60)} min — no manual step.` : 'Reports must be filed by hand from Handoff.'}
+          · ${last}</div>
+      </div>
+      ${toggle}
+    </div></div>`;
+}
+
+async function wlSetAutofile(enabled) {
+  if (enabled && !confirm('Turn ON automatic filing?\n\nThe platform will write VERIFIED reports (exactly-one-study matches only) into the live Siratech HIS by itself. Anything ambiguous is left for manual review.')) return;
+  try {
+    wlState.autofile = await API.post('/radiology/autofile/config', { enabled: !!enabled });
+    wlLoadAutofile();
+    toast(enabled ? 'Auto-file turned ON' : 'Auto-file turned OFF');
+  } catch (e) { toast(e.message || 'Could not change auto-file', 'err'); }
+}
+
+function wlWhen(iso) {
+  try {
+    const d = new Date(iso), diff = (Date.now() - d.getTime()) / 60000;
+    if (diff < 1) return 'just now';
+    if (diff < 60) return `${Math.round(diff)} min ago`;
+    if (diff < 1440) return `${Math.round(diff / 60)}h ago`;
+    return d.toLocaleDateString();
+  } catch (e) { return ''; }
 }
 
 function wlRender() {

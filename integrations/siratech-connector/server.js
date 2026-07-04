@@ -627,6 +627,47 @@ app.get('/worklist', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── RIS auto-file candidates ────────────────────────────────────────────────
+// Scan the live worklist and return every test that is SAFE to file with NO
+// human in the loop: the order's report is VERIFIED in DePACS (real PDF) AND the
+// test resolves to EXACTLY one study (buildMatch's allUnique + sibling guard).
+// READ-ONLY — it never writes; Meena's audited auto-file loop does the write,
+// re-checking the match on the way in. Anything ambiguous is simply omitted so a
+// human still files it from the worklist.
+app.get('/autofile/candidates', requireAuth, async (req, res) => {
+  try {
+    const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    const limit = Math.max(1, Math.min(80, Number(req.query.limit) || 40));
+    const wl = await buildWorklist({ sites, from: null, to: null, ready: false, noCache: true });
+    // Distinct patients, keeping the worklist's emergency-first / oldest-first order.
+    const seen = new Set(), targets = [];
+    for (const it of wl.items) {
+      if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= limit) break; }
+    }
+    const out = [];
+    await pool(targets, 5, async (it) => {
+      try {
+        const m = await buildMatch(it.mrno, null, it.site);
+        for (const o of (m.orders || [])) {
+          if (!o.allUnique) continue;   // whole order must be unambiguous
+          for (const t of o.tests) {
+            if (t.decision !== 'unique' || !t.study || t.study.studyId == null) continue;
+            if (!t.report || !t.report.pdfOk) continue;   // must have a real report PDF
+            out.push({
+              file: it.mrno, mrno: it.mrno, site: it.site, billNo: o.order.billNo,
+              genPatBillingId: o.order.genPatBillingId,
+              serviceId: t.test.invMastServiceId, invPatTestResultId: t.test.invPatTestResultId,
+              serviceName: t.test.serviceName, studyId: t.study.studyId,
+              patientName: it.patientName || '', emergency: !!it.emergency,
+            });
+          }
+        }
+      } catch (e) { /* skip this patient — a bad match never blocks the sweep */ }
+    });
+    return res.json({ ok: true, count: out.length, scanned: targets.length, candidates: out });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 // ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────
 // Files a VERIFIED DePACS report back into Siratech's Radiology Result Entry and
 // authorises it. NOTHING is written unless {confirm:true} is sent AND the target
