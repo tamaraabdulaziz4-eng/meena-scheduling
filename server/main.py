@@ -7059,15 +7059,14 @@ _ELITE_EMERGENCY_CATEGORY_NAME = (os.environ.get("ELITE_EMERGENCY_CATEGORY_NAME"
 def _elite_write_history(study_id, history, set_emergency=True):
     """Write `history` into a study's clinical_history via the same endpoint the
     Butterfly UI uses — PUT study/update_study_stats/{id} (multipart form-data).
-    For the handoff (emergency) flow, also flag Emergency = ✓ and Category "Others"
-    (emergency_status=1, study_category_id=3) so the read radiologist sees it
-    prioritised and correctly bucketed. Unlike the old edit_study_info call, this
-    endpoint only touches these fields — it never requires (or risks blanking) the
-    patient demographics."""
-    form = {"clinical_history": history or ""}
-    if set_emergency:
-        form["emergency_status"] = 1
-        form["study_category_id"] = _ELITE_EMERGENCY_CATEGORY_ID
+    ALWAYS files the study under Category "Others" (study_category_id=3) — a routine
+    study must be bucketed too, not left uncategorised — and flags Emergency ✓
+    (emergency_status=1) only for the ER/emergency hand-off, clearing it (0) for a
+    routine one. Unlike the old edit_study_info call, this endpoint only touches
+    these fields — it never requires (or risks blanking) the patient demographics."""
+    form = {"clinical_history": history or "",
+            "study_category_id": _ELITE_EMERGENCY_CATEGORY_ID,   # "Others" for routine AND ER
+            "emergency_status": 1 if set_emergency else 0}       # ER = 1, routine = 0
     res = _elite_put_form(f"/study/update_study_stats/{study_id}", form)
     # _elite_put_form raises on any non-2xx, so reaching here means the PUT was
     # accepted. Only treat it as a failure if the body carries an explicit error
@@ -7089,7 +7088,7 @@ def _elite_write_history(study_id, history, set_emergency=True):
     return {"ok": True, "study_id": study_id,
             "emergency": bool(set_emergency),
             "emergency_confirmed": emerg_ok,
-            "category": _ELITE_EMERGENCY_CATEGORY_NAME if set_emergency else None}
+            "category": _ELITE_EMERGENCY_CATEGORY_NAME}   # always set now (routine + ER)
 
 def _elite_stamp_accession(study_id, accession):
     """Stamp the Siratech order's accession number onto the Butterfly study so the
@@ -7201,7 +7200,7 @@ async def handoff_write_history(request: Request, user=Depends(require_radiology
     insert_audit(user, "HANDOFF_WRITE_HISTORY", str(study_id),
                  json.dumps({"file_no": (b.get("file_no") or "").strip(),
                              "emergency": bool(emergency),
-                             "category": _ELITE_EMERGENCY_CATEGORY_NAME if emergency else None,
+                             "category": _ELITE_EMERGENCY_CATEGORY_NAME,
                              "accession": (str(b.get("accession") or "").strip() or None),
                              "accession_stamped": bool(acc_result.get("stamped"))}))
     return out
