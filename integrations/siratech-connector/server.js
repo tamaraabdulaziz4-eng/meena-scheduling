@@ -652,22 +652,26 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   if (ready && items.length) {
     const seen = new Set(), targets = [];
     for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= readyLimit) break; } }
-    // Pipeline stage PER BILL, derived from DePACS via the matcher (the operator's
-    // "report ready" = a VERIFIED report exists in DePACS ready to file — NOT the
-    // Siratech hasRadiologyRepot flag, which only flips once the result is filed BACK
-    // into the HIS and by then the order has already left this board). Per-bill (not
-    // per-patient) so a patient's two orders can't smear each other's stage:
-    //   • reported → a verified study uniquely matches this order (ready to file)
-    //   • imaged   → a study exists for this order in PACS but isn't file-ready yet
-    //   • ordered  → nothing in PACS for this order
+    // Pipeline stage PER BILL, grounded in DePACS reality (the operator's rule):
+    //   • "awaiting report" (imaged) ONLY when an actual study for THIS exam's
+    //     modality exists in PACS but is NOT read yet (unread / not verified).
+    //   • "report ready" (reported) when a matching study IS verified.
+    //   • otherwise the patient simply isn't imaged → "awaiting imaging" (ordered).
+    // A Siratech order marked "completed" with NO PACS study is NOT imaged — it must
+    // not show as "awaiting report". Per-bill so a patient's two orders don't smear.
     const byBill = new Map();
     await pool(targets, 6, async (it) => {
       try {
         const m = await buildMatch(it.mrno, null, it.site);
+        const all = m.allStudies || [];   // every DePACS study for this patient, w/ status
         for (const o of (m.orders || [])) {
-          const ready = !!o.allUnique;
-          const hasStudy = (o.tests || []).some((t) => t.study || (t.candidates && t.candidates.length));
-          byBill.set(String(o.order.billNo), { stage: ready ? 'reported' : (hasStudy ? 'imaged' : 'ordered'), ready });
+          const mods = new Set((o.tests || [])
+            .map((t) => results.normMod((t.test && (t.test.categoryName || t.test.serviceName)) || ''))
+            .filter(Boolean));
+          const matched = all.filter((s) => mods.size === 0 || mods.has(results.normMod(s.modality || '')));
+          const anyVerified = matched.some((s) => results.isReported(s.status));
+          const stage = anyVerified ? 'reported' : (matched.length ? 'imaged' : 'ordered');
+          byBill.set(String(o.order.billNo), { stage, ready: !!o.allUnique });
         }
       } catch (e) { /* skip this patient — leave stage unknown */ }
     });
