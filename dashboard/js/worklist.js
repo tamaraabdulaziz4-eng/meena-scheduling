@@ -118,7 +118,9 @@ function wlToggleLive() {
   else if (wlState.timer) { clearInterval(wlState.timer); wlState.timer = null; }
 }
 
-function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlLoad(); }
+// Changing the branch/filter shows a different set of orders — re-seed the
+// emergency baseline so switching scope never fires a false "new emergency" alarm.
+function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlLoad(); }
 function wlToggleReady() { wlState.ready = document.getElementById('wl-ready').checked; wlLoad(true); }
 
 async function wlLoad(force, silent) {

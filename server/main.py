@@ -6194,6 +6194,33 @@ def _elite_ssl_ctx():
     c = ssl.create_default_context(); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
     return c
 
+# Optional DePACS cert pinning: set ELITE_CERT_SHA256 to the server cert's SHA-256
+# fingerprint (hex, colons/spaces ignored) to defend against MITM even though the
+# cert is self-signed. Empty → no pinning, identical to the plain path. Get it with:
+#   echo | openssl s_client -connect <host>:<port> 2>/dev/null \
+#     | openssl x509 -fingerprint -sha256 -noout
+_ELITE_PIN = re.sub(r"[^0-9a-f]", "", (os.environ.get("ELITE_CERT_SHA256") or "").lower())
+
+def _elite_opener():
+    """urllib opener that (when ELITE_CERT_SHA256 is set) verifies the DePACS server
+    certificate's SHA-256 fingerprint on the actual request socket, then behaves like
+    urlopen. Off by default so a deploy can never break the connection."""
+    import urllib.request, http.client, ssl, hashlib
+    ctx = _elite_ssl_ctx()
+    pin = _ELITE_PIN
+    class _PinnedConn(http.client.HTTPSConnection):
+        def connect(self):
+            super().connect()
+            if pin:
+                der = self.sock.getpeercert(binary_form=True) or b""
+                if hashlib.sha256(der).hexdigest() != pin:
+                    self.close()
+                    raise ssl.SSLError("DePACS certificate fingerprint mismatch (pin)")
+    class _PinnedHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(_PinnedConn, req, context=ctx)
+    return urllib.request.build_opener(_PinnedHandler)
+
 def _elite_request(method, path, token=None, body=None, form=None, want="json", timeout=30):
     import urllib.request, urllib.error
     url = _elite_cfg()["base"] + path
@@ -6221,7 +6248,7 @@ def _elite_request(method, path, token=None, body=None, form=None, want="json", 
     if token: headers["Authorization"] = "Token " + token
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_elite_ssl_ctx()) as resp:
+        with _elite_opener().open(req, timeout=timeout) as resp:
             raw = resp.read()
             if want == "raw":
                 return (resp.getheader("Content-Type", ""), raw)
@@ -6630,14 +6657,14 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
 def radiology_autofile_get(user=Depends(require_admin)):
     """Auto-file status: is the background worker filing verified reports into
     Siratech by itself, how often, and (best-effort) when it last filed one."""
-    last = q("""SELECT target, detail, at FROM scheduling.audit_log
+    last = q("""SELECT target, detail, created_at FROM scheduling.audit_log
                 WHERE action='RADIOLOGY_AUTOFILE' AND detail LIKE '%%\"wrote\": true%%'
-                ORDER BY at DESC LIMIT 1""", one=True)
+                ORDER BY created_at DESC LIMIT 1""", one=True)
     return {"ok": True,
             "enabled": (get_setting("rad_autofile_enabled", "0") or "0").strip() == "1",
             "everySec": _RAD_AUTOFILE_EVERY_SEC,
             "sites": (get_setting("rad_autofile_sites", "") or "").strip(),
-            "lastFiledAt": last["at"].isoformat() if last and last.get("at") else None,
+            "lastFiledAt": last["created_at"].isoformat() if last and last.get("created_at") else None,
             "lastFiledFile": last["target"] if last else None}
 
 @app.post("/api/radiology/autofile/config")
@@ -9100,6 +9127,11 @@ def _radiology_autofile_loop():
                                VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
                             (f"rad_autofile_run:{bucket}", "1"), one=True)
                 if claimed:
+                    # Reap old bucket-claim rows so app_settings doesn't grow unbounded
+                    # (all workers in this window share the same bucket, so only stale
+                    # ones are removed).
+                    q("DELETE FROM scheduling.app_settings WHERE key LIKE 'rad_autofile_run:%%' AND key <> %s",
+                      (f"rad_autofile_run:{bucket}",), exec_only=True)
                     _radiology_autofile_sweep()
         except Exception as e:
             print(f"[rad-autofile] {e}")
