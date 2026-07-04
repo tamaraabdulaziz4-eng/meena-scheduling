@@ -60,7 +60,7 @@ function renderNotifList() {
     return;
   }
   list.innerHTML = _notifications.map(n => `
-    <div class="notif-item${n.is_read ? '' : ' unread'}" onclick="openNotification(${n.id}, '${n.link || ''}')">
+    <div class="notif-item${n.is_read ? '' : ' unread'}" onclick="openNotification(${n.id}, '${jsAttr(n.link || '')}')">
       <span class="notif-ico">${NOTIF_ICON[n.type] || '🔔'}</span>
       <div style="flex:1;min-width:0">
         <div class="notif-msg">${escapeHtml(n.message)}</div>
