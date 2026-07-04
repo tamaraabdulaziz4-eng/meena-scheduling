@@ -131,17 +131,47 @@ async function wlLoad(force, silent) {
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
   if (wlState.ready) qs.set('ready', '1');
-  qs.set('modality', '1');   // show the real imaging modality (CT/US/XR/MR) on each row
   if (force) qs.set('nocache', '1');
   try {
+    // Load the board FAST (no modality) so it appears immediately, then enrich
+    // modality in the background — a per-order HIS call for ~80 rows is too slow
+    // to block the first paint.
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
     wlRender();
     if (silent) wlLoadAutofile();               // keep the auto-file banner fresh too
+    wlEnrichModality();                          // fills the modality badges when ready
   } catch (e) {
     if (!silent) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
       <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
   } finally { wlState.loading = false; }
+}
+
+// Second pass: fetch the same worklist with modality=1 (slow — a RadiologyDetails
+// call per order) and merge the modality onto the already-rendered rows. Never
+// blocks the board; if it fails or times out the rows just show no modality badge.
+let _wlModBusy = false;
+async function wlEnrichModality() {
+  if (_wlModBusy) return;
+  _wlModBusy = true;
+  const qs = new URLSearchParams();
+  if (wlState.site) qs.set('sites', wlState.site);
+  if (wlState.ready) qs.set('ready', '1');
+  qs.set('modality', '1');
+  try {
+    const d = await API.get('/radiology/worklist?' + qs.toString());
+    const mod = new Map();
+    for (const it of (d.items || [])) if (it.genPatBillingId != null && it.modality) mod.set(String(it.genPatBillingId), it.modality);
+    if (mod.size && wlState.data && Array.isArray(wlState.data.items)) {
+      let changed = false;
+      for (const it of wlState.data.items) {
+        const m = mod.get(String(it.genPatBillingId));
+        if (m && it.modality !== m) { it.modality = m; changed = true; }
+      }
+      if (changed && document.getElementById('wl-body')) wlRender();
+    }
+  } catch (e) { /* modality is best-effort — leave badges empty on failure */ }
+  finally { _wlModBusy = false; }
 }
 
 // Auto-file status banner: shows whether the platform is filing verified reports
