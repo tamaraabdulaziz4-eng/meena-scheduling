@@ -98,10 +98,13 @@ async function initApp() {
   if (reportsNav) reportsNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
   const messagesNav = document.getElementById('nav-messages');
   if (messagesNav) messagesNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
-  // Radiology WORKFLOW pages (worklist, handoff, patient lookup, CD transfers) are
-  // the front-line operator's job — a plain staff member gets them too. Only the
-  // management/analytics pages (Rad Stats, Orders lifecycle) stay team-lead-and-up.
-  const canRad = ['staff','admin','manager','superadmin'].includes(role);
+  // Radiology WORKFLOW pages (worklist, handoff, patient lookup, CD transfers).
+  // Team leads / managers / full admins have them by role; a plain staff member only
+  // when granted the per-user radiology privilege (so access goes to certain people,
+  // not every staff account). Management/analytics (Rad Stats, Orders) stay
+  // team-lead-and-up.
+  const staffHasRad = role === 'staff' && !!(currentUser.can_use_radiology || currentUser.can_file_radiology);
+  const canRad = ['admin','manager','superadmin'].includes(role) || staffHasRad;
   const canRadMgmt = ['admin','manager','superadmin'].includes(role);
   // Radiology handoff.
   const handoffNav = document.getElementById('nav-handoff');
@@ -153,11 +156,10 @@ async function initApp() {
   if (typeof loadTicketsBadge === 'function') loadTicketsBadge();
   // Unacknowledged action-required circulars badge (everyone).
   if (typeof loadAnnouncementsBadge === 'function') loadAnnouncementsBadge();
-  // Landing page: everyone who works radiology (staff operators + team leads +
-  // managers + full admins) opens straight onto the Worklist — the one screen they
-  // live in. A pure viewer falls back to the schedule.
-  window._defaultPage = ['staff', 'admin', 'manager', 'superadmin'].includes(role)
-    ? 'worklist' : 'schedule';
+  // Landing page: anyone who works radiology (team leads / managers / admins, or a
+  // staff member granted the privilege) opens straight onto the Worklist. A staff
+  // member WITHOUT radiology lands on their schedule; other roles on the schedule.
+  window._defaultPage = canRad ? 'worklist' : (isStaff ? 'myschedule' : 'schedule');
 
   // Load global data. Staff don't need the full roster up front (only the swap
   // modal does, and it lazy-loads it) — so don't make them wait on it before the
@@ -193,14 +195,18 @@ function resolvePage(page) {
   // reaching them via a stale link would otherwise see a page that then 403s).
   if (page === 'reports' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'messages' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
-  // Radiology workflow pages: staff allowed too. Only a pure viewer is bounced.
-  if (page === 'handoff' && !['staff','admin','manager','superadmin'].includes(role)) return 'schedule';
-  if (page === 'patientsearch' && !['staff','admin','manager','superadmin'].includes(role)) return 'schedule';
-  if (page === 'worklist' && !['staff','admin','manager','superadmin'].includes(role)) return 'schedule';
-  if (page === 'cdxfer' && !['staff','admin','manager','superadmin'].includes(role)) return 'schedule';
+  // Radiology workflow pages: team leads/managers/admins by role; a staff member
+  // only with the granted radiology privilege.
+  const canRadRoute = ['admin','manager','superadmin'].includes(role)
+    || (role === 'staff' && !!(currentUser?.can_use_radiology || currentUser?.can_file_radiology));
+  const radElse = role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'handoff' && !canRadRoute) return radElse;
+  if (page === 'patientsearch' && !canRadRoute) return radElse;
+  if (page === 'worklist' && !canRadRoute) return radElse;
+  if (page === 'cdxfer' && !canRadRoute) return radElse;
   // Radiology management/analytics: team leads + up only.
-  if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'worklist' : 'schedule';
-  if (page === 'orders' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'worklist' : 'schedule';
+  if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return canRadRoute ? 'worklist' : radElse;
+  if (page === 'orders' && !['admin','manager','superadmin'].includes(role)) return canRadRoute ? 'worklist' : radElse;
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';

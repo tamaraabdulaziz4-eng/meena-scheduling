@@ -343,6 +343,11 @@ def init_schema():
             # superadmin grants this per-user flag. Team leads/managers/superadmin can
             # always file (their role implies it); this flag only elevates a `staff`.
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS can_file_radiology BOOLEAN NOT NULL DEFAULT false;")
+            # Radiology ACCESS privilege: a staff member sees/uses the radiology
+            # worklist only when a superadmin grants this (so access is given to
+            # certain people, not every staff account). Team leads/managers/superadmin
+            # always have access by role. Filing (can_file_radiology) implies access.
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS can_use_radiology BOOLEAN NOT NULL DEFAULT false;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -1107,6 +1112,7 @@ def get_current_user(request: Request) -> dict:
     row = q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,
                       COALESCE(u.token_epoch,0) AS token_epoch,
                       COALESCE(u.can_file_radiology,false) AS can_file_radiology,
+                      COALESCE(u.can_use_radiology,false) AS can_use_radiology,
                       b.name AS branch_name
                FROM scheduling.users u
                LEFT JOIN scheduling.branches b ON b.id=u.branch_id
@@ -1124,14 +1130,17 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 def require_radiology(user: dict = Depends(get_current_user)) -> dict:
-    # The radiology WORKFLOW *view* (worklist, patient/report check, consent) is the
-    # front-line operator's job — so a plain `staff` member gets it too, not just team
-    # leads. Only a pure `viewer` is excluded. Branch isolation still applies via
-    # _rad_scope_site (a staff member is scoped to their own branch). Management/
-    # analytics routes (stats, orders lifecycle, auto-file config) stay require_admin.
-    if user.get("role") not in ("staff", "admin", "superadmin", "manager"):
-        raise HTTPException(403, "Forbidden")
-    return user
+    # Access to the radiology WORKFLOW (worklist, patient/report check, consent).
+    # Team leads / managers / full admins have it by role. A plain `staff` member has
+    # it ONLY when a superadmin granted can_use_radiology (or can_file_radiology, which
+    # implies access) — so radiology is given to certain people, not every staff
+    # account. Branch isolation still applies via _rad_scope_site.
+    role = user.get("role")
+    if role in ("admin", "superadmin", "manager"):
+        return user
+    if role == "staff" and (user.get("can_use_radiology") or user.get("can_file_radiology")):
+        return user
+    raise HTTPException(403, "You don't have access to the radiology worklist. Ask an admin to enable it for you.")
 
 def require_radiology_write(user: dict = Depends(get_current_user)) -> dict:
     # FILING a result into the live HIS is a privileged write. Team leads / managers /
@@ -2950,6 +2959,7 @@ def list_users(user=Depends(require_superadmin)):
     return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
                        u.email, COALESCE(u.email_notifications,true) AS email_notifications,
                        COALESCE(u.can_file_radiology,false) AS can_file_radiology,
+                       COALESCE(u.can_use_radiology,false) AS can_use_radiology,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
@@ -3011,6 +3021,7 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     # file results into the HIS). Takes effect on their next request — get_current_user
     # reads the live row, so no re-login is needed.
     if "can_file_radiology" in body: sets.append("can_file_radiology=%s"); params.append(bool(body["can_file_radiology"]))
+    if "can_use_radiology" in body: sets.append("can_use_radiology=%s"); params.append(bool(body["can_use_radiology"]))
     # A staff account stays pinned to its staff member's branch.
     if body.get("role") == "staff" and body.get("staff_id"):
         st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (body["staff_id"],), one=True)
@@ -3027,6 +3038,7 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
                        u.email, COALESCE(u.email_notifications,true) AS email_notifications,
                        COALESCE(u.can_file_radiology,false) AS can_file_radiology,
+                       COALESCE(u.can_use_radiology,false) AS can_use_radiology,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
