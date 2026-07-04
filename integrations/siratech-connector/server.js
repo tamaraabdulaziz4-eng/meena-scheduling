@@ -1091,8 +1091,15 @@ async function _patientSearch(q, debug) {
   // server-side filtered by type, so the rows are the real match. Send the NORMALISED
   // value, and for a mobile try both 05… and 5… forms in case the HIS stored it bare.
   const plans = [];
-  if (mobileLocal) plans.push(['PHONE NUMBER', 6, mobileLocal], ['PHONE NUMBER', 6, mobileLocal.slice(1)]);
-  else if (isSaudiId) plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
+  if (mobileLocal) {
+    // The EMR "phone" category id varies by HIS build (documented 6, but THIS instance
+    // returns 0 rows for 6). A phone value can only ever match the phone/contact field
+    // — never an ID or name field — so it is safe to try the plausible categories and
+    // use the FIRST that returns rows (self-healing across builds). Both 05… and bare
+    // 5… forms, in case the number is stored without the leading 0.
+    for (const cat of [6, 7, 8, 4, 5, 9, 10, 11]) plans.push(['PHONE NUMBER', cat, mobileLocal]);
+    for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, mobileLocal.slice(1)]);
+  } else if (isSaudiId) plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
   else if (isIqama) plans.push(['IQAMA ID', 3, digits], ['SAUDI ID', 2, digits]);
   for (const [idType, category, value] of plans) {
     const r = await _emrSearch(idType, category, value);
