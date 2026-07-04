@@ -73,6 +73,7 @@ async function wlLoad(force, silent) {
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
   if (wlState.ready) qs.set('ready', '1');
+  qs.set('modality', '1');   // show the real imaging modality (CT/US/XR/MR) on each row
   if (force) qs.set('nocache', '1');
   try {
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
@@ -146,6 +147,22 @@ function wlRender() {
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }
 
+// Friendly labels + colour per imaging modality so the board reads at a glance.
+const WL_MOD = {
+  CT: { label: 'CT', bg: '#3b7ddd' }, MR: { label: 'MRI', bg: '#7c5cff' },
+  US: { label: 'US', bg: '#2e9e6b' }, XR: { label: 'X-Ray', bg: '#6b7280' },
+  MG: { label: 'Mammo', bg: '#d6568c' },
+};
+function wlModBadges(modality) {
+  if (!modality) return '';
+  return String(modality).split(',').map((m) => {
+    const k = m.trim().toUpperCase(), info = WL_MOD[k];
+    const label = info ? info.label : k;
+    const bg = info ? info.bg : '#8a8f98';
+    return `<span class="badge" style="background:${bg};color:#fff">${escapeHtml(label)}</span>`;
+  }).join(' ');
+}
+
 function wlRow(it, i) {
   const readyBadge = it.readyToFile === true ? `<span class="badge badge-green">report ready</span>`
     : it.readyToFile === false ? `<span class="badge badge-orange">awaiting report</span>` : '';
@@ -158,6 +175,7 @@ function wlRow(it, i) {
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${escapeHtml(it.branch || '')}${it.department ? ' · ' + escapeHtml(it.department) : ''}${it.doctorName ? ' · ' + escapeHtml(it.doctorName) : ''}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${wlModBadges(it.modality)}
         ${it.emergency ? '<span class="badge badge-red">Emergency</span>' : '<span class="badge">Routine</span>'}
         ${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}
         ${readyBadge}

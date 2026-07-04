@@ -146,6 +146,19 @@ function odWhen(iso) {
   } catch (e) { return '—'; }
 }
 
+const OD_MOD = {
+  CT: { label: 'CT', bg: '#3b7ddd' }, MR: { label: 'MRI', bg: '#7c5cff' },
+  US: { label: 'US', bg: '#2e9e6b' }, XR: { label: 'X-Ray', bg: '#6b7280' },
+  MG: { label: 'Mammo', bg: '#d6568c' },
+};
+function odModBadges(modality) {
+  if (!modality) return '';
+  return String(modality).split(',').map((m) => {
+    const k = m.trim().toUpperCase(), info = OD_MOD[k];
+    return `<span class="badge" style="background:${info ? info.bg : '#8a8f98'};color:#fff">${escapeHtml(info ? info.label : k)}</span>`;
+  }).join(' ');
+}
+
 const OD_STEP_ORDER = { ordered: 0, reported: 1, filed: 2 };
 // "Stuck" thresholds (hours): a report verified but not filed for this long almost
 // always means the match was ambiguous and needs a human; an order with no report
@@ -189,6 +202,7 @@ function odRow(o) {
           ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${odModBadges(o.modality)}
         ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
         ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
         ${stateBadge}
