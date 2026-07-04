@@ -116,6 +116,8 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
+        <input id="wl-search" class="input" placeholder="🔍 Find patient (file / ID / iqama / mobile) — all branches"
+               style="min-width:230px;flex:1" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)" title="Group by pipeline stage: Ordered → Imaged → Report ready (checks DePACS, slower)">
           <input type="checkbox" id="wl-ready" onchange="wlToggleReady()"> Show stage (slower)
         </label>
@@ -417,4 +419,19 @@ function wlMatch(d) {
 function wlOpenHandoff(mrno) {
   window._handoffPreload = mrno;
   showPage('handoff');
+}
+
+// Cross-branch patient search from the worklist: find a patient by ANY identifier
+// (file / national ID / iqama / mobile) across ALL branches — for a patient whose
+// exam was ordered at a different branch — and open them in Handoff to see the exam.
+async function wlSearch(q) {
+  q = (q || '').trim();
+  if (!q) return;
+  try {
+    const d = await API.get('/radiology/find?q=' + encodeURIComponent(q));
+    const pts = (d && d.patients) || [];
+    if (!pts.length) { if (typeof toast === 'function') toast('No patient found for "' + q + '"', 'err'); return; }
+    if (pts.length > 1 && typeof toast === 'function') toast(pts.length + ' matches — opening the first; refine to narrow');
+    wlOpenHandoff(String(pts[0].mrno || pts[0].file_no || q));
+  } catch (e) { if (typeof toast === 'function') toast(e.message || 'Search failed', 'err'); }
 }
