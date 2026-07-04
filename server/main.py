@@ -1115,6 +1115,11 @@ def get_setting(key, default=None):
     r = q("SELECT value FROM scheduling.app_settings WHERE key=%s", (key,), one=True)
     return r["value"] if r else default
 
+def set_setting(key, value):
+    q("""INSERT INTO scheduling.app_settings (key,value) VALUES (%s,%s)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""",
+      (key, str(value)), exec_only=True)
+
 def get_leave_cutoff_day() -> int:
     try:
         d = int(get_setting("leave_cutoff_day", "15"))
@@ -6617,6 +6622,37 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
         by_state[r["state"]] = by_state.get(r["state"], 0) + 1
     return {"ok": True, "count": len(orders), "byState": by_state, "orders": orders}
 
+@app.get("/api/radiology/autofile/config")
+def radiology_autofile_get(user=Depends(require_admin)):
+    """Auto-file status: is the background worker filing verified reports into
+    Siratech by itself, how often, and (best-effort) when it last filed one."""
+    last = q("""SELECT target, detail, at FROM scheduling.audit_log
+                WHERE action='RADIOLOGY_AUTOFILE' AND detail LIKE '%%\"wrote\": true%%'
+                ORDER BY at DESC LIMIT 1""", one=True)
+    return {"ok": True,
+            "enabled": (get_setting("rad_autofile_enabled", "0") or "0").strip() == "1",
+            "everySec": _RAD_AUTOFILE_EVERY_SEC,
+            "sites": (get_setting("rad_autofile_sites", "") or "").strip(),
+            "lastFiledAt": last["at"].isoformat() if last and last.get("at") else None,
+            "lastFiledFile": last["target"] if last else None}
+
+@app.post("/api/radiology/autofile/config")
+async def radiology_autofile_set(request: Request, user=Depends(require_superadmin)):
+    """Turn auto-file on/off (and optionally pin the branches). Superadmin only —
+    this controls automatic writes into the live hospital HIS. Audited."""
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Invalid body")
+    if "enabled" in b:
+        set_setting("rad_autofile_enabled", "1" if b.get("enabled") else "0")
+    if "sites" in b:
+        sites = re.sub(r"[^0-9,]", "", str(b.get("sites") or ""))
+        set_setting("rad_autofile_sites", sites)
+    insert_audit(user, "RADIOLOGY_AUTOFILE_CONFIG", None,
+                 json.dumps({"enabled": (get_setting("rad_autofile_enabled", "0") == "1"),
+                             "sites": get_setting("rad_autofile_sites", "")}))
+    return radiology_autofile_get(user=user)
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_admin)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -8996,6 +9032,75 @@ def _cases_reminder_loop():
             print(f"[cases-reminder] {e}")
         time.sleep(300)   # re-check every 5 minutes (slots are 30 minutes apart)
 
+# ── RIS auto-file: file verified reports into Siratech with no human in the loop ──
+_RAD_AUTOFILE_EVERY_SEC = int(os.environ.get("RAD_AUTOFILE_EVERY_SEC") or 180)
+_RAD_AUTOFILE_USER = {"id": None, "username": "system:autofile", "role": "system", "branch_name": None}
+
+def _radiology_autofile_sweep():
+    """One auto-file pass: ask the connector for the tests that are SAFE to file with
+    no human (report VERIFIED in DePACS + exactly one matching study), then file each
+    (result + PDF + authorize) into Siratech and record the order↔study binding. The
+    connector re-matches on the write path and refuses anything ambiguous, so a race
+    or a changed study can only cause a skip, never a wrong file. Returns #filed."""
+    import urllib.parse
+    sites = (get_setting("rad_autofile_sites", "") or "").strip()
+    qs = {"limit": "40"}
+    if sites:
+        qs["sites"] = sites
+    data = _bridge_request("/his/autofile/candidates?" + urllib.parse.urlencode(qs), timeout=240)
+    if not isinstance(data, dict) or not data.get("ok"):
+        return 0
+    filed = 0
+    for c in (data.get("candidates") or []):
+        try:
+            body = {
+                "file": c.get("file"), "site": c.get("site"), "billNo": c.get("billNo"),
+                "serviceId": c.get("serviceId"), "expectStudyId": c.get("studyId"),
+                "genPatBillingId": c.get("genPatBillingId"),
+                "confirm": True, "authorize": True,
+            }
+            out = _bridge_request("/his/results/file", method="POST", body=body, timeout=180)
+            wrote = isinstance(out, dict) and out.get("wrote")
+            plan = (out.get("plan") or {}) if isinstance(out, dict) else {}
+            study = (plan.get("study") or {}) if isinstance(plan, dict) else {}
+            gpb = c.get("genPatBillingId") or plan.get("genPatBillingId")
+            insert_audit(_RAD_AUTOFILE_USER, "RADIOLOGY_AUTOFILE", str(c.get("file")),
+                         json.dumps({"billNo": c.get("billNo"), "serviceId": c.get("serviceId"),
+                                     "genPatBillingId": gpb, "studyId": c.get("studyId"),
+                                     "serviceName": c.get("serviceName"),
+                                     "wrote": bool(wrote),
+                                     "authorized": bool(isinstance(out, dict) and out.get("authorized")),
+                                     "note": None if wrote else (out.get("note") or out.get("reason") if isinstance(out, dict) else None)}))
+            if wrote and gpb:
+                _rad_mark_filed(gpb, study.get("studyId") or c.get("studyId"), c.get("serviceId"), None)
+                filed += 1
+        except Exception as e:
+            print(f"[rad-autofile] file {c.get('file')}: {e}")
+    if filed:
+        print(f"[rad-autofile] filed {filed} report(s) into Siratech")
+    return filed
+
+def _radiology_autofile_loop():
+    """Background auto-file worker. Runs only when the `rad_autofile_enabled` setting
+    is '1' (flip it off from the worklist to stop instantly). Each cycle is claimed
+    atomically so with multiple gunicorn workers exactly one sweep runs per window."""
+    import time
+    from datetime import datetime, timezone
+    # Small stagger so the sweep never collides with the snapshot job on boot.
+    time.sleep(20)
+    while True:
+        try:
+            if (get_setting("rad_autofile_enabled", "0") or "0").strip() == "1":
+                bucket = int(datetime.now(timezone.utc).timestamp()) // max(30, _RAD_AUTOFILE_EVERY_SEC)
+                claimed = q("""INSERT INTO scheduling.app_settings (key,value)
+                               VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
+                            (f"rad_autofile_run:{bucket}", "1"), one=True)
+                if claimed:
+                    _radiology_autofile_sweep()
+        except Exception as e:
+            print(f"[rad-autofile] {e}")
+        time.sleep(_RAD_AUTOFILE_EVERY_SEC)
+
 def start_scheduler():
     # Skip under the test harness; otherwise one daemon thread per worker is fine
     # (the atomic per-day claim keeps the actual send single).
@@ -9007,6 +9112,7 @@ def start_scheduler():
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()
     threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
     threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
+    threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
     threading.Thread(target=_cdxfer_cleanup_loop, daemon=True).start()
 
 def _capture_radiology_day(day_str, source_label="worklist"):
