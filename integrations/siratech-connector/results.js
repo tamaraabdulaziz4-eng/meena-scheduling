@@ -124,7 +124,16 @@ function sideOf(s) {
 // drops a freshly-signed study, and the matcher then reports "no candidate" for a
 // report that is plainly ready — the exact review-needed symptom seen in the field.
 const REPORTED_STATUS = /\b(VERIFIED|APPROVED|SIGNED|COMPLETED|REVIEWED|ADDENDUM|FINAL)\b/;
-function isReported(status) { return REPORTED_STATUS.test(String(status || '').toUpperCase()); }
+// A whitelist word alone isn't enough: "NOT VERIFIED" / "UN-SIGNED" / "PENDING FINAL"
+// all contain a positive token but describe a DRAFT that must NEVER be filed. Reject
+// any status carrying a negation/draft marker FIRST (purely additive — a plain
+// "VERIFIED" still passes), so the auto-filer can't push an unsigned report.
+const NOT_REPORTED = /\bNOT\b|\bPENDING\b|\bPRELIM|\bDRAFT\b|\bAWAIT|\bINCOMPLETE\b|IN[\s-]?PROGRESS|UN-?(VERIFIED|SIGNED|APPROVED|REVIEWED|COMPLETED)/;
+function isReported(status) {
+  const s = String(status || '').toUpperCase();
+  if (NOT_REPORTED.test(s)) return false;
+  return REPORTED_STATUS.test(s);
+}
 
 // The file-number (MRN) equality test used as the first match gate. DePACS is
 // inconsistent about pat_id and stores it three ways:
