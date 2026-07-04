@@ -13,7 +13,7 @@
 // No knobs, no banners — just the board.
 
 let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
-                seenEmerg: null, day: null, filter: null, searchView: false,
+                seenEmerg: null, from: wlTodayLocal(), to: wlTodayLocal(), filter: null, searchView: false,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
@@ -45,35 +45,47 @@ function wlTodayLocal() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-// day === null → "live": today + every still-pending prior-day order (nothing
-// pending vanishes at midnight). Picking a date drills to exactly that day.
-// Leaving a search: changing day/branch must drop any active on-board filter or
+// The board shows a date RANGE [from, to], defaulting to today only. Widen it with
+// the From/To pickers, or step the whole window a day at a time.
+// Leaving a search: changing range/branch must drop any active on-board filter or
 // cross-branch match view, else the new board is fetched but never painted (the
-// searchView guard blocks it) or the old MRN filter re-applies to the new day.
+// searchView guard blocks it) or the old MRN filter re-applies to the new data.
 function wlExitSearch() {
   wlState.filter = null; wlState.searchView = false;
   const s = document.getElementById('wl-search'); if (s) s.value = '';
 }
-function wlShiftDay(delta) {
-  const base = wlState.day || wlTodayLocal();
-  const [y, m, d] = base.split('-').map(Number);
+function _wlAddDays(iso, delta) {
+  const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(y, m - 1, d + delta);
-  const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  // Stepping forward onto today returns to the live rolling view.
-  wlState.day = (iso >= wlTodayLocal()) ? null : iso;
-  wlState.seenEmerg = null; wlExitSearch();
-  wlSyncDayControls();
-  wlLoad(true);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
-function wlSetDay(v) {
-  wlState.day = (!v || v >= wlTodayLocal()) ? null : v;   // today (or blank) = live
+function wlShiftDay(delta) {   // step the whole [from,to] window by a day
+  wlState.from = _wlAddDays(wlState.from, delta);
+  wlState.to = _wlAddDays(wlState.to, delta);
   wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
 }
-function wlToday() { wlState.day = null; wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true); }
+function wlSetFrom(v) {
+  if (!v) return;
+  wlState.from = v;
+  if (wlState.to < v) wlState.to = v;                       // keep from <= to
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+}
+function wlSetTo(v) {
+  if (!v) return;
+  wlState.to = v;
+  if (v < wlState.from) wlState.from = v;
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+}
+function wlTodayRange() {
+  wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+}
 function wlSyncDayControls() {
-  const i = document.getElementById('wl-day'); if (i) i.value = wlState.day || wlTodayLocal();
-  const t = document.getElementById('wl-today-btn');
-  if (t) t.style.visibility = wlState.day ? 'visible' : 'hidden';   // only offer "Today" when browsing the past
+  const f = document.getElementById('wl-from'); if (f) f.value = wlState.from;
+  const t = document.getElementById('wl-to'); if (t) t.value = wlState.to;
+  const btn = document.getElementById('wl-today-btn');
+  const isToday = wlState.from === wlTodayLocal() && wlState.to === wlTodayLocal();
+  if (btn) btn.className = 'btn btn-sm ' + (isToday ? 'btn-primary' : 'btn-ghost');
 }
 
 // A new EMERGENCY order arriving is the one event a radiology operator must not
@@ -125,6 +137,7 @@ function wlCheckNewEmergencies(items) {
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — emergency first, oldest first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
+  wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result')}
@@ -132,9 +145,12 @@ async function renderWorklistPage() {
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <div style="display:flex;gap:4px;align-items:center">
           <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(-1)" title="Previous day">◀</button>
-          <input type="date" id="wl-day" class="input" value="${wlState.day || wlTodayLocal()}" onchange="wlSetDay(this.value)" style="width:150px" title="The day is today automatically — pick another to look back">
+          <span style="font-size:12px;color:var(--muted)">From</span>
+          <input type="date" id="wl-from" class="input" value="${wlState.from}" onchange="wlSetFrom(this.value)" style="width:145px" title="From date">
+          <span style="font-size:12px;color:var(--muted)">To</span>
+          <input type="date" id="wl-to" class="input" value="${wlState.to}" onchange="wlSetTo(this.value)" style="width:145px" title="To date">
           <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(1)" title="Next day">▶</button>
-          <button id="wl-today-btn" class="btn btn-sm btn-primary" onclick="wlToday()" style="visibility:hidden" title="Back to today (live)">Today</button>
+          <button id="wl-today-btn" class="btn btn-sm btn-primary" onclick="wlTodayRange()" title="Today only">Today</button>
         </div>
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
@@ -193,7 +209,7 @@ async function wlLoad(force, silent) {
   // background pass right after, and never block the first paint.
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
-  if (wlState.day) { qs.set('from', wlState.day); qs.set('to', wlState.day); }
+  qs.set('from', wlState.from); qs.set('to', wlState.to);   // explicit range (defaults to today only)
   if (force) qs.set('nocache', '1');
   try {
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
@@ -245,7 +261,7 @@ async function wlEnrich(silent) {
   _wlEnrichBusy = true;
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
-  if (wlState.day) { qs.set('from', wlState.day); qs.set('to', wlState.day); }
+  qs.set('from', wlState.from); qs.set('to', wlState.to);
   qs.set('ready', '1'); qs.set('modality', '1');
   try {
     const d = await API.get('/radiology/worklist?' + qs.toString());
