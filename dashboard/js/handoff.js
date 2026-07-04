@@ -495,6 +495,9 @@ async function handoffWriteCore() {
     } else {
       flag += ` · <b>Emergency ✓</b>${w.category ? ' · Category ' + escapeHtml(w.category) : ''}`;
     }
+  } else if (w && w.category) {
+    // Routine study — still filed under its category (Others), no Emergency flag.
+    flag += ` · Routine · Category ${escapeHtml(w.category)}`;
   }
   if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}${flag}. Continue to the message →</div>`;
   try {
