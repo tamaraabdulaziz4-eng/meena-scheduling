@@ -55,10 +55,14 @@ const DEFAULT_STRING_RANGE = Number(process.env.RESULT_STRING_RANGE || RANGE_NOT
 // the hospital EMR. Never run it unauthenticated on a public interface. Either
 // set CONNECTOR_TOKEN, or bind to loopback (HOST=127.0.0.1) behind a proxy.
 const _isLoopback = (h) => !h || h === '127.0.0.1' || h === 'localhost' || h === '::1';
-if (!_isLoopback(HOST) && !API_TOKEN) {
-  console.error('✗ Refusing to start: bound to ' + HOST + ' with no CONNECTOR_TOKEN. ' +
+// A weak/placeholder token is as good as none — reject the known placeholders and
+// anything too short so a deploy left at the example value can't expose PHI + EMR
+// writes behind a guessable bearer.
+const _WEAK_TOKENS = new Set(['change-me', '__set_a_strong_random_token__', 'changeme', 'secret', 'token', 'test']);
+if (!_isLoopback(HOST) && (!API_TOKEN || _WEAK_TOKENS.has(API_TOKEN) || API_TOKEN.length < 16)) {
+  console.error('✗ Refusing to start: bound to ' + HOST + ' with a missing/weak CONNECTOR_TOKEN. ' +
                 'This connector exposes patient PHI and EMR writes — it must not be open. ' +
-                'Set CONNECTOR_TOKEN, or set HOST=127.0.0.1 and put it behind a proxy.');
+                'Set a strong random CONNECTOR_TOKEN (openssl rand -base64 36), or HOST=127.0.0.1 behind a proxy.');
   process.exit(1);
 }
 if (!API_TOKEN) {
@@ -143,6 +147,10 @@ async function getToken(force = false) {
 }
 
 // ── REST helper (retries once on 401/403 with a fresh login) ──────────────────
+// Hard timeout on every HIS call. Without it a stalled socket hangs the request
+// forever — and a hang while holding the single-flight login wedges the whole
+// connector. AbortSignal.timeout rejects the fetch, which the callers surface.
+const HIS_TIMEOUT_MS = Number(process.env.HIS_TIMEOUT_MS || 30000);
 async function hisFetch(path, { method = 'POST', body, headers: extra } = {}) {
   const doCall = async (tok) => {
     const res = await fetch(HIS_BASE + path, {
@@ -155,6 +163,7 @@ async function hisFetch(path, { method = 'POST', body, headers: extra } = {}) {
         ...(extra || {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(HIS_TIMEOUT_MS),
     });
     return res;
   };

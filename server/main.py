@@ -2206,9 +2206,9 @@ async def nafath_start(request: Request):
         results = _sadq_nafath_auth([nid], request_id, webhook)
     except Exception as e:
         raise HTTPException(502, f"Couldn't reach Nafath: {e}")
-    # Log the raw response so the real field shape is visible in the server logs.
-    print(f"[nafath] start nid={nid} req={request_id} -> {json.dumps(results, ensure_ascii=False)}", file=sys.stderr)
+    # Log status only — never the national ID or the raw response (names/IDs = PHI).
     r0 = (results or [{}])[0] or {}
+    print(f"[nafath] start req={request_id} ok={not _ci_get(r0, 'error', 'errorMessage', 'message')}", file=sys.stderr)
     err = _ci_get(r0, "error", "errorMessage", "message")
     random_code = str(_ci_get(r0, "random", "randomNumber", "code", "otp") or "")
     trans_id = _ci_get(r0, "transId", "transactionId", "id")
