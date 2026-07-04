@@ -1116,6 +1116,16 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(403, "Forbidden")
     return user
 
+def require_radiology(user: dict = Depends(get_current_user)) -> dict:
+    # The radiology WORKFLOW (worklist, consent, patient/report check, filing) is the
+    # front-line operator's job — so a plain `staff` member gets it too, not just team
+    # leads. Only a pure `viewer` is excluded. Branch isolation still applies via
+    # _rad_scope_site (a staff member is scoped to their own branch). Management/
+    # analytics routes (stats, orders lifecycle, auto-file config) stay require_admin.
+    if user.get("role") not in ("staff", "admin", "superadmin", "manager"):
+        raise HTTPException(403, "Forbidden")
+    return user
+
 def require_superadmin(user: dict = Depends(get_current_user)) -> dict:
     # Full admin only — branch/user/shift-type management.
     if user.get("role") != "superadmin":
@@ -6524,7 +6534,7 @@ def _bridge_request(path, method="GET", body=None, timeout=60):
         raise HTTPException(502, f"Couldn't reach the radiology connector: {e}")
 
 @app.get("/api/radiology/lookup/{file_no}")
-def radiology_lookup(file_no: str, user=Depends(require_admin)):
+def radiology_lookup(file_no: str, user=Depends(require_radiology)):
     """Radiology orders + patient for a file (MRN) number, live from Siratech HIS."""
     import urllib.parse
     file_no = (file_no or "").strip()
@@ -6533,7 +6543,7 @@ def radiology_lookup(file_no: str, user=Depends(require_admin)):
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no), timeout=90)
 
 @app.get("/api/radiology/find")
-def radiology_find(request: Request, user=Depends(require_admin)):
+def radiology_find(request: Request, user=Depends(require_radiology)):
     """Unified patient lookup: search Siratech by file/MRN, national ID, or phone
     (the HIS Patient/Search term matches across those) and return the matching
     patient rows. The caller then opens one to aggregate all their exams via
@@ -6615,7 +6625,7 @@ def radiology_stats(
     return _bridge_request("/his/stats/radiology" + qs, timeout=240 if heavy else 150)
 
 @app.get("/api/radiology/branches")
-def radiology_branches(user=Depends(require_admin)):
+def radiology_branches(user=Depends(require_radiology)):
     """The real list of branches (id + name) the connector's HIS user can see —
     used to populate the branch picker so all branches show by name."""
     return _bridge_request("/his/stats/branches", timeout=90)
@@ -6798,7 +6808,7 @@ async def radiology_autofile_set(request: Request, user=Depends(require_superadm
 _RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
 
 @app.get("/api/radiology/worklist")
-def radiology_worklist(request: Request, user=Depends(require_admin)):
+def radiology_worklist(request: Request, user=Depends(require_radiology)):
     """Live RIS worklist — every radiology order awaiting a result across the
     requested branches (emergency first, oldest first, with TAT age). ?ready=1
     also flags which orders have a VERIFIED DePACS report ready to file (slower).
@@ -6905,7 +6915,7 @@ def radiology_stats_snapshot(date: str = Query(...), user=Depends(require_admin)
     return {"ok": True, "date": date, "total": total}
 
 @app.get("/api/radiology/results/match/{file_no}")
-def radiology_results_match(file_no: str, request: Request, user=Depends(require_admin)):
+def radiology_results_match(file_no: str, request: Request, user=Depends(require_radiology)):
     """Reverse handoff: match a patient's radiology order(s)/test(s) to the
     VERIFIED DePACS study that holds the report — the strict, no-guess gate.
     Read-only (never writes). Each test resolves to `unique` / `none` /
@@ -6921,7 +6931,7 @@ def radiology_results_match(file_no: str, request: Request, user=Depends(require
     return _bridge_request("/his/results/match/" + urllib.parse.quote(file_no) + qs, timeout=120)
 
 @app.post("/api/radiology/results/file")
-async def radiology_results_file(request: Request, user=Depends(require_admin)):
+async def radiology_results_file(request: Request, user=Depends(require_radiology)):
     """File a VERIFIED DePACS report PDF back into Siratech's Result Entry and
     (unless authorize=false) authorize it. DRY-RUN by default: nothing is written
     unless confirm=true is sent AND the target test resolves to exactly one study.
@@ -7046,13 +7056,13 @@ def _elite_write_history(study_id, history, set_emergency=True):
             "category": _ELITE_EMERGENCY_CATEGORY_NAME if set_emergency else None}
 
 @app.get("/api/handoff/config")
-def handoff_config(user=Depends(require_admin)):
+def handoff_config(user=Depends(require_radiology)):
     c = _elite_cfg()
     return {"siratech_enabled": bool(_bridge_base()),
             "butterfly_configured": bool(c["username"] and c["password"])}
 
 @app.post("/api/handoff/write-history")
-async def handoff_write_history(request: Request, user=Depends(require_admin)):
+async def handoff_write_history(request: Request, user=Depends(require_radiology)):
     """Write the clinical history into a DePACS (Butterfly) study. The WhatsApp
     message is prepared client-side for the staff to copy into the group."""
     b = await request.json()
@@ -7115,7 +7125,7 @@ def _ksa_now():
         return datetime.now(timezone.utc) + timedelta(hours=3)
 
 @app.post("/api/consent")
-async def create_consent(request: Request, user=Depends(require_admin)):
+async def create_consent(request: Request, user=Depends(require_radiology)):
     """Generate the signed Declaration of Non-Pregnancy PDF from the captured form
     + signature, store it against the patient file, and return its id. The completed
     PDF can then be viewed/downloaded and filed into the patient's record."""
@@ -7177,7 +7187,7 @@ async def create_consent(request: Request, user=Depends(require_admin)):
     return {"ok": True, "id": row["id"], "created_at": str(row["created_at"])}
 
 @app.get("/api/consent")
-def list_consents(request: Request, user=Depends(require_admin)):
+def list_consents(request: Request, user=Depends(require_radiology)):
     """List the signed consents on a patient file (newest first)."""
     file_no = (request.query_params.get("file_no") or "").strip()
     if not file_no:
@@ -7191,7 +7201,7 @@ def list_consents(request: Request, user=Depends(require_admin)):
     return {"file_no": file_no, "count": len(rows), "consents": rows}
 
 @app.get("/api/consent/{consent_id}/pdf")
-def consent_pdf(consent_id: int, request: Request, user=Depends(require_admin)):
+def consent_pdf(consent_id: int, request: Request, user=Depends(require_radiology)):
     """Download a signed consent PDF. Bound to the file number so a sequential id
     alone can't enumerate other patients' consents (must know the patient file)."""
     row = q("SELECT file_no, pdf FROM scheduling.consents WHERE id=%s", (consent_id,), one=True)
