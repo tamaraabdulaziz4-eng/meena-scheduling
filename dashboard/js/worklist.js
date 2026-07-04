@@ -357,8 +357,13 @@ function wlConsent(mrno, name, exam) {
 }
 
 function wlRow(it, i) {
-  const readyBadge = it.readyToFile === true ? `<span class="badge badge-green">report ready</span>`
-    : it.readyToFile === false ? `<span class="badge badge-orange">awaiting report</span>` : '';
+  // Badge from the real pipeline STAGE, not a bare ready flag: "awaiting report" only
+  // when a study is actually imaged-but-unread in PACS; a not-yet-imaged order shows
+  // "awaiting imaging", never "awaiting report".
+  const readyBadge = it.stage === 'reported' ? `<span class="badge badge-green">✅ report ready</span>`
+    : it.stage === 'imaged' ? `<span class="badge badge-orange">📷 awaiting report</span>`
+      : it.stage === 'ordered' ? `<span class="badge">📋 awaiting imaging</span>`
+        : (it.readyToFile === true ? `<span class="badge badge-green">report ready</span>` : '');
   const age = wlAge(it.ageHours);
   return `<div class="card wl-card" style="margin-bottom:8px;padding:12px${it.emergency ? ';border-left:3px solid var(--danger,#E25555)' : ''}">
     <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">

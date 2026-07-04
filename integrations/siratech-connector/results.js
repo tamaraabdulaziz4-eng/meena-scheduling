@@ -434,7 +434,7 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 }
 
 module.exports = {
-  dpAgent, normMod, bodyTokens, sideOf,
+  dpAgent, normMod, bodyTokens, sideOf, isReported,
   depacsStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
 };
