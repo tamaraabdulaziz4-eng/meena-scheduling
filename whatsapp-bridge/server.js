@@ -286,13 +286,27 @@ app.post('/send', requireAuth, async (req, res) => {
 
 // Passthrough to the Siratech HIS connector (same VPS, internal port). Meena
 // authenticates to the bridge as usual; we forward with the connector's own token.
+// Separate rate window for the /his passthrough so a leaked BRIDGE_API_TOKEN can't
+// pull/write unlimited EMR through the connector (and so it doesn't share the /send
+// budget). Reads are more frequent than sends, so a higher default.
+const HIS_PROXY_RATE = Number(process.env.HIS_PROXY_RATE || 120);
+const HIS_PROXY_TIMEOUT_MS = Number(process.env.HIS_PROXY_TIMEOUT_MS || 245000);
+let _hisWindow = { start: 0, count: 0 };
+function hisRateOk() {
+  const now = Date.now();
+  if (now - _hisWindow.start >= 60000) _hisWindow = { start: now, count: 0 };
+  _hisWindow.count += 1;
+  return _hisWindow.count <= HIS_PROXY_RATE;
+}
 app.all('/his/*', requireAuth, async (req, res) => {
+  if (!hisRateOk()) return res.status(429).json({ ok: false, error: 'Rate limit exceeded' });
   try {
     const sub = req.originalUrl.replace(/^\/his/, '') || '/';
     const r = await fetch(HIS_CONNECTOR_URL + sub, {
       method: req.method,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + HIS_CONNECTOR_TOKEN },
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
+      signal: AbortSignal.timeout(HIS_PROXY_TIMEOUT_MS),   // never hang the bridge on a stuck connector
     });
     const text = await r.text();
     return res.status(r.status).type(r.headers.get('content-type') || 'application/json').send(text);
