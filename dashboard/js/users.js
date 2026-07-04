@@ -95,6 +95,7 @@ function openUserModal(id) {
   document.getElementById('user-password').value  = '';
   document.getElementById('user-email').value     = u?.email || '';
   document.getElementById('user-email-notif').checked = u ? (u.email_notifications !== false) : true;
+  const rf = document.getElementById('user-radfile'); if (rf) rf.checked = !!(u && u.can_file_radiology);
   document.getElementById('user-role').value      = u?.role || 'viewer';
   document.getElementById('user-pw-hint').style.display = id ? 'inline' : 'none';
   document.getElementById('user-pw-hint').textContent   = id ? '(leave blank to keep current)' : '(required)';
@@ -137,6 +138,10 @@ function toggleUserBranch() {
     (['superadmin','manager'].includes(role) || isStaff) ? 'none' : 'flex';
   const sw = document.getElementById('user-staff-wrap');
   if (sw) sw.style.display = isStaff ? 'block' : 'none';
+  // The radiology-filing privilege only matters for a staff member (team leads and
+  // up can always file); hide it for other roles.
+  const rw = document.getElementById('user-radfile-wrap');
+  if (rw) rw.style.display = isStaff ? 'block' : 'none';
 }
 async function saveUser() {
   const msg      = document.getElementById('user-msg');
@@ -154,7 +159,10 @@ async function saveUser() {
     const body = { username, role, branch_id: branch_id ? Number(branch_id) : null,
                    email: document.getElementById('user-email').value.trim(),
                    email_notifications: !!document.getElementById('user-email-notif').checked };
-    if (role === 'staff') body.staff_id = Number(staff_id);
+    if (role === 'staff') {
+      body.staff_id = Number(staff_id);
+      body.can_file_radiology = !!document.getElementById('user-radfile')?.checked;
+    }
     if (password) body.password = password;
 
     if (_editUserId) {

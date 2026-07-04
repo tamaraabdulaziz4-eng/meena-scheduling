@@ -602,7 +602,9 @@ function renderHandoffResults(d) {
         <div class="ho-actions" style="margin-top:8px">
           ${isFiled
             ? `<button class="btn btn-sm" disabled>✅ Filed</button>`
-            : `<button class="btn btn-sm btn-primary" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>`}
+            : canFileRadiology()
+              ? `<button class="btn btn-sm btn-primary" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>`
+              : `<span style="font-size:12px;color:var(--muted)">View only — ask an admin to enable radiology filing for your account.</span>`}
         </div>
         <div class="ho-file-out" style="margin-top:8px"></div>
       </div>`;
