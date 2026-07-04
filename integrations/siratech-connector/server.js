@@ -639,22 +639,32 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   }
 
   if (ready && items.length) {
-    const seen = new Set(), targets = [];
-    for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= readyLimit) break; } }
-    // Derive the pipeline STAGE for each patient from DePACS (reusing the match work):
-    //   • reported → a verified report is ready to file (some order allUnique)
-    //   • imaged   → images exist in PACS but no verified report yet (studiesFound>0)
-    //   • ordered  → order placed, nothing in PACS yet (no studies)
-    const matched = await pool(targets, 6, async (it) => {
+    const seen = new Set(), mrnos = [];
+    for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); mrnos.push(it.mrno); if (mrnos.length >= readyLimit) break; } }
+    // Authoritative per-ORDER pipeline stage straight from Siratech (one
+    // FetchRadiologyDetails call per patient — no DePACS guessing, and per-bill so a
+    // patient's two orders can't smear each other):
+    //   • reported → the HIS already has a radiology report (hasRadiologyRepot)
+    //   • imaged   → an accession exists (study performed / in PACS)
+    //   • ordered  → placed, not yet imaged (e.g. cpoeStatusDescription "Scheduled")
+    const byBill = new Map();
+    await pool(mrnos, 6, async (mrno) => {
       try {
-        const m = await buildMatch(it.mrno, null, it.site);
-        const anyReady = (m.orders || []).some((o) => o.allUnique);
-        const stage = anyReady ? 'reported' : ((m.studiesFound || 0) > 0 ? 'imaged' : 'ordered');
-        return { mrno: it.mrno, anyReady, stage };
-      } catch (e) { return { mrno: it.mrno, anyReady: null, stage: null }; }
+        const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
+        for (const o of ((dr.json && dr.json.data) || [])) {
+          const imaged = o.accessionNumber != null && String(o.accessionNumber).trim() !== '';
+          const hasReport = !!o.hasRadiologyRepot;
+          byBill.set(String(o.billNo), {
+            stage: hasReport ? 'reported' : (imaged ? 'imaged' : 'ordered'),
+            hasReport, imaged, reportDate: o.reportDate || null, hisStatus: o.cpoeStatusDescription || null,
+          });
+        }
+      } catch (e) { /* skip this patient — leave stage unknown */ }
     });
-    const byMrn = new Map(matched.filter(Boolean).map((x) => [x.mrno, x]));
-    for (const it of items) if (byMrn.has(it.mrno)) { it.readyToFile = byMrn.get(it.mrno).anyReady; it.stage = byMrn.get(it.mrno).stage; }
+    for (const it of items) {
+      const e = byBill.get(String(it.billNo));
+      if (e) { it.readyToFile = e.hasReport; it.stage = e.stage; it.imaged = e.imaged; it.reportDate = e.reportDate; it.hisStatus = e.hisStatus; }
+    }
   }
 
   for (const it of items) { delete it.__row; delete it.__site; }   // strip enrichment scratch

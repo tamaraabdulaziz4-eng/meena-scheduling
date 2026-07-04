@@ -116,7 +116,7 @@ A standard RIS / DICOM Modality Worklist row carries: Patient name, MRN/ID, DOB/
 | Order time / TAT age | ✅ |
 | Report status (awaiting/ready) | ✅ (from DePACS match) |
 | **Accession #** | ❌ (this HIS leaves it null; DePACS studyId is the binding) |
-| **True order status** (`risOrderStatus`) | ⏳ **opportunity** — `FetchRISPanel` returns `risOrderStatus` per order (the HIS's own scheduled/performed/reported status). Surfacing it would give an authoritative "done vs pending" instead of inferring from `filterResult`/DePACS. Needs live probing of the exact status values (can't be done from the sandbox — geo-locked). High-value next step. |
+| **True order status** | ✅ **done** — `FetchRadiologyDetails` (one call/patient) returns per-order `cpoeStatusDescription` (e.g. "Scheduled"), `accessionNumber` (→ imaged), and `hasRadiologyRepot` (→ reported). The worklist "Show stage" pass derives Ordered/Imaged/Reported authoritatively from these (per-bill, no DePACS guessing, no per-MRN smear); `reportDate` also lands here for correct TAT. |
 
 ## 4-agent audit (findings + status)
 
