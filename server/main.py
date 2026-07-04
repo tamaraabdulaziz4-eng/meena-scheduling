@@ -255,7 +255,10 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS phase INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS min_shifts INTEGER NOT NULL DEFAULT 0;")
             cur.execute("ALTER TABLE scheduling.staff ADD COLUMN IF NOT EXISTS max_shifts INTEGER NOT NULL DEFAULT 17;")
-            cur.execute("UPDATE scheduling.staff SET max_shifts=17 WHERE max_shifts=0 OR max_shifts IS NULL;")
+            # NOTE: do NOT re-backfill max_shifts here. The column is NOT NULL DEFAULT 17,
+            # so it is never NULL — an UPDATE …WHERE max_shifts=0 would run on every boot
+            # and silently reset any staff an admin intentionally set to 0 (e.g. on long
+            # leave / not to be scheduled). The DEFAULT already covers brand-new rows.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduling.section_month_settings (
                     id SERIAL PRIMARY KEY,
@@ -1771,6 +1774,14 @@ async def _no_store_api(request: Request, call_next):
     if request.url.path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         resp.headers["Pragma"] = "no-cache"
+    # Baseline security headers on every response (PHI app). Clickjacking, MIME
+    # sniffing, referrer leakage, and downgrade. CSP is intentionally omitted for
+    # now — the SPA uses inline handlers and a strict policy would break it; add a
+    # tested policy separately. HSTS is only honoured over HTTPS (Railway is HTTPS).
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return resp
 
 def backfill_us_sections():
@@ -5268,12 +5279,15 @@ def _apply_swap(sw):
     a = cell(sw["staff_a"], sw["date_a"])
     b = cell(sw["staff_b"], sw["date_b"])
     def put(staff_id, d, c):
+        # Mark the swapped cells is_manual so a later regenerate PRESERVES them — an
+        # approved swap is a deliberate manager decision and must not be silently
+        # overwritten by the solver (regenerate only keeps is_manual cells).
         q("""INSERT INTO scheduling.schedule_entries
-             (schedule_id,staff_id,date,shift_code,is_oncall,cross_branch_id)
-             VALUES (%s,%s,%s,%s,%s,%s)
+             (schedule_id,staff_id,date,shift_code,is_oncall,cross_branch_id,is_manual)
+             VALUES (%s,%s,%s,%s,%s,%s,true)
              ON CONFLICT (schedule_id,staff_id,date) DO UPDATE
              SET shift_code=EXCLUDED.shift_code,is_oncall=EXCLUDED.is_oncall,
-                 cross_branch_id=EXCLUDED.cross_branch_id""",
+                 cross_branch_id=EXCLUDED.cross_branch_id,is_manual=true""",
           (sid, staff_id, d, c["shift_code"], c["is_oncall"], c["cross_branch_id"]), exec_only=True)
     put(sw["staff_a"], sw["date_a"], b)
     put(sw["staff_b"], sw["date_b"], a)
