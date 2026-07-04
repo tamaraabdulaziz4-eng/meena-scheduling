@@ -62,9 +62,13 @@ def get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     global _pool
     if _pool is None:
         _pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=2, maxconn=10,
+            # maxconn matches the request threadpool so a burst of clicks doesn't hit
+            # "connection pool exhausted"; keepalives stop Neon from silently dropping
+            # idle SSL connections (which forced a full-pool rebuild storm before).
+            minconn=2, maxconn=int(os.environ.get("DB_MAXCONN") or 24),
             dsn=DATABASE_URL,
             cursor_factory=psycopg2.extras.RealDictCursor,
+            keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
         )
     return _pool
 
@@ -858,6 +862,15 @@ def init_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_mrno ON scheduling.radiology_orders(mrno);")
             # Imaging modality (CT/US/XR/MR/MG) captured from the worklist when known.
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS modality TEXT;")
+
+            # ── Performance indexes for hot / growing tables (audit, on-duty, dashboard
+            # counts). All additive and IF NOT EXISTS — safe to run every boot. ──
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON scheduling.audit_log(created_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_action_created ON scheduling.audit_log(action, created_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sched_entries_date ON scheduling.schedule_entries(date);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_status ON scheduling.leave_requests(status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_swaps_status ON scheduling.shift_swaps(status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_staffreg_status ON scheduling.staff_registrations(status);")
 
             conn.commit()
     print("Scheduling schema ready.")
@@ -1801,6 +1814,13 @@ _CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(","
 app.add_middleware(CORSMiddleware, allow_origins=_CORS_ORIGINS,
                    allow_credentials=bool(_CORS_ORIGINS),
                    allow_methods=["*"], allow_headers=["*"])
+# Compress JSON/text responses — worklists, rosters, stats and base64 payloads are
+# large and highly repetitive, so gzip typically cuts them ~70-85% over the wire.
+try:
+    from starlette.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+except Exception:
+    pass
 
 @app.middleware("http")
 async def _no_store_api(request: Request, call_next):
