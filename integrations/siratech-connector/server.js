@@ -912,8 +912,17 @@ app.post('/results/file', requireAuth, async (req, res) => {
     // The attachment's `site` label is the branch short name (display only).
     const branchName = await getSites().then((s) => (s.find((x) => x.siteId === plan.site) || {}).shortName || plan.searchRow.site || '').catch(() => plan.searchRow.site || '');
     const nowIso = new Date().toISOString();
+    // Name the attached PDF descriptively — patient · exam · date — instead of a bare
+    // "report.pdf", so it's identifiable in the patient's Siratech file.
+    const _fnClean = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const _rptDate = String(rep.reportDate || plan.orderDate || nowIso).slice(0, 10);
+    const reportFileName = [
+      _fnClean(plan.searchRow && (plan.searchRow.patientName || plan.searchRow.patName)),
+      _fnClean(tgt.serviceName),
+      _rptDate,
+    ].filter(Boolean).join(' - ').slice(0, 120).concat('.pdf') || 'report.pdf';
     const attachment = {
-      fileName: 'report.pdf', site: branchName, filePath: '', file: '',
+      fileName: reportFileName, site: branchName, filePath: '', file: '',
       fileAttachmentCategoryId: FILE_ATTACHMENT_CATEGORY_ID, fileAttachmentSubCategoryId: null,
       isLoading: true, resultType: 'pdf', objectState: 1,
       attachedfile: rep.pdfBase64, auditDate: null, attachedFile: rep.pdfBase64,
