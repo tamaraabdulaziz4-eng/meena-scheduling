@@ -193,29 +193,51 @@ async function dpToken(force = false) {
   return token;
 }
 
-// All VERIFIED studies for an MRN, enriched with the report description (which the
-// list endpoint leaves blank — it lives in the per-study report info).
+// DePACS stores pat_id three ways (bare MRN, MRN+name, or a "SIRA"+MRN prefix).
+// get_studies substring-matches, so a bare search usually finds all forms — but we
+// search every candidate form and merge (deduped) so the reverse flow is exactly as
+// robust as the forward reports lookup. The file-number GATE in matchStudy still
+// filters out any study that isn't truly this patient's, so extra forms are safe.
+function _fileCandidates(mrno) {
+  const s = String(mrno == null ? '' : mrno).trim();
+  const out = [];
+  const add = (x) => { x = String(x || '').trim(); if (x && !out.includes(x)) out.push(x); };
+  add(s);
+  const m = s.match(/^\s*sira[\s\-_:]*(.+)$/i);      // strip a leading SIRA (+ separators)
+  const bare = m ? m[1].trim() : s;
+  add(bare);
+  if (/^\d+$/.test(bare)) add('SIRA' + bare);        // a plain file number → also the SIRA-prefixed form
+  return out;
+}
+
+// All studies for an MRN (across pat_id forms), enriched with the report description
+// (which the list endpoint leaves blank — it lives in the per-study report info).
 async function depacsStudies(mrno) {
-  // Page through ALL studies (not just the first 100) so a high-volume patient's
-  // recent/reported study can't fall off the end and read as "no report".
   let token = await dpToken();
-  const qs = (page) => `/study/get_studies?start_date=2015-01-01&end_date=2035-12-31&page_size=100&current_page=${page}&patient_id=${encodeURIComponent(mrno)}`;
-  const fetchPage = async (page) => {
-    let r = await dpFetch(qs(page), { token });
-    if (r.status === 401) { token = await dpToken(true); r = await dpFetch(qs(page), { token }); }  // token lapsed → refresh once
-    // A DePACS error must surface as an error — NEVER as an empty list, which would
-    // wrongly tell staff the patient has no imaging/report when DePACS was unreachable.
+  const qs = (page, pid) => `/study/get_studies?start_date=2015-01-01&end_date=2035-12-31&page_size=100&current_page=${page}&patient_id=${encodeURIComponent(pid)}`;
+  const fetchPage = async (page, pid) => {
+    let r = await dpFetch(qs(page, pid), { token });
+    if (r.status === 401) { token = await dpToken(true); r = await dpFetch(qs(page, pid), { token }); }  // token lapsed → refresh once
     if (!r || (r.status && r.status >= 400) || r.json == null) {
       throw new Error(`DePACS study lookup failed (HTTP ${r ? r.status : 'unreachable'})`);
     }
     return (r.json && r.json.body && r.json.body.data) || [];
   };
-  const rows = [];
-  for (let page = 1; page <= 20; page++) {          // hard cap 2000 studies
-    const batch = await fetchPage(page);
-    rows.push(...batch);
-    if (batch.length < 100) break;                  // last page
+  // Page through ALL studies per candidate form, merged and deduped by study_id.
+  const seen = new Set(), rows = [];
+  let lastErr = null, anyOk = false;
+  for (const pid of _fileCandidates(mrno)) {
+    try {
+      for (let page = 1; page <= 20; page++) {       // hard cap 2000 studies per form
+        const batch = await fetchPage(page, pid);
+        anyOk = true;
+        for (const s of batch) { if (!seen.has(s.study_id)) { seen.add(s.study_id); rows.push(s); } }
+        if (batch.length < 100) break;               // last page
+      }
+    } catch (e) { lastErr = e; }                      // one form's blip must not abort the others
   }
+  // Surface a real outage (never an empty list) only if EVERY form failed.
+  if (!anyOk && lastErr) throw lastErr;
   const out = [];
   for (const s of rows) {
     let desc = s.study_desc || '';
