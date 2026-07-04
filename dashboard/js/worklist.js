@@ -5,11 +5,64 @@
 // the actual file+authorize is handed off to the trusted Handoff wizard so the
 // clinical write path lives in one place.
 
-let wlState = { branches: [], site: '', ready: false, data: null, loading: false, timer: null, autofile: null };
+let wlState = { branches: [], site: '', ready: false, data: null, loading: false, timer: null, autofile: null,
+                seenEmerg: null, alert: (localStorage.getItem('wl_alert') !== '0') };
 
 // Live board: refresh on a timer so a newly-arrived order shows up without the
 // operator touching anything (the whole point — they never open Siratech).
 const WL_REFRESH_MS = 45000;
+
+// A new EMERGENCY order arriving is the one event a radiology operator must not
+// miss — so on the live board we chime + raise a desktop notification the moment
+// one appears (never for orders already on screen at first load).
+function wlBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ac = new Ctx();
+    const beep = (t, freq) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = freq;
+      o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(0.001, ac.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + t + 0.28);
+      o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.3);
+    };
+    beep(0, 880); beep(0.32, 1175);   // two-tone chime
+    setTimeout(() => { try { ac.close(); } catch (e) {} }, 1200);
+  } catch (e) { /* audio blocked — the visual badge + toast still fire */ }
+}
+function wlNotify(newOnes) {
+  const n = newOnes.length;
+  const first = newOnes[0] || {};
+  const msg = n === 1
+    ? `${first.patientName || first.mrno || 'A patient'} · ${first.branch || ''}`.trim()
+    : `${n} new emergency orders`;
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('🚨 New emergency radiology order', { body: msg, tag: 'wl-emergency' });
+    }
+  } catch (e) { /* ignore */ }
+  if (typeof toast === 'function') toast(`🚨 New emergency: ${msg}`, 'err');
+}
+// Compare the current emergency orders to the ones we've already seen; chime on
+// genuinely new ones. First load seeds the set silently (no alarm for a backlog).
+function wlCheckNewEmergencies(items) {
+  const emerg = (items || []).filter((i) => i.emergency && i.genPatBillingId != null);
+  const keys = emerg.map((i) => String(i.genPatBillingId));
+  if (wlState.seenEmerg === null) { wlState.seenEmerg = new Set(keys); return; }   // seed, no alarm
+  const fresh = emerg.filter((i) => !wlState.seenEmerg.has(String(i.genPatBillingId)));
+  keys.forEach((k) => wlState.seenEmerg.add(k));
+  if (fresh.length && wlState.alert) { wlBeep(); wlNotify(fresh); }
+}
+function wlToggleAlert() {
+  wlState.alert = document.getElementById('wl-alert').checked;
+  localStorage.setItem('wl_alert', wlState.alert ? '1' : '0');
+  if (wlState.alert && 'Notification' in window && Notification.permission === 'default') {
+    try { Notification.requestPermission(); } catch (e) {}
+  }
+}
 
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — file the ready ones');
@@ -27,6 +80,9 @@ async function renderWorklistPage() {
         </label>
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
           <input type="checkbox" id="wl-live" checked onchange="wlToggleLive()"> Live
+        </label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)" title="Chime + notify on a new emergency order">
+          <input type="checkbox" id="wl-alert" ${wlState.alert ? 'checked' : ''} onchange="wlToggleAlert()"> 🔔 Emergency alert
         </label>
         <button class="btn btn-sm btn-primary" onclick="wlLoad(true)">↻ Refresh</button>
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
@@ -135,6 +191,7 @@ function wlWhen(iso) {
 
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
+  wlCheckNewEmergencies(items);   // chime on any genuinely new emergency order
   const sum = document.getElementById('wl-summary');
   if (sum) sum.textContent = `${d.total || 0} awaiting · ${d.emergency || 0} emergency`
     + (d.readyChecked ? ` · checked ${d.readyChecked}` : '')
