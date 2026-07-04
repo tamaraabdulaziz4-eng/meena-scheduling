@@ -527,6 +527,97 @@ app.post('/results/match', requireAuth, async (req, res) => {
   catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── RIS worklist ──────────────────────────────────────────────────────────────
+// The live radiology worklist: every order AWAITING a result (RadiologySearch,
+// filterResult=0) across the requested branches, sorted emergency-first then
+// oldest-first, with a turnaround (TAT) age in hours. Optionally (?ready=1) the top
+// N distinct patients are matched against DePACS so the board flags which orders
+// already have a VERIFIED report ready to file. READ-ONLY.
+const WORKLIST_CACHE_TTL = Number(process.env.WORKLIST_CACHE_TTL_MS || 60000);
+const worklistCache = new Map();
+
+async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, noCache = false }) {
+  const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit });
+  if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < WORKLIST_CACHE_TTL) return e.data; }
+  await getToken();
+  const empId = currentEmpId() || '0';
+  const now = Date.now();
+  const today = new Date();
+  const def = (d, end) => `${d.toISOString().slice(0, 10)}T${end ? '23:59:59' : '00:00:00'}.000Z`;
+  const fromISO = from ? `${from}T00:00:00.000Z` : def(new Date(today.getTime() - 14 * 864e5), false);
+  const toISO = to ? `${to}T23:59:59.000Z` : def(new Date(today.getTime() + 864e5), true);   // +1d covers KSA/UTC skew
+  const siteList = await getSites().catch(() => []);
+  const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+  const wantSites = (sites && sites.length) ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);
+  const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
+
+  const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+    try {
+      const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+        body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
+      });
+      if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
+      return { site, ok: true, rows: (sr.json.data || []) };
+    } catch (e) { return { site, ok: false, rows: [] }; }
+  });
+
+  const items = [], failed = [];
+  for (const s of perSite) {
+    if (!s) continue;
+    if (!s.ok) { failed.push(s.site); continue; }
+    for (const r of s.rows) {
+      const t = Date.parse(r.billDate || r.visitDate || '');
+      const ageHours = Number.isFinite(t) ? Math.max(0, Math.round((now - t) / 36e5)) : null;
+      const emergency = Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0;
+      items.push({
+        site: s.site, branch: branchLabel(s.site),
+        mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
+        age: r.age, gender: r.gender,
+        doctorName: (r.doctorName || '').trim(), department: (r.departmentName || '').trim(),
+        emergency, priority: emergency ? 'Emergency' : 'Routine',
+        billNo: r.billNo || null, genPatBillingId: r.genPatBillingId,
+        orderedDate: r.billDate || r.visitDate || null, ageHours, tatStatus: r.tatStatus,
+        readyToFile: null,   // filled below only when ready=1
+      });
+    }
+  }
+  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+
+  if (ready && items.length) {
+    const seen = new Set(), targets = [];
+    for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= readyLimit) break; } }
+    const matched = await pool(targets, 6, async (it) => {
+      try { const m = await buildMatch(it.mrno, null, it.site); return { mrno: it.mrno, anyReady: (m.orders || []).some((o) => o.allUnique) }; }
+      catch (e) { return { mrno: it.mrno, anyReady: null }; }
+    });
+    const byMrn = new Map(matched.filter(Boolean).map((x) => [x.mrno, x.anyReady]));
+    for (const it of items) if (byMrn.has(it.mrno)) it.readyToFile = byMrn.get(it.mrno);
+  }
+
+  const data = {
+    range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
+    sites: { requested: wantSites, failed },
+    total: items.length, emergency: items.filter((i) => i.emergency).length,
+    readyChecked: ready ? Math.min(readyLimit, new Set(items.map((i) => i.mrno)).size) : 0,
+    items, generatedAt: new Date().toISOString(),
+  };
+  worklistCache.set(key, { data, ts: Date.now() });
+  if (worklistCache.size > 40) worklistCache.delete(worklistCache.keys().next().value);
+  return data;
+}
+
+app.get('/worklist', requireAuth, async (req, res) => {
+  try {
+    const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    const from = String(req.query.from || '').trim() || null;
+    const to = String(req.query.to || '').trim() || null;
+    const ready = String(req.query.ready || '') === '1';
+    const readyLimit = Math.max(1, Math.min(60, Number(req.query.readyLimit) || 25));
+    const noCache = String(req.query.nocache || '') === '1';
+    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, noCache })) });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 // ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────
 // Files a VERIFIED DePACS report back into Siratech's Radiology Result Entry and
 // authorises it. NOTHING is written unless {confirm:true} is sent AND the target
