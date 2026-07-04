@@ -338,6 +338,11 @@ def init_schema():
             # Left NULL until the owner confirms each branch's HIS site number, so
             # nothing is silently restricted before the mapping exists.
             cur.execute("ALTER TABLE scheduling.branches ADD COLUMN IF NOT EXISTS siratech_site_id INTEGER;")
+            # Radiology WRITE privilege: staff can VIEW the worklist/reports and sign
+            # consent by default, but FILING a result into the live HIS is off until a
+            # superadmin grants this per-user flag. Team leads/managers/superadmin can
+            # always file (their role implies it); this flag only elevates a `staff`.
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS can_file_radiology BOOLEAN NOT NULL DEFAULT false;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -1100,7 +1105,9 @@ def get_current_user(request: Request) -> dict:
     # password was changed) can't keep using an old 30-day token. We trust the
     # live row for role/branch, not whatever was baked into the token.
     row = q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,
-                      COALESCE(u.token_epoch,0) AS token_epoch, b.name AS branch_name
+                      COALESCE(u.token_epoch,0) AS token_epoch,
+                      COALESCE(u.can_file_radiology,false) AS can_file_radiology,
+                      b.name AS branch_name
                FROM scheduling.users u
                LEFT JOIN scheduling.branches b ON b.id=u.branch_id
                WHERE u.id=%s""", (payload.get("id"),), one=True)
@@ -1117,7 +1124,7 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 def require_radiology(user: dict = Depends(get_current_user)) -> dict:
-    # The radiology WORKFLOW (worklist, consent, patient/report check, filing) is the
+    # The radiology WORKFLOW *view* (worklist, patient/report check, consent) is the
     # front-line operator's job — so a plain `staff` member gets it too, not just team
     # leads. Only a pure `viewer` is excluded. Branch isolation still applies via
     # _rad_scope_site (a staff member is scoped to their own branch). Management/
@@ -1125,6 +1132,17 @@ def require_radiology(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") not in ("staff", "admin", "superadmin", "manager"):
         raise HTTPException(403, "Forbidden")
     return user
+
+def require_radiology_write(user: dict = Depends(get_current_user)) -> dict:
+    # FILING a result into the live HIS is a privileged write. Team leads / managers /
+    # full admins can always file (role implies it). A plain `staff` member is
+    # VIEW-ONLY until a superadmin grants the per-user `can_file_radiology` flag.
+    role = user.get("role")
+    if role in ("admin", "superadmin", "manager"):
+        return user
+    if role == "staff" and user.get("can_file_radiology"):
+        return user
+    raise HTTPException(403, "You don't have permission to file radiology results. Ask an admin to enable it for you.")
 
 def require_superadmin(user: dict = Depends(get_current_user)) -> dict:
     # Full admin only — branch/user/shift-type management.
@@ -2931,6 +2949,7 @@ def delete_branch(bid: int, user=Depends(require_superadmin)):
 def list_users(user=Depends(require_superadmin)):
     return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
                        u.email, COALESCE(u.email_notifications,true) AS email_notifications,
+                       COALESCE(u.can_file_radiology,false) AS can_file_radiology,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
@@ -2988,6 +3007,10 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     if body.get("role")     is not None: sets.append("role=%s");     params.append(body["role"])
     if "email" in body: sets.append("email=%s"); params.append((body.get("email") or "").strip() or None)
     if "email_notifications" in body: sets.append("email_notifications=%s"); params.append(bool(body["email_notifications"]))
+    # Radiology filing privilege (elevates a staff member from view-only to able to
+    # file results into the HIS). Takes effect on their next request — get_current_user
+    # reads the live row, so no re-login is needed.
+    if "can_file_radiology" in body: sets.append("can_file_radiology=%s"); params.append(bool(body["can_file_radiology"]))
     # A staff account stays pinned to its staff member's branch.
     if body.get("role") == "staff" and body.get("staff_id"):
         st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (body["staff_id"],), one=True)
@@ -3003,6 +3026,7 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
         q(f"UPDATE scheduling.users SET {','.join(sets)} WHERE id=%s", params, exec_only=True)
     return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
                        u.email, COALESCE(u.email_notifications,true) AS email_notifications,
+                       COALESCE(u.can_file_radiology,false) AS can_file_radiology,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
@@ -6931,7 +6955,7 @@ def radiology_results_match(file_no: str, request: Request, user=Depends(require
     return _bridge_request("/his/results/match/" + urllib.parse.quote(file_no) + qs, timeout=120)
 
 @app.post("/api/radiology/results/file")
-async def radiology_results_file(request: Request, user=Depends(require_radiology)):
+async def radiology_results_file(request: Request, user=Depends(require_radiology_write)):
     """File a VERIFIED DePACS report PDF back into Siratech's Result Entry and
     (unless authorize=false) authorize it. DRY-RUN by default: nothing is written
     unless confirm=true is sent AND the target test resolves to exactly one study.
@@ -7062,7 +7086,7 @@ def handoff_config(user=Depends(require_radiology)):
             "butterfly_configured": bool(c["username"] and c["password"])}
 
 @app.post("/api/handoff/write-history")
-async def handoff_write_history(request: Request, user=Depends(require_radiology)):
+async def handoff_write_history(request: Request, user=Depends(require_radiology_write)):
     """Write the clinical history into a DePACS (Butterfly) study. The WhatsApp
     message is prepared client-side for the staff to copy into the group."""
     b = await request.json()

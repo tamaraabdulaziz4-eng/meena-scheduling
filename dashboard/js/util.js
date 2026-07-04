@@ -1,5 +1,12 @@
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Can the current user FILE a radiology result into the HIS? Team leads / managers /
+// full admins always can; a plain staff member only if granted the per-user privilege.
+function canFileRadiology() {
+  if (typeof currentUser === 'undefined' || !currentUser) return false;
+  if (['admin', 'manager', 'superadmin'].includes(currentUser.role)) return true;
+  return currentUser.role === 'staff' && !!currentUser.can_file_radiology;
+}
 // For values dropped into a single-quoted onclick JS string: escape the JS
 // string itself (backslash + quotes + the HTML), so a name like O'Brien is safe.
 function jsAttr(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
