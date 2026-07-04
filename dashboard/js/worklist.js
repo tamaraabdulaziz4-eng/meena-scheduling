@@ -261,40 +261,56 @@ async function wlEnrich(silent) {
   _wlEnrichBusy = true;
   // Show the loading shimmer on the not-yet-filled cells while this pass runs.
   if (anyMissing) { wlState.enriching = true; if (document.getElementById('wl-body')) wlRender(); }
-  const qs = new URLSearchParams();
-  if (wlState.site) qs.set('sites', wlState.site);
-  qs.set('from', wlState.from); qs.set('to', wlState.to);
-  qs.set('ready', '1'); qs.set('modality', '1');
+  const mkQs = (flags) => {
+    const qs = new URLSearchParams();
+    if (wlState.site) qs.set('sites', wlState.site);
+    qs.set('from', wlState.from); qs.set('to', wlState.to);
+    for (const k of Object.keys(flags)) qs.set(k, flags[k]);
+    return qs.toString();
+  };
+  // Two INDEPENDENT passes in parallel — this is what makes the board feel like the
+  // native RIS panel. exam+modality is pure HIS work and returns quickly; the
+  // pipeline stage does per-patient DePACS matching and is the slow one. The old
+  // single combined request made the Exam/Type columns shimmer until the SLOWEST
+  // work finished; now each pass merges + repaints the moment it lands.
   try {
-    const d = await API.get('/radiology/worklist?' + qs.toString());
+    await Promise.all([
+      API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d)).catch(() => {}),
+      API.get('/radiology/worklist?' + mkQs({ ready: '1' })).then((d) => wlMergeEnrich(d)).catch(() => {}),
+    ]);
     wlState.lastEnrich = Date.now();
-    if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); }
-    const enr = new Map();
-    for (const it of (d.items || [])) {
-      const k = wlRowKey(it);
-      if (!k) continue;                            // keyless → don't cache/merge (collision-safe)
-      enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
-      if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
-      if (it.stage) wlState.stageCache.set(k, it.stage);
-    }
-    if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
-      for (const it of wlState.data.items) {
-        const k = wlRowKey(it); if (!k) continue;
-        const e = enr.get(k);
-        if (!e) continue;
-        if (e.modality && it.modality !== e.modality) it.modality = e.modality;
-        if (e.exam && it.exam !== e.exam) it.exam = e.exam;
-        if (e.stage && it.stage !== e.stage) it.stage = e.stage;
-      }
-    }
-  } catch (e) { /* best-effort */ }
-  finally {
+  } finally {
     _wlEnrichBusy = false;
     // Settle: turn the shimmer off and repaint with whatever filled in (rows still
     // empty after this pass fall back to "—" — that's the connector's per-order cap).
     wlState.enriching = false;
     if (document.getElementById('wl-body')) wlRender();
   }
+}
+
+// Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
+// sibling pass may still be running, but whatever this one filled shows now.
+function wlMergeEnrich(d) {
+  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); }
+  const enr = new Map();
+  for (const it of ((d && d.items) || [])) {
+    const k = wlRowKey(it);
+    if (!k) continue;                            // keyless → don't cache/merge (collision-safe)
+    enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
+    if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
+    if (it.stage) wlState.stageCache.set(k, it.stage);
+  }
+  if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
+    for (const it of wlState.data.items) {
+      const k = wlRowKey(it); if (!k) continue;
+      const e = enr.get(k);
+      if (!e) continue;
+      if (e.modality && it.modality !== e.modality) it.modality = e.modality;
+      if (e.exam && it.exam !== e.exam) it.exam = e.exam;
+      if (e.stage && it.stage !== e.stage) it.stage = e.stage;
+    }
+  }
+  if (document.getElementById('wl-body')) wlRender();
 }
 
 // Pipeline stage → badge. Each stage is detected from a specific signal:

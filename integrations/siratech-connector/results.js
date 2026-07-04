@@ -247,26 +247,38 @@ async function depacsStudies(mrno) {
   }
   // Surface a real outage (never an empty list) only if EVERY form failed.
   if (!anyOk && lastErr) throw lastErr;
-  const out = [];
-  for (const s of rows) {
-    let desc = s.study_desc || '';
-    if (!desc) {
-      const info = await dpFetch('/report/get_study_report_info/' + s.study_id, { token });
-      desc = (info.json && info.json.body && info.json.body.study_desc) || '';
+  // The per-study report-info lookup (only needed when study_desc is blank) used to
+  // run ONE AT A TIME — and on this instance study_desc is blank on MOST studies, so
+  // a patient with 20 studies cost 20 sequential DePACS round-trips; the worklist
+  // stage pass (many patients) multiplied that into minutes of shimmer. Run it with
+  // bounded concurrency instead; order is preserved by index.
+  const out = new Array(rows.length);
+  let nextIdx = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = nextIdx++;
+      if (i >= rows.length) return;
+      const s = rows[i];
+      let desc = s.study_desc || '';
+      if (!desc) {
+        const info = await dpFetch('/report/get_study_report_info/' + s.study_id, { token });
+        desc = (info.json && info.json.body && info.json.body.study_desc) || '';
+      }
+      // This DePACS instance often leaves study_desc blank and puts the description
+      // in the accession_number field ("X L.SPNE", "T SPINE"). Use it as the body-part
+      // source when desc is empty — it only feeds the (still strict) body-part match.
+      if (!desc && s.accession_number) desc = String(s.accession_number);
+      out[i] = {
+        studyId: s.study_id, iuid: s.study_iuid, modality: s.modality, desc,
+        studyDate: s.study_date, status: s.study_status, patName: s.pat_name, patId: s.pat_id,
+        // Only the REAL DICOM accession is a deterministic key. The study-UID's last
+        // arc is NOT the accession (it just happens to coincide sometimes), so it must
+        // never drive the primary match — that would risk a wrong-study bind.
+        accession: s.accession_number || null,
+      };
     }
-    // This DePACS instance often leaves study_desc blank and puts the description
-    // in the accession_number field ("X L.SPNE", "T SPINE"). Use it as the body-part
-    // source when desc is empty — it only feeds the (still strict) body-part match.
-    if (!desc && s.accession_number) desc = String(s.accession_number);
-    out.push({
-      studyId: s.study_id, iuid: s.study_iuid, modality: s.modality, desc,
-      studyDate: s.study_date, status: s.study_status, patName: s.pat_name, patId: s.pat_id,
-      // Only the REAL DICOM accession is a deterministic key. The study-UID's last
-      // arc is NOT the accession (it just happens to coincide sometimes), so it must
-      // never drive the primary match — that would risk a wrong-study bind.
-      accession: s.accession_number || null,
-    });
-  }
+  };
+  await Promise.all(new Array(Math.max(1, Math.min(6, rows.length))).fill(0).map(worker));
   return out;
 }
 

@@ -1141,6 +1141,12 @@ async function _patientSearch(q, debug) {
     // 5… forms, in case the number is stored without the leading 0.
     for (const cat of [6, 7, 8, 4, 5, 9, 10, 11]) plans.push(['PHONE NUMBER', cat, mobileLocal]);
     for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, mobileLocal.slice(1)]);
+    // Reception sometimes stores the number WITH the country code ("966581453234" /
+    // "+966581453234") — the EMR search is an exact match, so those records are
+    // invisible to the 05…/5… forms above. Try the country-code shapes too (only on
+    // the categories that have ever matched, to bound the fan-out).
+    for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, '966' + mobileLocal.slice(1)]);
+    for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, '+966' + mobileLocal.slice(1)]);
   } else if (isSaudiId) {
     // National ID category 2 is confirmed working on this HIS; keep it first, iqama as fallback.
     plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
