@@ -116,7 +116,7 @@ A standard RIS / DICOM Modality Worklist row carries: Patient name, MRN/ID, DOB/
 | Order time / TAT age | ✅ |
 | Report status (awaiting/ready) | ✅ (from DePACS match) |
 | **Accession #** | ❌ (this HIS leaves it null; DePACS studyId is the binding) |
-| **True order status** | ✅ **done** — `FetchRadiologyDetails` (one call/patient) returns per-order `cpoeStatusDescription` (e.g. "Scheduled"), `accessionNumber` (→ imaged), and `hasRadiologyRepot` (→ reported). The worklist "Show stage" pass derives Ordered/Imaged/Reported authoritatively from these (per-bill, no DePACS guessing, no per-MRN smear); `reportDate` also lands here for correct TAT. |
+| **True order status** | Partly — the worklist "Show stage" derives Ordered/Imaged/Reported from DePACS **per bill** (no smear). NOTE (proven by a live test on MRN 25111825): Siratech's `hasRadiologyRepot` means **"report FILED back into the HIS"**, NOT "report ready in PACS" — a DePACS-verified report has `hasRadiologyRepot=false` until we file it. So "report ready to file" MUST come from DePACS (verified study), not from `hasRadiologyRepot`. `hasRadiologyRepot`/`cpoeStatusDescription` are instead the right signal for **store reconciliation** (detecting an order resulted outside Meena → mark done). |
 
 ## 4-agent audit (findings + status)
 
