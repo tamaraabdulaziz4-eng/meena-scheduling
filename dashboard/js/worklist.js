@@ -129,7 +129,7 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <input id="wl-search" class="input" placeholder="🔍 Find patient (file / ID / iqama / mobile) — all branches"
+        <input id="wl-search" class="input" placeholder="🔍 مريض من فرع ثاني؟ اكتب رقم الملف / الهوية / الإقامة / الجوال"
                style="min-width:230px;flex:1" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
         <button class="btn btn-sm btn-ghost" onclick="wlLoad(true)" title="Refresh now">↻</button>
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
@@ -329,13 +329,26 @@ function wlRow(it, i) {
     : it.stage === 'imaged' ? `<span class="badge badge-orange">📷 awaiting report</span>`
       : it.stage === 'ordered' ? `<span class="badge">📋 awaiting imaging</span>` : '';
   const age = wlAge(it.ageHours);
-  return `<div class="card wl-card" style="margin-bottom:8px;padding:12px${it.emergency ? ';border-left:3px solid var(--danger,#E25555)' : ''}">
+  // Highlight a patient who ALREADY has images in DePACS: the scan is done, so the
+  // row is tinted "almost finished" — it's just waiting for the report, then auto-file
+  // files it and the patient drops off on their own. imaged = amber, report-ready = green.
+  const tint = it.stage === 'reported' ? ';background:rgba(46,158,107,0.12)'
+    : it.stage === 'imaged' ? ';background:rgba(224,168,0,0.12)' : '';
+  const leftBorder = it.emergency ? ';border-left:3px solid var(--danger,#E25555)'
+    : it.stage === 'reported' ? ';border-left:3px solid #2e9e6b'
+      : it.stage === 'imaged' ? ';border-left:3px solid #e0a800' : '';
+  const doneHint = it.stage === 'imaged'
+    ? `<div style="font-size:11px;color:#b5850a;margin-top:2px">📷 تم التصوير — بانتظار التقرير، يُرفع تلقائياً ويختفي</div>`
+    : it.stage === 'reported'
+      ? `<div style="font-size:11px;color:#1f7a52;margin-top:2px">✅ التقرير جاهز — يُرفع تلقائياً الآن ويختفي</div>` : '';
+  return `<div class="card wl-card" style="margin-bottom:8px;padding:12px${tint}${leftBorder}">
     <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
         <div style="font-weight:700">${escapeHtml(it.patientName || '—')}
           <span style="color:var(--muted);font-weight:500">· ${escapeHtml(it.mrno)}</span></div>
         ${it.exam ? `<div style="font-size:13px;font-weight:600;color:var(--text,#1a1a2e);margin-top:3px">🩻 ${escapeHtml(it.exam)}</div>` : ''}
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${escapeHtml(it.branch || '')}${it.doctorName ? ' · 👨‍⚕️ ' + escapeHtml(it.doctorName) : ''}</div>
+        ${doneHint}
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${wlModBadges(it.modality)}
@@ -396,6 +409,15 @@ function wlOpenHandoff(mrno) {
 async function wlSearch(q) {
   q = (q || '').trim();
   if (!q) return;
+  // Cross-branch lookup is a TARGETED find, never a browse: it only runs when the
+  // operator gives a real identifier — file number, national ID, iqama, or mobile
+  // (all numeric, ≥6 digits). A name or a couple of characters must NOT return the
+  // whole hospital, so we refuse anything that isn't an identifier.
+  const digits = q.replace(/\D/g, '');
+  if (digits.length < 6) {
+    if (typeof toast === 'function') toast('اكتب رقم ملف / هوية / إقامة / جوال كامل — البحث لا يعرض الكل', 'err');
+    return;
+  }
   try {
     const d = await API.get('/radiology/find?q=' + encodeURIComponent(q));
     const pts = (d && d.patients) || [];
