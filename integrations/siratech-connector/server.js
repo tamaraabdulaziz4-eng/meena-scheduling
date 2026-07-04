@@ -565,8 +565,13 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const now = Date.now();
   const today = new Date();
   const def = (d, end) => `${d.toISOString().slice(0, 10)}T${end ? '23:59:59' : '00:00:00'}.000Z`;
-  const fromISO = from ? `${from}T00:00:00.000Z` : def(new Date(today.getTime() - WORKLIST_DAYS_BACK * 864e5), false);
-  const toISO = to ? `${to}T23:59:59.000Z` : def(new Date(today.getTime() + 864e5), true);   // +1d covers KSA/UTC skew
+  // An explicit from/to is a KSA CALENDAR day (the operator's day picker). The HIS
+  // window is UTC, so convert the KSA day to the correct UTC instant (KSA = +03:00)
+  // — otherwise orders placed 00:00–02:59 KSA fall on the previous UTC day and vanish
+  // from the board (and their emergency chime never fires).
+  const ksaDayToUtc = (dateStr, end) => new Date(`${dateStr}T${end ? '23:59:59' : '00:00:00'}.000+03:00`).toISOString();
+  const fromISO = from ? ksaDayToUtc(from, false) : def(new Date(today.getTime() - WORKLIST_DAYS_BACK * 864e5), false);
+  const toISO = to ? ksaDayToUtc(to, true) : def(new Date(today.getTime() + 864e5), true);   // +1d covers KSA/UTC skew
   const siteList = await getSites().catch(() => []);
   const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
   const wantSites = (sites && sites.length) ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);

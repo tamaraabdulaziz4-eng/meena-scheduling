@@ -69,11 +69,19 @@ function wlNotify(newOnes) {
 }
 // Compare the current emergency orders to the ones we've already seen; chime on
 // genuinely new ones. First load seeds the set silently (no alarm for a backlog).
+// Key an order for the seen-set: prefer genPatBillingId but fall back to bill/MRN so
+// an emergency order that arrives WITHOUT a genPatBillingId still chimes (the one
+// event the operator must not miss).
+function wlKey(i) {
+  return i.genPatBillingId != null ? 'g' + i.genPatBillingId
+    : i.billNo ? 'b' + i.billNo
+      : (i.mrno ? 'm' + i.mrno + '|' + (i.orderedDate || '') : null);
+}
 function wlCheckNewEmergencies(items) {
-  const emerg = (items || []).filter((i) => i.emergency && i.genPatBillingId != null);
-  const keys = emerg.map((i) => String(i.genPatBillingId));
+  const emerg = (items || []).filter((i) => i.emergency && wlKey(i));
+  const keys = emerg.map(wlKey);
   if (wlState.seenEmerg === null) { wlState.seenEmerg = new Set(keys); return; }   // seed, no alarm
-  const fresh = emerg.filter((i) => !wlState.seenEmerg.has(String(i.genPatBillingId)));
+  const fresh = emerg.filter((i) => !wlState.seenEmerg.has(wlKey(i)));
   keys.forEach((k) => wlState.seenEmerg.add(k));
   if (fresh.length && wlState.alert) { wlBeep(); wlNotify(fresh); }
 }

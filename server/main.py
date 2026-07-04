@@ -6543,33 +6543,60 @@ def radiology_branches(user=Depends(require_admin)):
 
 # ── RIS Phase 2 — order lifecycle state store + durable study binding ──────────
 def _rad_ts(s):
-    """Parse a HIS/worklist timestamp (ISO-ish, maybe no tz) → datetime or None."""
+    """Parse a HIS/worklist timestamp → aware UTC datetime or None. The HIS billDate is
+    a KSA (Asia/Riyadh, +03:00) wall-clock with no offset; treat a naive value as KSA
+    and convert to UTC so it lands correctly in the TIMESTAMPTZ column (else TAT is off
+    by 3h and can go negative)."""
     if not s:
         return None
-    try:
-        return datetime.fromisoformat(str(s).replace("Z", "+00:00")[:19].replace(" ", "T"))
-    except Exception:
-        return None
+    raw = str(s).strip().replace(" ", "T").replace("Z", "+00:00")
+    for cand in (raw, raw[:26], raw[:19]):
+        try:
+            dt = datetime.fromisoformat(cand)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone(timedelta(hours=3)))   # HIS billDate is KSA
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            continue
+    return None
 
 def _rad_upsert_orders(items):
     """Persist/refresh order lifecycle from a worklist payload (one row per
     gen_pat_billing_id): stamp ordered_at on first sight, promote to 'reported' when a
-    verified report is ready, never downgrade a 'filed' order. Best-effort — a bad row
-    is skipped, never fails the request."""
-    if not isinstance(items, list):
+    verified report is ready, never downgrade a 'filed' order. One batched upsert (not
+    N round-trips) so it never slows the worklist response. Best-effort — a failure is
+    swallowed, never breaks the request."""
+    if not isinstance(items, list) or not items:
         return 0
-    n = 0
+    dedup = {}   # last-wins per gen_pat_billing_id (a single batch can't touch a row twice)
     for it in items:
         try:
             gpb = it.get("genPatBillingId")
             if not gpb:
                 continue
-            ready = it.get("readyToFile") is True
-            q("""INSERT INTO scheduling.radiology_orders
+            gpb = int(gpb)
+        except Exception:
+            continue
+        ready = it.get("readyToFile") is True
+        dedup[gpb] = (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), gpb,
+                      it.get("patientName"), it.get("department"), it.get("doctorName"),
+                      bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),
+                      "reported" if ready else "ordered",
+                      (datetime.now(timezone.utc) if ready else None),
+                      (it.get("modality") or None))
+    rows = list(dedup.values())
+    if not rows:
+        return 0
+    pool = get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO scheduling.radiology_orders
                     (site, mrno, bill_no, gen_pat_billing_id, patient_name, department, doctor,
                      emergency, ordered_at, state, reported_at, modality)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                 ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
+                VALUES %s
+                ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                     site=EXCLUDED.site, mrno=EXCLUDED.mrno, bill_no=EXCLUDED.bill_no,
                     patient_name=EXCLUDED.patient_name, department=EXCLUDED.department, doctor=EXCLUDED.doctor,
                     emergency=EXCLUDED.emergency,
@@ -6579,18 +6606,18 @@ def _rad_upsert_orders(items):
                                ELSE scheduling.radiology_orders.state END,
                     reported_at=COALESCE(scheduling.radiology_orders.reported_at, EXCLUDED.reported_at),
                     modality=COALESCE(EXCLUDED.modality, scheduling.radiology_orders.modality),
-                    updated_at=NOW()""",
-              (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), int(gpb),
-               it.get("patientName"), it.get("department"), it.get("doctorName"),
-               bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),
-               "reported" if ready else "ordered",
-               (datetime.now(timezone.utc) if ready else None),
-               (it.get("modality") or None)),
-              exec_only=True)
-            n += 1
+                    updated_at=NOW()""", rows)
+        conn.commit()
+        pool.putconn(conn)
+        return len(rows)
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: pool.putconn(conn, close=True)   # don't return a poisoned connection to the pool
         except Exception:
-            continue
-    return n
+            try: conn.close()
+            except Exception: pass
+        return 0
 
 def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id):
     """Record the durable binding (order ↔ DePACS study) + 'filed' state when a report

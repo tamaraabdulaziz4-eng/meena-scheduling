@@ -1,12 +1,25 @@
 # Meena RIS — Roadmap & Self-Audit
 
-Living plan for the Siratech + DePACS integration ("RIS"). The goal: **staff never
-open Siratech — our platform is the full RIS front-end.** Every feature below is
-checked against three questions: **Does it work? What could break it? How do we make
-it better?**
+Living plan for the Siratech + DePACS integration ("RIS"). Every feature is checked
+against three questions: **Does it work? What could break it? How do we make it better?**
 
-Flow covered end-to-end:
-`Reception (register) → Order → Imaging → Report (DePACS) → Auto-file into Siratech → Deliver`
+**Honest scope (reframed after the 4-agent audit).** The platform owns the
+**report/result loop** — it is a *"DePACS↔Siratech result-loop autopilot + patient
+delivery"*, not a full Siratech replacement. Today:
+
+| Journey step | Where it happens | Platform covers it? |
+|---|---|---|
+| Reception / register patient | **Siratech** | ❌ (read-only lookup) |
+| Doctor orders imaging | **Siratech** | ❌ (read-only mirror) |
+| Patient imaged → DePACS | modality → DePACS | ⚠️ writes the indication (Handoff) |
+| Radiologist reads/verifies | **DePACS** | ❌ (radiologist lives in DePACS) |
+| Report filed back into Siratech | **Platform** | ✅ the crown jewel (auto-file + Handoff) |
+| Deliver to patient | Platform | ⚠️ public link + manual WhatsApp |
+
+"Staff never open Siratech" is the *direction*, not today's reality — reception,
+ordering, and reading still require Siratech/DePACS. Building registration/order
+write-back is a large, high-risk effort (writes that can corrupt a live medical
+record) and is a deliberate future decision, not an implied promise.
 
 ---
 
@@ -88,6 +101,34 @@ If the service runs from a different dir than the repo checkout, point the drop-
 - **Open (needs owner action):** rotate the 8 account passwords + connector/bridge tokens; purge `seed_prod.sql` from git history (force-push); set `ELITE_CERT_SHA256` on Railway to enable pinning.
 
 ---
+
+## 4-agent audit (findings + status)
+
+**Fixed in this pass:**
+- 🔴 `isReported` was negation-blind — "NOT VERIFIED"/"UN-SIGNED"/"PENDING FINAL" could pass and auto-file a *draft*. Now rejects negation/draft markers first (connector `results.js`).
+- 🟠 Day-picker sent a raw-UTC window; KSA 00:00–02:59 orders dropped off the board (and their emergency chime never fired). Now converts the KSA calendar day to the correct UTC instant (connector `buildWorklist`).
+- 🟠 `_rad_ts` dropped the timezone → `ordered_at` stored 3h off → TAT wrong / sometimes negative. Now treats HIS billDate as KSA→UTC.
+- 🟠 Worklist DB upsert was N per-row commits inline on every load; now one batched `execute_values`.
+- 🟠 Emergency chime keyed only on `genPatBillingId`; an emergency without one never chimed. Now falls back to bill/MRN key.
+- 🟠 `worklist`/`patientsearch` missing from `VALID_PAGES` → refresh/Back bounced to Home. Added.
+
+**Open — safety/trust (highest value next):**
+- **No un-file / cancel / correction path.** A mis-filed report forces the operator back to Siratech — the inverse of the goal. Build a guarded un-file (Siratech has `isResultCancellation`).
+- **Amended reports never re-file.** `filed` is terminal; a later ADDENDUM/FINAL never reaches Siratech. Track report version; re-open on a newer verified report.
+- **No monitoring/alerting on the auto-writer.** Failures only `print()`. Add success/fail counters, alert on consecutive failures or "0 filed while candidates>0", a per-day tile.
+- **Auto-classify normal/abnormal writes with no human review** in the auto path. Consider filing without asserting the flag when confidence is low; keep a reviewable classification log.
+- **WhatsApp delivery targets no specific group** (client-side `wa.me`) → PHI mis-send risk. Route through the VPS bridge to a configured group JID.
+- `reported_at` is "detection time", not the DePACS verification time → TAT inflated. Derive from `depacsReport.reportDate`.
+- Auto-file target picked by `serviceId` only (ignores `invPatTestResultId`) → a repeated same-service exam leaves the sibling unfiled. Pass/honor `invPatTestResultId`.
+
+**Open — operator experience:**
+- Search can't find by **patient name** or **accession**. Orders search is exact-MRN only.
+- No **bulk "file all green"** on the worklist.
+- No **cancelled / no-show** state → the board rots and TAT skews.
+- Modality badge cap (80 rows) silently drops badges on the busiest days.
+
+**Open — performance (connector, needs a VPS pull):**
+- Cache DePACS studies + report PDF (fetched 3× on one file). Collapse the check→file→confirm re-matches. Share the per-site RadiologySearch cache across the modality/ready passes. Lazy-enrich old orders in patient lookup. Run typed patient-search variants concurrently.
 
 ## Backlog (owner action)
 1. **Update the VPS connector** (runbook above) — unblocks auto-file, modality, search.
