@@ -83,6 +83,12 @@ function renderHandoffPage() {
   renderHandoffSteps();
   renderHandoffStep();
   handoffRenderReportsLink();
+  // Deep-link from the RIS worklist: pre-fill the file and look it up immediately.
+  if (window._handoffPreload) {
+    const file = String(window._handoffPreload); window._handoffPreload = null;
+    const inp = document.getElementById('ho-file');
+    if (inp) { inp.value = file; handoffLookup(); }
+  }
 }
 
 // Shareable, login-free link for doctors to look up a patient's finished report
@@ -216,7 +222,10 @@ function renderHandoffPatient() {
   } else {
     block = `<div class="ho-lbl" style="margin-top:14px">Radiology order${orders.length > 1 ? 's — pick the one you imaged' : ''}</div>` +
       orders.map((o, i) => {
-        const imaged = o.imaged || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
+        // "Imaged" = present in PACS / has a report / carries an accession. Keying it
+        // off the accession alone showed "waiting" for already-imaged orders (accession
+        // is usually null on this HIS), so accept pacsId/hasReport too.
+        const imaged = o.imaged || !!o.pacsId || !!o.hasReport || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
         const chips = [
           o.isER ? `<span class="badge badge-red">🚨 ER</span>` : '',
           o.billingStatus ? `<span class="badge badge-purple">${escapeHtml(o.billingStatus)}</span>` : '',

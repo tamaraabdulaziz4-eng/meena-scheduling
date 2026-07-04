@@ -107,6 +107,9 @@ async function initApp() {
   // Radiology statistics for team leads + managers.
   const radstatsNav = document.getElementById('nav-radstats');
   if (radstatsNav) radstatsNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  // Radiology RIS worklist for team leads + managers.
+  const worklistNav = document.getElementById('nav-worklist');
+  if (worklistNav) worklistNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
   // Radiology CD transfers for team leads + managers.
   const cdxferNav = document.getElementById('nav-cdxfer');
   if (cdxferNav) cdxferNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
@@ -212,6 +215,7 @@ async function renderRoute(page) {
     case 'handoff':    await renderHandoffPage(); break;
     case 'patientsearch': renderPatientSearchPage(); break;
     case 'radstats':   await renderRadStatsPage(); break;
+    case 'worklist':   await renderWorklistPage(); break;
     case 'cdxfer':     await renderCdxferPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
     case 'messages':   await renderMessagesPage(); break;

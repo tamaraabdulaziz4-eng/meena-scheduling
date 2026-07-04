@@ -6477,6 +6477,29 @@ def radiology_branches(user=Depends(require_admin)):
     used to populate the branch picker so all branches show by name."""
     return _bridge_request("/his/stats/branches", timeout=90)
 
+@app.get("/api/radiology/worklist")
+def radiology_worklist(request: Request, user=Depends(require_admin)):
+    """Live RIS worklist — every radiology order awaiting a result across the
+    requested branches (emergency first, oldest first, with TAT age). ?ready=1
+    also flags which orders have a VERIFIED DePACS report ready to file (slower).
+    Team leads are scoped to their own branch."""
+    import urllib.parse
+    p = request.query_params
+    qs = {}
+    # Branch isolation: a branch-locked team lead is confined to their own HIS site;
+    # superadmin/manager (scope None) keep the client's picker.
+    scope = _rad_scope_site(user)
+    if scope is not None:
+        qs["sites"] = str(scope)
+    elif (p.get("sites") or "").strip():
+        qs["sites"] = p.get("sites").strip()
+    for k in ("from", "to", "ready", "readyLimit", "nocache"):
+        if (p.get(k) or "").strip():
+            qs[k] = p.get(k).strip()
+    q = ("?" + urllib.parse.urlencode(qs)) if qs else ""
+    heavy = p.get("ready") == "1"
+    return _bridge_request("/his/worklist" + q, timeout=240 if heavy else 90)
+
 @app.get("/api/radiology/stats/history")
 def radiology_stats_history(
     from_: str = Query("", alias="from"),
