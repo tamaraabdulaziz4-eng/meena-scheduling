@@ -25,7 +25,7 @@ import psycopg2.extras
 import psycopg2.pool
 from jose import jwt, JWTError
 from fastapi import FastAPI, Request, Response, HTTPException, Depends, Cookie, Query
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -1914,6 +1914,40 @@ def startup():
 
 DASHBOARD = os.path.join(os.path.dirname(__file__), '..', 'dashboard')
 
+# ── Automatic cache-busting ───────────────────────────────────────────────────
+# Every deploy must invalidate the browser's cached JS/CSS with ZERO manual work
+# (hand-bumped ?v= tags drifted and shipped stale code — the "stuck on old cache"
+# bug). We compute ONE build id per deploy and stamp it onto every asset URL in
+# index.html and onto the service-worker cache name as we serve them. A redeploy
+# re-clones the repo → new file mtimes → new build id → the browser fetches fresh;
+# a mere worker restart keeps the same id, so we don't bust cache for nothing.
+import glob as _glob, hashlib as _hashlib, re as _re_cb
+def _compute_build_id():
+    sha = (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("SOURCE_VERSION")
+           or os.environ.get("GIT_COMMIT") or "")
+    if sha:
+        return sha[:12]
+    try:
+        files = _glob.glob(os.path.join(DASHBOARD, "js", "*.js"))
+        files += [os.path.join(DASHBOARD, n) for n in ("index.html", "sw.js", "style.css")]
+        mt = max(os.path.getmtime(f) for f in files if os.path.exists(f))
+        return _hashlib.md5(str(int(mt)).encode()).hexdigest()[:12]
+    except Exception:
+        return "dev"
+BUILD_ID = _compute_build_id()
+_ASSET_VER_RE = _re_cb.compile(r'\?v=[0-9A-Za-z._-]+')
+
+# Precompute the stamped index.html + sw.js once per process (build id is fixed for
+# the life of the deploy) so we don't re-read/re-regex on every request.
+def _stamped(name, transform):
+    try:
+        with open(os.path.join(DASHBOARD, name), encoding="utf-8") as f:
+            return transform(f.read())
+    except Exception:
+        return None
+_INDEX_HTML = _stamped("index.html", lambda h: _ASSET_VER_RE.sub(f'?v={BUILD_ID}', h))
+_SW_JS = _stamped("sw.js", lambda j: _re_cb.sub(r"const CACHE\s*=\s*'[^']*'", f"const CACHE = 'meena-{BUILD_ID}'", j, count=1))
+
 app.mount("/js", StaticFiles(directory=os.path.join(DASHBOARD, "js")), name="js")
 
 @app.get("/style.css")
@@ -1953,13 +1987,14 @@ def serve_cdupload_public():
 
 @app.get("/sw.js")
 def serve_service_worker():
-    """Served from root so the service worker controls the whole app scope."""
-    return FileResponse(
-        os.path.join(DASHBOARD, "sw.js"),
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-cache, must-revalidate",
-                 "Service-Worker-Allowed": "/"},
-    )
+    """Served from root so the service worker controls the whole app scope. The cache
+    name is stamped with the per-deploy build id so a new deploy purges the old cache
+    automatically (the `activate` handler drops every cache whose key != CACHE)."""
+    if _SW_JS is not None:
+        return Response(_SW_JS, media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache, must-revalidate", "Service-Worker-Allowed": "/"})
+    return FileResponse(os.path.join(DASHBOARD, "sw.js"), media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache, must-revalidate", "Service-Worker-Allowed": "/"})
 
 @app.get("/manifest.json")
 def serve_manifest():
@@ -6748,7 +6783,7 @@ async def radiology_autofile_set(request: Request, user=Depends(require_superadm
 # days (a pending order must not vanish at midnight just because the date rolled).
 # So the default is a rolling multi-day window; the dashboard day-picker is an opt-in
 # drill-down to a single day, not the default view.
-_RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 3)
+_RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
 
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_admin)):
@@ -10333,4 +10368,9 @@ async def generate_schedule(request: Request, user=Depends(require_editor)):
 @app.get("/")
 @app.get("/{full_path:path}")
 def serve_index(full_path: str = ""):
+    # Stamp every asset URL (?v=…) with the per-deploy build id and serve the HTML
+    # no-cache, so a new deploy always reaches the browser with fresh JS/CSS — no
+    # hand-bumped versions, no "stuck on old cache".
+    if _INDEX_HTML is not None:
+        return HTMLResponse(_INDEX_HTML, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return FileResponse(os.path.join(DASHBOARD, "index.html"))

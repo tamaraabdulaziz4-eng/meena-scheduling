@@ -13,11 +13,11 @@
 // No knobs, no banners — just the board.
 
 let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
-                seenEmerg: null, day: null,
-                // Persistent modality/exam cache (per order) so a live refresh never
-                // re-runs the heavy per-order HIS enrichment for rows we already know —
-                // the board updates instantly; only a genuinely-new order hits the HIS.
-                modCache: new Map() };
+                seenEmerg: null, day: null, filter: null, searchView: false,
+                // Persistent per-order caches so a live refresh paints INSTANTLY and the
+                // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
+                // background, only for rows we don't already know — never blocking paint.
+                modCache: new Map(), stageCache: new Map() };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
 // dropping off) shows without the operator touching anything.
@@ -115,6 +115,7 @@ function wlCheckNewEmergencies(items) {
 
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — emergency first, oldest first');
+  wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result')}
@@ -177,73 +178,77 @@ async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
   if (!body || wlState.loading) return;
   wlState.loading = true;
-  if (!silent) body.innerHTML = LOADING_HTML;
+  if (!silent && !wlState.filter) body.innerHTML = LOADING_HTML;
+  // FAST load: no ready/modality — just the pending list, so the board paints in one
+  // round-trip. The pipeline stage + exam/modality (per-order HIS work) come in a
+  // background pass right after, and never block the first paint.
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
-  qs.set('ready', '1');                                     // pipeline stage is always on — it's a RIS panel
   if (wlState.day) { qs.set('from', wlState.day); qs.set('to', wlState.day); }
   if (force) qs.set('nocache', '1');
   try {
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
-    wlHydrateModality();                          // paint known modality/exam instantly from cache
+    wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
-    wlEnrichModality();                            // fill only the rows still missing modality
+    wlEnrich(silent);                             // background: fill stage + modality for unknown rows
   } catch (e) {
-    if (!silent) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
+    if (!silent && !wlState.filter) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
       <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
   } finally { wlState.loading = false; }
 }
 
-// Paint modality/exam onto the freshly-loaded board from the persistent cache, so a
-// live refresh shows the badges INSTANTLY without waiting on — or firing — the slow
-// enrichment pass for rows we already know.
-function wlHydrateModality() {
+// Paint modality/exam AND pipeline stage onto the freshly-loaded board from the
+// persistent caches, so a live refresh shows everything INSTANTLY without waiting on
+// the slow enrichment pass for rows we already resolved.
+function wlHydrate() {
   const items = (wlState.data && wlState.data.items) || [];
   for (const it of items) {
-    if (it.modality || it.exam) continue;
-    const c = wlState.modCache.get(wlRowKey(it));
-    if (c) { if (c.modality) it.modality = c.modality; if (c.exam) it.exam = c.exam; }
+    const k = wlRowKey(it);
+    if (!it.modality && !it.exam) { const c = wlState.modCache.get(k); if (c) { it.modality = c.modality; it.exam = c.exam; } }
+    if (!it.stage) { const s = wlState.stageCache.get(k); if (s) it.stage = s; }
   }
 }
 
-// Second pass: fetch the same worklist with modality=1 (slow — a RadiologyDetails
-// call per order) and merge modality/exam onto the rendered rows. Skipped entirely
-// when every visible row is already resolved (from cache) — so a steady board's
-// live refresh is light and instant, and the heavy HIS fan-out only runs for a
-// genuinely-new order. Never blocks the board.
-let _wlModBusy = false;
-async function wlEnrichModality() {
-  if (_wlModBusy) return;
+// Background pass: fetch the board WITH ready=1 (pipeline stage) + modality=1 (exam +
+// modality) — the heavy per-order HIS work — and merge it onto the visible rows. On a
+// silent live refresh it only runs when there's a row we don't yet have a stage for (a
+// new arrival), so a steady board stays light; a manual/explicit load always refreshes
+// stages. Never blocks the board; caches results so future paints are instant.
+let _wlEnrichBusy = false;
+async function wlEnrich(silent) {
+  if (_wlEnrichBusy) return;
   const items = (wlState.data && wlState.data.items) || [];
-  if (!items.some((it) => !it.modality && !it.exam)) return;   // nothing new → no heavy call
-  _wlModBusy = true;
+  if (!items.length) return;
+  if (silent && items.every((it) => it.stage)) return;   // steady board, nothing new → no heavy call
+  _wlEnrichBusy = true;
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
-  qs.set('ready', '1');
   if (wlState.day) { qs.set('from', wlState.day); qs.set('to', wlState.day); }
-  qs.set('modality', '1');
+  qs.set('ready', '1'); qs.set('modality', '1');
   try {
     const d = await API.get('/radiology/worklist?' + qs.toString());
-    if (wlState.modCache.size > 2000) wlState.modCache.clear();   // bound memory on a long-lived kiosk
+    if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); }
     const enr = new Map();
-    for (const it of (d.items || [])) if (it.modality || it.exam) {
-      const k = wlRowKey(it), v = { modality: it.modality, exam: it.exam };
-      enr.set(k, v); wlState.modCache.set(k, v);
+    for (const it of (d.items || [])) {
+      const k = wlRowKey(it);
+      enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
+      if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
+      if (it.stage) wlState.stageCache.set(k, it.stage);
     }
     if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
       let changed = false;
       for (const it of wlState.data.items) {
         const e = enr.get(wlRowKey(it));
-        if (e) {
-          if (e.modality && it.modality !== e.modality) { it.modality = e.modality; changed = true; }
-          if (e.exam && it.exam !== e.exam) { it.exam = e.exam; changed = true; }
-        }
+        if (!e) continue;
+        if (e.modality && it.modality !== e.modality) { it.modality = e.modality; changed = true; }
+        if (e.exam && it.exam !== e.exam) { it.exam = e.exam; changed = true; }
+        if (e.stage && it.stage !== e.stage) { it.stage = e.stage; changed = true; }
       }
       if (changed && document.getElementById('wl-body')) wlRender();
     }
   } catch (e) { /* best-effort */ }
-  finally { _wlModBusy = false; }
+  finally { _wlEnrichBusy = false; }
 }
 
 // The RIS pipeline stages, in order. Each is detected from a specific signal:
@@ -265,6 +270,21 @@ function wlRender() {
     + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
   const body = document.getElementById('wl-body');
   if (!body) return;
+  // A cross-branch search result view is showing — don't let a live refresh clobber it.
+  if (wlState.searchView) return;
+  // On-board search filter: show only the matching patient(s) from THIS board, with a
+  // banner to clear back. Consent + Check are on the row — no jump to another page.
+  if (wlState.filter) {
+    const f = wlState.filter;
+    const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '') === f);
+    const banner = `<div style="display:flex;align-items:center;gap:8px;margin:2px 2px 12px">
+      <span style="font-weight:700">Showing ${match.length} result${match.length !== 1 ? 's' : ''} for "${escapeHtml(f)}"</span>
+      <button class="btn btn-sm btn-ghost" onclick="wlClearFilter()">← Back to full board</button></div>`;
+    body.innerHTML = banner + (match.length
+      ? match.map((it, i) => wlRow(it, i)).join('')
+      : `<div class="empty" style="padding:20px"><p>This patient is no longer on the board (report may have been filed).</p></div>`);
+    return;
+  }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
   const haveStages = items.some((it) => it.stage);
   if (!haveStages) { body.innerHTML = items.map((it, i) => wlRow(it, i)).join(''); return; }
@@ -402,41 +422,56 @@ function wlOpenHandoff(mrno) {
   showPage('handoff');
 }
 
-// Cross-branch patient search: find a patient by ANY identifier (file / national ID
-// / iqama / mobile) across ALL branches — for a patient whose exam was ordered at a
-// different branch — and open them in Handoff to see the exam. Shows a chooser when
-// more than one patient matches (never silently opens the wrong one).
+// Search behaves like the RIS panel's search: it FILTERS the current board first, so
+// the patient (with their consent + Check right there) stays on the worklist instead
+// of jumping to another page. Only if the file isn't on this board does it do a
+// TARGETED cross-branch find — and only for a real identifier (file / national ID /
+// iqama / mobile, numeric ≥6 digits), never a browse of the whole hospital.
 async function wlSearch(q) {
   q = (q || '').trim();
   if (!q) return;
-  // Cross-branch lookup is a TARGETED find, never a browse: it only runs when the
-  // operator gives a real identifier — file number, national ID, iqama, or mobile
-  // (all numeric, ≥6 digits). A name or a couple of characters must NOT return the
-  // whole hospital, so we refuse anything that isn't an identifier.
   const digits = q.replace(/\D/g, '');
   if (digits.length < 6) {
     if (typeof toast === 'function') toast('اكتب رقم ملف / هوية / إقامة / جوال كامل — البحث لا يعرض الكل', 'err');
     return;
   }
+  // 1) On THIS board? Filter in place — consent + everything is right here.
+  const items = (wlState.data && wlState.data.items) || [];
+  if (items.some((it) => String(it.mrno || '').replace(/\D/g, '') === digits)) {
+    wlState.searchView = false; wlState.filter = digits; wlRender(); return;
+  }
+  // 2) Not on the board → targeted cross-branch find, shown with consent (no jump).
   try {
     const d = await API.get('/radiology/find?q=' + encodeURIComponent(q));
     const pts = (d && d.patients) || [];
-    if (!pts.length) { if (typeof toast === 'function') toast('No patient found for "' + q + '"', 'err'); return; }
-    if (pts.length === 1) { wlOpenHandoff(String(pts[0].mrno || pts[0].file_no || q)); return; }
+    if (!pts.length) { if (typeof toast === 'function') toast('ما فيه مريض بهذا الرقم على أي فرع', 'err'); return; }
     wlShowMatches(pts);
   } catch (e) { if (typeof toast === 'function') toast(e.message || 'Search failed', 'err'); }
 }
+function wlClearFilter() {
+  wlState.filter = null; wlState.searchView = false;
+  const s = document.getElementById('wl-search'); if (s) s.value = '';
+  wlRender();
+}
+// Cross-branch matches (patient not on this board): show each with a consent button
+// (female) + Open, right here — no auto-jump. A live refresh won't clobber this view
+// (searchView guard); "Back" returns to the board.
 function wlShowMatches(pts) {
+  wlState.searchView = true; wlState.filter = null;
   const body = document.getElementById('wl-body');
   if (!body) return;
   const rows = pts.slice(0, 25).map((p) => {
     const mrn = String(p.mrno || p.file_no || '');
+    const nm = p.patientName || p.name || '—';
     const sub = [p.gender, p.birthDate || p.dob, p.branch].filter(Boolean).map(escapeHtml).join(' · ');
+    const consent = wlIsFemale(p.gender)
+      ? `<button class="btn btn-sm" style="background:#e0a800;color:#fff;border:none" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(nm)}','','','${jsAttr(p.branch || '')}')">⚠ Consent</button>` : '';
     return `<div class="card" style="margin-bottom:6px;padding:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-      <div><div style="font-weight:700">${escapeHtml(p.patientName || p.name || '—')} <span style="color:var(--muted);font-weight:500">· ${escapeHtml(mrn)}</span></div>
+      <div><div style="font-weight:700">${escapeHtml(nm)} <span style="color:var(--muted);font-weight:500">· ${escapeHtml(mrn)}</span></div>
         ${sub ? `<div style="font-size:12px;color:var(--muted)">${sub}</div>` : ''}</div>
-      <button class="btn btn-sm btn-primary" onclick="wlOpenHandoff('${jsAttr(mrn)}')">Open →</button></div>`;
+      <div style="display:flex;gap:6px;align-items:center">${consent}
+        <button class="btn btn-sm btn-primary" onclick="wlOpenHandoff('${jsAttr(mrn)}')">Open →</button></div></div>`;
   }).join('');
-  body.innerHTML = `<div style="margin:6px 2px 10px;font-weight:700">${pts.length} matches — pick the patient</div>${rows}
-    <button class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="wlLoad(true)">← Back to worklist</button>`;
+  body.innerHTML = `<div style="margin:6px 2px 10px;font-weight:700">${pts.length} من فروع أخرى — اختر المريض</div>${rows}
+    <button class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="wlClearFilter()">← Back to worklist</button>`;
 }
