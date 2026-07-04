@@ -102,6 +102,22 @@ If the service runs from a different dir than the repo checkout, point the drop-
 
 ---
 
+## Worklist — standard RIS columns vs ours
+
+A standard RIS / DICOM Modality Worklist row carries: Patient name, MRN/ID, DOB/age/sex, **Accession #**, **Requested Procedure Description** (exam + body part), Modality, Referring physician, Department, Priority (STAT/routine), Scheduled/order time, and **order Status** (scheduled → arrived → in-progress → completed → reported → verified).
+
+| Field | Ours today |
+|---|---|
+| Patient name / MRN / age / sex | ✅ |
+| Exam / requested procedure (body part) | ✅ **now shown** (`it.exam` from RadiologyDetails serviceName) |
+| Modality | ✅ badge |
+| Referring physician / department | ✅ |
+| Priority (emergency/routine) | ✅ |
+| Order time / TAT age | ✅ |
+| Report status (awaiting/ready) | ✅ (from DePACS match) |
+| **Accession #** | ❌ (this HIS leaves it null; DePACS studyId is the binding) |
+| **True order status** (`risOrderStatus`) | ⏳ **opportunity** — `FetchRISPanel` returns `risOrderStatus` per order (the HIS's own scheduled/performed/reported status). Surfacing it would give an authoritative "done vs pending" instead of inferring from `filterResult`/DePACS. Needs live probing of the exact status values (can't be done from the sandbox — geo-locked). High-value next step. |
+
 ## 4-agent audit (findings + status)
 
 **Fixed in this pass:**

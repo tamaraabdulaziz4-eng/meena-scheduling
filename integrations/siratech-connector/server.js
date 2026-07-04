@@ -604,6 +604,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         billNo: r.billNo || null, genPatBillingId: r.genPatBillingId,
         orderedDate: r.billDate || r.visitDate || null, ageHours, tatStatus: r.tatStatus,
         modality: null,      // filled below only when modality=1
+        exam: null,          // the requested procedure(s) — body part, filled with modality=1
         readyToFile: null,   // filled below only when ready=1
         __row: r, __site: s.site,   // kept for enrichment; stripped before return
       });
@@ -611,7 +612,10 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   }
   items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
 
-  // Real modality (CT / US / XR / MR / MG) per order — bounded, concurrent, best-effort.
+  // Real modality (CT / US / XR / MR / MG) AND the requested procedure(s) — the
+  // exam + body part (e.g. "US ABDOMEN", "CT CHEST", "XR L-SPINE"), which is what a
+  // real RIS worklist shows. Both come from the same per-order RadiologyDetails call
+  // — bounded, concurrent, best-effort.
   if (modality && items.length) {
     const targets = items.slice(0, WORKLIST_MODALITY_CAP);
     await pool(targets, 6, async (it) => {
@@ -620,13 +624,16 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
           body: results.radiologyDetailsBody(it.__row, { hospitalId: it.__site, empId }),
         });
         const det = (dr.json && dr.json.data) || [];
-        const mods = [];
+        const mods = [], exams = [];
         for (const t of det) {
           const m = results.normMod(t.categoryName || t.serviceName || '');
           if (m && !mods.includes(m)) mods.push(m);
+          const ex = (t.serviceName || '').trim();
+          if (ex && !exams.includes(ex)) exams.push(ex);
         }
         it.modality = mods.length ? mods.join(', ') : null;
-      } catch (e) { /* leave modality null on any per-order failure */ }
+        it.exam = exams.length ? exams.join(' · ') : null;
+      } catch (e) { /* leave modality/exam null on any per-order failure */ }
     });
   }
 
