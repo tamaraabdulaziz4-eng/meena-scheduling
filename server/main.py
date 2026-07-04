@@ -6684,6 +6684,10 @@ async def radiology_autofile_set(request: Request, user=Depends(require_superadm
                              "sites": get_setting("rad_autofile_sites", "")}))
     return radiology_autofile_get(user=user)
 
+# Default worklist look-back (days) when the client picks no date — a live board is
+# "today", not an archive. The dashboard drives a per-day picker (from=to=day).
+_RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_admin)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -6703,6 +6707,12 @@ def radiology_worklist(request: Request, user=Depends(require_admin)):
     for k in ("from", "to", "ready", "readyLimit", "modality", "nocache"):
         if (p.get(k) or "").strip():
             qs[k] = p.get(k).strip()
+    # A worklist is "what's pending NOW", not a 2-week archive. If the client didn't
+    # pick a range, default the look-back to a short operational window (KSA date) so
+    # the board is fast and free of stale old orders. Widen with ?from=/?to=.
+    if "from" not in qs:
+        ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+        qs["from"] = (ksa_today - timedelta(days=_RAD_WORKLIST_DAYS_BACK)).isoformat()
     query = ("?" + urllib.parse.urlencode(qs)) if qs else ""
     # ready=1 (per-patient match) and modality=1 (per-order RadiologyDetails) both do
     # heavy per-order HIS work — give them the long timeout.

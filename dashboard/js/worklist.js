@@ -6,11 +6,32 @@
 // clinical write path lives in one place.
 
 let wlState = { branches: [], site: '', ready: false, data: null, loading: false, timer: null, autofile: null,
-                seenEmerg: null, alert: (localStorage.getItem('wl_alert') !== '0') };
+                seenEmerg: null, alert: (localStorage.getItem('wl_alert') !== '0'), day: null };
 
 // Live board: refresh on a timer so a newly-arrived order shows up without the
 // operator touching anything (the whole point — they never open Siratech).
 const WL_REFRESH_MS = 45000;
+
+// Local (KSA) date as YYYY-MM-DD — the operator is in KSA so the browser's local
+// date IS the hospital's operational day. The board is viewed one day at a time.
+function wlTodayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function wlShiftDay(delta) {
+  const [y, m, d] = wlState.day.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + delta);
+  wlState.day = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  wlState.seenEmerg = null;            // different day = different set; no false alarm
+  const inp = document.getElementById('wl-day'); if (inp) inp.value = wlState.day;
+  wlLoad(true);
+}
+function wlSetDay(v) { if (!v) return; wlState.day = v; wlState.seenEmerg = null; wlLoad(true); }
+function wlGoToday() {
+  wlState.day = wlTodayLocal(); wlState.seenEmerg = null;
+  const i = document.getElementById('wl-day'); if (i) i.value = wlState.day;
+  wlLoad(true);
+}
 
 // A new EMERGENCY order arriving is the one event a radiology operator must not
 // miss — so on the live board we chime + raise a desktop notification the moment
@@ -66,13 +87,20 @@ function wlToggleAlert() {
 
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — file the ready ones');
+  if (!wlState.day) wlState.day = wlTodayLocal();
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result — emergency first, oldest first')}
     <div id="wl-autofile"></div>
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <select id="wl-branch" class="input" style="min-width:180px" onchange="wlOnBranch()">
+        <div style="display:flex;gap:4px;align-items:center">
+          <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(-1)" title="Previous day">◀</button>
+          <input type="date" id="wl-day" class="input" value="${wlState.day}" onchange="wlSetDay(this.value)" style="width:150px">
+          <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(1)" title="Next day">▶</button>
+          <button class="btn btn-sm btn-ghost" onclick="wlGoToday()" title="Jump to today">Today</button>
+        </div>
+        <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
@@ -131,6 +159,7 @@ async function wlLoad(force, silent) {
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
   if (wlState.ready) qs.set('ready', '1');
+  if (wlState.day) { qs.set('from', wlState.day); qs.set('to', wlState.day); }   // one day at a time
   if (force) qs.set('nocache', '1');
   try {
     // Load the board FAST (no modality) so it appears immediately, then enrich
@@ -157,6 +186,7 @@ async function wlEnrichModality() {
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
   if (wlState.ready) qs.set('ready', '1');
+  if (wlState.day) { qs.set('from', wlState.day); qs.set('to', wlState.day); }
   qs.set('modality', '1');
   try {
     const d = await API.get('/radiology/worklist?' + qs.toString());

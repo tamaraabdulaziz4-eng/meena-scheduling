@@ -551,6 +551,11 @@ const worklistCache = new Map();
 // concurrent so the board stays fast. Emergency-first sort means the ones that
 // matter most are enriched first.
 const WORKLIST_MODALITY_CAP = Number(process.env.WORKLIST_MODALITY_CAP || 80);
+// Default look-back window for the live board. A radiology worklist is an operational
+// "what's pending now" view, not an archive — 14 days across 14 branches returns
+// hundreds of stale orders and is slow. 3 days is the right operational default;
+// widen per-request with ?from=/?to= or globally via WORKLIST_DAYS_BACK.
+const WORKLIST_DAYS_BACK = Number(process.env.WORKLIST_DAYS_BACK || 3);
 
 async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, noCache = false }) {
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality });
@@ -560,7 +565,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const now = Date.now();
   const today = new Date();
   const def = (d, end) => `${d.toISOString().slice(0, 10)}T${end ? '23:59:59' : '00:00:00'}.000Z`;
-  const fromISO = from ? `${from}T00:00:00.000Z` : def(new Date(today.getTime() - 14 * 864e5), false);
+  const fromISO = from ? `${from}T00:00:00.000Z` : def(new Date(today.getTime() - WORKLIST_DAYS_BACK * 864e5), false);
   const toISO = to ? `${to}T23:59:59.000Z` : def(new Date(today.getTime() + 864e5), true);   // +1d covers KSA/UTC skew
   const siteList = await getSites().catch(() => []);
   const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
