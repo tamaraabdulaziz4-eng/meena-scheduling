@@ -51,3 +51,20 @@ Optional filters: `MWL_CALLING_AE=CT_SCANNER` (if the server allow-lists callers
 Paste the output back and we'll decide the wiring. If accessions come back clean, this
 replaces both the vendor request and the handoff-stamp dependency with one deterministic
 source.
+
+## Windows / hospital-PC variant (no installs)
+
+Hospital PCs often block installers (MSI error 1625). The probe also ships as ONE
+self-contained file that only needs the Node.js **ZIP** (portable, no installer):
+
+1. Build it (anywhere with npm): `npx esbuild mwl-probe-win-entry.js --bundle
+   --platform=node --outfile=mwl-probe-win.js`
+2. On the hospital PC: download https://nodejs.org/dist/latest-v22.x/ (the
+   `win-x64.zip`), Extract All, rename the folder to `node`, put it next to
+   `mwl-probe-win.js` + `RUN-MWL-PROBE.bat`, double-click the .bat.
+
+`mwl-probe-win-entry.js` bakes in the discovered defaults (10.0.73.56:104,
+AE `DMWL_AE`, today's date) — pass a calling AE as the first argument (e.g.
+`RUN-MWL-PROBE.bat CTN3`) if the broker only answers machines it knows.
+Verified end-to-end against a local MWL SCP (dcmjs-dimse), including the
+association-rejected fallback path.
