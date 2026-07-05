@@ -568,6 +568,16 @@ const WORKLIST_MODALITY_CAP = Number(process.env.WORKLIST_MODALITY_CAP || 80);
 // widen per-request with ?from=/?to= or globally via WORKLIST_DAYS_BACK.
 const WORKLIST_DAYS_BACK = Number(process.env.WORKLIST_DAYS_BACK || 3);
 
+// HIS timestamps come as NAIVE local KSA strings ("2026-07-05T09:06:00", no offset).
+// Date.parse would read that as UTC (the VPS's zone), skewing every age by 3h and
+// misplacing rows across midnight — so parse with an explicit +03:00 unless the
+// string already carries an offset.
+function parseHisDate(s) {
+  if (!s) return NaN;
+  const str = String(s).trim().replace(' ', 'T');
+  return Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(str) ? str : str + '+03:00');
+}
+
 async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, noCache = false }) {
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality });
   if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < WORKLIST_CACHE_TTL) return e.data; }
@@ -603,7 +613,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     if (!s) continue;
     if (!s.ok) { failed.push(s.site); continue; }
     for (const r of s.rows) {
-      const t = Date.parse(r.billDate || r.visitDate || '');
+      const t = parseHisDate(r.billDate || r.visitDate || '');
       const ageHours = Number.isFinite(t) ? Math.max(0, Math.round((now - t) / 36e5)) : null;
       const emergency = Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0;
       items.push({
@@ -676,19 +686,61 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         if (row.billNo == null) continue;
         const st = risStatusOf(row);
         if (st) _risStatuses.add(st);
-        risByBill.set(String(row.billNo), { svc: risServiceOf(row), status: st });
+        // ONE ENTRY PER SERVICE — a bill can bundle several exams (US Pelvis + US
+        // Abdomen on one bill) and Siratech's RIS panel shows a row per exam; a
+        // last-wins map was collapsing them into a single mislabelled row.
+        const list = risByBill.get(String(row.billNo)) || [];
+        list.push({
+          svc: risServiceOf(row), status: st,
+          svcId: row.invMastServiceId != null ? row.invMastServiceId : null,
+          billDate: row.billDate || row.appoinmentDate || null,
+          encounterER: String(row.encounter || '').trim().toUpperCase() === 'ER',
+        });
+        risByBill.set(String(row.billNo), list);
       }
     } catch (e) { /* fall back to the per-order RadiologyDetails pass below */ }
   });
   if (_risStatuses.size) console.log('[worklist] distinct risOrderStatus:', [..._risStatuses].join(' | '));
+  // Expand each bill-level row into ONE ROW PER EXAM (RIS-panel parity), stamping the
+  // per-exam service, modality, preliminary stage, the bill's real order time (the
+  // HIS's search rows sometimes carry the VISIT time instead — that's why a fresh
+  // order could show "5h ago"), and the ER-encounter emergency flag.
   let risFilled = 0;
+  const expanded = [];
   for (const it of items) {
-    const r = risByBill.get(String(it.billNo));
-    if (!r) continue;
-    if (r.svc) { it.exam = r.svc; it.modality = results.normMod(r.svc) || null; risFilled++; }
-    const st = risStageOf(r.status);
-    if (st) it.stage = st;   // fast preliminary stage; refined by the DePACS check below
+    const list = risByBill.get(String(it.billNo));
+    if (!list || !list.length) { expanded.push(it); continue; }
+    const er = list.some((e) => e.encounterER);
+    list.forEach((e, idx) => {
+      const row = idx === 0 ? it : { ...it };
+      if (e.svc) { row.exam = e.svc; row.modality = results.normMod(e.svc) || null; risFilled++; }
+      row.svcId = e.svcId; row.svcSeq = idx;
+      const st = risStageOf(e.status);
+      if (st) row.stage = st;   // fast preliminary stage; refined by the DePACS check below
+      if (e.billDate) {
+        row.orderedDate = e.billDate;
+        const bt = parseHisDate(e.billDate);
+        if (Number.isFinite(bt)) row.ageHours = Math.max(0, Math.round((now - bt) / 36e5));
+      }
+      if (er) { row.emergency = true; row.priority = 'Emergency'; }
+      expanded.push(row);
+    });
   }
+  items.length = 0; items.push(...expanded);
+  // Honour the requested KSA day range strictly (RIS-panel parity): the HIS's
+  // pending-orders search returns EVERY still-pending order regardless of the date
+  // window we pass it, so "Today" was still showing yesterday's leftovers. A row
+  // whose bill day can't be parsed is KEPT — never hide work on a parse failure.
+  const fromDay = from || new Date(Date.parse(fromISO) + 3 * 36e5).toISOString().slice(0, 10);
+  const toDay = to || new Date(Date.parse(toISO) + 3 * 36e5).toISOString().slice(0, 10);
+  const inRange = (it) => {
+    const t = parseHisDate(it.orderedDate);
+    if (!Number.isFinite(t)) return true;
+    const day = new Date(t + 3 * 36e5).toISOString().slice(0, 10);   // KSA calendar day
+    return day >= fromDay && day <= toDay;
+  };
+  const kept = items.filter(inRange);
+  items.length = 0; items.push(...kept);
 
   // Fallback: any rows the RIS panel didn't cover (or if the service field guess
   // missed) get the old per-order RadiologyDetails lookup — bounded and concurrent —
@@ -733,16 +785,33 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
           const mods = new Set((o.tests || [])
             .map((t) => results.normMod((t.test && (t.test.categoryName || t.test.serviceName)) || ''))
             .filter(Boolean));
-          const matched = all.filter((s) => mods.size === 0 || mods.has(results.normMod(s.modality || '')));
+          // G7 guard: only studies from THIS order's time window may drive the stage.
+          // A patient's OLD study of the same modality must not flip a fresh order to
+          // "report ready" (it hid brand-new ER orders inside the reported strip).
+          const ot = parseHisDate(o.order.orderDate);
+          const recent = Number.isFinite(ot)
+            ? all.filter((s) => {
+                const st = parseHisDate(s.studyDate);
+                return Number.isFinite(st) ? st >= ot - 24 * 36e5 : true;   // unparseable → keep
+              })
+            : all;
+          const matched = recent.filter((s) => mods.size === 0 || mods.has(results.normMod(s.modality || '')));
           const anyVerified = matched.some((s) => results.isReported(s.status));
           const stage = anyVerified ? 'reported' : (matched.length ? 'imaged' : 'ordered');
           byBill.set(String(o.order.billNo), { stage, ready: !!o.allUnique });
         }
       } catch (e) { /* skip this patient — leave stage unknown */ }
     });
+    const perBillRows = new Map();
+    for (const it of items) perBillRows.set(String(it.billNo), (perBillRows.get(String(it.billNo)) || 0) + 1);
     for (const it of items) {
       const e = byBill.get(String(it.billNo));
-      if (e) { it.readyToFile = e.ready; it.stage = e.stage; }
+      if (!e) continue;
+      it.readyToFile = e.ready;                     // filing readiness is per bill
+      // The DePACS stage is computed per BILL; on a multi-exam bill it must not
+      // overwrite each exam's own (per-service) preliminary stage — one finished
+      // sibling would wrongly mark the other exam "report ready".
+      if (perBillRows.get(String(it.billNo)) === 1 || !it.stage) it.stage = e.stage;
     }
   }
 
