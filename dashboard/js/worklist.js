@@ -17,7 +17,16 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
-                modCache: new Map(), stageCache: new Map() };
+                modCache: new Map(), stageCache: new Map(),
+                // Which rows have their "Check" detail expanded, keyed by the STABLE row
+                // key (not the positional index) → the fetched match HTML (null while it's
+                // loading). A live refresh / enrichment repaint rebuilds the whole table,
+                // so without this every 45s tick (or background enrich) collapsed an open
+                // panel — the "I open it and it jumps back / hangs" bug. Re-deriving the
+                // open state from here keeps expanded rows open across repaints.
+                open: new Map() };
+// A DOM-safe id fragment from a row key (billNo can carry non-id chars like "CR07-1").
+function wlDomId(rk) { return String(rk).replace(/[^a-zA-Z0-9]/g, '_'); }
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
 // dropping off) shows without the operator touching anything.
@@ -328,6 +337,12 @@ function wlStageBadge(stage) {
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);
+  // Drop open-state for rows no longer on the board (e.g. a filed report dropped off),
+  // so the map can't grow without bound and a stale key can't reopen a vanished row.
+  if (wlState.open.size) {
+    const live = new Set(items.map((it, i) => wlRowKey(it) || ('i' + i)));
+    for (const k of [...wlState.open.keys()]) if (!live.has(k)) wlState.open.delete(k);
+  }
   const sum = document.getElementById('wl-summary');
   if (sum) sum.textContent = `${d.total || 0} awaiting · ${d.emergency || 0} emergency`
     + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
@@ -417,6 +432,13 @@ function wlRow(it, i) {
   const p = wlState.enriching;
   const sh = (w) => `<span class="wl-shimmer" style="width:${w}px"></span>`;
   const dash = '<span style="color:var(--muted)">—</span>';
+  // Re-derive the expanded "Check" panel from wlState.open (keyed by the STABLE row
+  // key, not the index) so a live refresh / enrichment repaint keeps it open instead
+  // of collapsing it under the operator.
+  const rk = wlRowKey(it) || ('i' + i);
+  const dom = wlDomId(rk);
+  const isOpen = wlState.open.has(rk);
+  const openHtml = isOpen ? (wlState.open.get(rk) || LOADING_HTML) : '';
   return `<tr style="${tint}${edge}">
     <td style="color:var(--muted)">${i + 1}</td>
     <td><div style="font-weight:700">${escapeHtml(it.patientName || '—')}</div>
@@ -427,23 +449,40 @@ function wlRow(it, i) {
     <td>${it.stage ? wlStageBadge(it.stage) : (p ? sh(64) : wlStageBadge(null))}</td>
     <td>${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}</td>
     <td>${wlConsentEl(it)}</td>
-    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${jsAttr(rk)}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">${isOpen ? 'Hide' : 'Check'}</button></td>
   </tr>
-  <tr id="wl-dr-${i}" style="display:none"><td colspan="9" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${i}"></div></td></tr>`;
+  <tr id="wl-dr-${dom}" style="display:${isOpen ? '' : 'none'}"><td colspan="9" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${dom}">${openHtml}</div></td></tr>`;
 }
 
 // Read-only drill: expand a detail row that matches the finished DePACS report(s) to
-// this patient's order(s).
-async function wlToggle(i, mrno, site, btn) {
-  const row = document.getElementById('wl-dr-' + i), box = document.getElementById('wl-d-' + i);
+// this patient's order(s). Open-state lives in wlState.open (keyed by the stable row
+// key) and the fetched HTML is cached there, so a background refresh repaints the row
+// still-open with its content instead of collapsing it. DOM ids derive from the key
+// (not the index), so the post-fetch paint lands even if a repaint happened mid-flight.
+async function wlToggle(rk, mrno, site, btn) {
+  const dom = wlDomId(rk);
+  const row = document.getElementById('wl-dr-' + dom), box = document.getElementById('wl-d-' + dom);
   if (!row || !box) return;
-  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = 'Check'; return; }
-  row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
+  if (wlState.open.has(rk)) {                    // open → close
+    wlState.open.delete(rk);
+    row.style.display = 'none'; box.innerHTML = '';
+    if (btn) btn.textContent = 'Check';
+    return;
+  }
+  wlState.open.set(rk, null);                     // mark open (null = loading); survives repaints
+  row.style.display = ''; box.innerHTML = LOADING_HTML;
+  if (btn) btn.textContent = 'Hide';
+  const paint = (html) => {
+    if (!wlState.open.has(rk)) return;            // operator closed it while we fetched
+    wlState.open.set(rk, html);                  // cache so future repaints keep it
+    const b2 = document.getElementById('wl-d-' + dom);   // re-query: a repaint may have replaced it
+    if (b2) b2.innerHTML = html;
+  };
   try {
     const d = await API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`);
-    box.innerHTML = wlMatch(d);
+    paint(wlMatch(d));
   } catch (e) {
-    box.innerHTML = `<div class="ho-note">${escapeHtml(e.message || 'Result match failed')}</div>`;
+    paint(`<div class="ho-note">${escapeHtml(e.message || 'Result match failed')}</div>`);
   }
 }
 
