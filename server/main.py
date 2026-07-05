@@ -901,6 +901,8 @@ def init_schema():
             # having been filed/resolved outside Meena, so its TAT is unknown). Keeps the
             # stats honest: only 'meena' rows feed the turnaround averages.
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS filed_source TEXT;")
+            # When the images first appeared in DePACS (order scanned but report pending).
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS imaged_at TIMESTAMPTZ;")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -6728,12 +6730,14 @@ def _rad_upsert_orders(items):
         except Exception:
             continue
         ready = it.get("readyToFile") is True
+        imaged = ready or it.get("stage") in ("imaged", "reported")
         dedup[gpb] = (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), gpb,
                       it.get("patientName"), it.get("department"), it.get("doctorName"),
                       bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),
                       "reported" if ready else "ordered",
                       (datetime.now(timezone.utc) if ready else None),
-                      (it.get("modality") or None))
+                      (it.get("modality") or None),
+                      (datetime.now(timezone.utc) if imaged else None))
     rows = list(dedup.values())
     if not rows:
         return 0
@@ -6744,7 +6748,7 @@ def _rad_upsert_orders(items):
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO scheduling.radiology_orders
                     (site, mrno, bill_no, gen_pat_billing_id, patient_name, department, doctor,
-                     emergency, ordered_at, state, reported_at, modality)
+                     emergency, ordered_at, state, reported_at, modality, imaged_at)
                 VALUES %s
                 ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                     site=EXCLUDED.site, mrno=EXCLUDED.mrno, bill_no=EXCLUDED.bill_no,
@@ -6756,6 +6760,7 @@ def _rad_upsert_orders(items):
                                ELSE scheduling.radiology_orders.state END,
                     reported_at=COALESCE(scheduling.radiology_orders.reported_at, EXCLUDED.reported_at),
                     modality=COALESCE(EXCLUDED.modality, scheduling.radiology_orders.modality),
+                    imaged_at=COALESCE(scheduling.radiology_orders.imaged_at, EXCLUDED.imaged_at),
                     updated_at=NOW()""", rows)
         conn.commit()
         pool.putconn(conn)
@@ -6886,13 +6891,13 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
         clauses.append("mrno=%s"); params.append(mr)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = q(f"""SELECT gen_pat_billing_id, site, mrno, bill_no, patient_name, department, doctor,
-                        emergency, state, study_id, service_id, modality, filed_source,
+                        emergency, state, study_id, service_id, modality, filed_source, imaged_at,
                         ordered_at, reported_at, filed_at, updated_at,
                         EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
                         EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
                         EXTRACT(EPOCH FROM (COALESCE(filed_at, NOW()) - ordered_at))/3600 AS tat_total_h
                  FROM scheduling.radiology_orders{where}
-                 ORDER BY (state='filed') ASC, emergency DESC, ordered_at ASC NULLS LAST
+                 ORDER BY (state='filed') ASC, emergency DESC, ordered_at DESC NULLS LAST
                  LIMIT 500""", tuple(params))
     def _iso(v):
         return v.isoformat() if v is not None else None
@@ -6903,7 +6908,7 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
         "billNo": r["bill_no"], "patientName": r["patient_name"], "department": r["department"],
         "doctor": r["doctor"], "emergency": r["emergency"], "state": r["state"],
         "studyId": r["study_id"], "serviceId": r["service_id"], "modality": r["modality"],
-        "filedSource": r["filed_source"],
+        "filedSource": r["filed_source"], "imagedAt": _iso(r["imaged_at"]),
         "orderedAt": _iso(r["ordered_at"]), "reportedAt": _iso(r["reported_at"]), "filedAt": _iso(r["filed_at"]),
         "tatReportH": _r1(r["tat_report_h"]), "tatFileH": _r1(r["tat_file_h"]), "tatTotalH": _r1(r["tat_total_h"]),
     } for r in rows]
@@ -9605,6 +9610,130 @@ def _radiology_autofile_sweep():
         print(f"[rad-autofile] filed {filed} report(s) into Siratech")
     return filed
 
+_RAD_AUTOSTAMP_EVERY_SEC = int(os.environ.get("RAD_AUTOSTAMP_EVERY_SEC") or 90)
+_RAD_AUTOSTAMP_USER = {"id": None, "username": "system:autostamp", "role": "system", "branch_name": None}
+# DICOM modality → the worklist's coarse modality bucket, for matching a DePACS study
+# to the right pending order when a patient has several.
+_AUTOSTAMP_MOD = {"CT": "CT", "MR": "MR", "US": "US", "MG": "MG",
+                  "XR": "XR", "CR": "XR", "DX": "XR", "DR": "XR", "RF": "XR"}
+_autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
+
+def _radiology_autostamp_sweep():
+    """The moment a patient's images land in DePACS, stamp what the radiologist needs
+    to START READING with zero delay — the clinical indication (from the order), the
+    category ("Others") and the emergency flag — plus the order's accession when the
+    MWL feed knows it unambiguously (so the finished report later files by exact key).
+    Replaces waiting for a human handoff; a later handoff simply overwrites with the
+    staff's richer text. Idempotent: a study already carrying history+category is
+    skipped, and the accession stamp has its own no-clobber guards."""
+    data = _bridge_request("/his/worklist", timeout=90)
+    if not isinstance(data, dict):
+        return 0
+    by_mrn = {}
+    for it in (data.get("items") or []):
+        m = str(it.get("mrno") or "").strip()
+        if m:
+            by_mrn.setdefault(m, []).append(it)
+    if not by_mrn:
+        return 0
+    ksa_now = datetime.now(timezone.utc) + timedelta(hours=3)
+    fresh_days = {ksa_now.strftime("%Y%m%d"), (ksa_now - timedelta(days=1)).strftime("%Y%m%d")}
+    stamped = 0
+    for mrno, orders in list(by_mrn.items())[:25]:      # bounded per pass
+        try:
+            studies = _elite_studies_for_file(mrno)
+        except Exception:
+            continue
+        fresh = [s for s in studies
+                 if re.sub(r"\D", "", str(s.get("study_date") or ""))[:8] in fresh_days]
+        if not fresh:
+            continue
+        try:
+            mwl = q("""SELECT accession, modality FROM scheduling.radiology_mwl
+                       WHERE mrno=%s AND sps_date=%s""",
+                    (mrno, ksa_now.strftime("%Y%m%d"))) or []
+        except Exception:
+            mwl = []
+        for s in fresh:
+            sid = s.get("study_id")
+            if not sid:
+                continue
+            smod = _AUTOSTAMP_MOD.get(str(s.get("modality") or "").strip().upper())
+            # the order(s) this study most plausibly belongs to: same modality bucket,
+            # else all of the patient's pending orders (for the ER flag / exam list).
+            cand = [o for o in orders
+                    if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
+            pick = cand or orders
+            emergency = any(bool(o.get("emergency")) for o in pick)
+            has_hist = bool(str(s.get("clinical_history") or "").strip())
+            has_cat = bool(str(s.get("category") or "").strip())
+            if not (has_hist and has_cat):
+                if len(pick) == 1:
+                    o = pick[0]
+                    text = " — ".join([x for x in [
+                        str(o.get("exam") or "").strip() or None,
+                        ("Dr " + str(o.get("doctorName")).strip()) if o.get("doctorName") else None,
+                    ] if x])
+                else:
+                    text = "; ".join(dict.fromkeys(
+                        [str(o.get("exam") or "").strip() for o in pick if o.get("exam")]))
+                if emergency:
+                    text = (text + " — EMERGENCY") if text else "EMERGENCY"
+                try:
+                    # keep any existing history (never blank it); add category + ER now
+                    _elite_write_history(sid, (str(s.get("clinical_history") or "").strip() or text or ""),
+                                         set_emergency=emergency)
+                    stamped += 1
+                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP", str(mrno),
+                                 json.dumps({"studyId": sid, "emergency": bool(emergency),
+                                             "history": (text or "")[:120]}))
+                except Exception as e:
+                    print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
+            # accession: deterministic key from the MWL feed — only when unambiguous
+            # (single entry for the patient today, or exactly one of this modality).
+            if sid not in _autostamp_acc_done:
+                acc = None
+                if len(mwl) == 1:
+                    acc = mwl[0].get("accession")
+                elif smod:
+                    hits = [r for r in mwl
+                            if _AUTOSTAMP_MOD.get(str(r.get("modality") or "").strip().upper()) == smod]
+                    if len(hits) == 1:
+                        acc = hits[0].get("accession")
+                if acc:
+                    try:
+                        res = _elite_stamp_accession(sid, acc)
+                        _autostamp_acc_done.add(sid)
+                        if res.get("stamped") and res.get("changed"):
+                            insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_ACC", str(mrno),
+                                         json.dumps({"studyId": sid, "accession": acc}))
+                    except Exception as e:
+                        print(f"[rad-autostamp] accession {mrno}/{sid}: {e}")
+    if stamped:
+        print(f"[rad-autostamp] stamped {stamped} stud(ies)")
+    return stamped
+
+def _radiology_autostamp_loop():
+    """Background auto-stamp worker — same claim pattern as auto-file so exactly one
+    sweep runs per window across gunicorn workers. Gated by rad_autostamp_enabled."""
+    import time
+    from datetime import datetime, timezone
+    time.sleep(35)   # stagger away from the autofile worker's boot sweep
+    while True:
+        try:
+            if (get_setting("rad_autostamp_enabled", "0") or "0").strip() == "1":
+                bucket = int(datetime.now(timezone.utc).timestamp()) // max(30, _RAD_AUTOSTAMP_EVERY_SEC)
+                claimed = q("""INSERT INTO scheduling.app_settings (key,value)
+                               VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
+                            (f"rad_autostamp_run:{bucket}", "1"), one=True)
+                if claimed:
+                    q("DELETE FROM scheduling.app_settings WHERE key LIKE 'rad_autostamp_run:%%' AND key <> %s",
+                      (f"rad_autostamp_run:{bucket}",), exec_only=True)
+                    _radiology_autostamp_sweep()
+        except Exception as e:
+            print(f"[rad-autostamp] {e}")
+        time.sleep(_RAD_AUTOSTAMP_EVERY_SEC)
+
 def _radiology_autofile_loop():
     """Background auto-file worker. Runs only when the `rad_autofile_enabled` setting
     is '1' (flip it off from the worklist to stop instantly). Each cycle is claimed
@@ -9644,6 +9773,12 @@ def start_scheduler():
         if get_setting("rad_autofile_forced_on") != "1":
             set_setting("rad_autofile_enabled", "1")
             set_setting("rad_autofile_forced_on", "1")
+        # Auto-stamp (owner's directive): the moment images land in DePACS, the
+        # indication + category + ER flag are written so the radiologist starts with
+        # zero delay. Same once-only force pattern as auto-file.
+        if get_setting("rad_autostamp_forced_on") != "1":
+            set_setting("rad_autostamp_enabled", "1")
+            set_setting("rad_autostamp_forced_on", "1")
     except Exception:
         pass
     import threading
@@ -9653,6 +9788,7 @@ def start_scheduler():
     threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
     threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
     threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
+    threading.Thread(target=_radiology_autostamp_loop, daemon=True).start()
     threading.Thread(target=_cdxfer_cleanup_loop, daemon=True).start()
 
 def _capture_radiology_day(day_str, source_label="worklist"):

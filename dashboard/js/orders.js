@@ -281,7 +281,8 @@ function odRow(o) {
         ? '<span class="badge" style="background:#8a8f98;color:#fff" title="Left the board filed/resolved outside Meena — turnaround unknown">Filed elsewhere</span>'
         : '<span class="badge badge-green">Filed</span>')
     : o.state === 'reported' ? '<span class="badge badge-orange">Reported</span>'
-      : '<span class="badge">Ordered</span>';
+      : (o.imagedAt ? '<span class="badge badge-orange" title="Images are in DePACS — awaiting the report">📷 Imaged</span>'
+                    : '<span class="badge">Ordered</span>');
   const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--warn,#e0a800)') : null;
   const border = attBorder || (emerg ? 'var(--danger,#E25555)' : null);
   return `<div class="card" style="margin-bottom:8px;padding:12px${border ? ';border-left:3px solid ' + border : ''}">
