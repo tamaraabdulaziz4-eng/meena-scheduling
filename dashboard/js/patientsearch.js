@@ -162,6 +162,7 @@ function renderPsDetail() {
         </div>
       </div>
       ${allergyAlert}
+      <div id="ps-labs" style="margin-top:10px"></div>
       ${tiles ? `<div class="ps-tiles">${tiles}</div>` : ''}
       <div class="ps-grid ps-idgrid">
         ${psField('National ID / Iqama', p.nationalId)}
@@ -194,6 +195,37 @@ function renderPsDetail() {
   }
   det.innerHTML = patCard + examBlock;
   psLoadConsents();
+  psLoadLabs();
+}
+
+// Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG
+// status on the patient page (a single call — this is a dedicated per-patient view,
+// not the 30-row board, so auto-loading is fine here). Read-only decision support.
+async function psLoadLabs() {
+  const box = document.getElementById('ps-labs');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno || !psIsFemale(p)) { box.innerHTML = ''; return; }
+  box.innerHTML = '<span style="color:var(--muted);font-size:12px">🤰 Checking pregnancy status…</span>';
+  let r;
+  try { r = await API.get(`/radiology/labs/pregnancy?mrno=${encodeURIComponent(p.mrno)}`); }
+  catch (e) { box.innerHTML = '<span style="color:var(--muted);font-size:12px">🤰 Pregnancy status unavailable.</span>'; return; }
+  const when = r && (r.resultDate || r.orderDate);
+  const dstr = when ? ' · ' + escapeHtml(String(when).slice(0, 10)) : '';
+  const nm = r && r.testName ? escapeHtml(String(r.testName)) : 'pregnancy test';
+  let html;
+  if (!r || !r.found || !r.hasPregnancyTest) {
+    html = `<div class="ps-alert" style="background:rgba(224,168,0,0.12);border-color:#e0a800">🤰 <b>No recent pregnancy / β-hCG lab</b> on file — confirm status before imaging.</div>`;
+  } else if (r.verdict === 'positive') {
+    html = `<div class="ps-alert">🤰 <b>Pregnancy test POSITIVE</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Do NOT irradiate without physician review.</div>`;
+  } else if (r.verdict === 'negative') {
+    html = `<div class="ps-alert" style="background:rgba(46,158,107,0.12);border-color:#2e9e6b">🤰 <b>Pregnancy test negative</b> — ${nm}${dstr}.</div>`;
+  } else if (r.resulted) {
+    html = `<div class="ps-alert" style="background:rgba(107,114,128,0.12);border-color:#6b7280">🤰 <b>Pregnancy test resulted</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Read the value.</div>`;
+  } else {
+    html = `<div class="ps-alert" style="background:rgba(224,168,0,0.12);border-color:#e0a800">🤰 <b>Pregnancy test pending</b> — ${nm} ordered${dstr}, result not back yet.</div>`;
+  }
+  box.innerHTML = html;
 }
 
 // Female detection (the non-pregnancy consent is female-specific) — accept English
@@ -264,8 +296,10 @@ function psExamCard(o, open) {
     o.billingStatus ? `<span class="badge badge-purple">${escapeHtml(o.billingStatus)}</span>` : '',
     imaged ? `<span class="badge badge-green">✅ Imaged</span>` : `<span class="badge badge-orange">⏳ Awaiting imaging</span>`,
     o.hasReport ? `<span class="badge badge-green">📄 Report ready</span>` : '',
+    o.cpacsUrl ? `<a class="badge" style="background:#3b6fd4;color:#fff;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 Images</a>` : '',
   ].filter(Boolean).join('');
   const day = (o.orderedDate || o.reportDate || '').toString().slice(0, 10);
+  const repId = 'ps-rep-' + String(o.billNo || o.accessionNumber || Math.abs(psParseDate(o.orderedDate) || 0)).replace(/[^A-Za-z0-9_-]/g, '');
   return `
     <div class="card ps-exam${open ? ' open' : ''}">
       <button type="button" class="ps-exam-summary" onclick="psToggleExam(this)">
@@ -296,8 +330,51 @@ function psExamCard(o, open) {
           ${psField('Bill no', o.billNo)}
           ${psField('Order status', o.status)}
           ${psField('Accession', o.accessionNumber)}
+          ${psField('Image status', o.imageStatus)}
+          ${psField('Report status', o.reportStatus)}
           ${psField('Report date', o.reportDate)}
         </div>
+        <div class="ps-sec-l">Report</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${o.cpacsUrl ? `<a class="btn btn-sm" style="background:#3b6fd4;color:#fff;border:none;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener">🖼 View images</a>` : ''}
+          <button class="btn btn-sm btn-ghost" onclick="psLoadReport('${jsAttr(String(o.billNo || ''))}','${repId}',this)">📄 Load report</button>
+        </div>
+        <div id="${repId}" style="margin-top:8px"></div>
       </div>
     </div>`;
+}
+
+// Lazy-load the DePACS report matched to THIS order (by bill number) and show the
+// radiologist, date, and impression preview inline. Read-only; the heavy match runs
+// once per file and is cached on psState.
+async function psLoadReport(billNo, elId, btn) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { el.innerHTML = '<span style="color:var(--muted)">No file number.</span>'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'loading…'; }
+  try {
+    if (!psState.match || psState.match.mrno !== p.mrno) {
+      const d = await API.get(`/radiology/results/match/${encodeURIComponent(p.mrno)}`);
+      psState.match = { mrno: p.mrno, data: d };
+    }
+    const orders = (psState.match.data && psState.match.data.orders) || [];
+    const ord = billNo ? orders.find((o) => String(o.billNo) === String(billNo)) : orders[0];
+    const tests = (ord && ord.tests) || [];
+    const withRep = tests.find((t) => t.report && t.report.preview);
+    if (!withRep) {
+      const anyStudy = tests.find((t) => t.study);
+      el.innerHTML = `<div style="color:var(--muted);font-size:12px">No verified report matched yet${anyStudy ? ' (images found, report pending)' : ''}.</div>`;
+    } else {
+      const r = withRep.report;
+      el.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card-alt,#f7f7fa)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${escapeHtml(withRep.report.reviewer || 'Radiologist')}${r.reportDate ? ' · ' + escapeHtml(String(r.reportDate).slice(0, 16).replace('T', ' ')) : ''}${withRep.study && withRep.study.studyId ? ' · study #' + escapeHtml(String(withRep.study.studyId)) : ''}</div>
+        <div style="white-space:pre-wrap;font-size:12.5px;line-height:1.5">${escapeHtml(r.preview)}${r.preview && r.preview.length >= 590 ? '…' : ''}</div>
+      </div>`;
+    }
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger,#E25555);font-size:12px">${escapeHtml(e.message || 'Could not load the report')}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📄 Load report'; }
+  }
 }
