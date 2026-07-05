@@ -337,13 +337,16 @@ function wlStageBadge(stage) {
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);
-  // The working queue is what still needs the team: ordered/imaged. A row whose report
-  // is signed LEAVES the main board (auto-file takes it from here) into a collapsed
-  // strip below — visible in one click, so a wrongly-staged row is never lost.
-  const active = items.filter((it) => it.stage !== 'reported');
+  // The main board is ONLY the pre-scan queue (who still needs consent + imaging).
+  // The moment images land in DePACS the row moves to the "Imaged" strip; the moment
+  // the report is signed it moves to the "Reported" strip (auto-file takes it from
+  // there). Both strips open with one click, so nothing is ever silently lost.
+  const active = items.filter((it) => it.stage !== 'reported' && it.stage !== 'imaged');
+  const imaged = items.filter((it) => it.stage === 'imaged');
   const reported = items.filter((it) => it.stage === 'reported');
   const sum = document.getElementById('wl-summary');
-  if (sum) sum.textContent = `${active.length} in progress · ${d.emergency || 0} emergency`
+  if (sum) sum.textContent = `${active.length} waiting to scan · ${d.emergency || 0} emergency`
+    + (imaged.length ? ` · ${imaged.length} imaged` : '')
     + (reported.length ? ` · ${reported.length} reported` : '')
     + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
   const body = document.getElementById('wl-body');
@@ -366,22 +369,24 @@ function wlRender() {
     return;
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
-  const strip = reported.length ? `
+  const strip = (id, list, badge, label, prefix) => !list.length ? '' : `
     <div class="card" style="margin-top:10px;padding:8px 12px">
-      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="wlToggleReported()">
-        <span class="badge badge-green">✅ ${reported.length}</span>
-        <span style="font-weight:600">Reported — filing to the patient file</span>
-        <span id="wl-rep-arrow" style="margin-left:auto;color:var(--muted)">▸</span>
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="wlToggleStrip('${id}')">
+        ${badge}
+        <span style="font-weight:600">${label}</span>
+        <span id="wl-${id}-arrow" style="margin-left:auto;color:var(--muted)">▸</span>
       </div>
-      <div id="wl-rep-list" style="display:none;margin-top:8px">${wlTable(reported, true)}</div>
-    </div>` : '';
+      <div id="wl-${id}-list" style="display:none;margin-top:8px">${wlTable(list, prefix)}</div>
+    </div>`;
   body.innerHTML = (active.length
-    ? wlTable(active)
-    : `<div class="empty" style="padding:22px"><p>All caught up — nothing awaiting imaging or a report.</p></div>`) + strip;
+    ? wlTable(active, 'a')
+    : `<div class="empty" style="padding:22px"><p>All caught up — no one is waiting to be scanned.</p></div>`)
+    + strip('img', imaged, `<span class="badge badge-orange">📷 ${imaged.length}</span>`, 'Imaged — awaiting the report', 'i')
+    + strip('rep', reported, `<span class="badge badge-green">✅ ${reported.length}</span>`, 'Reported — filing to the patient file', 'r');
 }
 
-function wlToggleReported() {
-  const list = document.getElementById('wl-rep-list'), arrow = document.getElementById('wl-rep-arrow');
+function wlToggleStrip(id) {
+  const list = document.getElementById(`wl-${id}-list`), arrow = document.getElementById(`wl-${id}-arrow`);
   if (!list) return;
   const open = list.style.display !== 'none';
   list.style.display = open ? 'none' : '';
@@ -392,8 +397,8 @@ function wlToggleReported() {
 // emergencies pinned above routine so a STAT order is never buried. SIX columns so
 // the board fits without sideways scrolling: priority folds into the patient cell,
 // modality into the exam cell, age under the stage badge.
-function wlTable(items, isReportedStrip) {
-  const p = isReportedStrip ? 'r' : 'a';   // namespace row ids — two tables coexist
+function wlTable(items, prefix) {
+  const p = prefix || 'a';   // namespace row ids — several tables coexist (board + strips)
   const rows = items.slice().sort((a, b) =>
     (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
   return `<div class="table-wrap"><table class="wl-table" style="width:100%">
