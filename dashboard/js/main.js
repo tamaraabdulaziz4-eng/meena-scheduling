@@ -101,8 +101,8 @@ async function initApp() {
   // Radiology WORKFLOW pages (worklist, handoff, patient lookup, CD transfers).
   // Team leads / managers / full admins have them by role; a plain staff member only
   // when granted the per-user radiology privilege (so access goes to certain people,
-  // not every staff account). Management/analytics (Rad Stats, Orders) stay
-  // team-lead-and-up.
+  // not every staff account). Rad Stats stays team-lead-and-up; Orders (order history)
+  // follows the worklist grant.
   const staffHasRad = role === 'staff' && !!(currentUser.can_use_radiology || currentUser.can_file_radiology);
   const canRad = ['admin','manager','superadmin'].includes(role) || staffHasRad;
   const canRadMgmt = ['admin','manager','superadmin'].includes(role);
@@ -121,9 +121,11 @@ async function initApp() {
   // "Radiology" section label — visible whenever any radiology item is.
   const radSection = document.getElementById('nav-section-radiology');
   if (radSection) radSection.style.display = canRad ? 'block' : 'none';
-  // Radiology order lifecycle board — management (team leads + managers).
+  // Radiology order lifecycle board — the order history / turnaround view. Gated the
+  // same as the worklist (anyone who works radiology) so a privileged staff operator can
+  // see where their reports landed; Rad Stats stays management-only.
   const ordersNav = document.getElementById('nav-orders');
-  if (ordersNav) ordersNav.style.display = canRadMgmt ? 'flex' : 'none';
+  if (ordersNav) ordersNav.style.display = canRad ? 'flex' : 'none';
   // Radiology CD transfers.
   const cdxferNav = document.getElementById('nav-cdxfer');
   if (cdxferNav) cdxferNav.style.display = canRad ? 'flex' : 'none';
@@ -204,9 +206,11 @@ function resolvePage(page) {
   if (page === 'patientsearch' && !canRadRoute) return radElse;
   if (page === 'worklist' && !canRadRoute) return radElse;
   if (page === 'cdxfer' && !canRadRoute) return radElse;
-  // Radiology management/analytics: team leads + up only.
+  // Radiology management/analytics: Rad Stats stays team-lead-and-up. Orders (the order
+  // history / turnaround view) is gated the same as the worklist — a privileged staff
+  // operator who works the board can also see where their reports ended up.
   if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return canRadRoute ? 'worklist' : radElse;
-  if (page === 'orders' && !['admin','manager','superadmin'].includes(role)) return canRadRoute ? 'worklist' : radElse;
+  if (page === 'orders' && !canRadRoute) return radElse;
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';

@@ -6,7 +6,7 @@
 // now" view — the operational heart of the platform replacing Siratech's own
 // order list. Read-only.
 
-let odState = { branches: [], site: '', state: '', qtext: '', data: null, loading: false, timer: null };
+let odState = { branches: [], site: '', state: 'attention', qtext: '', data: null, loading: false, timer: null, attnCount: 0, orphanCount: 0 };
 const OD_REFRESH_MS = 60000;
 
 async function renderOrdersPage() {
@@ -14,6 +14,13 @@ async function renderOrdersPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Orders', 'Radiology orders', 'The full lifecycle of every order — ordered, reported, filed, with turnaround times')}
+    <div class="card" style="margin-bottom:12px;padding:10px 12px;border-left:3px solid #3b7ddd;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:18px">📋</span>
+      <span style="font-size:13px;color:var(--muted)">
+        This is the <strong>history &amp; turnaround</strong> view — where every report ended up.
+        To <strong>work</strong> pending patients, open the <a href="#" onclick="showPage('worklist');return false" style="color:#3b7ddd;font-weight:600">Worklist</a>.
+      </span>
+    </div>
     <div id="od-summary" style="margin-bottom:12px"></div>
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
@@ -47,6 +54,8 @@ async function renderOrdersPage() {
 }
 
 const OD_STATES = [
+  { key: 'attention', label: '⚠️ Needs attention' },
+  { key: 'orphan', label: '🔎 Orphan reports' },
   { key: '', label: 'All' },
   { key: 'ordered', label: 'Ordered' },
   { key: 'reported', label: 'Reported' },
@@ -55,9 +64,17 @@ const OD_STATES = [
 function odRenderTabs() {
   const host = document.getElementById('od-states');
   if (!host) return;
-  host.innerHTML = OD_STATES.map(s =>
-    `<button class="btn btn-sm ${odState.state === s.key ? 'btn-primary' : 'btn-ghost'}"
-       onclick="odSetState('${s.key}')">${s.label}</button>`).join('');
+  host.innerHTML = OD_STATES.map(s => {
+    // The attention + orphan tabs carry a live count so a manager sees "3 stuck" /
+    // "2 unconfirmed" from anywhere.
+    let badge = '';
+    if (s.key === 'attention' && odState.attnCount > 0)
+      badge = ` <span class="badge badge-red" style="padding:0 6px">${odState.attnCount}</span>`;
+    else if (s.key === 'orphan' && odState.orphanCount > 0)
+      badge = ` <span class="badge badge-orange" style="padding:0 6px">${odState.orphanCount}</span>`;
+    return `<button class="btn btn-sm ${odState.state === s.key ? 'btn-primary' : 'btn-ghost'}"
+       onclick="odSetState('${s.key}')">${s.label}${badge}</button>`;
+  }).join('');
 }
 function odSetState(k) { odState.state = k; odRenderTabs(); odLoad(true); }
 function odOnBranch() { odState.site = document.getElementById('od-branch').value; odLoad(true); }
@@ -88,7 +105,9 @@ async function odLoad(force, silent) {
   if (!silent) body.innerHTML = LOADING_HTML;
   const qs = new URLSearchParams();
   if (odState.site) qs.set('site', odState.site);
-  if (odState.state) qs.set('state', odState.state);
+  // 'attention' isn't a server state — it's a client-side filter over the whole
+  // in-flight set, so we ask for everything and pick the stuck ones out below.
+  if (odState.state && odState.state !== 'attention') qs.set('state', odState.state);
   if (odState.qtext) qs.set('mrno', odState.qtext);
   try {
     odState.data = await API.get('/radiology/orders?' + qs.toString());
@@ -102,10 +121,13 @@ async function odLoad(force, silent) {
 
 function odRender() {
   const d = odState.data || {}, orders = d.orders || [], by = d.byState || {};
-  // Summary: the pipeline counts + a couple of average turnaround figures.
-  const filed = orders.filter(o => o.state === 'filed' && o.tatTotalH != null);
+  // Summary: the pipeline counts + a couple of average turnaround figures. Only orders
+  // filed THROUGH Meena carry a real turnaround — 'external' rows were reconciled off the
+  // board (filed elsewhere) with an unknown file time, so they're kept out of the averages
+  // to stop the numbers being poisoned.
+  const filed = orders.filter(o => o.state === 'filed' && o.filedSource !== 'external' && o.tatTotalH != null);
   const avgTotal = filed.length ? (filed.reduce((s, o) => s + o.tatTotalH, 0) / filed.length) : null;
-  const rep = orders.filter(o => o.tatReportH != null);
+  const rep = orders.filter(o => o.filedSource !== 'external' && o.tatReportH != null);
   const avgReport = rep.length ? (rep.reduce((s, o) => s + o.tatReportH, 0) / rep.length) : null;
   const sum = document.getElementById('od-summary');
   if (sum) sum.innerHTML = `
@@ -120,8 +142,74 @@ function odRender() {
   if (cnt) cnt.textContent = `${d.count || 0} order(s)`;
   const body = document.getElementById('od-body');
   if (!body) return;
+
+  // Orphan count comes straight from the server (scope-aware) on every load, so the tab
+  // badge is accurate from any tab.
+  if (typeof d.orphanCount === 'number') odState.orphanCount = d.orphanCount;
+
+  // "Needs attention" = every still-in-flight order past its SLA (reported-not-filed, or
+  // ordered-no-report), worst first. When the loaded set includes in-flight orders we can
+  // refresh the tab badge count; otherwise we keep the last known count.
+  const attn = orders.filter(o => odAttention(o));
+  if (odState.state === 'attention' || !odState.state || odState.state === 'ordered' || odState.state === 'reported') {
+    odState.attnCount = attn.length;
+  }
+  odRenderTabs();
+
+  if (odState.state === 'orphan') {
+    if (!orders.length) {
+      body.innerHTML = `<div class="empty" style="padding:34px;text-align:center">
+        <div style="font-size:34px">✅</div>
+        <p style="font-weight:600;margin-top:6px">No orphan reports — every verified report is accounted for.</p>
+        <p style="color:var(--muted);font-size:13px">A report lands here only if it was verified, left the worklist, and Meena never filed it.</p></div>`;
+      return;
+    }
+    body.innerHTML = `<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--warn,#e0a800)">
+        <div style="font-size:13px">
+          <strong>${orders.length} report(s) may not have reached the file.</strong>
+          Each was verified and left the worklist, but Meena never filed it — open it on the worklist and
+          confirm the report is attached (file it if not). Fully automatic matching needs the vendor's
+          accession feed.
+        </div></div>`
+      + orders.map(odRow).join('');
+    return;
+  }
+
+  if (odState.state === 'attention') {
+    if (!attn.length) {
+      body.innerHTML = `<div class="empty" style="padding:34px;text-align:center">
+        <div style="font-size:34px">✅</div>
+        <p style="font-weight:600;margin-top:6px">Nothing stuck — every report is on track.</p>
+        <p style="color:var(--muted);font-size:13px">Orders show up here only when a report sits unfiled or a read runs long.</p></div>`;
+      return;
+    }
+    // worst first: emergencies on top, then the longest-waiting.
+    attn.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || (odAttnAge(b) - odAttnAge(a)));
+    body.innerHTML = `<div style="font-size:12px;color:var(--muted);margin:2px 2px 10px">
+        ${attn.length} order(s) need a human — filed reports and on-track orders are hidden here.</div>`
+      + attn.map(odRow).join('');
+    return;
+  }
+
   if (!orders.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders${odState.state ? ' in this state' : ''} yet. The store fills as the worklist is viewed.</p></div>`; return; }
   body.innerHTML = orders.map(odRow).join('');
+}
+
+// How long an in-flight order has been waiting at its current stage (hours) — drives the
+// worst-first sort on the attention tab.
+function odAttnAge(o) {
+  if (o.state === 'reported') return odHoursSince(o.reportedAt) || 0;
+  if (o.state === 'ordered') return odHoursSince(o.orderedAt) || 0;
+  return 0;
+}
+function odJumpWorklist(mrno) {
+  window._wlPendingFilter = String(mrno || '');
+  showPage('worklist');
+}
+// A verified report that left the board without Meena filing it (mirrors the backend's
+// orphan predicate) — a report exists but we can't confirm it reached the patient file.
+function odIsOrphan(o) {
+  return o.state === 'filed' && o.filedSource === 'external' && !o.studyId && !!o.reportedAt;
 }
 
 function odStat(label, val, color, icon) {
@@ -188,7 +276,10 @@ function odRow(o) {
   const step = OD_STEP_ORDER[o.state] ?? 0;
   const emerg = o.emergency;
   const att = odAttention(o);
-  const stateBadge = o.state === 'filed' ? '<span class="badge badge-green">Filed</span>'
+  const stateBadge = o.state === 'filed'
+    ? (o.filedSource === 'external'
+        ? '<span class="badge" style="background:#8a8f98;color:#fff" title="Left the board filed/resolved outside Meena — turnaround unknown">Filed elsewhere</span>'
+        : '<span class="badge badge-green">Filed</span>')
     : o.state === 'reported' ? '<span class="badge badge-orange">Reported</span>'
       : '<span class="badge">Ordered</span>';
   const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--warn,#e0a800)') : null;
@@ -205,7 +296,11 @@ function odRow(o) {
         ${odModBadges(o.modality)}
         ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
         ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
+        ${odIsOrphan(o) ? '<span class="badge badge-orange" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
         ${stateBadge}
+        ${(o.state !== 'filed' || odIsOrphan(o)) && o.mrno
+          ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" title="Open this patient on the worklist to confirm / file the report"
+               onclick="odJumpWorklist('${escapeHtml(String(o.mrno))}')">${odIsOrphan(o) ? 'Verify in Worklist →' : 'Open in Worklist →'}</button>` : ''}
       </div>
     </div>
     ${odTimeline(o, step)}

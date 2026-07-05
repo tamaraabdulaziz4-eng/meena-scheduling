@@ -820,7 +820,7 @@ app.get('/autofile/candidates', requireAuth, async (req, res) => {
 // test resolves to exactly ONE study (file-number + modality + body-part + time).
 // Dry-run returns the raw result-entry template + report + the exact payloads that
 // WOULD be posted, so a human can verify before anything is committed.
-async function buildFilePlan({ file, site, billNo, serviceId }) {
+async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
   await getToken();
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
@@ -871,7 +871,9 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
       decision: 'already_filed', reason: 'a report is already attached to this test in Siratech', writable: false };
   }
 
-  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: pickAccession(target, row) }, studies);
+  // An explicit accession (from the caller — e.g. Meena's MWL-agent capture) is the
+  // deterministic key and beats whatever the HIS row may or may not carry.
+  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: (accession && String(accession).trim()) || pickAccession(target, row) }, studies);
   if (m.decision !== 'unique') {
     return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName }, decision: m.decision, reason: m.reason, candidates: m.candidates, writable: false };
   }
@@ -906,7 +908,7 @@ async function buildFilePlan({ file, site, billNo, serviceId }) {
 }
 
 app.post('/results/file', requireAuth, async (req, res) => {
-  const { file, site, billNo, serviceId, confirm, range, authorize } = req.body || {};
+  const { file, site, billNo, serviceId, confirm, range, authorize, accession } = req.body || {};
   if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
   // Did the caller pin the range explicitly? If so it always wins; otherwise we
   // auto-classify from the report's IMPRESSION further down (once we have it).
@@ -917,7 +919,7 @@ app.post('/results/file', requireAuth, async (req, res) => {
   })();
   const doAuthorize = authorize !== false;   // default: also authorize after a good save
   try {
-    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId });
+    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId, accession });
     if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
 
     // On CONFIRM, the study MUST be the same one the human reviewed in the dry-run.

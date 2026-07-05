@@ -896,6 +896,31 @@ def init_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_mrno ON scheduling.radiology_orders(mrno);")
             # Imaging modality (CT/US/XR/MR/MG) captured from the worklist when known.
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS modality TEXT;")
+            # How the order was closed: 'meena' (filed through our workflow, so its
+            # turnaround is real) vs 'external' (reconciled — it left the Siratech board
+            # having been filed/resolved outside Meena, so its TAT is unknown). Keeps the
+            # stats honest: only 'meena' rows feed the turnaround averages.
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS filed_source TEXT;")
+            # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
+            # one scheduled procedure step carrying the Siratech-generated accession — the
+            # deterministic key that links order → images → report. The HIS REST API
+            # withholds this, so the agent reads it from the same worklist the machines use.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_mwl (
+                    id           BIGSERIAL PRIMARY KEY,
+                    accession    TEXT NOT NULL UNIQUE,
+                    mrno         TEXT,
+                    patient_name TEXT,
+                    proc_id      TEXT,
+                    proc_desc    TEXT,
+                    modality     TEXT,
+                    station      TEXT,
+                    sps_date     TEXT,           -- DICOM YYYYMMDD, as sent by the broker
+                    raw          JSONB,          -- full item, for when field semantics surprise us
+                    first_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_mwl_mrno ON scheduling.radiology_mwl(mrno);")
 
             # ── Performance indexes for hot / growing tables (audit, on-duty, dashboard
             # counts). All additive and IF NOT EXISTS — safe to run every boot. ──
@@ -6744,43 +6769,124 @@ def _rad_upsert_orders(items):
             except Exception: pass
         return 0
 
-def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id):
-    """Record the durable binding (order ↔ DePACS study) + 'filed' state when a report
-    is filed into Siratech. The bound study_id is the deterministic link going forward."""
+def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
+                    mrno=None, site=None, bill_no=None, patient_name=None):
+    """Record the durable binding (order ↔ DePACS study) + 'filed' state when Meena files
+    a report into Siratech. The bound study_id is the deterministic link going forward.
+    An UPSERT (not UPDATE-only): if the board never persisted this order first (e.g. it
+    was filed the instant it appeared), we still record the filing instead of silently
+    losing it — which used to leave some filed reports invisible on the Orders page.
+    filed_source='meena' marks it as a real Meena turnaround (feeds the TAT averages)."""
     if not gen_pat_billing_id:
         return
     try:
-        q("""UPDATE scheduling.radiology_orders
-                SET state='filed', filed_at=NOW(), filed_by=%s,
-                    study_id=COALESCE(%s, study_id),
-                    service_id=COALESCE(%s, service_id),
-                    reported_at=COALESCE(reported_at, NOW()), updated_at=NOW()
-              WHERE gen_pat_billing_id=%s""",
-          (user_id, study_id, (str(service_id) if service_id is not None else None), int(gen_pat_billing_id)),
+        gpb = int(gen_pat_billing_id)
+    except Exception:
+        return
+    svc = str(service_id) if service_id is not None else None
+    try:
+        # mrno is NOT NULL on the table; fall back to the order key as a last resort so a
+        # first-sight filing can still insert rather than error out.
+        mr = str(mrno) if mrno else str(gpb)
+        try:
+            st = int(site) if site is not None and str(site).strip() != "" else None
+        except Exception:
+            st = None
+        q("""INSERT INTO scheduling.radiology_orders
+                 (site, mrno, bill_no, gen_pat_billing_id, patient_name,
+                  state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source)
+             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),NOW(),NOW(),%s,'meena')
+             ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
+                 state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by,
+                 filed_source='meena',
+                 study_id=COALESCE(EXCLUDED.study_id, scheduling.radiology_orders.study_id),
+                 service_id=COALESCE(EXCLUDED.service_id, scheduling.radiology_orders.service_id),
+                 site=COALESCE(scheduling.radiology_orders.site, EXCLUDED.site),
+                 bill_no=COALESCE(scheduling.radiology_orders.bill_no, EXCLUDED.bill_no),
+                 patient_name=COALESCE(scheduling.radiology_orders.patient_name, EXCLUDED.patient_name),
+                 reported_at=COALESCE(scheduling.radiology_orders.reported_at, NOW()),
+                 updated_at=NOW()""",
+          (st, mr, (str(bill_no) if bill_no is not None else None), gpb, patient_name,
+           study_id, svc, user_id),
           exec_only=True)
     except Exception:
         pass
 
+def _rad_reconcile_resolved(items):
+    """Close orders that have left the live Siratech board — filed or resolved OUTSIDE
+    Meena — so the Orders page stops crying wolf. Every stored 'ordered'/'reported' row
+    first entered the store via the worklist, so while an order is genuinely pending the
+    board keeps returning it and the upsert (which runs just before this) re-stamps its
+    updated_at=NOW(). A row whose updated_at has gone stale (>5 min) has therefore dropped
+    off the board → it's done. We only reconcile SITES that returned >=1 pending item in
+    this very response, so a transient empty/failed fetch can never mass-close a branch.
+    Reconciled rows get filed_source='external' → their (unknown) turnaround never poisons
+    the Meena TAT averages. History-only: this never touches the live worklist or the HIS.
+    Best-effort — a DB hiccup is swallowed."""
+    if not isinstance(items, list) or not items:
+        return 0
+    sites = set()
+    for it in items:
+        s = it.get("site")
+        if s is None:
+            continue
+        try:
+            sites.add(int(s))
+        except Exception:
+            pass
+    if not sites:
+        return 0
+    try:
+        q("""UPDATE scheduling.radiology_orders
+                SET state='filed', filed_source='external',
+                    filed_at=COALESCE(filed_at, NOW()), updated_at=NOW()
+              WHERE site = ANY(%s) AND state IN ('ordered','reported')
+                AND updated_at < NOW() - INTERVAL '5 minutes'""",
+          (list(sites),), exec_only=True)
+    except Exception:
+        pass
+    return 0
+
+# A verified report was seen ready (reported_at) but Meena never filed it (study_id NULL)
+# and it has left the board (reconciled filed-elsewhere) — so we cannot confirm the report
+# actually reached the patient file. One place, used by both the list filter and the count.
+_RAD_ORPHAN_PREDICATE = ("state='filed' AND filed_source='external' "
+                         "AND reported_at IS NOT NULL AND study_id IS NULL")
+
 @app.get("/api/radiology/orders")
-def radiology_orders(request: Request, user=Depends(require_admin)):
+def radiology_orders(request: Request, user=Depends(require_radiology)):
     """RIS Phase 2 — the persisted order lifecycle store with turnaround (TAT) in
-    hours. Filter by state / site / mrno. Team leads are scoped to their branch."""
+    hours. Filter by state / site / mrno. Team leads are scoped to their branch.
+    Gated the same as the worklist (require_radiology) so a privileged staff member
+    who can see the live board can also see its history."""
     p = request.query_params
     clauses, params = [], []
     scope = _rad_scope_site(user)
+    site_scope_sql, site_scope_params = None, []
     if scope is not None:
-        clauses.append("site=%s"); params.append(scope)
+        site_scope_sql = "site=%s"; site_scope_params = [scope]
     elif (p.get("site") or "").strip().isdigit():
-        clauses.append("site=%s"); params.append(int(p.get("site")))
+        site_scope_sql = "site=%s"; site_scope_params = [int(p.get("site"))]
+    if site_scope_sql:
+        clauses.append(site_scope_sql); params.extend(site_scope_params)
     st = (p.get("state") or "").strip()
-    if st in ("ordered", "reported", "filed"):
+    if st == "orphan":
+        # Orphan reports: a verified report was seen ready (reported_at set), the order
+        # then left the live board and was reconciled as filed-elsewhere (filed_source
+        # 'external'), yet Meena never bound/filed a study to it (study_id NULL). So a
+        # report existed but we can't confirm it reached the patient file — a human must
+        # verify. This is the reliable, ledger-only half of the durable-ledger fix; the
+        # deterministic version (matching every report to its study) needs the vendor
+        # accession feed.
+        clauses.append(_RAD_ORPHAN_PREDICATE)
+    elif st in ("ordered", "reported", "filed"):
         clauses.append("state=%s"); params.append(st)
     mr = (p.get("mrno") or "").strip()
     if mr:
         clauses.append("mrno=%s"); params.append(mr)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = q(f"""SELECT gen_pat_billing_id, site, mrno, bill_no, patient_name, department, doctor,
-                        emergency, state, study_id, service_id, modality,
+                        emergency, state, study_id, service_id, modality, filed_source,
                         ordered_at, reported_at, filed_at, updated_at,
                         EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
                         EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
@@ -6797,13 +6903,84 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
         "billNo": r["bill_no"], "patientName": r["patient_name"], "department": r["department"],
         "doctor": r["doctor"], "emergency": r["emergency"], "state": r["state"],
         "studyId": r["study_id"], "serviceId": r["service_id"], "modality": r["modality"],
+        "filedSource": r["filed_source"],
         "orderedAt": _iso(r["ordered_at"]), "reportedAt": _iso(r["reported_at"]), "filedAt": _iso(r["filed_at"]),
         "tatReportH": _r1(r["tat_report_h"]), "tatFileH": _r1(r["tat_file_h"]), "tatTotalH": _r1(r["tat_total_h"]),
     } for r in rows]
     by_state = {}
     for r in rows:
         by_state[r["state"]] = by_state.get(r["state"], 0) + 1
-    return {"ok": True, "count": len(orders), "byState": by_state, "orders": orders}
+    # Always surface the orphan count (scope-aware) so the tab badge shows from any tab.
+    ocl = [_RAD_ORPHAN_PREDICATE]
+    oparams = []
+    if site_scope_sql:
+        ocl.append(site_scope_sql); oparams.extend(site_scope_params)
+    try:
+        oc = q("SELECT COUNT(*) AS n FROM scheduling.radiology_orders WHERE " + " AND ".join(ocl),
+               tuple(oparams), one=True)
+        orphan_count = int(oc["n"]) if oc and oc.get("n") is not None else 0
+    except Exception:
+        orphan_count = 0
+    return {"ok": True, "count": len(orders), "byState": by_state,
+            "orphanCount": orphan_count, "orders": orders}
+
+@app.post("/api/radiology/mwl/push")
+async def radiology_mwl_push(request: Request, user=Depends(require_admin)):
+    """Ingest DICOM Modality Worklist entries from the on-site MWL agent (a small
+    watcher on a hospital-LAN PC — the cloud can't speak DICOM to the broker). Upserts
+    by accession; last_seen refreshes on every sighting so we can tell what's still on
+    the broker. The accession is the deterministic order↔study↔report key that the HIS
+    REST API withholds."""
+    b = await request.json()
+    items = b.get("items") if isinstance(b, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(400, "Body must be {items: [...]}")
+    saved = 0
+    for it in items[:200]:                     # sanity cap per push
+        if not isinstance(it, dict):
+            continue
+        acc = str(it.get("accession") or "").strip()
+        if not acc:
+            continue                           # accession is the whole point — skip blanks
+        try:
+            q("""INSERT INTO scheduling.radiology_mwl
+                     (accession, mrno, patient_name, proc_id, proc_desc, modality, station, sps_date, raw)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 ON CONFLICT (accession) DO UPDATE SET
+                     mrno=COALESCE(NULLIF(EXCLUDED.mrno,''), scheduling.radiology_mwl.mrno),
+                     patient_name=COALESCE(NULLIF(EXCLUDED.patient_name,''), scheduling.radiology_mwl.patient_name),
+                     proc_id=COALESCE(NULLIF(EXCLUDED.proc_id,''), scheduling.radiology_mwl.proc_id),
+                     proc_desc=COALESCE(NULLIF(EXCLUDED.proc_desc,''), scheduling.radiology_mwl.proc_desc),
+                     modality=COALESCE(NULLIF(EXCLUDED.modality,''), scheduling.radiology_mwl.modality),
+                     station=COALESCE(NULLIF(EXCLUDED.station,''), scheduling.radiology_mwl.station),
+                     sps_date=COALESCE(NULLIF(EXCLUDED.sps_date,''), scheduling.radiology_mwl.sps_date),
+                     raw=COALESCE(EXCLUDED.raw, scheduling.radiology_mwl.raw),
+                     last_seen=NOW()""",
+              (acc, str(it.get("patientId") or "").strip(), str(it.get("patientName") or "").strip(),
+               str(it.get("procId") or "").strip(), str(it.get("procDesc") or "").strip(),
+               str(it.get("modality") or "").strip().upper(), str(it.get("station") or "").strip(),
+               str(it.get("date") or "").strip(), json.dumps(it)[:4000]),
+              exec_only=True)
+            saved += 1
+        except Exception:
+            pass                               # one bad row never sinks the batch
+    if saved:
+        insert_audit(user, "RADIOLOGY_MWL_PUSH", None, json.dumps({"received": len(items), "saved": saved}))
+    return {"ok": True, "received": len(items), "saved": saved}
+
+@app.get("/api/radiology/mwl/recent")
+def radiology_mwl_recent(user=Depends(require_radiology)):
+    """The MWL entries we've captured, newest first — visibility while the feed is
+    young: confirms what the broker actually sends (field semantics, accession shape)."""
+    rows = q("""SELECT accession, mrno, patient_name, proc_id, proc_desc, modality, station,
+                       sps_date, first_seen, last_seen
+                FROM scheduling.radiology_mwl ORDER BY last_seen DESC LIMIT 50""") or []
+    out = [{"accession": r["accession"], "mrno": r["mrno"], "patientName": r["patient_name"],
+            "procId": r["proc_id"], "procDesc": r["proc_desc"], "modality": r["modality"],
+            "station": r["station"], "spsDate": r["sps_date"],
+            "firstSeen": r["first_seen"].isoformat() if r["first_seen"] else None,
+            "lastSeen": r["last_seen"].isoformat() if r["last_seen"] else None} for r in rows]
+    return {"ok": True, "count": len(out), "entries": out}
 
 @app.get("/api/radiology/autofile/config")
 def radiology_autofile_get(user=Depends(require_admin)):
@@ -6879,6 +7056,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     try:
         if isinstance(data, dict):
             _rad_upsert_orders(data.get("items"))
+            _rad_reconcile_resolved(data.get("items"))
             _annotate_worklist_consent(data.get("items"))
     except Exception:
         pass
@@ -6975,6 +7153,21 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
     b = await request.json()
     if not isinstance(b, dict) or not str(b.get("file") or "").strip():
         raise HTTPException(400, "A patient file number is required")
+    # Deterministic key injection: if the on-site MWL agent captured this patient's
+    # accession from the modality worklist, hand it to the connector so the study match
+    # is exact instead of fuzzy. CONSERVATIVE by design: only when exactly ONE entry
+    # exists for this MRN on this day — with several same-day entries we cannot yet tell
+    # which procedure is which (that refinement lands once we've seen real feed data).
+    if not b.get("accession"):
+        try:
+            ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y%m%d")
+            mrows = q("""SELECT accession FROM scheduling.radiology_mwl
+                         WHERE mrno=%s AND sps_date=%s LIMIT 2""",
+                      (str(b.get("file")).strip(), ksa_today)) or []
+            if len(mrows) == 1 and mrows[0].get("accession"):
+                b["accession"] = mrows[0]["accession"]
+        except Exception:
+            pass
     # Ride the patient's signed non-pregnancy consent along with the report so BOTH
     # land on her Siratech file in one filing (the connector attaches it as a second
     # genFileAttachments entry, named on its own). Only on a real write (confirm).
@@ -7013,7 +7206,8 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
                                  "authorized": bool(isinstance(out, dict) and out.get("authorized"))}))
         if wrote and gpb:
             try:
-                _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"])
+                _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"],
+                                mrno=b.get("file"), site=b.get("site"), bill_no=b.get("billNo"))
             except Exception:
                 pass
         if wrote and consent_id:
@@ -9402,7 +9596,8 @@ def _radiology_autofile_sweep():
                                      "authorized": bool(isinstance(out, dict) and out.get("authorized")),
                                      "note": None if wrote else (out.get("note") or out.get("reason") if isinstance(out, dict) else None)}))
             if wrote and gpb:
-                _rad_mark_filed(gpb, study.get("studyId") or c.get("studyId"), c.get("serviceId"), None)
+                _rad_mark_filed(gpb, study.get("studyId") or c.get("studyId"), c.get("serviceId"), None,
+                                mrno=c.get("file"), site=c.get("site"), bill_no=c.get("billNo"))
                 filed += 1
         except Exception as e:
             print(f"[rad-autofile] file {c.get('file')}: {e}")

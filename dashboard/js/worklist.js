@@ -138,6 +138,9 @@ async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Orders awaiting a result — emergency first, newest first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
+  // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
+  // that patient (search finds them even if they're not on today's board).
+  const jumpMrn = window._wlPendingFilter; window._wlPendingFilter = null;
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result')}
@@ -183,7 +186,12 @@ async function renderWorklistPage() {
       }
     } catch (e) { /* picker optional; org-wide roles can still see all */ }
   }
-  wlLoad();
+  await wlLoad();
+  if (jumpMrn) {
+    const inp = document.getElementById('wl-search');
+    if (inp) inp.value = jumpMrn;
+    wlSearch(jumpMrn);   // filters the board, or finds the patient cross-branch if not on it
+  }
   wlStartTimer();
 }
 
