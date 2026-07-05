@@ -6847,11 +6847,17 @@ def _rad_reconcile_resolved(items):
     if not sites:
         return 0
     try:
+        # Close ONLY orders the board was actively tracking that just dropped off:
+        #   • stale >5 min (not on the last few boards) AND
+        #   • still recently tracked (updated within 24h) — so a pending order the strict
+        #     day-filter hides (a prior-day order not on today's board, hence never
+        #     refreshed) is NOT falsely closed as "filed elsewhere".
         q("""UPDATE scheduling.radiology_orders
                 SET state='filed', filed_source='external',
                     filed_at=COALESCE(filed_at, NOW()), updated_at=NOW()
               WHERE site = ANY(%s) AND state IN ('ordered','reported')
-                AND updated_at < NOW() - INTERVAL '5 minutes'""",
+                AND updated_at < NOW() - INTERVAL '5 minutes'
+                AND updated_at > NOW() - INTERVAL '24 hours'""",
           (list(sites),), exec_only=True)
     except Exception:
         pass
@@ -7165,17 +7171,37 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
         raise HTTPException(400, "A patient file number is required")
     # Deterministic key injection: if the on-site MWL agent captured this patient's
     # accession from the modality worklist, hand it to the connector so the study match
-    # is exact instead of fuzzy. CONSERVATIVE by design: only when exactly ONE entry
-    # exists for this MRN on this day — with several same-day entries we cannot yet tell
-    # which procedure is which (that refinement lands once we've seen real feed data).
+    # is exact instead of fuzzy. CONSERVATIVE: inject only when we can attribute the
+    # accession to THIS order unambiguously — either the patient has exactly one MWL
+    # entry today AND exactly one order in our ledger today (no cross-order confusion),
+    # OR exactly one MWL entry today matches this order's MODALITY. Otherwise skip and
+    # let the connector's own strict matcher decide (never bind a guessed accession).
     if not b.get("accession"):
         try:
             ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y%m%d")
-            mrows = q("""SELECT accession FROM scheduling.radiology_mwl
-                         WHERE mrno=%s AND sps_date=%s LIMIT 2""",
-                      (str(b.get("file")).strip(), ksa_today)) or []
+            file_no = str(b.get("file")).strip()
+            mrows = q("""SELECT accession, modality FROM scheduling.radiology_mwl
+                         WHERE mrno=%s AND sps_date=%s""", (file_no, ksa_today)) or []
+            acc = None
             if len(mrows) == 1 and mrows[0].get("accession"):
-                b["accession"] = mrows[0]["accession"]
+                # the order's modality, from our ledger (or the request), to confirm fit
+                gpb = b.get("genPatBillingId")
+                ord_mod = None
+                if gpb:
+                    orow = q("SELECT modality FROM scheduling.radiology_orders WHERE gen_pat_billing_id=%s",
+                             (int(gpb),), one=True) if str(gpb).strip().isdigit() else None
+                    ord_mod = (orow or {}).get("modality")
+                # count the patient's orders today — 1 order + 1 accession = unambiguous
+                cnt = q("""SELECT COUNT(*) AS n FROM scheduling.radiology_orders
+                           WHERE mrno=%s AND ordered_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '1 day')""",
+                        (file_no,), one=True)
+                one_order = cnt and int(cnt.get("n") or 0) <= 1
+                mwl_mod = str(mrows[0].get("modality") or "").strip().upper()
+                mod_ok = ord_mod and mwl_mod and _mod_bucket(ord_mod) == _mod_bucket(mwl_mod)
+                if one_order or mod_ok:
+                    acc = mrows[0]["accession"]
+            if acc:
+                b["accession"] = acc
         except Exception:
             pass
     # Ride the patient's signed non-pregnancy consent along with the report so BOTH
@@ -9621,7 +9647,46 @@ _RAD_AUTOSTAMP_USER = {"id": None, "username": "system:autostamp", "role": "syst
 # to the right pending order when a patient has several.
 _AUTOSTAMP_MOD = {"CT": "CT", "MR": "MR", "US": "US", "MG": "MG",
                   "XR": "XR", "CR": "XR", "DX": "XR", "DR": "XR", "RF": "XR"}
+
+def _mod_bucket(m):
+    """Coarse modality bucket (CT/MR/US/XR/MG) from a DICOM code, our normMod output,
+    or a service label — used to confirm an MWL accession fits the order it's bound to."""
+    s = str(m or "").strip().upper()
+    if s in _AUTOSTAMP_MOD:
+        return _AUTOSTAMP_MOD[s]
+    if re.search(r"X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b", s): return "XR"
+    if re.search(r"ULTRA\s?SOUND|SONOGRAM|\bUS\b", s): return "US"
+    if re.search(r"\bCT\b|COMPUTED", s): return "CT"
+    if re.search(r"\bMRI?\b|MAGNETIC", s): return "MR"
+    if re.search(r"MAMMOG|\bMG\b", s): return "MG"
+    return s or None
+
 _autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
+
+def _claim_sweep_lock(name, ttl_sec):
+    """Cross-worker single-flight for a background sweep. Claims the lock only if it's
+    free (released) or the holder is older than ttl (a crashed/overrunning sweep) —
+    so a sweep that runs longer than its interval can NEVER overlap a second sweep on
+    another gunicorn worker (which could double-write). Returns True if claimed."""
+    try:
+        row = q("""INSERT INTO scheduling.app_settings (key, value)
+                   VALUES (%s, EXTRACT(EPOCH FROM NOW())::bigint::text)
+                   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                   WHERE COALESCE(NULLIF(scheduling.app_settings.value,''),'0')::bigint
+                         < EXTRACT(EPOCH FROM NOW())::bigint - %s
+                   RETURNING key""",
+                (f"sweep_lock:{name}", int(ttl_sec)), one=True)
+        return bool(row)
+    except Exception:
+        return False
+
+def _release_sweep_lock(name):
+    """Mark the lock free so the NEXT interval can claim immediately after a fast sweep
+    (a crashed sweep instead just expires via the ttl above)."""
+    try:
+        q("UPDATE scheduling.app_settings SET value='0' WHERE key=%s", (f"sweep_lock:{name}",), exec_only=True)
+    except Exception:
+        pass
 
 def _radiology_autostamp_sweep():
     """The moment a patient's images land in DePACS, stamp what the radiologist needs
@@ -9664,24 +9729,21 @@ def _radiology_autostamp_sweep():
             if not sid:
                 continue
             smod = _AUTOSTAMP_MOD.get(str(s.get("modality") or "").strip().upper())
-            # the order(s) this study most plausibly belongs to: same modality bucket,
-            # else all of the patient's pending orders (for the ER flag / exam list).
+            # ONLY attribute this study to an order we can match by modality. If the study
+            # can't be tied to EXACTLY ONE order of its own modality, we must NOT stamp —
+            # otherwise a routine US study would inherit an unrelated EMERGENCY CT order's
+            # flag and indication. When unsure, leave it for the human handoff.
             cand = [o for o in orders
                     if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
-            pick = cand or orders
-            emergency = any(bool(o.get("emergency")) for o in pick)
             has_hist = bool(str(s.get("clinical_history") or "").strip())
             has_cat = bool(str(s.get("category") or "").strip())
-            if not (has_hist and has_cat):
-                if len(pick) == 1:
-                    o = pick[0]
-                    text = " — ".join([x for x in [
-                        str(o.get("exam") or "").strip() or None,
-                        ("Dr " + str(o.get("doctorName")).strip()) if o.get("doctorName") else None,
-                    ] if x])
-                else:
-                    text = "; ".join(dict.fromkeys(
-                        [str(o.get("exam") or "").strip() for o in pick if o.get("exam")]))
+            if not (has_hist and has_cat) and len(cand) == 1:
+                o = cand[0]
+                emergency = bool(o.get("emergency"))
+                text = " — ".join([x for x in [
+                    str(o.get("exam") or "").strip() or None,
+                    ("Dr " + str(o.get("doctorName")).strip()) if o.get("doctorName") else None,
+                ] if x])
                 if emergency:
                     text = (text + " — EMERGENCY") if text else "EMERGENCY"
                 try:
@@ -9727,14 +9789,9 @@ def _radiology_autostamp_loop():
     while True:
         try:
             if (get_setting("rad_autostamp_enabled", "0") or "0").strip() == "1":
-                bucket = int(datetime.now(timezone.utc).timestamp()) // max(30, _RAD_AUTOSTAMP_EVERY_SEC)
-                claimed = q("""INSERT INTO scheduling.app_settings (key,value)
-                               VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
-                            (f"rad_autostamp_run:{bucket}", "1"), one=True)
-                if claimed:
-                    q("DELETE FROM scheduling.app_settings WHERE key LIKE 'rad_autostamp_run:%%' AND key <> %s",
-                      (f"rad_autostamp_run:{bucket}",), exec_only=True)
-                    _radiology_autostamp_sweep()
+                if _claim_sweep_lock("autostamp", 300):
+                    try: _radiology_autostamp_sweep()
+                    finally: _release_sweep_lock("autostamp")
         except Exception as e:
             print(f"[rad-autostamp] {e}")
         time.sleep(_RAD_AUTOSTAMP_EVERY_SEC)
@@ -9750,17 +9807,12 @@ def _radiology_autofile_loop():
     while True:
         try:
             if (get_setting("rad_autofile_enabled", "0") or "0").strip() == "1":
-                bucket = int(datetime.now(timezone.utc).timestamp()) // max(30, _RAD_AUTOFILE_EVERY_SEC)
-                claimed = q("""INSERT INTO scheduling.app_settings (key,value)
-                               VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
-                            (f"rad_autofile_run:{bucket}", "1"), one=True)
-                if claimed:
-                    # Reap old bucket-claim rows so app_settings doesn't grow unbounded
-                    # (all workers in this window share the same bucket, so only stale
-                    # ones are removed).
-                    q("DELETE FROM scheduling.app_settings WHERE key LIKE 'rad_autofile_run:%%' AND key <> %s",
-                      (f"rad_autofile_run:{bucket}",), exec_only=True)
-                    _radiology_autofile_sweep()
+                # TTL lock (not a per-window bucket): a filing sweep that runs longer than
+                # the interval can never overlap a second sweep on another worker, which
+                # could race two writes to the same order.
+                if _claim_sweep_lock("autofile", 600):
+                    try: _radiology_autofile_sweep()
+                    finally: _release_sweep_lock("autofile")
         except Exception as e:
             print(f"[rad-autofile] {e}")
         time.sleep(_RAD_AUTOFILE_EVERY_SEC)

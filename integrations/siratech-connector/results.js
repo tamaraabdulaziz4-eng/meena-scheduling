@@ -391,14 +391,19 @@ function candOf(s) {
 // The RadiologySearch body schema (field types matter: empId is a STRING,
 // invCategoryId is nullable-decimal, visiType is int).
 function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, filterResult = '0',
-  fromDate = '1900-01-01T00:00:00.000Z', toDate = '2035-12-31T23:59:59.000Z' }) {
-  return {
+  fromDate = '1900-01-01T00:00:00.000Z', toDate = '2035-12-31T23:59:59.000Z',
+  selectionType = 1, isFrequent = null }) {
+  const body = {
     mrno, billno, fromDate, toDate,
     baseCatgeory: 0, hospitalId, mode: 6, cpoeStatus: 0, isbilled: 0, empId: String(empId),
-    visitno: '', selectionType: 1, filterResult, profileId: '', invCategoryId: null,
+    visitno: '', selectionType, filterResult, profileId: '', invCategoryId: null,
     baseInvCategoryId: 2, visitMode: '', invMastServiceId: 0, sampleNo: '',
     isCreditWithoutBilling: 0, cpoeSearchGroupMode: 0, searchType: 'B', visiType: '0',
   };
+  // The RESULTED list (Siratech's own "auth search", captured live 2026-07-05) differs
+  // from the pending list only by: filterResult "2", selectionType 2, isFrequent 1.
+  if (isFrequent != null) body.isFrequent = isFrequent;
+  return body;
 }
 
 // ── Normal vs. abnormal classification ────────────────────────────────────────
