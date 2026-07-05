@@ -137,7 +137,9 @@ async function meenaPush(items) {
 }
 
 // ── main loop ──────────────────────────────────────────────────────────────────
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 let cycle = 0;
+let consecFail = 0;         // consecutive fully-failed cycles → back off (don't hammer a sick broker)
 const badAes = new Set();   // AEs the broker rejected — logged once, retried hourly
 async function tick() {
   cycle++;
@@ -147,10 +149,16 @@ async function tick() {
     // never missed. Dedupe by accession across AEs — brokers that return the full
     // list to every caller would otherwise duplicate every row.
     const byAcc = new Map();
-    let blanks = 0, okQueries = 0, lastErr = null;
+    let blanks = 0, okQueries = 0, lastErr = null, firstQuery = true;
+    // Yesterday matters far less than today (most pending orders are same-day) and each
+    // query is a fresh DICOM association — halve the load on the broker by only sweeping
+    // yesterday occasionally.
+    const days = (cycle % 5 === 1) ? [dcmDate(0), dcmDate(-1)] : [dcmDate(0)];
     for (const ae of CALLING_AES) {
       if (badAes.has(ae) && cycle % 60 !== 1) continue;   // rejected AE → retry ~hourly
-      for (const day of [dcmDate(0), dcmDate(-1)]) {
+      for (const day of days) {
+        if (!firstQuery) await sleepMs(400);              // space associations — some brokers reset on back-to-back
+        firstQuery = false;
         const r = await mwlFindDay(day, ae);
         if (!r.ok) {
           lastErr = r.err;
@@ -168,7 +176,18 @@ async function tick() {
         }
       }
     }
-    if (!okQueries) { say(`worklist query failed on every AE: ${lastErr}`); return; }
+    if (!okQueries) {
+      consecFail++;
+      // Back off up to ~10 min so a sick/restarting broker isn't hammered every 60s;
+      // recovers automatically on the next successful query. Only log occasionally.
+      const backoff = Math.min(10 * 60, POLL_SEC * Math.min(consecFail, 10));
+      if (consecFail === 1 || consecFail % 10 === 0) {
+        say(`worklist unreachable (${lastErr}) — ${consecFail} tr${consecFail === 1 ? 'y' : 'ies'}, backing off ${backoff}s. Auto-resumes when the broker answers.`);
+      }
+      await sleepMs(backoff * 1000);
+      return;
+    }
+    if (consecFail) { say(`worklist reachable again after ${consecFail} failed tr${consecFail === 1 ? 'y' : 'ies'}.`); consecFail = 0; }
     const items = [...byAcc.values()];
     if (!items.length) {
       if (cycle === 1 || cycle % 10 === 0) say(`worklist empty (${blanks} row(s) without accession) — watching…`);
