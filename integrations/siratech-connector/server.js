@@ -767,51 +767,36 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   }
 
   if (ready && items.length) {
-    const seen = new Set(), targets = [];
-    for (const it of items) { if (it.mrno && !seen.has(it.mrno)) { seen.add(it.mrno); targets.push(it); if (targets.length >= readyLimit) break; } }
-    // Pipeline stage PER BILL, grounded in DePACS reality (the operator's rule):
-    //   • "awaiting report" (imaged) ONLY when an actual study for THIS exam's
-    //     modality exists in PACS but is NOT read yet (unread / not verified).
-    //   • "report ready" (reported) when a matching study IS verified.
-    //   • otherwise the patient simply isn't imaged → "awaiting imaging" (ordered).
-    // A Siratech order marked "completed" with NO PACS study is NOT imaged — it must
-    // not show as "awaiting report". Per-bill so a patient's two orders don't smear.
-    const byBill = new Map();
-    await pool(targets, 6, async (it) => {
-      try {
-        const m = await buildMatch(it.mrno, null, it.site);
-        const all = m.allStudies || [];   // every DePACS study for this patient, w/ status
-        for (const o of (m.orders || [])) {
-          const mods = new Set((o.tests || [])
-            .map((t) => results.normMod((t.test && (t.test.categoryName || t.test.serviceName)) || ''))
-            .filter(Boolean));
-          // G7 guard: only studies from THIS order's time window may drive the stage.
-          // A patient's OLD study of the same modality must not flip a fresh order to
-          // "report ready" (it hid brand-new ER orders inside the reported strip).
-          const ot = parseHisDate(o.order.orderDate);
-          const recent = Number.isFinite(ot)
-            ? all.filter((s) => {
-                const st = parseHisDate(s.studyDate);
-                return Number.isFinite(st) ? st >= ot - 24 * 36e5 : true;   // unparseable → keep
-              })
-            : all;
-          const matched = recent.filter((s) => mods.size === 0 || mods.has(results.normMod(s.modality || '')));
-          const anyVerified = matched.some((s) => results.isReported(s.status));
-          const stage = anyVerified ? 'reported' : (matched.length ? 'imaged' : 'ordered');
-          byBill.set(String(o.order.billNo), { stage, ready: !!o.allUnique });
-        }
-      } catch (e) { /* skip this patient — leave stage unknown */ }
+    // Pipeline stage PER ROW for the WHOLE board, grounded in DePACS reality:
+    //   ordered  — no study of this exam's modality in PACS (whatever the HIS claims)
+    //   imaged   — images exist, nothing written yet
+    //   draft    — a report EXISTS but is not verified (dictated / to-be-verified)
+    //   reported — a verified report exists
+    // One LIGHT DePACS lookup per patient (status+modality+date only — no per-study
+    // report-info round-trips), so covering every row costs a fraction of the old
+    // capped 25-patient pass. G7 guard: only studies from this order's own time
+    // window count — an old same-modality study must not flip a fresh order.
+    const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
+    const studiesBy = new Map();
+    await pool(mrns, 6, async (m) => {
+      try { studiesBy.set(m, await results.depacsStudies(m, { light: true })); } catch (e) { /* leave unknown */ }
     });
-    const perBillRows = new Map();
-    for (const it of items) perBillRows.set(String(it.billNo), (perBillRows.get(String(it.billNo)) || 0) + 1);
     for (const it of items) {
-      const e = byBill.get(String(it.billNo));
-      if (!e) continue;
-      it.readyToFile = e.ready;                     // filing readiness is per bill
-      // The DePACS stage is computed per BILL; on a multi-exam bill it must not
-      // overwrite each exam's own (per-service) preliminary stage — one finished
-      // sibling would wrongly mark the other exam "report ready".
-      if (perBillRows.get(String(it.billNo)) === 1 || !it.stage) it.stage = e.stage;
+      const all = studiesBy.get(it.mrno);
+      if (!all) continue;                            // lookup failed → keep preliminary stage
+      const mod = results.normMod(it.modality || it.exam || '');
+      if (!mod) continue;                            // unknown exam type → never guess a stage
+      const ot = parseHisDate(it.orderedDate);
+      const matched = all.filter((s) => {
+        if (results.normMod(s.modality || '') !== mod) return false;
+        if (!Number.isFinite(ot)) return true;
+        const st = parseHisDate(s.studyDate);
+        return Number.isFinite(st) ? st >= ot - 24 * 36e5 : true;   // unparseable → keep
+      });
+      if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; continue; }
+      if (matched.some((s) => results.isReported(s.status))) { it.stage = 'reported'; it.readyToFile = true; }
+      else if (matched.some((s) => results.isDraftReport(s.status))) { it.stage = 'draft'; it.readyToFile = false; }
+      else { it.stage = 'imaged'; it.readyToFile = false; }
     }
   }
 

@@ -334,8 +334,9 @@ function wlMergeEnrich(d) {
 //              then drops off this board on its own.
 function wlStageBadge(stage) {
   if (stage === 'reported') return '<span class="badge badge-green" title="Report signed — auto-file will file it, then it leaves the board">✅ Report ready</span>';
-  if (stage === 'imaged')   return '<span class="badge badge-orange" title="Scan done — awaiting the report">📷 Imaged</span>';
-  if (stage === 'ordered')  return '<span class="badge" title="Ordered — awaiting imaging">📋 Ordered</span>';
+  if (stage === 'draft')    return '<span class="badge" style="background:#7c5cff;color:#fff" title="A report exists but is NOT verified yet — radiologist mid-report">📝 Not verified</span>';
+  if (stage === 'imaged')   return '<span class="badge badge-orange" title="Images are in DePACS — nothing written yet">📷 Imaged</span>';
+  if (stage === 'ordered')  return '<span class="badge" title="Ordered — images not in DePACS yet">📋 Ordered</span>';
   return '<span class="badge" style="opacity:.55">…</span>';
 }
 
@@ -346,8 +347,8 @@ function wlRender() {
   // The moment images land in DePACS the row moves to the "Imaged" strip; the moment
   // the report is signed it moves to the "Reported" strip (auto-file takes it from
   // there). Both strips open with one click, so nothing is ever silently lost.
-  const active = items.filter((it) => it.stage !== 'reported' && it.stage !== 'imaged');
-  const imaged = items.filter((it) => it.stage === 'imaged');
+  const active = items.filter((it) => it.stage !== 'reported' && it.stage !== 'imaged' && it.stage !== 'draft');
+  const imaged = items.filter((it) => it.stage === 'imaged' || it.stage === 'draft');   // in DePACS, report not verified yet
   const reported = items.filter((it) => it.stage === 'reported');
   const sum = document.getElementById('wl-summary');
   const activeEmerg = active.filter((it) => it.emergency).length;   // emergencies still in the queue, not board-wide
