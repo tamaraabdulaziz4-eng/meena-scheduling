@@ -6789,7 +6789,8 @@ def _rad_upsert_orders(items):
 
 def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                     mrno=None, site=None, bill_no=None, patient_name=None,
-                    accession=None, accession_source=None, pacs_id=None, cpacs_url=None):
+                    accession=None, accession_source=None, pacs_id=None, cpacs_url=None,
+                    reported_at=None):
     """Record the durable binding (order ↔ DePACS study) + 'filed' state when Meena files
     a report into Siratech. The bound study_id is the deterministic link going forward.
     An UPSERT (not UPDATE-only): if the board never persisted this order first (e.g. it
@@ -6815,11 +6816,18 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
         acc_src = (str(accession_source).strip() or None) if accession_source else None
         pid = (str(pacs_id).strip() or None) if pacs_id is not None and str(pacs_id).strip() != "" else None
         curl = (str(cpacs_url).strip() or None) if cpacs_url is not None and str(cpacs_url).strip() != "" else None
+        # TAT truth: prefer the report's REAL signing time (from DePACS / Siratech EMR)
+        # over "when Meena first saw it ready". Guarded so a bad/absent value never wins:
+        # only accept a parsed timestamp that is at/after the order time and not in the
+        # future; else fall back to whatever's stored, then NOW().
+        rep_real = _rad_ts(reported_at) if reported_at else None
+        if rep_real is not None and rep_real > datetime.now(timezone.utc) + timedelta(minutes=5):
+            rep_real = None   # a report can't be signed in the future — reject the parse
         q("""INSERT INTO scheduling.radiology_orders
                  (site, mrno, bill_no, gen_pat_billing_id, patient_name,
                   state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source,
                   accession, accession_source, pacs_id, cpacs_url)
-             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),NOW(),NOW(),%s,'meena',%s,%s,%s,%s)
+             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),COALESCE(%s::timestamptz, NOW()),NOW(),%s,'meena',%s,%s,%s,%s)
              ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                  state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by,
                  filed_source='meena',
@@ -6828,14 +6836,17 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                  site=COALESCE(scheduling.radiology_orders.site, EXCLUDED.site),
                  bill_no=COALESCE(scheduling.radiology_orders.bill_no, EXCLUDED.bill_no),
                  patient_name=COALESCE(scheduling.radiology_orders.patient_name, EXCLUDED.patient_name),
-                 reported_at=COALESCE(scheduling.radiology_orders.reported_at, NOW()),
+                 -- the real report date, when we have it, is the truth — it overrides the
+                 -- board's earlier "seen ready" guess; else keep what's stored, then NOW().
+                 reported_at=COALESCE(%s::timestamptz, scheduling.radiology_orders.reported_at, NOW()),
                  accession=COALESCE(scheduling.radiology_orders.accession, EXCLUDED.accession),
                  accession_source=COALESCE(scheduling.radiology_orders.accession_source, EXCLUDED.accession_source),
                  pacs_id=COALESCE(scheduling.radiology_orders.pacs_id, EXCLUDED.pacs_id),
                  cpacs_url=COALESCE(scheduling.radiology_orders.cpacs_url, EXCLUDED.cpacs_url),
                  updated_at=NOW()""",
           (st, mr, (str(bill_no) if bill_no is not None else None), gpb, patient_name,
-           study_id, svc, user_id, acc, acc_src, pid, curl),
+           study_id, svc, (rep_real.isoformat() if rep_real else None), user_id, acc, acc_src, pid, curl,
+           (rep_real.isoformat() if rep_real else None)),
           exec_only=True)
     except Exception:
         pass
@@ -7270,7 +7281,9 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
                                 accession=(plan.get("accession") or b.get("accession")
                                            or (study.get("accession") if isinstance(study, dict) else None)),
                                 accession_source=plan.get("accessionSource"),
-                                pacs_id=plan.get("pacsId"), cpacs_url=plan.get("cpacsUrl"))
+                                pacs_id=plan.get("pacsId"), cpacs_url=plan.get("cpacsUrl"),
+                                reported_at=((plan.get("report") or {}).get("reportDate")
+                                             if isinstance(plan.get("report"), dict) else None))
             except Exception:
                 pass
         if wrote and consent_id:
@@ -9660,7 +9673,12 @@ def _radiology_autofile_sweep():
                                      "note": None if wrote else (out.get("note") or out.get("reason") if isinstance(out, dict) else None)}))
             if wrote and gpb:
                 _rad_mark_filed(gpb, study.get("studyId") or c.get("studyId"), c.get("serviceId"), None,
-                                mrno=c.get("file"), site=c.get("site"), bill_no=c.get("billNo"))
+                                mrno=c.get("file"), site=c.get("site"), bill_no=c.get("billNo"),
+                                accession=(plan.get("accession") or (study.get("accession") if isinstance(study, dict) else None)),
+                                accession_source=plan.get("accessionSource"),
+                                pacs_id=plan.get("pacsId"), cpacs_url=plan.get("cpacsUrl"),
+                                reported_at=((plan.get("report") or {}).get("reportDate")
+                                             if isinstance(plan.get("report"), dict) else None))
                 filed += 1
         except Exception as e:
             print(f"[rad-autofile] file {c.get('file')}: {e}")
