@@ -896,6 +896,11 @@ def init_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_orders_mrno ON scheduling.radiology_orders(mrno);")
             # Imaging modality (CT/US/XR/MR/MG) captured from the worklist when known.
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS modality TEXT;")
+            # How the order was closed: 'meena' (filed through our workflow, so its
+            # turnaround is real) vs 'external' (reconciled — it left the Siratech board
+            # having been filed/resolved outside Meena, so its TAT is unknown). Keeps the
+            # stats honest: only 'meena' rows feed the turnaround averages.
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS filed_source TEXT;")
 
             # ── Performance indexes for hot / growing tables (audit, on-duty, dashboard
             # counts). All additive and IF NOT EXISTS — safe to run every boot. ──
@@ -6744,27 +6749,90 @@ def _rad_upsert_orders(items):
             except Exception: pass
         return 0
 
-def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id):
-    """Record the durable binding (order ↔ DePACS study) + 'filed' state when a report
-    is filed into Siratech. The bound study_id is the deterministic link going forward."""
+def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
+                    mrno=None, site=None, bill_no=None, patient_name=None):
+    """Record the durable binding (order ↔ DePACS study) + 'filed' state when Meena files
+    a report into Siratech. The bound study_id is the deterministic link going forward.
+    An UPSERT (not UPDATE-only): if the board never persisted this order first (e.g. it
+    was filed the instant it appeared), we still record the filing instead of silently
+    losing it — which used to leave some filed reports invisible on the Orders page.
+    filed_source='meena' marks it as a real Meena turnaround (feeds the TAT averages)."""
     if not gen_pat_billing_id:
         return
     try:
-        q("""UPDATE scheduling.radiology_orders
-                SET state='filed', filed_at=NOW(), filed_by=%s,
-                    study_id=COALESCE(%s, study_id),
-                    service_id=COALESCE(%s, service_id),
-                    reported_at=COALESCE(reported_at, NOW()), updated_at=NOW()
-              WHERE gen_pat_billing_id=%s""",
-          (user_id, study_id, (str(service_id) if service_id is not None else None), int(gen_pat_billing_id)),
+        gpb = int(gen_pat_billing_id)
+    except Exception:
+        return
+    svc = str(service_id) if service_id is not None else None
+    try:
+        # mrno is NOT NULL on the table; fall back to the order key as a last resort so a
+        # first-sight filing can still insert rather than error out.
+        mr = str(mrno) if mrno else str(gpb)
+        try:
+            st = int(site) if site is not None and str(site).strip() != "" else None
+        except Exception:
+            st = None
+        q("""INSERT INTO scheduling.radiology_orders
+                 (site, mrno, bill_no, gen_pat_billing_id, patient_name,
+                  state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source)
+             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),NOW(),NOW(),%s,'meena')
+             ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
+                 state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by,
+                 filed_source='meena',
+                 study_id=COALESCE(EXCLUDED.study_id, scheduling.radiology_orders.study_id),
+                 service_id=COALESCE(EXCLUDED.service_id, scheduling.radiology_orders.service_id),
+                 site=COALESCE(scheduling.radiology_orders.site, EXCLUDED.site),
+                 bill_no=COALESCE(scheduling.radiology_orders.bill_no, EXCLUDED.bill_no),
+                 patient_name=COALESCE(scheduling.radiology_orders.patient_name, EXCLUDED.patient_name),
+                 reported_at=COALESCE(scheduling.radiology_orders.reported_at, NOW()),
+                 updated_at=NOW()""",
+          (st, mr, (str(bill_no) if bill_no is not None else None), gpb, patient_name,
+           study_id, svc, user_id),
           exec_only=True)
     except Exception:
         pass
 
+def _rad_reconcile_resolved(items):
+    """Close orders that have left the live Siratech board — filed or resolved OUTSIDE
+    Meena — so the Orders page stops crying wolf. Every stored 'ordered'/'reported' row
+    first entered the store via the worklist, so while an order is genuinely pending the
+    board keeps returning it and the upsert (which runs just before this) re-stamps its
+    updated_at=NOW(). A row whose updated_at has gone stale (>5 min) has therefore dropped
+    off the board → it's done. We only reconcile SITES that returned >=1 pending item in
+    this very response, so a transient empty/failed fetch can never mass-close a branch.
+    Reconciled rows get filed_source='external' → their (unknown) turnaround never poisons
+    the Meena TAT averages. History-only: this never touches the live worklist or the HIS.
+    Best-effort — a DB hiccup is swallowed."""
+    if not isinstance(items, list) or not items:
+        return 0
+    sites = set()
+    for it in items:
+        s = it.get("site")
+        if s is None:
+            continue
+        try:
+            sites.add(int(s))
+        except Exception:
+            pass
+    if not sites:
+        return 0
+    try:
+        q("""UPDATE scheduling.radiology_orders
+                SET state='filed', filed_source='external',
+                    filed_at=COALESCE(filed_at, NOW()), updated_at=NOW()
+              WHERE site = ANY(%s) AND state IN ('ordered','reported')
+                AND updated_at < NOW() - INTERVAL '5 minutes'""",
+          (list(sites),), exec_only=True)
+    except Exception:
+        pass
+    return 0
+
 @app.get("/api/radiology/orders")
-def radiology_orders(request: Request, user=Depends(require_admin)):
+def radiology_orders(request: Request, user=Depends(require_radiology)):
     """RIS Phase 2 — the persisted order lifecycle store with turnaround (TAT) in
-    hours. Filter by state / site / mrno. Team leads are scoped to their branch."""
+    hours. Filter by state / site / mrno. Team leads are scoped to their branch.
+    Gated the same as the worklist (require_radiology) so a privileged staff member
+    who can see the live board can also see its history."""
     p = request.query_params
     clauses, params = [], []
     scope = _rad_scope_site(user)
@@ -6780,7 +6848,7 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
         clauses.append("mrno=%s"); params.append(mr)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = q(f"""SELECT gen_pat_billing_id, site, mrno, bill_no, patient_name, department, doctor,
-                        emergency, state, study_id, service_id, modality,
+                        emergency, state, study_id, service_id, modality, filed_source,
                         ordered_at, reported_at, filed_at, updated_at,
                         EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
                         EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
@@ -6797,6 +6865,7 @@ def radiology_orders(request: Request, user=Depends(require_admin)):
         "billNo": r["bill_no"], "patientName": r["patient_name"], "department": r["department"],
         "doctor": r["doctor"], "emergency": r["emergency"], "state": r["state"],
         "studyId": r["study_id"], "serviceId": r["service_id"], "modality": r["modality"],
+        "filedSource": r["filed_source"],
         "orderedAt": _iso(r["ordered_at"]), "reportedAt": _iso(r["reported_at"]), "filedAt": _iso(r["filed_at"]),
         "tatReportH": _r1(r["tat_report_h"]), "tatFileH": _r1(r["tat_file_h"]), "tatTotalH": _r1(r["tat_total_h"]),
     } for r in rows]
@@ -6879,6 +6948,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     try:
         if isinstance(data, dict):
             _rad_upsert_orders(data.get("items"))
+            _rad_reconcile_resolved(data.get("items"))
             _annotate_worklist_consent(data.get("items"))
     except Exception:
         pass
@@ -7013,7 +7083,8 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
                                  "authorized": bool(isinstance(out, dict) and out.get("authorized"))}))
         if wrote and gpb:
             try:
-                _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"])
+                _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"],
+                                mrno=b.get("file"), site=b.get("site"), bill_no=b.get("billNo"))
             except Exception:
                 pass
         if wrote and consent_id:
@@ -9402,7 +9473,8 @@ def _radiology_autofile_sweep():
                                      "authorized": bool(isinstance(out, dict) and out.get("authorized")),
                                      "note": None if wrote else (out.get("note") or out.get("reason") if isinstance(out, dict) else None)}))
             if wrote and gpb:
-                _rad_mark_filed(gpb, study.get("studyId") or c.get("studyId"), c.get("serviceId"), None)
+                _rad_mark_filed(gpb, study.get("studyId") or c.get("studyId"), c.get("serviceId"), None,
+                                mrno=c.get("file"), site=c.get("site"), bill_no=c.get("billNo"))
                 filed += 1
         except Exception as e:
             print(f"[rad-autofile] file {c.get('file')}: {e}")

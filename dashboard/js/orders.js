@@ -14,6 +14,13 @@ async function renderOrdersPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Orders', 'Radiology orders', 'The full lifecycle of every order — ordered, reported, filed, with turnaround times')}
+    <div class="card" style="margin-bottom:12px;padding:10px 12px;border-left:3px solid #3b7ddd;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:18px">📋</span>
+      <span style="font-size:13px;color:var(--muted)">
+        This is the <strong>history &amp; turnaround</strong> view — where every report ended up.
+        To <strong>work</strong> pending patients, open the <a href="#" onclick="showPage('worklist');return false" style="color:#3b7ddd;font-weight:600">Worklist</a>.
+      </span>
+    </div>
     <div id="od-summary" style="margin-bottom:12px"></div>
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
@@ -102,10 +109,13 @@ async function odLoad(force, silent) {
 
 function odRender() {
   const d = odState.data || {}, orders = d.orders || [], by = d.byState || {};
-  // Summary: the pipeline counts + a couple of average turnaround figures.
-  const filed = orders.filter(o => o.state === 'filed' && o.tatTotalH != null);
+  // Summary: the pipeline counts + a couple of average turnaround figures. Only orders
+  // filed THROUGH Meena carry a real turnaround — 'external' rows were reconciled off the
+  // board (filed elsewhere) with an unknown file time, so they're kept out of the averages
+  // to stop the numbers being poisoned.
+  const filed = orders.filter(o => o.state === 'filed' && o.filedSource !== 'external' && o.tatTotalH != null);
   const avgTotal = filed.length ? (filed.reduce((s, o) => s + o.tatTotalH, 0) / filed.length) : null;
-  const rep = orders.filter(o => o.tatReportH != null);
+  const rep = orders.filter(o => o.filedSource !== 'external' && o.tatReportH != null);
   const avgReport = rep.length ? (rep.reduce((s, o) => s + o.tatReportH, 0) / rep.length) : null;
   const sum = document.getElementById('od-summary');
   if (sum) sum.innerHTML = `
@@ -188,7 +198,10 @@ function odRow(o) {
   const step = OD_STEP_ORDER[o.state] ?? 0;
   const emerg = o.emergency;
   const att = odAttention(o);
-  const stateBadge = o.state === 'filed' ? '<span class="badge badge-green">Filed</span>'
+  const stateBadge = o.state === 'filed'
+    ? (o.filedSource === 'external'
+        ? '<span class="badge" style="background:#8a8f98;color:#fff" title="Left the board filed/resolved outside Meena — turnaround unknown">Filed elsewhere</span>'
+        : '<span class="badge badge-green">Filed</span>')
     : o.state === 'reported' ? '<span class="badge badge-orange">Reported</span>'
       : '<span class="badge">Ordered</span>';
   const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--warn,#e0a800)') : null;
