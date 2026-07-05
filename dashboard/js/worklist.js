@@ -35,8 +35,13 @@ function wlCanSwitchBranch() {
 // fall back to mrno+date (two same-day orders for one patient would collide and swap
 // each other's modality/stage). Keyless rows just re-enrich each pass — no swap.
 function wlRowKey(it) {
-  return it.genPatBillingId != null ? 'g' + it.genPatBillingId
+  const base = it.genPatBillingId != null ? 'g' + it.genPatBillingId
     : it.billNo ? 'b' + it.billNo : null;
+  if (base == null) return null;
+  // A bill can bundle several exams (one board row per exam) — key each exam's row
+  // separately or the caches would smear one exam's modality/stage onto its sibling.
+  const svc = it.svcId != null ? it.svcId : (it.svcSeq != null ? 's' + it.svcSeq : null);
+  return svc != null ? base + ':' + svc : base;
 }
 
 // Local (KSA) date as YYYY-MM-DD — the operator is in KSA so the browser's local
@@ -345,7 +350,8 @@ function wlRender() {
   const imaged = items.filter((it) => it.stage === 'imaged');
   const reported = items.filter((it) => it.stage === 'reported');
   const sum = document.getElementById('wl-summary');
-  if (sum) sum.textContent = `${active.length} waiting to scan · ${d.emergency || 0} emergency`
+  const activeEmerg = active.filter((it) => it.emergency).length;   // emergencies still in the queue, not board-wide
+  if (sum) sum.textContent = `${active.length} waiting to scan${activeEmerg ? ` (${activeEmerg} emergency)` : ''}`
     + (imaged.length ? ` · ${imaged.length} imaged` : '')
     + (reported.length ? ` · ${reported.length} reported` : '')
     + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
