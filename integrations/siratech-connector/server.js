@@ -706,6 +706,13 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
           svcId: row.invMastServiceId != null ? row.invMastServiceId : null,
           billDate: row.billDate || row.appoinmentDate || null,
           encounterER: String(row.encounter || '').trim().toUpperCase() === 'ER',
+          // Siratech's OWN patient-tracking timestamps (discovered in FetchRISPanel):
+          // arrival → exam start → exam end. examStart/examEnd are a HARD "the scan
+          // physically happened" signal — instant imaged status straight from the HIS,
+          // no DePACS/MPPS needed. Empty when the workflow isn't recorded (harmless).
+          examStart: row.examStartDate || null,
+          examEnd: row.examEndDate || null,
+          arrival: row.arrivalDate || null,
         });
         risByBill.set(String(row.billNo), list);
       }
@@ -728,6 +735,13 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
       row.svcId = e.svcId; row.svcSeq = idx;
       const st = risStageOf(e.status);
       if (st) row.stage = st;   // fast preliminary stage; refined by the DePACS check below
+      // Hard scan signal from Siratech's own exam timestamps (authoritative, unlike the
+      // status TEXT): once the tech records exam start/end, the study exists — mark the
+      // row imaged instantly (the client trusts `scanned` even before the DePACS pass).
+      row.scanned = !!(e.examEnd || e.examStart);
+      row.examStartAt = e.examStart || null;
+      row.examEndAt = e.examEnd || null;
+      row.arrivedAt = e.arrival || null;
       if (e.billDate) {
         row.orderedDate = e.billDate;
         const bt = parseHisDate(e.billDate);
