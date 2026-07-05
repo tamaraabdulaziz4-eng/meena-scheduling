@@ -868,6 +868,43 @@ app.get('/autofile/candidates', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── Resulted / awaiting-authorization queue (READ-ONLY) ───────────────────────
+// Siratech's own "auth search" (filterResult=2, selectionType=2, isFrequent=1 —
+// captured live from the UI): every order that already HAS a result saved. Two uses:
+//   • rescue "saved but never authorized" results (they vanish from the pending
+//     list, so before this we could not even SEE them)
+//   • confirm an order that left the pending worklist truly got a result (honest
+//     reconcile: 'filed' vs merely 'gone')
+app.get('/results/resulted', requireAuth, async (req, res) => {
+  try {
+    await getToken();
+    const empId = currentEmpId();
+    if (!empId) throw new Error('no empId (not logged in?)');
+    const site = Number(req.query.site) > 0 ? Number(req.query.site) : RESULT_SITE;
+    const mrno = String(req.query.mrno || '').trim();
+    const day = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
+    const from = day(String(req.query.from || '')) || new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
+    const to = day(String(req.query.to || '')) || new Date().toISOString().slice(0, 10);
+    const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+      body: results.radiologySearchBody({
+        mrno, hospitalId: site, empId, filterResult: '2', selectionType: 2, isFrequent: 1,
+        fromDate: `${from}T00:00:00.000Z`, toDate: `${to}T23:59:59.000Z`,
+      }),
+    });
+    if (!sr || (sr.status && sr.status >= 400) || sr.json == null) {
+      throw new Error(`HIS resulted search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
+    }
+    const rows = (sr.json.data || []).map((r) => ({
+      mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
+      billNo: r.billNo || null, genPatBillingId: r.genPatBillingId,
+      billDate: r.billDate || null, doctorName: (r.doctorName || '').trim(),
+      authorizationStatus: r.authorizationstatus != null ? r.authorizationstatus : (r.authorizationStatus != null ? r.authorizationStatus : null),
+      raw: _accDbg(r),
+    }));
+    return res.json({ ok: true, site, from, to, count: rows.length, rows });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 // ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────
 // Files a VERIFIED DePACS report back into Siratech's Radiology Result Entry and
 // authorises it. NOTHING is written unless {confirm:true} is sent AND the target
