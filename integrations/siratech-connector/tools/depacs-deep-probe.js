@@ -55,7 +55,19 @@ async function tryGet(token, path) {
   console.log('══════════════════════════════════════════════════════════════');
   let token;
   try { token = await results.dpToken(); console.log('✓ DePACS login OK\n'); }
-  catch (e) { console.error('✗ DePACS login FAILED:', e.message); process.exit(2); }
+  catch (e) {
+    console.error('✗ DePACS login FAILED:', e.message);
+    console.error('\n── signin diagnosis (password never shown) ──');
+    try {
+      const dbg = await results.depacsSigninDebug();
+      console.error(JSON.stringify(dbg, null, 2));
+      console.error('\nRead it like this:');
+      console.error('  • userSet/passSet false      → the DEPACS_USER/DEPACS_PASS env vars aren\'t set on the connector.');
+      console.error('  • message says invalid/wrong  → the DePACS credentials changed — update them.');
+      console.error('  • tokenFound false but a token-looking key IS in responseShape → tell me the key name and I\'ll parse it.');
+    } catch (e2) { console.error('  (could not run signin diagnosis:', e2.message, ')'); }
+    process.exit(2);
+  }
 
   // 1) The study SCHEMA — reveals every column/field DePACS knows (incl. a real
   //    "Accession Number" field distinct from the list row, if one exists).

@@ -209,14 +209,40 @@ async function dpFetch(path, { method = 'GET', body, token } = {}) {
   return { status: res.status, json, text };
 }
 
+// Pull the bearer token out of a DePACS signin response, trying every shape the API
+// has been seen to use (the token key/path varies by build), so a cosmetic response
+// change can't silently break every DePACS feature.
+function _extractDpToken(json) {
+  if (!json || typeof json !== 'object') return null;
+  const b = json.body || json.data || json.result || json;
+  return (b && (b.access_token || b.accessToken || b.token || b.authToken || b.jwt))
+    || json.access_token || json.token || null;
+}
 let dpTok = { token: '', ts: 0 };
 async function dpToken(force = false) {
   if (!force && dpTok.token && Date.now() - dpTok.ts < 20 * 60 * 1000) return dpTok.token;
   const r = await dpFetch('/auth/signin', { method: 'POST', body: { identifier: DEPACS_USER, password: DEPACS_PASS, device_id: DEPACS_USER + '_meena', platform: 'web' } });
-  const token = r.json && r.json.body && r.json.body.access_token;
-  if (!token) throw new Error('DePACS signin failed (HTTP ' + r.status + ')');
+  const token = _extractDpToken(r.json);
+  if (!token) {
+    const msg = (r.json && (r.json.message || r.json.error || (r.json.body && r.json.body.message))) || '';
+    throw new Error('DePACS signin failed (HTTP ' + r.status + (msg ? ' — ' + String(msg).slice(0, 120) : ' — no token in response') + ')');
+  }
   dpTok = { token, ts: Date.now() };
   return token;
+}
+// Read-only diagnostic: what does signin actually return? Never exposes the password
+// or the full token — just enough to tell "wrong credentials" from "token moved".
+async function depacsSigninDebug() {
+  const r = await dpFetch('/auth/signin', { method: 'POST', body: { identifier: DEPACS_USER, password: DEPACS_PASS, device_id: DEPACS_USER + '_meena', platform: 'web' } });
+  const tok = _extractDpToken(r.json);
+  const shape = (o, d) => (o && typeof o === 'object' && d > 0)
+    ? Object.fromEntries(Object.keys(o).slice(0, 30).map((k) => [k, (o[k] && typeof o[k] === 'object') ? shape(o[k], d - 1) : (/token|jwt|password/i.test(k) ? '<hidden:' + typeof o[k] + '>' : o[k])])) : o;
+  return {
+    base: DEPACS_BASE, user: DEPACS_USER, userSet: !!DEPACS_USER, passSet: !!DEPACS_PASS,
+    httpStatus: r.status, tokenFound: !!tok,
+    message: (r.json && (r.json.message || r.json.error || (r.json.body && r.json.body.message))) || null,
+    responseShape: shape(r.json, 3),
+  };
 }
 
 // DePACS stores pat_id three ways (bare MRN, MRN+name, or a "SIRA"+MRN prefix).
@@ -504,5 +530,5 @@ module.exports = {
   depacsStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
   // exposed for the deep DePACS probe tool (read-only diagnostics)
-  dpFetch, dpToken, _fileCandidates,
+  dpFetch, dpToken, _fileCandidates, depacsSigninDebug,
 };
