@@ -236,11 +236,36 @@ function _fileCandidates(mrno) {
   return out;
 }
 
+// Short-TTL cache for the LIGHT stage-check lookups (worklist imaged/reported pass).
+// The board re-checks every patient on load and on each 45s refresh; without this,
+// every pass re-queries DePACS for each patient's whole study history — the source
+// of the "lag" on the imaged/reported badges. Only light lookups are cached (a
+// recent, small window); the filing matcher's full-history lookups are never cached
+// (correctness-critical). TTL is short so a just-arrived study still surfaces fast.
+const _lightCache = new Map();   // mrno -> { ts, data }
+const DEPACS_LIGHT_TTL = Number(process.env.DEPACS_LIGHT_TTL_MS || 30000);
+// How far back the light stage-check looks. The live board only shows recent orders,
+// and a study for such an order is dated near it — so a wide window just pages through
+// years of irrelevant history. 120 days covers any realistic board range with slack.
+const DEPACS_LIGHT_DAYS = Number(process.env.DEPACS_LIGHT_DAYS || 120);
+
 // All studies for an MRN (across pat_id forms), enriched with the report description
 // (which the list endpoint leaves blank — it lives in the per-study report info).
 async function depacsStudies(mrno, opts = {}) {
+  // Serve a fresh light lookup from cache (huge win for the worklist stage pass).
+  const cacheKey = String(mrno == null ? '' : mrno).trim();
+  if (opts.light && !opts.noCache) {
+    const e = _lightCache.get(cacheKey);
+    if (e && Date.now() - e.ts < DEPACS_LIGHT_TTL) return e.data;
+  }
   let token = await dpToken();
-  const qs = (page, pid) => `/study/get_studies?start_date=2015-01-01&end_date=2035-12-31&page_size=100&current_page=${page}&patient_id=${encodeURIComponent(pid)}`;
+  // Narrow the date window for light stage checks: fetch only recent studies (a
+  // patient's 10-year history is irrelevant to whether TODAY's order is imaged), so
+  // most patients come back in a single page instead of many.
+  const startDate = opts.light
+    ? new Date(Date.now() - DEPACS_LIGHT_DAYS * 864e5).toISOString().slice(0, 10)
+    : '2015-01-01';
+  const qs = (page, pid) => `/study/get_studies?start_date=${startDate}&end_date=2035-12-31&page_size=100&current_page=${page}&patient_id=${encodeURIComponent(pid)}`;
   const fetchPage = async (page, pid) => {
     let r = await dpFetch(qs(page, pid), { token });
     if (r.status === 401) { token = await dpToken(true); r = await dpFetch(qs(page, pid), { token }); }  // token lapsed → refresh once
@@ -298,6 +323,10 @@ async function depacsStudies(mrno, opts = {}) {
     }
   };
   await Promise.all(new Array(Math.max(1, Math.min(6, rows.length))).fill(0).map(worker));
+  if (opts.light && !opts.noCache) {
+    _lightCache.set(cacheKey, { ts: Date.now(), data: out });
+    if (_lightCache.size > 800) _lightCache.delete(_lightCache.keys().next().value);
+  }
   return out;
 }
 
