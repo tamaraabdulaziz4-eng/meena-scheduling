@@ -291,10 +291,12 @@ function odRow(o) {
         <div style="font-weight:700">${escapeHtml(o.patientName || '—')}
           <span style="color:var(--muted);font-weight:500">· ${escapeHtml(o.mrno || '')}</span></div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">
-          ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}</div>
+          ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}${o.accession ? ' · acc ' + escapeHtml(String(o.accession)) : ''}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${odModBadges(o.modality)}
+        ${o.accession ? `<span class="badge badge-green" title="Exact image↔order link — matched on DICOM accession ${escapeHtml(String(o.accession))}${o.accessionSource ? ' (' + escapeHtml(String(o.accessionSource)) + ')' : ''}">🔗 Linked</span>` : ''}
+        ${o.cpacsUrl ? `<a class="badge" style="background:#3b6fd4;color:#fff;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 View images</a>` : ''}
         ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
         ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
         ${odIsOrphan(o) ? '<span class="badge badge-orange" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
