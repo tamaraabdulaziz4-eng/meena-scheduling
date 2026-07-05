@@ -40,7 +40,9 @@ function wlRowKey(it) {
   if (base == null) return null;
   // A bill can bundle several exams (one board row per exam) — key each exam's row
   // separately or the caches would smear one exam's modality/stage onto its sibling.
-  const svc = it.svcId != null ? it.svcId : (it.svcSeq != null ? 's' + it.svcSeq : null);
+  // Prefer the stable service id; fall back to the exam NAME (also stable) rather than
+  // the per-response array index, which can reorder between the fast and enrich passes.
+  const svc = it.svcId != null ? it.svcId : (it.exam ? 'x' + it.exam : null);
   return svc != null ? base + ':' + svc : base;
 }
 
@@ -227,6 +229,14 @@ async function wlLoad(force, silent) {
   if (force) qs.set('nocache', '1');
   try {
     wlState.data = await API.get('/radiology/worklist?' + qs.toString());
+    // The fast pass carries only a PRELIMINARY stage (from the HIS RIS status text),
+    // which can be wrong ("Not Verified" etc). Demote it: it may hint the badge, but it
+    // must NOT move a row into the imaged/reported strips — only the authoritative
+    // DePACS stage (ready=1 pass) does that. This stops an imaged row from being
+    // hidden then reappearing when a later pass overwrites the accurate stage.
+    for (const it of (wlState.data.items || [])) {
+      if (it.stage) { it.stagePrelim = it.stage; delete it.stage; }
+    }
     wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
     wlEnrich(silent);                             // background: fill stage + modality for unknown rows
@@ -289,8 +299,11 @@ async function wlEnrich(silent) {
   // work finished; now each pass merges + repaints the moment it lands.
   try {
     await Promise.all([
-      API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d)).catch(() => {}),
-      API.get('/radiology/worklist?' + mkQs({ ready: '1' })).then((d) => wlMergeEnrich(d)).catch(() => {}),
+      // modality pass: exam+modality ONLY — must never touch the stage (it carries just
+      // the preliminary stage, which would stomp the accurate one from the ready pass).
+      API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d, false)).catch(() => {}),
+      // ready pass: the authoritative DePACS-grounded stage.
+      API.get('/radiology/worklist?' + mkQs({ ready: '1' })).then((d) => wlMergeEnrich(d, true)).catch(() => {}),
     ]);
     wlState.lastEnrich = Date.now();
   } finally {
@@ -304,7 +317,7 @@ async function wlEnrich(silent) {
 
 // Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
 // sibling pass may still be running, but whatever this one filled shows now.
-function wlMergeEnrich(d) {
+function wlMergeEnrich(d, isReady) {
   if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); }
   const enr = new Map();
   for (const it of ((d && d.items) || [])) {
@@ -312,7 +325,7 @@ function wlMergeEnrich(d) {
     if (!k) continue;                            // keyless → don't cache/merge (collision-safe)
     enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
     if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
-    if (it.stage) wlState.stageCache.set(k, it.stage);
+    if (isReady && it.stage) wlState.stageCache.set(k, it.stage);   // only the authoritative pass caches stage
   }
   if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
     for (const it of wlState.data.items) {
@@ -321,7 +334,8 @@ function wlMergeEnrich(d) {
       if (!e) continue;
       if (e.modality && it.modality !== e.modality) it.modality = e.modality;
       if (e.exam && it.exam !== e.exam) it.exam = e.exam;
-      if (e.stage && it.stage !== e.stage) it.stage = e.stage;
+      // Stage is authoritative ONLY from the ready pass; the modality pass never sets it.
+      if (isReady && e.stage && it.stage !== e.stage) it.stage = e.stage;
     }
   }
   if (document.getElementById('wl-body')) wlRender();
@@ -390,14 +404,33 @@ function wlRender() {
     : `<div class="empty" style="padding:22px"><p>All caught up — no one is waiting to be scanned.</p></div>`)
     + strip('img', imaged, `<span class="badge badge-orange">📷 ${imaged.length}</span>`, 'Imaged — awaiting the report', 'i')
     + strip('rep', reported, `<span class="badge badge-green">✅ ${reported.length}</span>`, 'Reported — filing to the patient file', 'r');
+  wlRestoreOpenState();   // a live refresh must not collapse strips/drills the operator opened
 }
 
+// Which strips + Check drills the operator has open — preserved across every repaint
+// (live refresh, enrichment merge) so the board never "resets" under their hands.
+wlState.openStrips = wlState.openStrips || new Set();
+wlState.openDrills = wlState.openDrills || new Set();
+function wlRestoreOpenState() {
+  for (const id of wlState.openStrips) {
+    const list = document.getElementById(`wl-${id}-list`), arrow = document.getElementById(`wl-${id}-arrow`);
+    if (list) { list.style.display = ''; if (arrow) arrow.textContent = '▾'; }
+  }
+  for (const key of wlState.openDrills) {
+    const row = document.getElementById('wl-dr-' + key), box = document.getElementById('wl-d-' + key);
+    if (!row) { wlState.openDrills.delete(key); continue; }   // its row left the board
+    row.style.display = '';
+    const cached = wlState.drillHtml && wlState.drillHtml.get(key);
+    if (box && cached) box.innerHTML = cached;                // restore last result, no refetch flicker
+  }
+}
 function wlToggleStrip(id) {
   const list = document.getElementById(`wl-${id}-list`), arrow = document.getElementById(`wl-${id}-arrow`);
   if (!list) return;
   const open = list.style.display !== 'none';
   list.style.display = open ? 'none' : '';
   if (arrow) arrow.textContent = open ? '▸' : '▾';
+  if (open) wlState.openStrips.delete(id); else wlState.openStrips.add(id);
 }
 
 // Compact RIS-panel table — a flat list, NEWEST first (lowest age on top), with
@@ -478,7 +511,9 @@ function wlRow(it, key) {
       if (it.exam) return mod + ' <span>' + escapeHtml(it.exam) + '</span>';
       if (p) return mod + ' ' + sh(90);
       return mod || dash; })()}</td>
-    <td>${it.stage ? wlStageBadge(it.stage) : (p ? sh(64) : wlStageBadge(null))}
+    <td>${it.stage ? wlStageBadge(it.stage)
+        : (it.stagePrelim ? `<span title="checking DePACS…" style="opacity:.5">${wlStageBadge(it.stagePrelim)}</span>`
+          : (p ? sh(64) : wlStageBadge(null)))}
       ${age ? `<div style="font-size:10px;color:var(--muted);margin-top:2px" title="time since ordered">${age} ago</div>` : ''}</td>
     <td>${wlConsentEl(it)}</td>
     <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
@@ -491,11 +526,14 @@ function wlRow(it, key) {
 async function wlToggle(key, mrno, site, btn) {
   const row = document.getElementById('wl-dr-' + key), box = document.getElementById('wl-d-' + key);
   if (!row || !box) return;
-  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = 'Check'; return; }
+  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = 'Check'; wlState.openDrills.delete(key); return; }
   row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
+  wlState.openDrills.add(key);
+  wlState.drillHtml = wlState.drillHtml || new Map();
   try {
     const d = await API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`);
     box.innerHTML = wlMatch(d);
+    wlState.drillHtml.set(key, box.innerHTML);   // cache so a repaint can restore it without a refetch
   } catch (e) {
     box.innerHTML = `<div class="ho-note">${escapeHtml(e.message || 'Result match failed')}</div>`;
   }

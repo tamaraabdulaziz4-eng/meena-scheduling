@@ -406,8 +406,10 @@ function pickAccession(...objs) {
   // ("SIRA1661") — using it as the accession key risks a wrong-study bind, so it is
   // deliberately excluded. When no true accession is present the matcher correctly
   // falls back to modality + body-part + time.
-  const keys = ['accessionNumber', 'accessionNo', 'accession_no', 'accession',
-                'accNo', 'barCode', 'barcode'];
+  // ONLY real DICOM-accession fields. barCode/barcode were included here but the
+  // function's own docstring says barcodes are lab/specimen ids, NOT the accession —
+  // matching on them risks binding a report to the wrong study. Removed.
+  const keys = ['accessionNumber', 'accessionNo', 'accession_no', 'accession', 'accNo'];
   for (const o of objs) {
     if (!o) continue;
     for (const k of keys) {
@@ -665,9 +667,18 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const risStageOf = (status) => {
     const s = String(status || '').toLowerCase();
     if (!s) return null;
+    // Negation/pending FIRST — "not verified", "to be signed", "pending approval",
+    // "un-verified" all carry a positive token but are NOT a signed report. Without
+    // this they wrongly read as 'reported' (same lesson as isReported in results.js).
+    if (/\bnot\b|\bnon[\s-]?|to\s+be|\bawait|\bun[\s-]?(verif|sign|approv)/.test(s)) {
+      // a negated report state that still implies a report exists → draft, else ordered
+      return /(verif|sign|approv|report|dictat|transcrib)/.test(s) ? 'draft' : 'ordered';
+    }
+    // a report exists but isn't signed → draft (dictated / transcribed / preliminary / pending approval)
+    if (/dictat|transcrib|prelim|\bdraft\b|partial|interim|\bpend/.test(s)) return 'draft';
     if (/\b(verif|report|sign|approv|final|released|authenticat)/.test(s)) return 'reported';
-    if (/(complet|perform|imag|acquir|dictat|transcrib|prelim|scan|exam)/.test(s)) return 'imaged';
-    return 'ordered';   // ordered / scheduled / registered / arrived / booked / pending
+    if (/(complet|perform|imag|acquir|scan|exam)/.test(s)) return 'imaged';
+    return 'ordered';   // ordered / scheduled / registered / arrived / booked
   };
   let _risKeysLogged = false;   // one-time: reveal real field names if a guess misses
   const risByBill = new Map();
@@ -741,29 +752,44 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   };
   const kept = items.filter(inRange);
   items.length = 0; items.push(...kept);
+  // Re-sort AFTER expansion: the ER-encounter flag and the per-bill order time were
+  // applied during expansion, so the emergency-first / newest-first order computed
+  // before expansion is now stale (a fresh ER row could otherwise sit mid-list).
+  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
 
   // Fallback: any rows the RIS panel didn't cover (or if the service field guess
   // missed) get the old per-order RadiologyDetails lookup — bounded and concurrent —
   // only requested when modality=1, and only for rows still missing an exam.
   if (modality && items.length) {
-    const targets = items.filter((it) => !it.exam).slice(0, WORKLIST_MODALITY_CAP);
-    await pool(targets, 6, async (it) => {
+    // Fetch RadiologyDetails ONCE per bill (not per expanded row), then give EACH
+    // expanded sibling ITS OWN exam by service id — the old code joined every exam on
+    // the bill onto each sibling, producing duplicate identical rows with a corrupted
+    // "A · B" modality string.
+    const need = items.filter((it) => !it.exam);
+    const byBill = new Map();
+    for (const it of need) if (it.__row && !byBill.has(String(it.billNo))) byBill.set(String(it.billNo), it);
+    const svcId = (t) => (t && (t.inv_mast_service_id != null ? t.inv_mast_service_id : t.invMastserviceId));
+    const detByBill = new Map();
+    await pool([...byBill.values()].slice(0, WORKLIST_MODALITY_CAP), 6, async (it) => {
       try {
         const dr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', {
           body: results.radiologyDetailsBody(it.__row, { hospitalId: it.__site, empId }),
         });
-        const det = (dr.json && dr.json.data) || [];
-        const mods = [], exams = [];
-        for (const t of det) {
-          const m = results.normMod(t.categoryName || t.serviceName || '');
-          if (m && !mods.includes(m)) mods.push(m);
-          const ex = (t.serviceName || '').trim();
-          if (ex && !exams.includes(ex)) exams.push(ex);
-        }
-        if (mods.length) it.modality = mods.join(', ');
-        if (exams.length) it.exam = exams.join(' · ');
-      } catch (e) { /* leave modality/exam null on any per-order failure */ }
+        detByBill.set(String(it.billNo), (dr.json && dr.json.data) || []);
+      } catch (e) { /* leave this bill's rows as-is */ }
     });
+    for (const it of need) {
+      const det = detByBill.get(String(it.billNo));
+      if (!det || !det.length) continue;
+      // pick THIS row's test by service id when we have one; else the bill's single test.
+      const t = (it.svcId != null && det.find((x) => String(svcId(x)) === String(it.svcId)))
+        || (det.length === 1 ? det[0] : null);
+      if (!t) continue;
+      const ex = (t.serviceName || '').trim();
+      const m = results.normMod(t.categoryName || t.serviceName || '');
+      if (ex) it.exam = ex;
+      if (m) it.modality = m;
+    }
   }
 
   if (ready && items.length) {
@@ -781,17 +807,24 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     await pool(mrns, 6, async (m) => {
       try { studiesBy.set(m, await results.depacsStudies(m, { light: true })); } catch (e) { /* leave unknown */ }
     });
+    const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
     for (const it of items) {
       const all = studiesBy.get(it.mrno);
       if (!all) continue;                            // lookup failed → keep preliminary stage
       const mod = results.normMod(it.modality || it.exam || '');
-      if (!mod) continue;                            // unknown exam type → never guess a stage
+      // normMod returns the RAW string when it can't classify — that would never equal a
+      // study's normalized modality and would force EVERY unmapped exam to 'ordered' even
+      // when imaged. Only trust a match on a KNOWN modality; otherwise leave the stage.
+      if (!KNOWN_MOD.has(mod)) continue;
       const ot = parseHisDate(it.orderedDate);
       const matched = all.filter((s) => {
         if (results.normMod(s.modality || '') !== mod) return false;
         if (!Number.isFinite(ot)) return true;
         const st = parseHisDate(s.studyDate);
-        return Number.isFinite(st) ? st >= ot - 24 * 36e5 : true;   // unparseable → keep
+        // within the order's window: from 24h before the order to 96h after (the same
+        // bound the matcher uses) — an OLD or a much-later same-modality study can't
+        // drive this order's stage.
+        return Number.isFinite(st) ? (st >= ot - 24 * 36e5 && st <= ot + 96 * 36e5) : true;
       });
       if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; continue; }
       if (matched.some((s) => results.isReported(s.status))) { it.stage = 'reported'; it.readyToFile = true; }
