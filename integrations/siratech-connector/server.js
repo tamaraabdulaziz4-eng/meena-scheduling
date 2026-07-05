@@ -449,13 +449,11 @@ async function discoverOrderSite(file, wantBillNo) {
 async function emrRadiologyDetails(mrno, site) {
   const map = new Map();
   try {
-    const now = Date.now();
-    const from = new Date(now - 120 * 864e5).toISOString().slice(0, 10);
-    const to = new Date(now + 864e5).toISOString().slice(0, 10);
-    const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: {
-      mrno, hospitalId: site, fromDate: from + 'T00:00:00', toDate: to + 'T23:59:59',
-      userId: String(HIS_USER).padStart(8, '0'),
-    } });
+    // Use the PROVEN minimal body ({mrno}) — the same call discoverOrderSite relies on,
+    // which is known to return every radiology order for the patient (with siteId,
+    // accessionNumber, pacsId, cpacsUrl). Adding date/site filters here risked
+    // over-filtering the rows; the accession lookup wants ALL the patient's orders.
+    const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
     for (const d of ((r.json && r.json.data) || [])) {
       const nz = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null);
       const rec = {
