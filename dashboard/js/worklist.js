@@ -258,6 +258,7 @@ async function wlLoad(force, silent) {
 // Paint modality/exam AND pipeline stage onto the freshly-loaded board from the
 // persistent caches, so a live refresh shows everything INSTANTLY without waiting on
 // the slow enrichment pass for rows we already resolved.
+wlState.scannedSeen = wlState.scannedSeen || new Set();
 function wlHydrate() {
   const items = (wlState.data && wlState.data.items) || [];
   for (const it of items) {
@@ -265,6 +266,11 @@ function wlHydrate() {
     if (!k) continue;                              // keyless row → never restore from cache (collision-safe)
     if (!it.modality && !it.exam) { const c = wlState.modCache.get(k); if (c) { it.modality = c.modality; it.exam = c.exam; } }
     if (!it.stage) { const s = wlState.stageCache.get(k); if (s) it.stage = s; }
+    // "scanned" is a hard fact (Siratech recorded the exam start/end) — once true it
+    // stays true, so a later load where the RIS panel omitted the times can't drop the
+    // row back off the Imaged strip.
+    if (it.scanned) wlState.scannedSeen.add(k);
+    else if (wlState.scannedSeen.has(k)) it.scanned = true;
   }
 }
 
@@ -281,7 +287,12 @@ async function wlEnrich(silent) {
   const items = (wlState.data && wlState.data.items) || [];
   if (!items.length) return;
   const anyMissing = items.some((it) => !it.stage || !it.exam);
-  if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 120000)) return;
+  // Re-check the pipeline stage on (almost) every live refresh so promotions
+  // (ordered→imaged→reported) show within a poll — the DePACS lookups are now
+  // short-window + cached on the connector, so this is cheap. The ratchet in
+  // wlMergeEnrich guarantees a row never moves backward, so more-frequent checks
+  // only ever fill in progress, never cause flicker.
+  if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 30000)) return;
   _wlEnrichBusy = true;
   // Show the loading shimmer on the not-yet-filled cells while this pass runs.
   if (anyMissing) { wlState.enriching = true; if (document.getElementById('wl-body')) wlRender(); }
@@ -315,17 +326,38 @@ async function wlEnrich(silent) {
   }
 }
 
+// The pipeline is monotonic: ordered → imaged → draft → reported. On the live board a
+// row only moves FORWARD (images don't un-scan, a signed report doesn't un-sign; a row
+// that's truly done leaves the board entirely). So we RATCHET the stage: a later pass
+// may promote a row but must never demote it. This kills the flicker where an
+// imaged/reported row briefly showed then dropped back to "ordered" because one
+// ambiguous DePACS lookup (narrow window / modality miss / transient blip) disagreed.
+const _WL_STAGE_RANK = { ordered: 0, imaged: 1, draft: 2, reported: 3 };
+function wlStageRank(stage) {
+  return stage in _WL_STAGE_RANK ? _WL_STAGE_RANK[stage] : -1;
+}
+// The highest stage we currently believe for a row, honouring the hard scan signal
+// (scanned → at least imaged) so a ready pass can't hide a scanned row as "ordered".
+function wlCurRank(it) {
+  return Math.max(wlStageRank(it.stage), it.scanned ? _WL_STAGE_RANK.imaged : -1);
+}
+
 // Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
 // sibling pass may still be running, but whatever this one filled shows now.
 function wlMergeEnrich(d, isReady) {
-  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); }
+  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); }
   const enr = new Map();
   for (const it of ((d && d.items) || [])) {
     const k = wlRowKey(it);
     if (!k) continue;                            // keyless → don't cache/merge (collision-safe)
     enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
     if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
-    if (isReady && it.stage) wlState.stageCache.set(k, it.stage);   // only the authoritative pass caches stage
+    // Cache the HIGHEST stage ever seen for this row (ratchet), so a refresh restores
+    // the furthest-along state instead of letting a weaker later reading win.
+    if (isReady && it.stage) {
+      const prev = wlState.stageCache.get(k);
+      if (!prev || wlStageRank(it.stage) >= wlStageRank(prev)) wlState.stageCache.set(k, it.stage);
+    }
   }
   if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
     for (const it of wlState.data.items) {
@@ -334,8 +366,8 @@ function wlMergeEnrich(d, isReady) {
       if (!e) continue;
       if (e.modality && it.modality !== e.modality) it.modality = e.modality;
       if (e.exam && it.exam !== e.exam) it.exam = e.exam;
-      // Stage is authoritative ONLY from the ready pass; the modality pass never sets it.
-      if (isReady && e.stage && it.stage !== e.stage) it.stage = e.stage;
+      // Stage is authoritative ONLY from the ready pass — and only ever moves forward.
+      if (isReady && e.stage && wlStageRank(e.stage) > wlCurRank(it)) it.stage = e.stage;
     }
   }
   if (document.getElementById('wl-body')) wlRender();
