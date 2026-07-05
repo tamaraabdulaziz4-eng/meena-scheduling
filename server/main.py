@@ -7030,6 +7030,22 @@ def radiology_mwl_recent(user=Depends(require_radiology)):
             "lastSeen": r["last_seen"].isoformat() if r["last_seen"] else None} for r in rows]
     return {"ok": True, "count": len(out), "entries": out}
 
+@app.get("/api/radiology/labs/pregnancy")
+def radiology_labs_pregnancy(request: Request, user=Depends(require_radiology)):
+    """Radiation-safety decision support: has this patient had a recent pregnancy /
+    β-hCG lab, and what did it say? Read-only, best-effort — surfaces what Siratech's
+    own lab module already knows so the tech/radiologist can decide before imaging.
+    Never a hard block. Returns {found, verdict, resultText, testName, orderDate}."""
+    import urllib.parse
+    p = request.query_params
+    mrno = (p.get("mrno") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "mrno is required")
+    qs = {"mrno": mrno}
+    if (p.get("site") or "").strip().isdigit():
+        qs["site"] = p.get("site")
+    return _bridge_request("/his/labs/pregnancy?" + urllib.parse.urlencode(qs), timeout=90)
+
 @app.get("/api/radiology/autofile/config")
 def radiology_autofile_get(user=Depends(require_admin)):
     """Auto-file status: is the background worker filing verified reports into

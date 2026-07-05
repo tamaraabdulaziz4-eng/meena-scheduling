@@ -17,7 +17,7 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
-                modCache: new Map(), stageCache: new Map() };
+                modCache: new Map(), stageCache: new Map(), pregCache: new Map() };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
 // dropping off) shows without the operator touching anything.
@@ -482,6 +482,50 @@ function wlConsentEl(it) {
   if (it.consentOnFile) return '<span class="badge badge-green" title="Non-pregnancy consent signed">✓ Consent</span>';
   return `<button class="btn btn-sm" style="background:#e0a800;color:#fff;border:none" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">⚠ Consent needed</button>`;
 }
+// Radiation-safety decision support: for a female patient of child-bearing age,
+// let the tech check β-hCG / pregnancy lab status BEFORE imaging — on demand, per
+// patient (never auto for the whole board: each check is 2 HIS lab searches). The
+// verdict is cached so a live refresh keeps it. This never blocks imaging — it just
+// surfaces what Siratech's lab module already knows.
+function wlPregEl(it) {
+  if (!wlIsFemale(it.gender)) return '';
+  const mr = String(it.mrno || '');
+  const cached = wlState.pregCache.get(mr);
+  const id = 'wl-preg-' + mr.replace(/[^A-Za-z0-9_-]/g, '');
+  if (cached) return `<span id="${id}">${wlPregBadge(cached)}</span>`;
+  return `<span id="${id}"><button class="btn btn-sm btn-ghost" style="padding:1px 7px;font-size:11px" title="Check pregnancy / β-hCG lab before imaging" onclick="wlPregCheck('${jsAttr(mr)}',${Number(it.site) || 0},'${id}',this)">🤰 Preg check</button></span>`;
+}
+function wlPregBadge(r) {
+  if (!r || !r.found || !r.hasPregnancyTest) {
+    return '<span class="badge" style="background:#e0a800;color:#fff" title="No recent pregnancy / β-hCG lab found in Siratech — confirm status before imaging">🤰 No recent test</span>';
+  }
+  const when = r.resultDate || r.orderDate;
+  const dstr = when ? (' · ' + escapeHtml(String(when).slice(0, 10))) : '';
+  const nm = r.testName ? escapeHtml(String(r.testName)) : 'pregnancy test';
+  if (r.verdict === 'positive') {
+    return `<span class="badge badge-red" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — POSITIVE. Do NOT irradiate without physician review.">🤰 POSITIVE${dstr}</span>`;
+  }
+  if (r.verdict === 'negative') {
+    return `<span class="badge badge-green" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — negative">🤰 Negative${dstr}</span>`;
+  }
+  if (r.resulted) {
+    return `<span class="badge" style="background:#6b7280;color:#fff" title="${nm} resulted${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — read the value">🤰 Resulted${dstr}</span>`;
+  }
+  return `<span class="badge" style="background:#e0a800;color:#fff" title="${nm} ordered but result still pending">🤰 Test pending${dstr}</span>`;
+}
+async function wlPregCheck(mrno, site, id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'checking…'; }
+  try {
+    const qs = new URLSearchParams({ mrno }); if (site) qs.set('site', String(site));
+    const r = await API.get('/radiology/labs/pregnancy?' + qs.toString());
+    wlState.pregCache.set(String(mrno), r);
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = wlPregBadge(r);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '🤰 Preg check'; }
+    if (typeof toast === 'function') toast('Pregnancy lookup failed', 'err');
+  }
+}
 function wlConsent(mrno, name, exam, doctor, branch) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
@@ -520,7 +564,7 @@ function wlRow(it, key) {
           : (it.stagePrelim ? `<span title="checking DePACS…" style="opacity:.5">${wlStageBadge(it.stagePrelim)}</span>`
             : (p ? sh(64) : wlStageBadge(null))))}
       ${age ? `<div style="font-size:10px;color:var(--muted);margin-top:2px" title="time since ordered">${age} ago</div>` : ''}</td>
-    <td>${wlConsentEl(it)}</td>
+    <td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
     <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
   </tr>
   <tr id="wl-dr-${key}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${key}"></div></td></tr>`;

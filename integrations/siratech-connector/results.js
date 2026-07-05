@@ -392,12 +392,13 @@ function candOf(s) {
 // invCategoryId is nullable-decimal, visiType is int).
 function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, filterResult = '0',
   fromDate = '1900-01-01T00:00:00.000Z', toDate = '2035-12-31T23:59:59.000Z',
-  selectionType = 1, isFrequent = null }) {
+  selectionType = 1, isFrequent = null, baseInvCategoryId = 2 }) {
   const body = {
     mrno, billno, fromDate, toDate,
     baseCatgeory: 0, hospitalId, mode: 6, cpoeStatus: 0, isbilled: 0, empId: String(empId),
     visitno: '', selectionType, filterResult, profileId: '', invCategoryId: null,
-    baseInvCategoryId: 2, visitMode: '', invMastServiceId: 0, sampleNo: '',
+    // 2 = radiology, 1 = laboratory (same investigation-api, different base category).
+    baseInvCategoryId, visitMode: '', invMastServiceId: 0, sampleNo: '',
     isCreditWithoutBilling: 0, cpoeSearchGroupMode: 0, searchType: 'B', visiType: '0',
   };
   // The RESULTED list (Siratech's own "auth search", captured live 2026-07-05) differs
