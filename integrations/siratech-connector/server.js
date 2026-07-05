@@ -436,6 +436,45 @@ async function discoverOrderSite(file, wantBillNo) {
   } catch (e) { return 0; }
 }
 
+// Siratech's EMR forward view of a patient's radiology — the endpoint that actually
+// carries the DICOM ACCESSION + pacsId + cpacsUrl + real reportDate (found by live probe).
+// These populate once Siratech's cPACS integration is enabled (pacsType); until then the
+// accession is empty and the matcher falls back to fuzzy matching — this just makes the
+// link EXACT the moment the accession is available, with zero code change. Keyed by
+// invPatTestResultId (clean 1:1 with the result-entry test rows) + a billNo|service key.
+async function emrRadiologyDetails(mrno, site) {
+  const map = new Map();
+  try {
+    const now = Date.now();
+    const from = new Date(now - 120 * 864e5).toISOString().slice(0, 10);
+    const to = new Date(now + 864e5).toISOString().slice(0, 10);
+    const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: {
+      mrno, hospitalId: site, fromDate: from + 'T00:00:00', toDate: to + 'T23:59:59',
+      userId: String(HIS_USER).padStart(8, '0'),
+    } });
+    for (const d of ((r.json && r.json.data) || [])) {
+      const nz = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null);
+      const rec = {
+        accession: nz(d.accessionNumber), pacsId: nz(d.pacsId), cpacsUrl: nz(d.cpacsUrl),
+        reportDate: d.reportDate || null, reportPath: nz(d.reportPath), modality: nz(d.modality),
+        reportStatus: nz(d.radioReportStatus) || nz(d.cpoeStatusDescription),
+        imageStatus: nz(d.imageStatus) || nz(d.radioImageStatus),
+        hasReport: !!d.hasRadiologyRepot, billNo: nz(d.billNo), serviceName: nz(d.serviceName),
+      };
+      if (d.invPatTestResultId != null) map.set(String(d.invPatTestResultId), rec);
+      if (rec.billNo && rec.serviceName) map.set('bs:' + rec.billNo + '|' + rec.serviceName.toLowerCase(), rec);
+    }
+  } catch (e) { /* best-effort enrichment — never blocks matching */ }
+  return map;
+}
+function emrLookup(emrMap, t, row) {
+  if (!emrMap) return null;
+  if (t && t.invPatTestResultId != null && emrMap.has(String(t.invPatTestResultId))) return emrMap.get(String(t.invPatTestResultId));
+  const svc = (t && t.serviceName ? String(t.serviceName).toLowerCase() : null);
+  if (row && row.billNo != null && svc) return emrMap.get('bs:' + String(row.billNo) + '|' + svc) || null;
+  return null;
+}
+
 async function buildMatch(file, wantBillNo, site) {
   await getToken();                                    // ensure logged in (empId)
   const empId = currentEmpId();
@@ -459,6 +498,8 @@ async function buildMatch(file, wantBillNo, site) {
 
   // 2) the patient's VERIFIED DePACS studies (once)
   const studies = await results.depacsStudies(file);
+  // 2b) the EMR forward view once — for the accession + pacs link per test (when enabled)
+  const emrMap = await emrRadiologyDetails(file, useSite);
 
   const out = [];
   for (const row of orderRows) {
@@ -473,11 +514,15 @@ async function buildMatch(file, wantBillNo, site) {
     const orderDate = row.billDate || row.visitDate || null;
     const tests = [];
     for (const t of det) {
+      const emr = emrLookup(emrMap, t, row);
       const test = {
         serviceName: t.serviceName || null, categoryName: t.categoryName || null,
         invPatTestResultId: t.invPatTestResultId,
-        accession: pickAccession(t, row), orderDate,
+        // EMR accession (Siratech's own DICOM key) wins when present; else the fuzzy fallback.
+        accession: (emr && emr.accession) || pickAccession(t, row), orderDate,
         invMastServiceId: t.inv_mast_service_id, orderId: t.emR_PAT_DTLS_INV_ORDER_ID || null,
+        pacsId: emr && emr.pacsId || null, cpacsUrl: emr && emr.cpacsUrl || null,
+        emrReportDate: emr && emr.reportDate || null,
       };
       const m = results.matchStudy({ mrno: row.mrno, serviceName: test.serviceName, categoryName: test.categoryName, orderDate, accession: test.accession }, studies);
       let report = null;
@@ -488,6 +533,8 @@ async function buildMatch(file, wantBillNo, site) {
           preview: rep.reportText.slice(0, 600) };
       }
       tests.push({ test, decision: m.decision, matchKey: m.key, reason: m.reason, orderAccession: test.accession || null,
+        accessionSource: (test.accession && emr && emr.accession === test.accession) ? 'siratech' : (test.accession ? 'row' : null),
+        pacsId: test.pacsId, cpacsUrl: test.cpacsUrl, emrReportDate: test.emrReportDate,
         rawAcc: { detail: _accDbg(t), order: _accDbg(row) },
         study: m.study ? { studyId: m.study.studyId, desc: m.study.desc, modality: m.study.modality, studyDate: m.study.studyDate, accession: m.study.accession } : null,
         candidates: m.candidates, report });
@@ -983,6 +1030,8 @@ async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
   if (!details.length) throw new Error('RadiologyDetails returned no test rows');
 
   const studies = await results.depacsStudies(file);
+  // EMR forward view — carries Siratech's own DICOM accession per test (when cPACS is on).
+  const emrMap = await emrRadiologyDetails(file, useSite);
   const orderDate = row.billDate || row.visitDate || null;
 
   // Canonical service id — HIS spells it inv_mast_service_id OR invMastserviceId
@@ -1009,9 +1058,15 @@ async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
       decision: 'already_filed', reason: 'a report is already attached to this test in Siratech', writable: false };
   }
 
-  // An explicit accession (from the caller — e.g. Meena's MWL-agent capture) is the
-  // deterministic key and beats whatever the HIS row may or may not carry.
-  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: (accession && String(accession).trim()) || pickAccession(target, row) }, studies);
+  // Accession priority for the deterministic key:
+  //   1) explicit accession from the caller (Meena's MWL-agent capture),
+  //   2) Siratech's own EMR/cPACS accession for this test (exact, once cPACS is on),
+  //   3) whatever the HIS result row happens to carry (fuzzy fallback).
+  const targetEmr = emrLookup(emrMap, target, row);
+  const effectiveAccession = (accession && String(accession).trim())
+    || (targetEmr && targetEmr.accession)
+    || pickAccession(target, row);
+  const m = results.matchStudy({ mrno: row.mrno, serviceName: target.serviceName, categoryName: target.categoryName, orderDate, accession: effectiveAccession }, studies);
   if (m.decision !== 'unique') {
     return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName }, decision: m.decision, reason: m.reason, candidates: m.candidates, writable: false };
   }
@@ -1021,7 +1076,8 @@ async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
   for (const t of details) {
     if (t === target) continue;
     if (svcId(t) != null && String(svcId(t)) === String(svcId(target))) continue;
-    const sm = results.matchStudy({ mrno: row.mrno, serviceName: t.serviceName, categoryName: t.categoryName, orderDate, accession: pickAccession(t, row) }, studies);
+    const tEmr = emrLookup(emrMap, t, row);
+    const sm = results.matchStudy({ mrno: row.mrno, serviceName: t.serviceName, categoryName: t.categoryName, orderDate, accession: (tEmr && tEmr.accession) || pickAccession(t, row) }, studies);
     if (sm.decision === 'unique' && sm.study && String(sm.study.studyId) === String(m.study.studyId)) {
       return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
         decision: 'ambiguous', reason: `study #${m.study.studyId} also matches "${t.serviceName}" on this bill — file manually to the correct test`,
@@ -1041,6 +1097,12 @@ async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
   return {
     file, site: useSite, empId, billNo: row.billNo, orderDate,
     searchRow: row, details, target, study: m.study, report, template,
+    accession: effectiveAccession || null,
+    accessionSource: (accession && String(accession).trim()) ? 'caller'
+      : (targetEmr && targetEmr.accession) ? 'siratech'
+      : (pickAccession(target, row) ? 'row' : null),
+    pacsId: (targetEmr && targetEmr.pacsId) || null,
+    cpacsUrl: (targetEmr && targetEmr.cpacsUrl) || null,
     match: { decision: m.decision, key: m.key, reason: m.reason },
   };
 }
@@ -1087,7 +1149,10 @@ app.post('/results/file', requireAuth, async (req, res) => {
       // RIS Phase 2 — the durable order key so Meena can bind order ↔ study on file.
       genPatBillingId: plan.target.genPatBillingId != null ? plan.target.genPatBillingId : (plan.searchRow && plan.searchRow.genPatBillingId),
       target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId, invMastServiceId: plan.target.inv_mast_service_id },
-      study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate },
+      // Deterministic image↔order link — the accession the matcher actually used + PACS pointers.
+      accession: plan.accession || null, accessionSource: plan.accessionSource || null,
+      pacsId: plan.pacsId || null, cpacsUrl: plan.cpacsUrl || null,
+      study: { studyId: plan.study.studyId, desc: plan.study.desc, modality: plan.study.modality, studyDate: plan.study.studyDate, accession: plan.study.accession || null },
       match: plan.match,
       report: { reviewer: rep.reviewer, reportDate: rep.reportDate, pdfOk: rep.pdfOk, pdfBytes: rep.pdfBytes, textPreview: (rep.reportText || '').slice(0, 400) },
       range: { code: stringRange, source: rangeSource, classified: autoClass.range, impression: autoClass.impression, reason: autoClass.reason },

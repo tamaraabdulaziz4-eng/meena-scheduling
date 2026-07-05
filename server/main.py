@@ -903,6 +903,14 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS filed_source TEXT;")
             # When the images first appeared in DePACS (order scanned but report pending).
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS imaged_at TIMESTAMPTZ;")
+            # Deterministic image↔order link. accession is the DICOM key (from the MWL agent
+            # or, once Siratech's cPACS is enabled, from the HIS EMR forward view). pacs_id /
+            # cpacs_url point straight at the study in the PACS viewer. Filled opportunistically
+            # from the connector's match; once accession is set, matching is exact — no fuzzing.
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS accession TEXT;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS accession_source TEXT;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS pacs_id TEXT;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS cpacs_url TEXT;")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -6780,7 +6788,8 @@ def _rad_upsert_orders(items):
         return 0
 
 def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
-                    mrno=None, site=None, bill_no=None, patient_name=None):
+                    mrno=None, site=None, bill_no=None, patient_name=None,
+                    accession=None, accession_source=None, pacs_id=None, cpacs_url=None):
     """Record the durable binding (order ↔ DePACS study) + 'filed' state when Meena files
     a report into Siratech. The bound study_id is the deterministic link going forward.
     An UPSERT (not UPDATE-only): if the board never persisted this order first (e.g. it
@@ -6802,10 +6811,15 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
             st = int(site) if site is not None and str(site).strip() != "" else None
         except Exception:
             st = None
+        acc = (str(accession).strip() or None) if accession is not None and str(accession).strip() != "" else None
+        acc_src = (str(accession_source).strip() or None) if accession_source else None
+        pid = (str(pacs_id).strip() or None) if pacs_id is not None and str(pacs_id).strip() != "" else None
+        curl = (str(cpacs_url).strip() or None) if cpacs_url is not None and str(cpacs_url).strip() != "" else None
         q("""INSERT INTO scheduling.radiology_orders
                  (site, mrno, bill_no, gen_pat_billing_id, patient_name,
-                  state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source)
-             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),NOW(),NOW(),%s,'meena')
+                  state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source,
+                  accession, accession_source, pacs_id, cpacs_url)
+             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),NOW(),NOW(),%s,'meena',%s,%s,%s,%s)
              ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                  state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by,
                  filed_source='meena',
@@ -6815,9 +6829,13 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                  bill_no=COALESCE(scheduling.radiology_orders.bill_no, EXCLUDED.bill_no),
                  patient_name=COALESCE(scheduling.radiology_orders.patient_name, EXCLUDED.patient_name),
                  reported_at=COALESCE(scheduling.radiology_orders.reported_at, NOW()),
+                 accession=COALESCE(scheduling.radiology_orders.accession, EXCLUDED.accession),
+                 accession_source=COALESCE(scheduling.radiology_orders.accession_source, EXCLUDED.accession_source),
+                 pacs_id=COALESCE(scheduling.radiology_orders.pacs_id, EXCLUDED.pacs_id),
+                 cpacs_url=COALESCE(scheduling.radiology_orders.cpacs_url, EXCLUDED.cpacs_url),
                  updated_at=NOW()""",
           (st, mr, (str(bill_no) if bill_no is not None else None), gpb, patient_name,
-           study_id, svc, user_id),
+           study_id, svc, user_id, acc, acc_src, pid, curl),
           exec_only=True)
     except Exception:
         pass
@@ -6903,6 +6921,7 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = q(f"""SELECT gen_pat_billing_id, site, mrno, bill_no, patient_name, department, doctor,
                         emergency, state, study_id, service_id, modality, filed_source, imaged_at,
+                        accession, accession_source, pacs_id, cpacs_url,
                         ordered_at, reported_at, filed_at, updated_at,
                         EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
                         EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
@@ -6920,6 +6939,8 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
         "doctor": r["doctor"], "emergency": r["emergency"], "state": r["state"],
         "studyId": r["study_id"], "serviceId": r["service_id"], "modality": r["modality"],
         "filedSource": r["filed_source"], "imagedAt": _iso(r["imaged_at"]),
+        "accession": r["accession"], "accessionSource": r["accession_source"],
+        "pacsId": r["pacs_id"], "cpacsUrl": r["cpacs_url"],
         "orderedAt": _iso(r["ordered_at"]), "reportedAt": _iso(r["reported_at"]), "filedAt": _iso(r["filed_at"]),
         "tatReportH": _r1(r["tat_report_h"]), "tatFileH": _r1(r["tat_file_h"]), "tatTotalH": _r1(r["tat_total_h"]),
     } for r in rows]
@@ -7242,8 +7263,14 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
                                  "authorized": bool(isinstance(out, dict) and out.get("authorized"))}))
         if wrote and gpb:
             try:
+                # Prefer the deterministic accession the connector actually matched on
+                # (plan.accession) so the durable order↔study↔images link is exact.
                 _rad_mark_filed(gpb, study.get("studyId"), b.get("serviceId"), user["id"],
-                                mrno=b.get("file"), site=b.get("site"), bill_no=b.get("billNo"))
+                                mrno=b.get("file"), site=b.get("site"), bill_no=b.get("billNo"),
+                                accession=(plan.get("accession") or b.get("accession")
+                                           or (study.get("accession") if isinstance(study, dict) else None)),
+                                accession_source=plan.get("accessionSource"),
+                                pacs_id=plan.get("pacsId"), cpacs_url=plan.get("cpacsUrl"))
             except Exception:
                 pass
         if wrote and consent_id:
