@@ -901,6 +901,26 @@ def init_schema():
             # having been filed/resolved outside Meena, so its TAT is unknown). Keeps the
             # stats honest: only 'meena' rows feed the turnaround averages.
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS filed_source TEXT;")
+            # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
+            # one scheduled procedure step carrying the Siratech-generated accession — the
+            # deterministic key that links order → images → report. The HIS REST API
+            # withholds this, so the agent reads it from the same worklist the machines use.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_mwl (
+                    id           BIGSERIAL PRIMARY KEY,
+                    accession    TEXT NOT NULL UNIQUE,
+                    mrno         TEXT,
+                    patient_name TEXT,
+                    proc_id      TEXT,
+                    proc_desc    TEXT,
+                    modality     TEXT,
+                    station      TEXT,
+                    sps_date     TEXT,           -- DICOM YYYYMMDD, as sent by the broker
+                    raw          JSONB,          -- full item, for when field semantics surprise us
+                    first_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_mwl_mrno ON scheduling.radiology_mwl(mrno);")
 
             # ── Performance indexes for hot / growing tables (audit, on-duty, dashboard
             # counts). All additive and IF NOT EXISTS — safe to run every boot. ──
@@ -6904,6 +6924,64 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
     return {"ok": True, "count": len(orders), "byState": by_state,
             "orphanCount": orphan_count, "orders": orders}
 
+@app.post("/api/radiology/mwl/push")
+async def radiology_mwl_push(request: Request, user=Depends(require_admin)):
+    """Ingest DICOM Modality Worklist entries from the on-site MWL agent (a small
+    watcher on a hospital-LAN PC — the cloud can't speak DICOM to the broker). Upserts
+    by accession; last_seen refreshes on every sighting so we can tell what's still on
+    the broker. The accession is the deterministic order↔study↔report key that the HIS
+    REST API withholds."""
+    b = await request.json()
+    items = b.get("items") if isinstance(b, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(400, "Body must be {items: [...]}")
+    saved = 0
+    for it in items[:200]:                     # sanity cap per push
+        if not isinstance(it, dict):
+            continue
+        acc = str(it.get("accession") or "").strip()
+        if not acc:
+            continue                           # accession is the whole point — skip blanks
+        try:
+            q("""INSERT INTO scheduling.radiology_mwl
+                     (accession, mrno, patient_name, proc_id, proc_desc, modality, station, sps_date, raw)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 ON CONFLICT (accession) DO UPDATE SET
+                     mrno=COALESCE(NULLIF(EXCLUDED.mrno,''), scheduling.radiology_mwl.mrno),
+                     patient_name=COALESCE(NULLIF(EXCLUDED.patient_name,''), scheduling.radiology_mwl.patient_name),
+                     proc_id=COALESCE(NULLIF(EXCLUDED.proc_id,''), scheduling.radiology_mwl.proc_id),
+                     proc_desc=COALESCE(NULLIF(EXCLUDED.proc_desc,''), scheduling.radiology_mwl.proc_desc),
+                     modality=COALESCE(NULLIF(EXCLUDED.modality,''), scheduling.radiology_mwl.modality),
+                     station=COALESCE(NULLIF(EXCLUDED.station,''), scheduling.radiology_mwl.station),
+                     sps_date=COALESCE(NULLIF(EXCLUDED.sps_date,''), scheduling.radiology_mwl.sps_date),
+                     raw=COALESCE(EXCLUDED.raw, scheduling.radiology_mwl.raw),
+                     last_seen=NOW()""",
+              (acc, str(it.get("patientId") or "").strip(), str(it.get("patientName") or "").strip(),
+               str(it.get("procId") or "").strip(), str(it.get("procDesc") or "").strip(),
+               str(it.get("modality") or "").strip().upper(), str(it.get("station") or "").strip(),
+               str(it.get("date") or "").strip(), json.dumps(it)[:4000]),
+              exec_only=True)
+            saved += 1
+        except Exception:
+            pass                               # one bad row never sinks the batch
+    if saved:
+        insert_audit(user, "RADIOLOGY_MWL_PUSH", None, json.dumps({"received": len(items), "saved": saved}))
+    return {"ok": True, "received": len(items), "saved": saved}
+
+@app.get("/api/radiology/mwl/recent")
+def radiology_mwl_recent(user=Depends(require_radiology)):
+    """The MWL entries we've captured, newest first — visibility while the feed is
+    young: confirms what the broker actually sends (field semantics, accession shape)."""
+    rows = q("""SELECT accession, mrno, patient_name, proc_id, proc_desc, modality, station,
+                       sps_date, first_seen, last_seen
+                FROM scheduling.radiology_mwl ORDER BY last_seen DESC LIMIT 50""") or []
+    out = [{"accession": r["accession"], "mrno": r["mrno"], "patientName": r["patient_name"],
+            "procId": r["proc_id"], "procDesc": r["proc_desc"], "modality": r["modality"],
+            "station": r["station"], "spsDate": r["sps_date"],
+            "firstSeen": r["first_seen"].isoformat() if r["first_seen"] else None,
+            "lastSeen": r["last_seen"].isoformat() if r["last_seen"] else None} for r in rows]
+    return {"ok": True, "count": len(out), "entries": out}
+
 @app.get("/api/radiology/autofile/config")
 def radiology_autofile_get(user=Depends(require_admin)):
     """Auto-file status: is the background worker filing verified reports into
@@ -7075,6 +7153,21 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
     b = await request.json()
     if not isinstance(b, dict) or not str(b.get("file") or "").strip():
         raise HTTPException(400, "A patient file number is required")
+    # Deterministic key injection: if the on-site MWL agent captured this patient's
+    # accession from the modality worklist, hand it to the connector so the study match
+    # is exact instead of fuzzy. CONSERVATIVE by design: only when exactly ONE entry
+    # exists for this MRN on this day — with several same-day entries we cannot yet tell
+    # which procedure is which (that refinement lands once we've seen real feed data).
+    if not b.get("accession"):
+        try:
+            ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y%m%d")
+            mrows = q("""SELECT accession FROM scheduling.radiology_mwl
+                         WHERE mrno=%s AND sps_date=%s LIMIT 2""",
+                      (str(b.get("file")).strip(), ksa_today)) or []
+            if len(mrows) == 1 and mrows[0].get("accession"):
+                b["accession"] = mrows[0]["accession"]
+        except Exception:
+            pass
     # Ride the patient's signed non-pregnancy consent along with the report so BOTH
     # land on her Siratech file in one filing (the connector attaches it as a second
     # genFileAttachments entry, named on its own). Only on a real write (confirm).
