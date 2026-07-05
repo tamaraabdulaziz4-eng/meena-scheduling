@@ -567,7 +567,57 @@ function wlRow(it, key) {
     <td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
     <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
   </tr>
-  <tr id="wl-dr-${key}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${key}"></div></td></tr>`;
+  <tr id="wl-dr-${key}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px">${wlTrack(it)}<div id="wl-d-${key}"></div></td></tr>`;
+}
+
+// Patient-journey tracker (RIS "arrival → exam → done"), built from Siratech's own
+// FetchRISPanel timestamps already on the row. A horizontal stepper: each reached
+// step is solid + shows its time; the gaps show how long each phase took. Purely
+// from data we already have — no extra call.
+function wlTrackFmt(s) {
+  if (!s) return '';
+  const t = wlParseTs(s);
+  if (!t) return String(s).slice(0, 16).replace('T', ' ');
+  const d = new Date(t);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function wlParseTs(s) {
+  if (!s) return 0;
+  const t = Date.parse(String(s));
+  return isNaN(t) ? 0 : t;
+}
+function wlTrack(it) {
+  const reported = it.stage === 'reported' || it.stage === 'draft';
+  const steps = [
+    { label: 'Ordered', at: it.orderedDate, on: !!it.orderedDate },
+    { label: 'Arrived', at: it.arrivedAt, on: !!it.arrivedAt },
+    { label: 'Exam started', at: it.examStartAt, on: !!it.examStartAt },
+    { label: 'Exam done', at: it.examEndAt, on: !!(it.examEndAt || it.scanned) },
+    { label: 'Reported', at: null, on: reported },
+  ];
+  // Nothing recorded beyond the order? Show a hint instead of a bare single dot.
+  const anyTracking = it.arrivedAt || it.examStartAt || it.examEndAt;
+  const dur = (a, b) => {
+    const ta = wlParseTs(a), tb = wlParseTs(b);
+    if (!ta || !tb || tb < ta) return '';
+    const m = Math.round((tb - ta) / 60000);
+    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  };
+  const node = (s, i) => {
+    const color = s.on ? 'var(--accent,#2e9e6b)' : 'var(--border,#d0d0d5)';
+    const prev = steps[i - 1];
+    const gap = (i > 0 && prev && prev.at && s.at) ? dur(prev.at, s.at) : '';
+    return `${i > 0 ? `<div style="flex:1;height:2px;background:${s.on && prev.on ? 'var(--accent,#2e9e6b)' : 'var(--border,#d0d0d5)'};position:relative;min-width:24px">${gap ? `<span style="position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--muted);white-space:nowrap">${escapeHtml(gap)}</span>` : ''}</div>` : ''}
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:56px">
+        <div style="width:11px;height:11px;border-radius:50%;background:${color};border:2px solid ${color}"></div>
+        <div style="font-size:9.5px;margin-top:3px;color:${s.on ? 'var(--text)' : 'var(--muted)'};text-align:center;white-space:nowrap">${escapeHtml(s.label)}</div>
+        ${s.on && s.at ? `<div style="font-size:9px;color:var(--muted);white-space:nowrap">${escapeHtml(wlTrackFmt(s.at))}</div>` : ''}
+      </div>`;
+  };
+  return `<div style="margin-bottom:10px;padding:12px 8px 6px;background:var(--card,#fff);border:1px solid var(--border);border-radius:8px">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Patient journey${anyTracking ? '' : ' · <span title="Siratech hasn\'t recorded arrival/exam times for this order yet">arrival &amp; exam times not recorded yet</span>'}</div>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:2px;overflow-x:auto">${steps.map(node).join('')}</div>
+  </div>`;
 }
 
 // Read-only drill: expand a detail row that matches the finished DePACS report(s) to
