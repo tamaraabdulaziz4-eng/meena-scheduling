@@ -144,7 +144,7 @@ function wlCheckNewEmergencies(items) {
 }
 
 async function renderWorklistPage() {
-  setTopbar('Radiology worklist', 'Orders awaiting a result — emergency first, newest first');
+  setTopbar('Radiology worklist', 'Live RIS status board · STAT first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
   // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
@@ -686,9 +686,8 @@ function wlRow(it, key) {
       if (p) return mod + ' ' + sh(90);
       return mod || dash; })()}
       ${acc ? `<div style="font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums" title="DICOM accession">🔗 ${escapeHtml(String(acc))}</div>` : ''}</td>
-    <td data-l="Ordered" style="white-space:nowrap">${ordered ? `<div style="font-size:12px">${escapeHtml(ordered)}</div>` : dash}
-      ${age ? `<div style="font-size:10.5px;color:var(--muted)" title="waiting time">${age} waiting</div>` : ''}</td>
-    <td data-l="Status">${wlRisStatusBadge(it)}</td>
+    <td data-l="Ordered" style="white-space:nowrap;font-size:11.5px;color:var(--muted)">${ordered ? escapeHtml(ordered) : dash}</td>
+    <td data-l="Status"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${wlRisStatusBadge(it)}${(age && it.__bucket !== 'reported') ? `<span style="font-size:11px;color:var(--muted)" title="waiting time">${age} waiting</span>` : ''}</div></td>
     <td data-l="Safety"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
     <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Open</button></td>
   </tr>

@@ -2040,35 +2040,27 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
    both edges. On narrow screens we turn every row into a stacked card instead. */
 @media (max-width: 640px) {
   .wl-table thead { display: none; }
-  .wl-table, .wl-table tbody { display: block; width: 100%; }
-  .wl-table tr { display: block; }
-  /* real data rows (the drill rows carry an id, so :not([id]) targets data rows) */
+  .wl-table, .wl-table tbody, .wl-table tr, .wl-table td { display: block; width: 100%; }
+  /* Each order is ONE tight card — no per-field labels, no wasted vertical space. */
   .wl-table tbody tr:not([id]) {
-    padding: 12px 4px; border-bottom: 1px solid var(--border);
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
   }
   .wl-table tbody tr:not([id]):last-child { border-bottom: none; }
-  .wl-table td {
-    display: block; width: 100%; white-space: normal;
-    border-bottom: none; padding: 3px 0;
-  }
+  .wl-table td { border-bottom: none; padding: 0; white-space: normal; }
+  .wl-table td::before { content: none !important; }     /* kill the ORDERED/STATUS/SAFETY labels */
   .wl-table td:hover, .wl-table tr:hover td { background: transparent; }
-  /* Ordered / Status / Safety carry a small label so the stacked card reads clearly */
-  .wl-table td[data-l="Ordered"]::before, .wl-table td[data-l="Status"]::before,
-  .wl-table td[data-l="Safety"]::before {
-    content: attr(data-l); display: inline-block; min-width: 62px;
-    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
-    color: var(--muted); margin-right: 6px;
-  }
-  .wl-table td[data-l="Ordered"], .wl-table td[data-l="Status"], .wl-table td[data-l="Safety"] { margin-top: 4px; }
-  /* consent / preg badges: left-aligned, wrap, sensible size */
+  .wl-table td[data-l="Exam"]   { margin-top: 7px; font-size: 13px; }
+  .wl-table td[data-l="Status"] { margin-top: 8px; }
+  .wl-table td[data-l="Ordered"] { display: none; }       /* the "Xh waiting" in Status already carries timing */
+  .wl-table td[data-l="Safety"] { margin-top: 8px; }
   .wl-table td[data-l="Safety"] > div { flex-direction: row; flex-wrap: wrap; gap: 6px; }
-  .wl-table td[data-l="Safety"] .btn { width: auto; }
-  /* the Open button becomes a full-width action at the foot of the card */
-  .wl-table td:last-child { margin-top: 8px; }
-  .wl-table td:last-child .btn { width: 100%; justify-content: center; padding: 9px; }
-  /* the expandable drill spans the full card width with no stray cell padding */
+  /* safety = small chips, never big buttons */
+  .wl-table td[data-l="Safety"] .btn { width: auto; padding: 4px 11px; font-size: 11px; border-radius: 8px; }
+  /* Open = a compact action, right-aligned, not a giant full-width slab */
+  .wl-table td:last-child { margin-top: 10px; text-align: right; }
+  .wl-table td:last-child .btn { width: auto; padding: 7px 22px; }
   .wl-table tr[id^="wl-dr-"] td { padding: 0; }
-  /* status tabs scroll horizontally on a phone instead of wrapping into a tall block */
+  /* status tabs scroll sideways instead of wrapping into a tall block */
   .wl-tabbar { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
   .wl-tabbar::-webkit-scrollbar { display: none; }
 }
