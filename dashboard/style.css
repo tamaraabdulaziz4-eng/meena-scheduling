@@ -2033,6 +2033,36 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
   background: linear-gradient(90deg, var(--border) 25%, rgba(127,127,140,.10) 37%, var(--border) 63%);
   background-size: 400% 100%; animation: wlsh 1.3s ease infinite; }
 @keyframes wlsh { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+/* ── Worklist: card layout on phones ──────────────────────────────────────────
+   The board is a 6-column table with nowrap cells; on a phone that is far wider
+   than the screen, so the patient column scrolled off the left and rows bled off
+   both edges. On narrow screens we turn every row into a stacked card instead. */
+@media (max-width: 640px) {
+  .wl-table thead { display: none; }
+  .wl-table, .wl-table tbody { display: block; width: 100%; }
+  .wl-table tr { display: block; }
+  /* real data rows (the drill rows carry an id, so :not([id]) targets data rows) */
+  .wl-table tbody tr:not([id]) {
+    padding: 12px 4px; border-bottom: 1px solid var(--border);
+  }
+  .wl-table tbody tr:not([id]):last-child { border-bottom: none; }
+  .wl-table td {
+    display: block; width: 100%; white-space: normal;
+    border-bottom: none; padding: 3px 0;
+  }
+  .wl-table td:first-child { display: none; }        /* the # index — noise on mobile */
+  .wl-table td:hover, .wl-table tr:hover td { background: transparent; }
+  /* consent / preg badges: left-aligned, wrap, sensible size */
+  .wl-table td:nth-child(5) > div { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .wl-table td:nth-child(5) .btn { width: auto; }
+  /* the Check button becomes a full-width action at the foot of the card */
+  .wl-table td:last-child { margin-top: 8px; }
+  .wl-table td:last-child .btn { width: 100%; justify-content: center; padding: 9px; }
+  /* the expandable drill spans the full card width with no stray cell padding */
+  .wl-table tr[id^="wl-dr-"] td { padding: 0; }
+}
+
 /* Date pickers read left-to-right even on an Arabic phone, so the numerals line up. */
 input[type="date"].input { direction: ltr; text-align: left; font-variant-numeric: tabular-nums; }
 
