@@ -503,4 +503,6 @@ module.exports = {
   dpAgent, normMod, bodyTokens, sideOf, isReported, isDraftReport,
   depacsStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
+  // exposed for the deep DePACS probe tool (read-only diagnostics)
+  dpFetch, dpToken, _fileCandidates,
 };
