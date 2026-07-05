@@ -37,7 +37,11 @@ const MEENA_PASS = process.env.MEENA_PASS || '';
 const HOST = process.env.MWL_HOST || '10.0.73.56';
 const PORT = Number(process.env.MWL_PORT) || 104;
 const CALLED_AE = process.env.MWL_CALLED_AE || 'DMWL_AE';
-const CALLING_AE = process.env.MWL_CALLING_AE || 'CTN3';
+// One or more Calling AEs, comma-separated (e.g. "CTN3,XR1,US1"). If the broker
+// scopes each caller to its own machine's orders, listing every machine's AE makes
+// one agent cover all modalities; extra/wrong AEs are skipped with a log line.
+const CALLING_AES = String(process.env.MWL_CALLING_AE || 'CTN3')
+  .split(',').map((s) => s.trim()).filter(Boolean);
 const POLL_SEC = Math.max(15, Number(process.env.POLL_SEC) || 60);
 const TIMEOUT_MS = Number(process.env.MWL_TIMEOUT_MS) || 20000;
 
@@ -56,7 +60,7 @@ function dcmDate(offsetDays) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function mwlFindDay(dateStr) {
+function mwlFindDay(dateStr, callingAe) {
   return new Promise((resolve) => {
     const client = new Client();
     const query = {
@@ -94,7 +98,7 @@ function mwlFindDay(dateStr) {
     client.on('associationRejected', () => resolve({ ok: false, rows, err: 'association rejected (calling AE not allow-listed?)' }));
     client.on('closed', () => resolve({ ok: true, rows, err: null }));
     try {
-      client.send(HOST, PORT, CALLING_AE, CALLED_AE, {
+      client.send(HOST, PORT, callingAe, CALLED_AE, {
         associationLifetimeTimeout: TIMEOUT_MS, pduTimeout: TIMEOUT_MS, connectTimeout: TIMEOUT_MS,
       });
     } catch (e) { resolve({ ok: false, rows, err: String((e && e.message) || e) }); }
@@ -134,18 +138,40 @@ async function meenaPush(items) {
 
 // ── main loop ──────────────────────────────────────────────────────────────────
 let cycle = 0;
+const badAes = new Set();   // AEs the broker rejected — logged once, retried hourly
 async function tick() {
   cycle++;
   try {
-    // Today + yesterday as two single-day queries (broker limitation), so orders
-    // spanning midnight are never missed.
-    const [today, yday] = await Promise.all([mwlFindDay(dcmDate(0)), mwlFindDay(dcmDate(-1))]);
-    if (!today.ok && !yday.ok) { say(`worklist query failed: ${today.err || yday.err}`); return; }
-    const all = [...today.rows, ...yday.rows];
-    const items = all.filter((x) => x.accession);        // accession is the whole point
-    const blanks = all.length - items.length;
+    // For each calling AE (sequentially — gentle on the broker): today + yesterday as
+    // two single-day queries (broker limitation), so midnight-spanning orders are
+    // never missed. Dedupe by accession across AEs — brokers that return the full
+    // list to every caller would otherwise duplicate every row.
+    const byAcc = new Map();
+    let blanks = 0, okQueries = 0, lastErr = null;
+    for (const ae of CALLING_AES) {
+      if (badAes.has(ae) && cycle % 60 !== 1) continue;   // rejected AE → retry ~hourly
+      for (const day of [dcmDate(0), dcmDate(-1)]) {
+        const r = await mwlFindDay(day, ae);
+        if (!r.ok) {
+          lastErr = r.err;
+          if (/rejected/i.test(String(r.err)) && !badAes.has(ae)) {
+            badAes.add(ae);
+            say(`broker rejected calling AE "${ae}" — skipping it (kept: ${CALLING_AES.filter((a) => !badAes.has(a)).join(', ') || 'none'})`);
+          }
+          break;                                          // same AE won't work for day 2
+        }
+        badAes.delete(ae);
+        okQueries++;
+        for (const x of r.rows) {
+          if (!x.accession) { blanks++; continue; }       // accession is the whole point
+          if (!byAcc.has(x.accession)) byAcc.set(x.accession, x);
+        }
+      }
+    }
+    if (!okQueries) { say(`worklist query failed on every AE: ${lastErr}`); return; }
+    const items = [...byAcc.values()];
     if (!items.length) {
-      if (cycle === 1 || cycle % 10 === 0) say(`worklist empty (${all.length} rows, ${blanks} without accession) — watching…`);
+      if (cycle === 1 || cycle % 10 === 0) say(`worklist empty (${blanks} row(s) without accession) — watching…`);
       return;
     }
     const res = await meenaPush(items);
@@ -158,7 +184,7 @@ async function tick() {
 }
 
 (async () => {
-  say(`MWL agent starting — broker ${HOST}:${PORT} AE ${CALLED_AE} (calling as ${CALLING_AE}), Meena ${MEENA_URL}, every ${POLL_SEC}s`);
+  say(`MWL agent starting — broker ${HOST}:${PORT} AE ${CALLED_AE} (calling as ${CALLING_AES.join(', ')}), Meena ${MEENA_URL}, every ${POLL_SEC}s`);
   try { await meenaLogin(); say('Meena login OK'); } catch (e) { console.error('✗ ' + e.message); process.exit(1); }
   await tick();
   setInterval(tick, POLL_SEC * 1000);

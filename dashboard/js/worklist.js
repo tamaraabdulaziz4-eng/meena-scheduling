@@ -337,8 +337,14 @@ function wlStageBadge(stage) {
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);
+  // The working queue is what still needs the team: ordered/imaged. A row whose report
+  // is signed LEAVES the main board (auto-file takes it from here) into a collapsed
+  // strip below — visible in one click, so a wrongly-staged row is never lost.
+  const active = items.filter((it) => it.stage !== 'reported');
+  const reported = items.filter((it) => it.stage === 'reported');
   const sum = document.getElementById('wl-summary');
-  if (sum) sum.textContent = `${d.total || 0} awaiting · ${d.emergency || 0} emergency`
+  if (sum) sum.textContent = `${active.length} in progress · ${d.emergency || 0} emergency`
+    + (reported.length ? ` · ${reported.length} reported` : '')
     + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
   const body = document.getElementById('wl-body');
   if (!body) return;
@@ -346,7 +352,8 @@ function wlRender() {
   if (wlState.searchView) return;
   // Live typeahead: as the operator types digits, filter the board to the MRNs that
   // START WITH what's typed (prefix), so the patient narrows down live — no need to
-  // type the whole number or press Enter. Consent + Check stay on the row.
+  // type the whole number or press Enter. Consent + Check stay on the row. A search
+  // shows EVERYTHING for that patient, including reported rows (status lookup).
   if (wlState.filter) {
     const f = wlState.filter;
     const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(f));
@@ -359,20 +366,42 @@ function wlRender() {
     return;
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
-  body.innerHTML = wlTable(items);
+  const strip = reported.length ? `
+    <div class="card" style="margin-top:10px;padding:8px 12px">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="wlToggleReported()">
+        <span class="badge badge-green">✅ ${reported.length}</span>
+        <span style="font-weight:600">Reported — filing to the patient file</span>
+        <span id="wl-rep-arrow" style="margin-left:auto;color:var(--muted)">▸</span>
+      </div>
+      <div id="wl-rep-list" style="display:none;margin-top:8px">${wlTable(reported, true)}</div>
+    </div>` : '';
+  body.innerHTML = (active.length
+    ? wlTable(active)
+    : `<div class="empty" style="padding:22px"><p>All caught up — nothing awaiting imaging or a report.</p></div>`) + strip;
+}
+
+function wlToggleReported() {
+  const list = document.getElementById('wl-rep-list'), arrow = document.getElementById('wl-rep-arrow');
+  if (!list) return;
+  const open = list.style.display !== 'none';
+  list.style.display = open ? 'none' : '';
+  if (arrow) arrow.textContent = open ? '▸' : '▾';
 }
 
 // Compact RIS-panel table — a flat list, NEWEST first (lowest age on top), with
-// emergencies pinned above routine so a STAT order is never buried.
-function wlTable(items) {
+// emergencies pinned above routine so a STAT order is never buried. SIX columns so
+// the board fits without sideways scrolling: priority folds into the patient cell,
+// modality into the exam cell, age under the stage badge.
+function wlTable(items, isReportedStrip) {
+  const p = isReportedStrip ? 'r' : 'a';   // namespace row ids — two tables coexist
   const rows = items.slice().sort((a, b) =>
     (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
   return `<div class="table-wrap"><table class="wl-table" style="width:100%">
     <thead><tr>
-      <th style="width:34px">#</th><th>Patient</th><th>Exam</th><th>Type</th>
-      <th>Priority</th><th>Stage</th><th>Age</th><th>Consent</th><th></th>
+      <th style="width:30px">#</th><th>Patient</th><th>Exam</th>
+      <th>Stage</th><th>Consent</th><th style="width:64px"></th>
     </tr></thead>
-    <tbody>${rows.map((it, i) => wlRow(it, i)).join('')}</tbody>
+    <tbody>${rows.map((it, i) => wlRow(it, p + i)).join('')}</tbody>
   </table></div>`;
 }
 
@@ -414,7 +443,7 @@ function wlConsent(mrno, name, exam, doctor, branch) {
   if (typeof toast === 'function') toast('Consent module unavailable', 'err');
 }
 
-function wlRow(it, i) {
+function wlRow(it, key) {
   // A patient who already has images in DePACS is tinted "almost done": amber once
   // imaged (awaiting report), green once the report is verified (auto-file will file
   // it and it drops off the board). Emergency rows get a red left edge.
@@ -422,30 +451,33 @@ function wlRow(it, i) {
     : it.stage === 'imaged' ? 'background:rgba(224,168,0,0.10);' : '';
   const edge = it.emergency ? 'box-shadow:inset 3px 0 0 var(--danger,#E25555);' : '';
   const age = wlAge(it.ageHours);
+  const n = parseInt(String(key).slice(1), 10) + 1;   // display # within its table
   // While the background HIS enrichment is still running, show a loading shimmer for
-  // exam/type/stage instead of a bare "—" so the board reads as "loading", not broken.
+  // exam/stage instead of a bare "—" so the board reads as "loading", not broken.
   const p = wlState.enriching;
   const sh = (w) => `<span class="wl-shimmer" style="width:${w}px"></span>`;
   const dash = '<span style="color:var(--muted)">—</span>';
   return `<tr style="${tint}${edge}">
-    <td style="color:var(--muted)">${i + 1}</td>
-    <td><div style="font-weight:700">${escapeHtml(it.patientName || '—')}</div>
+    <td style="color:var(--muted)">${n}</td>
+    <td><div style="font-weight:700">${escapeHtml(it.patientName || '—')}
+        ${it.emergency ? ' <span class="badge badge-red">Emergency</span>' : ''}</div>
       <div style="font-size:11px;color:var(--muted)">${escapeHtml(it.mrno || '')}${it.branch ? ' · ' + escapeHtml(it.branch) : ''}${it.doctorName ? ' · ' + escapeHtml(it.doctorName) : ''}</div></td>
-    <td>${it.exam ? escapeHtml(it.exam) : (p ? sh(90) : dash)}</td>
-    <td>${wlModBadges(it.modality) || (p ? sh(34) : dash)}</td>
-    <td>${it.emergency ? '<span class="badge badge-red">Emergency</span>' : '<span class="badge">Routine</span>'}</td>
-    <td>${it.stage ? wlStageBadge(it.stage) : (p ? sh(64) : wlStageBadge(null))}</td>
-    <td>${age ? `<span class="badge badge-purple" title="time since ordered">${age}</span>` : ''}</td>
+    <td>${(() => { const mod = wlModBadges(it.modality);
+      if (it.exam) return mod + ' <span>' + escapeHtml(it.exam) + '</span>';
+      if (p) return mod + ' ' + sh(90);
+      return mod || dash; })()}</td>
+    <td>${it.stage ? wlStageBadge(it.stage) : (p ? sh(64) : wlStageBadge(null))}
+      ${age ? `<div style="font-size:10px;color:var(--muted);margin-top:2px" title="time since ordered">${age} ago</div>` : ''}</td>
     <td>${wlConsentEl(it)}</td>
-    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle(${i}, '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
   </tr>
-  <tr id="wl-dr-${i}" style="display:none"><td colspan="9" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${i}"></div></td></tr>`;
+  <tr id="wl-dr-${key}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px"><div id="wl-d-${key}"></div></td></tr>`;
 }
 
 // Read-only drill: expand a detail row that matches the finished DePACS report(s) to
 // this patient's order(s).
-async function wlToggle(i, mrno, site, btn) {
-  const row = document.getElementById('wl-dr-' + i), box = document.getElementById('wl-d-' + i);
+async function wlToggle(key, mrno, site, btn) {
+  const row = document.getElementById('wl-dr-' + key), box = document.getElementById('wl-d-' + key);
   if (!row || !box) return;
   if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = 'Check'; return; }
   row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
