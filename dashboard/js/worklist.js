@@ -361,9 +361,13 @@ function wlRender() {
   // The moment images land in DePACS the row moves to the "Imaged" strip; the moment
   // the report is signed it moves to the "Reported" strip (auto-file takes it from
   // there). Both strips open with one click, so nothing is ever silently lost.
-  const active = items.filter((it) => it.stage !== 'reported' && it.stage !== 'imaged' && it.stage !== 'draft');
-  const imaged = items.filter((it) => it.stage === 'imaged' || it.stage === 'draft');   // in DePACS, report not verified yet
-  const reported = items.filter((it) => it.stage === 'reported');
+  // `scanned` = Siratech recorded an exam start/end (a hard fact) → imaged, even before
+  // the DePACS pass and regardless of the demoted preliminary stage text.
+  const isRep = (it) => it.stage === 'reported';
+  const isImg = (it) => !isRep(it) && (it.stage === 'imaged' || it.stage === 'draft' || it.scanned);
+  const reported = items.filter(isRep);
+  const imaged = items.filter(isImg);
+  const active = items.filter((it) => !isRep(it) && !isImg(it));
   const sum = document.getElementById('wl-summary');
   const activeEmerg = active.filter((it) => it.emergency).length;   // emergencies still in the queue, not board-wide
   if (sum) sum.textContent = `${active.length} waiting to scan${activeEmerg ? ` (${activeEmerg} emergency)` : ''}`
@@ -512,8 +516,9 @@ function wlRow(it, key) {
       if (p) return mod + ' ' + sh(90);
       return mod || dash; })()}</td>
     <td>${it.stage ? wlStageBadge(it.stage)
-        : (it.stagePrelim ? `<span title="checking DePACS…" style="opacity:.5">${wlStageBadge(it.stagePrelim)}</span>`
-          : (p ? sh(64) : wlStageBadge(null)))}
+        : (it.scanned ? wlStageBadge('imaged')
+          : (it.stagePrelim ? `<span title="checking DePACS…" style="opacity:.5">${wlStageBadge(it.stagePrelim)}</span>`
+            : (p ? sh(64) : wlStageBadge(null))))}
       ${age ? `<div style="font-size:10px;color:var(--muted);margin-top:2px" title="time since ordered">${age} ago</div>` : ''}</td>
     <td>${wlConsentEl(it)}</td>
     <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
