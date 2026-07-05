@@ -2157,6 +2157,11 @@ async def login(request: Request, response: Response):
     payload["staff_id"] = user.get("staff_id")
     payload["epoch"] = int(user.get("token_epoch") or 0)
     token = sign_token(payload)
+    # The client builds currentUser from THIS response on a fresh login — it must carry
+    # the per-user radiology grants or a staff member granted the worklist sees no
+    # radiology section until their next session restore (/auth/me has them; this didn't).
+    payload["can_use_radiology"] = bool(user.get("can_use_radiology"))
+    payload["can_file_radiology"] = bool(user.get("can_file_radiology"))
     # Secure cookie in production (HTTPS). Set COOKIE_SECURE=0 only for local HTTP.
     response.set_cookie("token", token, httponly=True, samesite="lax",
                         secure=os.environ.get("COOKIE_SECURE", "1") != "0",
@@ -6730,7 +6735,7 @@ def _rad_upsert_orders(items):
         except Exception:
             continue
         ready = it.get("readyToFile") is True
-        imaged = ready or it.get("stage") in ("imaged", "reported")
+        imaged = ready or it.get("stage") in ("imaged", "draft", "reported")
         dedup[gpb] = (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), gpb,
                       it.get("patientName"), it.get("department"), it.get("doctorName"),
                       bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),

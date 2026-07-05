@@ -137,6 +137,21 @@ function isReported(status) {
   return REPORTED_STATUS.test(s);
 }
 
+// A report EXISTS but is not yet signed — dictated/draft/awaiting verification. The
+// board shows these distinctly ("Report not verified") so the operator can tell
+// "images done, radiologist mid-report" apart from "images done, nothing written
+// yet" and from a signed report. NEVER used for filing decisions (isReported guards
+// that); display only.
+function isDraftReport(status) {
+  const s = String(status || '').toUpperCase();
+  if (!s || isReported(s)) return false;
+  if (/(DRAFT|PRELIM|DICTAT|TRANSCRIB|INTERIM|\bPARTIAL)/.test(s)) return true;
+  // a verification word in a negated/pending form: "NOT VERIFIED", "TO BE SIGNED",
+  // "PENDING APPROVAL", "UN-VERIFIED" — a report is in flight, not absent.
+  return /(VERIF|SIGN|APPROV|REPORT)/.test(s)
+      && /(\bNOT\b|\bNON\b|TO\s+BE|\bPEND|\bAWAIT|\bUN[\s-]?)/.test(s);
+}
+
 // The file-number (MRN) equality test used as the first match gate. DePACS is
 // inconsistent about pat_id and stores it three ways:
 //   • the bare MRN                     — "26336282"
@@ -223,7 +238,7 @@ function _fileCandidates(mrno) {
 
 // All studies for an MRN (across pat_id forms), enriched with the report description
 // (which the list endpoint leaves blank — it lives in the per-study report info).
-async function depacsStudies(mrno) {
+async function depacsStudies(mrno, opts = {}) {
   let token = await dpToken();
   const qs = (page, pid) => `/study/get_studies?start_date=2015-01-01&end_date=2035-12-31&page_size=100&current_page=${page}&patient_id=${encodeURIComponent(pid)}`;
   const fetchPage = async (page, pid) => {
@@ -262,7 +277,9 @@ async function depacsStudies(mrno) {
       if (i >= rows.length) return;
       const s = rows[i];
       let desc = s.study_desc || '';
-      if (!desc) {
+      // light mode (stage checks): status/modality/date are enough — skip the
+      // per-study report-info round-trip that only recovers a blank description.
+      if (!desc && !opts.light) {
         const info = await dpFetch('/report/get_study_report_info/' + s.study_id, { token });
         desc = (info.json && info.json.body && info.json.body.study_desc) || '';
       }
@@ -448,7 +465,7 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 }
 
 module.exports = {
-  dpAgent, normMod, bodyTokens, sideOf, isReported,
+  dpAgent, normMod, bodyTokens, sideOf, isReported, isDraftReport,
   depacsStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
 };
