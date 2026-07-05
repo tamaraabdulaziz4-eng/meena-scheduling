@@ -999,6 +999,90 @@ app.get('/results/resulted', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── Pregnancy / β-hCG lab check (decision support before irradiating) ──────────
+// Radiation safety: before a CT / X-ray on a female patient of child-bearing age,
+// staff should know whether a recent pregnancy test exists and what it said. The
+// labs live in the SAME investigation-api as radiology, just baseInvCategoryId=1.
+// This is SUPPORT, never a hard block — it surfaces what Siratech already knows so
+// the tech/radiologist can make the call. Best-effort: any HIS hiccup returns
+// {found:false} rather than an error, so it can never wedge the worklist.
+const _PREG_RE = /\b(pregnan|الحمل|حمل|b[\s-]?hcg|beta[\s-]?hcg|β[\s-]?hcg|\bhcg\b|chorionic\s+gonadotropin|serum\s+hcg|urine\s+hcg|hcg\s+(qual|quant|titer|titre))/i;
+// Read a lab test's result verdict from whatever field the row carries (Siratech
+// spells the value/flag several ways across builds); classify positive/negative.
+function _pregVerdict(row) {
+  const raw = String(row.result != null ? row.result
+    : (row.resultValue != null ? row.resultValue
+      : (row.finalResult != null ? row.finalResult : (row.testResult != null ? row.testResult : '')))).trim();
+  const t = raw.toLowerCase();
+  let verdict = null;
+  if (t) {
+    if (/(^|\b)(pos|positive|reactive|detected|موجب|present)\b/.test(t) && !/non[\s-]?reactive|not\s+detected/.test(t)) verdict = 'positive';
+    else if (/(^|\b)(neg|negative|non[\s-]?reactive|not\s+detected|سالب|absent)\b/.test(t)) verdict = 'negative';
+    else {
+      const n = parseFloat(t.replace(/[^0-9.]/g, ''));
+      if (Number.isFinite(n)) verdict = n >= 5 ? 'positive' : 'negative';   // serum β-hCG ≥5 mIU/mL
+    }
+  }
+  return { verdict, resultText: raw || null };
+}
+async function labPregnancyCheck(mrno, site) {
+  const out = { found: false, hasPregnancyTest: false, resulted: false, verdict: null,
+    resultText: null, testName: null, orderDate: null, resultDate: null, tests: [] };
+  const empId = currentEmpId();
+  if (!empId || !mrno) return out;
+  const useSite = Number(site) > 0 ? Number(site) : ((await discoverOrderSite(mrno).catch(() => 0)) || RESULT_SITE);
+  const from = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  // Look at both RESULTED (filterResult 2) and PENDING (0) labs, so we can say
+  // "tested — negative", "tested — result pending", or "no recent pregnancy test".
+  const searches = [
+    { resulted: true, body: results.radiologySearchBody({ mrno, hospitalId: useSite, empId, baseInvCategoryId: 1, filterResult: '2', selectionType: 2, isFrequent: 1, fromDate: `${from}T00:00:00.000Z`, toDate: `${to}T23:59:59.000Z` }) },
+    { resulted: false, body: results.radiologySearchBody({ mrno, hospitalId: useSite, empId, baseInvCategoryId: 1, filterResult: '0', fromDate: `${from}T00:00:00.000Z`, toDate: `${to}T23:59:59.000Z` }) },
+  ];
+  const seen = new Set();
+  for (const s of searches) {
+    let sr;
+    try { sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', { body: s.body }); }
+    catch (e) { continue; }
+    if (!sr || (sr.status && sr.status >= 400) || sr.json == null) continue;
+    for (const r of (sr.json.data || [])) {
+      const name = String(r.serviceName || r.testName || r.profileName || '').trim();
+      // A search row is an ORDER (may bundle several tests) — match the order name OR
+      // pull the test rows and match those. Cheap first pass on the order name.
+      const rowMatches = _PREG_RE.test(name);
+      const key = String(r.genPatBillingId || r.billNo || name) + '|' + name.toLowerCase();
+      if (!rowMatches || seen.has(key)) continue;
+      seen.add(key);
+      const v = _pregVerdict(r);
+      out.tests.push({ testName: name, billNo: r.billNo || null, orderDate: r.billDate || r.visitDate || null,
+        resulted: !!s.resulted, verdict: v.verdict, resultText: v.resultText });
+    }
+  }
+  if (out.tests.length) {
+    // Newest first; the most recent test is the one that matters clinically.
+    out.tests.sort((a, b) => (parseHisDate(b.orderDate || '') || 0) - (parseHisDate(a.orderDate || '') || 0));
+    const top = out.tests[0];
+    out.found = true; out.hasPregnancyTest = true;
+    out.testName = top.testName; out.orderDate = top.orderDate;
+    out.resulted = out.tests.some((t) => t.resulted);
+    const resultedTop = out.tests.find((t) => t.resulted && t.verdict) || out.tests.find((t) => t.resulted) || top;
+    out.verdict = resultedTop.verdict; out.resultText = resultedTop.resultText;
+    out.resultDate = resultedTop.orderDate;
+  }
+  return out;
+}
+app.get('/labs/pregnancy', requireAuth, async (req, res) => {
+  try {
+    await getToken();
+    if (!currentEmpId()) throw new Error('no empId (not logged in?)');
+    const mrno = String(req.query.mrno || '').trim();
+    if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
+    const site = Number(req.query.site) > 0 ? Number(req.query.site) : 0;
+    const r = await labPregnancyCheck(mrno, site);
+    return res.json({ ok: true, mrno, ...r });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 // ── Guarded result FILE + AUTHORIZE (write) — dry-run by default ───────────────
 // Files a VERIFIED DePACS report back into Siratech's Radiology Result Entry and
 // authorises it. NOTHING is written unless {confirm:true} is sent AND the target
