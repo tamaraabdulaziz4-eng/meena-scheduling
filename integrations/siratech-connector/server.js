@@ -242,8 +242,12 @@ function normalizeOrder(o, ext) {
     status: o.cpoeStatusDescription || null,    // order's HIS status, e.g. "Pending"
     imaged,
     pacsId: o.pacsId || null,
+    cpacsUrl: o.cpacsUrl || null,               // direct PACS-viewer link (when cPACS is on)
+    reportPath: o.reportPath || null,
     hasReport: !!o.hasRadiologyRepot,
     reportDate: o.reportDate || null,
+    reportStatus: o.radioReportStatus || o.cpoeStatusDescription || null,
+    imageStatus: o.radioImageStatus || (imaged ? 'In PACS' : null),
     // ── enriched from RIS panel + GetEmrOrderDetails ──
     clinicalIndication: ext.clinicalIndication || null,
     reasonForOrder: ext.reasonForOrder || null,
