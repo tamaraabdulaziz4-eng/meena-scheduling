@@ -196,6 +196,7 @@ function renderPsDetail() {
   det.innerHTML = patCard + examBlock;
   psLoadConsents();
   psLoadLabs();
+  if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
 }
 
 // Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG
@@ -299,7 +300,7 @@ function psExamCard(o, open) {
     o.cpacsUrl ? `<a class="badge" style="background:#3b6fd4;color:#fff;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 Images</a>` : '',
   ].filter(Boolean).join('');
   const day = (o.orderedDate || o.reportDate || '').toString().slice(0, 10);
-  const repId = 'ps-rep-' + String(o.billNo || o.accessionNumber || Math.abs(psParseDate(o.orderedDate) || 0)).replace(/[^A-Za-z0-9_-]/g, '');
+  const repId = psRepId(o);
   return `
     <div class="card ps-exam${open ? ' open' : ''}">
       <button type="button" class="ps-exam-summary" onclick="psToggleExam(this)">
@@ -335,15 +336,27 @@ function psExamCard(o, open) {
           ${psField('Report date', o.reportDate)}
         </div>
         <div class="ps-sec-l">Report</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          ${o.cpacsUrl ? `<a class="btn btn-sm" style="background:#3b6fd4;color:#fff;border:none;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener">🖼 View images</a>` : ''}
-          <button class="btn btn-sm btn-ghost" onclick="psLoadReport('${jsAttr(String(o.billNo || ''))}','${repId}',this)">📄 Load report</button>
-        </div>
-        <div id="${repId}" style="margin-top:8px"></div>
+        ${o.cpacsUrl ? `<div style="margin-bottom:8px"><a class="btn btn-sm" style="background:#3b6fd4;color:#fff;border:none;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener">🖼 View images</a></div>` : ''}
+        <div id="${repId}"><span style="color:var(--muted);font-size:12px">${(o.hasReport || imaged) ? 'Loading report…' : '⏳ Awaiting imaging — no report yet.'}</span></div>
       </div>
     </div>`;
 }
 
+function psRepId(o) {
+  return 'ps-rep-' + String((o && (o.billNo || o.accessionNumber)) || Math.abs(psParseDate(o && o.orderedDate) || 0)).replace(/[^A-Za-z0-9_-]/g, '');
+}
+// Auto-load the reports for a patient's exams on open — no clicking. Runs the match
+// ONCE per file (cached) and fills every exam that has a verified report. Read-only.
+async function psAutoReports(orders) {
+  if (!orders || !orders.length) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) return;
+  // Only bother if at least one exam is imaged/has a report — else the match call is wasted.
+  if (!orders.some((o) => o.hasReport || o.imaged)) return;
+  // psLoadReport shares the per-file match cache, so calling it for each exam triggers
+  // exactly one network match; the rest read the cache. Fire them together.
+  for (const o of orders) psLoadReport(String(o.billNo || ''), psRepId(o), null);
+}
 // Lazy-load the DePACS report matched to THIS order (by bill number) and show the
 // radiologist, date, and impression preview inline. Read-only; the heavy match runs
 // once per file and is cached on psState.
@@ -353,9 +366,14 @@ async function psLoadReport(billNo, elId, btn) {
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { el.innerHTML = '<span style="color:var(--muted)">No file number.</span>'; return; }
   if (btn) { btn.disabled = true; btn.textContent = 'loading…'; }
+  if (!el.dataset.loaded) el.innerHTML = '<span style="color:var(--muted);font-size:12px">Loading report…</span>';
   try {
     if (!psState.match || psState.match.mrno !== p.mrno) {
-      const d = await API.get(`/radiology/results/match/${encodeURIComponent(p.mrno)}`);
+      // Dedupe: auto-load fires this for every exam at once — share ONE network match.
+      if (!psState.matchPromise || psState.matchPromise.mrno !== p.mrno) {
+        psState.matchPromise = { mrno: p.mrno, promise: API.get(`/radiology/results/match/${encodeURIComponent(p.mrno)}`) };
+      }
+      const d = await psState.matchPromise.promise;
       psState.match = { mrno: p.mrno, data: d };
     }
     const orders = (psState.match.data && psState.match.data.orders) || [];
