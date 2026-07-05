@@ -27,10 +27,25 @@ try {
   }
 } catch (e) { /* env optional */ }
 
+// Resolve puppeteer EXACTLY the way the running connector does (from server.js's
+// perspective) — works regardless of where node_modules got hoisted.
 let puppeteer;
-try { puppeteer = require(path.join(__dirname, '..', 'node_modules', 'puppeteer')); }
-catch (e) { try { puppeteer = require('puppeteer'); } catch (e2) {
-  console.error('✗ Run from the connector folder on the VPS (needs node_modules/puppeteer).'); process.exit(1); } }
+{
+  const { createRequire } = require('module');
+  const tries = [
+    () => createRequire(path.join(__dirname, '..', 'server.js'))('puppeteer'),
+    () => require(path.join(__dirname, '..', 'node_modules', 'puppeteer')),
+    () => require('puppeteer'),
+    () => require('puppeteer-core'),
+  ];
+  let lastErr;
+  for (const t of tries) { try { puppeteer = t(); break; } catch (e) { lastErr = e; } }
+  if (!puppeteer) {
+    console.error('✗ Could not load puppeteer. From the connector dir run:  npm ls puppeteer');
+    console.error('  (last error: ' + String(lastErr && lastErr.message || lastErr).slice(0, 140) + ')');
+    process.exit(1);
+  }
+}
 
 const HIS_BASE = (process.env.HIS_BASE || 'https://his.meena-health.com').replace(/\/+$/, '');
 const HIS_USER = process.env.HIS_USER || '';
