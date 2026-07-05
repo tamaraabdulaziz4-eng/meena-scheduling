@@ -530,7 +530,7 @@ function wlTable(items, prefix) {
   const rows = items.slice().sort((a, b) =>
     (Number(b.emergency) - Number(a.emergency))     // STAT / emergency always on top
     || (bk(a) - bk(b))                              // then by workflow phase (to-scan → reported)
-    || ((b.ageHours || 0) - (a.ageHours || 0)));    // then longest-waiting first
+    || ((a.ageHours || 0) - (b.ageHours || 0)));    // then NEWEST first (freshest order on top)
   return `<div class="table-wrap"><table class="wl-table" style="width:100%">
     <thead><tr>
       <th>Patient</th><th>Exam</th><th>Ordered</th><th>Status</th><th>Safety</th><th style="width:64px"></th>
