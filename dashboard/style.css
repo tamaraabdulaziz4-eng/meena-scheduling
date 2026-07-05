@@ -2051,17 +2051,72 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
     display: block; width: 100%; white-space: normal;
     border-bottom: none; padding: 3px 0;
   }
-  .wl-table td:first-child { display: none; }        /* the # index — noise on mobile */
   .wl-table td:hover, .wl-table tr:hover td { background: transparent; }
+  /* Ordered / Status / Safety carry a small label so the stacked card reads clearly */
+  .wl-table td[data-l="Ordered"]::before, .wl-table td[data-l="Status"]::before,
+  .wl-table td[data-l="Safety"]::before {
+    content: attr(data-l); display: inline-block; min-width: 62px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+    color: var(--muted); margin-right: 6px;
+  }
+  .wl-table td[data-l="Ordered"], .wl-table td[data-l="Status"], .wl-table td[data-l="Safety"] { margin-top: 4px; }
   /* consent / preg badges: left-aligned, wrap, sensible size */
-  .wl-table td:nth-child(5) > div { flex-direction: row; flex-wrap: wrap; gap: 6px; }
-  .wl-table td:nth-child(5) .btn { width: auto; }
-  /* the Check button becomes a full-width action at the foot of the card */
+  .wl-table td[data-l="Safety"] > div { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .wl-table td[data-l="Safety"] .btn { width: auto; }
+  /* the Open button becomes a full-width action at the foot of the card */
   .wl-table td:last-child { margin-top: 8px; }
   .wl-table td:last-child .btn { width: 100%; justify-content: center; padding: 9px; }
   /* the expandable drill spans the full card width with no stray cell padding */
   .wl-table tr[id^="wl-dr-"] td { padding: 0; }
+  /* status tabs scroll horizontally on a phone instead of wrapping into a tall block */
+  .wl-tabbar { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+  .wl-tabbar::-webkit-scrollbar { display: none; }
 }
+
+/* ── RIS worklist: status tabs, modality chips, status badges ────────────────── */
+.wl-tabbar {
+  display: flex; gap: 6px; margin: 2px 0 10px; padding-bottom: 2px;
+}
+.wl-tab {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  background: var(--card); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 11px;
+  padding: 7px 13px; font-size: 12.5px; font-weight: 600; font-family: inherit;
+  white-space: nowrap; transition: all .16s;
+}
+.wl-tab:hover { border-color: var(--border-strong); color: var(--text); }
+.wl-tab.on { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--shadow-sm); }
+.wl-tab-n {
+  font-size: 11px; font-weight: 800; min-width: 18px; text-align: center;
+  padding: 1px 6px; border-radius: 8px; background: var(--surface-2); color: var(--text);
+}
+.wl-tab.on .wl-tab-n { background: rgba(255,255,255,.24); color: #fff; }
+.wl-modbar { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
+.wl-mchip {
+  cursor: pointer; background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 4px 12px; font-size: 11.5px; font-weight: 600; font-family: inherit; transition: all .15s;
+}
+.wl-mchip:hover { border-color: var(--accent); color: var(--accent); }
+.wl-mchip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Workflow status badge — one per exam-lifecycle phase, colour-coded. */
+.wl-st {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 8px;
+  white-space: nowrap; border: 1px solid transparent;
+}
+.wl-st-sched  { background: rgba(133,133,168,.12); color: #6b6b85; }
+.wl-st-arr    { background: rgba(255,186,73,.16);  color: #b7791f; }
+.wl-st-prog   { background: rgba(43,159,255,.14);  color: #1f74c9; }
+.wl-st-done   { background: rgba(255,159,67,.16);  color: #c26510; }
+.wl-st-prelim { background: rgba(124,92,255,.15);  color: #6a4bd6; }
+.wl-st-final  { background: rgba(0,200,150,.15);   color: #009e78; }
+body.dark .wl-st-sched  { color: #b6b6d0; }
+body.dark .wl-st-arr    { color: #ffcf7a; }
+body.dark .wl-st-prog   { color: #7ac0ff; }
+body.dark .wl-st-done   { color: #ffb877; }
+body.dark .wl-st-prelim { color: #b9a6ff; }
+body.dark .wl-st-final  { color: #59e6bd; }
 
 /* Date pickers read left-to-right even on an Arabic phone, so the numerals line up. */
 input[type="date"].input { direction: ltr; text-align: left; font-variant-numeric: tabular-nums; }

@@ -17,7 +17,9 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
-                modCache: new Map(), stageCache: new Map(), pregCache: new Map() };
+                modCache: new Map(), stageCache: new Map(), pregCache: new Map(),
+                // RIS-style worklist: which status bucket + modality is the board filtered to.
+                statusTab: 'all', modFilter: null };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
 // dropping off) shows without the operator touching anything.
@@ -150,7 +152,7 @@ async function renderWorklistPage() {
   const jumpMrn = window._wlPendingFilter; window._wlPendingFilter = null;
   const c = document.getElementById('content');
   c.innerHTML = `
-    ${pageHero('Worklist', 'Radiology worklist', 'Every order awaiting a result')}
+    ${pageHero('Worklist', 'Radiology worklist', 'Live status board — scheduled · imaged · reporting · reported')}
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <div style="display:flex;gap:4px;align-items:center">
@@ -386,6 +388,44 @@ function wlStageBadge(stage) {
   return '<span class="badge" style="opacity:.55">…</span>';
 }
 
+// The full radiology exam-status lifecycle, the way a real RIS (Epic Radiant, Sectra,
+// Merge) models it, mapped onto the signals Meena has:
+//   Scheduled/Ordered → Arrived → In progress → Completed(imaged) → Preliminary(draft)
+//   → Final(reported)
+// Returns { bucket, label, cls, icon } — bucket drives the status tabs, the rest the badge.
+function wlRisStatus(it) {
+  if (it.stage === 'reported')
+    return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '✅' };
+  if (it.stage === 'draft')
+    return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '📝' };
+  if (it.stage === 'imaged' || it.scanned)
+    return { bucket: 'imaged', label: 'Completed', cls: 'wl-st-done', icon: '📷' };
+  if (it.examStartAt)
+    return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '🔵' };
+  if (it.arrivedAt)
+    return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '🟡' };
+  return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '📋' };
+}
+const _WL_BUCKETS = [
+  { key: 'all',       label: 'All',        icon: '▦' },
+  { key: 'waiting',   label: 'To scan',    icon: '🕐' },
+  { key: 'imaged',    label: 'Imaged',     icon: '📷' },
+  { key: 'reporting', label: 'Reporting',  icon: '📝' },
+  { key: 'reported',  label: 'Reported',   icon: '✅' },
+];
+// Switching the view re-indexes rows, so drop any open drills (their positional keys
+// would otherwise restore onto a different patient's row).
+function wlSetTab(t) { wlState.statusTab = t; if (wlState.openDrills) wlState.openDrills.clear(); wlRender(); }
+function wlSetMod(m) { wlState.modFilter = (m === '' || wlState.modFilter === m) ? null : m; if (wlState.openDrills) wlState.openDrills.clear(); wlRender(); }
+// Modality of a row, normalised to the coarse RIS bucket for filtering.
+function wlRowMod(it) {
+  const raw = String(it.modality || it.exam || '').toUpperCase();
+  for (const k of ['CT', 'MR', 'US', 'XR', 'MG']) if (raw.includes(k)) return k;
+  if (/MRI/.test(raw)) return 'MR'; if (/X.?RAY|XR|CR|DR\b/.test(raw)) return 'XR';
+  if (/ULTRA|SONO|US\b/.test(raw)) return 'US'; if (/MAMMO|MG\b/.test(raw)) return 'MG';
+  return null;
+}
+
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);
@@ -395,16 +435,12 @@ function wlRender() {
   // there). Both strips open with one click, so nothing is ever silently lost.
   // `scanned` = Siratech recorded an exam start/end (a hard fact) → imaged, even before
   // the DePACS pass and regardless of the demoted preliminary stage text.
-  const isRep = (it) => it.stage === 'reported';
-  const isImg = (it) => !isRep(it) && (it.stage === 'imaged' || it.stage === 'draft' || it.scanned);
-  const reported = items.filter(isRep);
-  const imaged = items.filter(isImg);
-  const active = items.filter((it) => !isRep(it) && !isImg(it));
+  // Bucket every row by its RIS status, and count per bucket for the tabs.
+  for (const it of items) it.__bucket = wlRisStatus(it).bucket;
+  const counts = { all: items.length, waiting: 0, imaged: 0, reporting: 0, reported: 0 };
+  for (const it of items) counts[it.__bucket] = (counts[it.__bucket] || 0) + 1;
   const sum = document.getElementById('wl-summary');
-  const activeEmerg = active.filter((it) => it.emergency).length;   // emergencies still in the queue, not board-wide
-  if (sum) sum.textContent = `${active.length} waiting to scan${activeEmerg ? ` (${activeEmerg} emergency)` : ''}`
-    + (imaged.length ? ` · ${imaged.length} imaged` : '')
-    + (reported.length ? ` · ${reported.length} reported` : '')
+  if (sum) sum.textContent = `${counts.waiting} to scan · ${counts.imaged} imaged · ${counts.reporting} reporting · ${counts.reported} reported`
     + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
   const body = document.getElementById('wl-body');
   if (!body) return;
@@ -412,8 +448,7 @@ function wlRender() {
   if (wlState.searchView) return;
   // Live typeahead: as the operator types digits, filter the board to the MRNs that
   // START WITH what's typed (prefix), so the patient narrows down live — no need to
-  // type the whole number or press Enter. Consent + Check stay on the row. A search
-  // shows EVERYTHING for that patient, including reported rows (status lookup).
+  // type the whole number or press Enter.
   if (wlState.filter) {
     const f = wlState.filter;
     const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(f));
@@ -423,24 +458,39 @@ function wlRender() {
     body.innerHTML = banner + (match.length
       ? wlTable(match)
       : `<div class="empty" style="padding:20px"><p>No patient on this board starts with "${escapeHtml(f)}".${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
+    wlAutoPreg();
     return;
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
-  const strip = (id, list, badge, label, prefix) => !list.length ? '' : `
-    <div class="card" style="margin-top:10px;padding:8px 12px">
-      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="wlToggleStrip('${id}')">
-        ${badge}
-        <span style="font-weight:600">${label}</span>
-        <span id="wl-${id}-arrow" style="margin-left:auto;color:var(--muted)">▸</span>
-      </div>
-      <div id="wl-${id}-list" style="display:none;margin-top:8px">${wlTable(list, prefix)}</div>
-    </div>`;
-  body.innerHTML = (active.length
-    ? wlTable(active, 'a')
-    : `<div class="empty" style="padding:22px"><p>All caught up — no one is waiting to be scanned.</p></div>`)
-    + strip('img', imaged, `<span class="badge badge-orange">📷 ${imaged.length}</span>`, 'Imaged — awaiting the report', 'i')
-    + strip('rep', reported, `<span class="badge badge-green">✅ ${reported.length}</span>`, 'Reported — filing to the patient file', 'r');
-  wlRestoreOpenState();   // a live refresh must not collapse strips/drills the operator opened
+
+  // ── RIS status tabs (worklist buckets) ──────────────────────────────────────
+  if (!(wlState.statusTab in counts)) wlState.statusTab = 'all';
+  const tabs = _WL_BUCKETS.map((b) => {
+    const n = counts[b.key] || 0;
+    const on = wlState.statusTab === b.key;
+    return `<button class="wl-tab${on ? ' on' : ''}" onclick="wlSetTab('${b.key}')">
+      <span>${b.icon}</span><span>${b.label}</span><span class="wl-tab-n">${n}</span></button>`;
+  }).join('');
+
+  // ── Modality filter chips (only modalities actually present) ────────────────
+  const present = new Set(items.map(wlRowMod).filter(Boolean));
+  const MOD_ORDER = [['CT', 'CT'], ['MR', 'MRI'], ['US', 'US'], ['XR', 'X-Ray'], ['MG', 'Mammo']];
+  const modChips = present.size > 1 ? `<div class="wl-modbar">
+      <button class="wl-mchip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All</button>
+      ${MOD_ORDER.filter(([k]) => present.has(k)).map(([k, lbl]) =>
+        `<button class="wl-mchip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')">${lbl}</button>`).join('')}
+    </div>` : '';
+
+  // Filter to the selected bucket + modality.
+  let rows = items;
+  if (wlState.statusTab !== 'all') rows = rows.filter((it) => it.__bucket === wlState.statusTab);
+  if (wlState.modFilter) rows = rows.filter((it) => wlRowMod(it) === wlState.modFilter);
+
+  const bar = `<div class="wl-tabbar">${tabs}</div>${modChips}`;
+  body.innerHTML = bar + (rows.length
+    ? wlTable(rows, 'a')
+    : `<div class="empty" style="padding:22px"><p>Nothing in this view.</p></div>`);
+  wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
 }
 
@@ -470,18 +520,20 @@ function wlToggleStrip(id) {
   if (open) wlState.openStrips.delete(id); else wlState.openStrips.add(id);
 }
 
-// Compact RIS-panel table — a flat list, NEWEST first (lowest age on top), with
-// emergencies pinned above routine so a STAT order is never buried. SIX columns so
-// the board fits without sideways scrolling: priority folds into the patient cell,
-// modality into the exam cell, age under the stage badge.
+// RIS worklist table. Sort the way a real RIS orders an actionable queue: STAT /
+// emergency pinned to the very top, then LONGEST-WAITING first (highest age) so the
+// order breaching its turnaround is never buried under fresh arrivals.
 function wlTable(items, prefix) {
-  const p = prefix || 'a';   // namespace row ids — several tables coexist (board + strips)
+  const p = prefix || 'a';   // namespace row ids — several tables coexist
+  const border = { waiting: 0, imaged: 1, reporting: 2, reported: 3 };
+  const bk = (it) => border[it.__bucket != null ? it.__bucket : wlRisStatus(it).bucket] ?? 0;
   const rows = items.slice().sort((a, b) =>
-    (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
+    (Number(b.emergency) - Number(a.emergency))     // STAT / emergency always on top
+    || (bk(a) - bk(b))                              // then by workflow phase (to-scan → reported)
+    || ((b.ageHours || 0) - (a.ageHours || 0)));    // then longest-waiting first
   return `<div class="table-wrap"><table class="wl-table" style="width:100%">
     <thead><tr>
-      <th style="width:30px">#</th><th>Patient</th><th>Exam</th>
-      <th>Stage</th><th>Consent</th><th style="width:64px"></th>
+      <th>Patient</th><th>Exam</th><th>Ordered</th><th>Status</th><th>Safety</th><th style="width:64px"></th>
     </tr></thead>
     <tbody>${rows.map((it, i) => wlRow(it, p + i)).join('')}</tbody>
   </table></div>`;
@@ -605,36 +657,40 @@ function wlConsent(mrno, name, exam, doctor, branch) {
   if (typeof toast === 'function') toast('Consent module unavailable', 'err');
 }
 
+// The RIS status badge (icon + label), coloured by workflow phase.
+function wlRisStatusBadge(it) {
+  const p = wlState.enriching;
+  // While the stage is still being checked and we have no signal at all, shimmer.
+  if (p && !it.stage && !it.scanned && !it.arrivedAt && !it.stagePrelim) return `<span class="wl-shimmer" style="width:70px"></span>`;
+  const s = wlRisStatus(it);
+  return `<span class="wl-st ${s.cls}"><span>${s.icon}</span>${escapeHtml(s.label)}</span>`;
+}
 function wlRow(it, key) {
-  // A patient who already has images in DePACS is tinted "almost done": amber once
-  // imaged (awaiting report), green once the report is verified (auto-file will file
-  // it and it drops off the board). Emergency rows get a red left edge.
-  const tint = it.stage === 'reported' ? 'background:rgba(46,158,107,0.10);'
-    : it.stage === 'imaged' ? 'background:rgba(224,168,0,0.10);' : '';
   const edge = it.emergency ? 'box-shadow:inset 3px 0 0 var(--danger,#E25555);' : '';
   const age = wlAge(it.ageHours);
-  const n = parseInt(String(key).slice(1), 10) + 1;   // display # within its table
   // While the background HIS enrichment is still running, show a loading shimmer for
-  // exam/stage instead of a bare "—" so the board reads as "loading", not broken.
+  // the exam instead of a bare "—" so the board reads as "loading", not broken.
   const p = wlState.enriching;
   const sh = (w) => `<span class="wl-shimmer" style="width:${w}px"></span>`;
   const dash = '<span style="color:var(--muted)">—</span>';
-  return `<tr style="${tint}${edge}">
-    <td style="color:var(--muted)">${n}</td>
-    <td><div style="font-weight:700">${escapeHtml(it.patientName || '—')}
-        ${it.emergency ? ' <span class="badge badge-red">Emergency</span>' : ''}</div>
-      <div style="font-size:11px;color:var(--muted)">${escapeHtml(it.mrno || '')}${it.branch ? ' · ' + escapeHtml(it.branch) : ''}${it.doctorName ? ' · ' + escapeHtml(it.doctorName) : ''}</div></td>
-    <td>${(() => { const mod = wlModBadges(it.modality);
+  const acc = it.accession || it.accessionNumber || null;
+  const demo = [it.age, (it.gender ? String(it.gender).charAt(0).toUpperCase() : '')].filter(Boolean).map((x) => escapeHtml(String(x))).join(' · ');
+  const ordered = it.orderedDate ? wlTrackFmt(it.orderedDate) : '';
+  return `<tr style="${edge}">
+    <td data-l="Patient"><div style="font-weight:700">${escapeHtml(it.patientName || '—')}
+        ${it.emergency ? ' <span class="badge badge-red">STAT</span>' : ''}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(it.mrno || '')}${demo ? ' · ' + demo : ''}</div>
+      ${(it.branch || it.doctorName) ? `<div style="font-size:10.5px;color:var(--muted)">${escapeHtml(it.branch || '')}${it.branch && it.doctorName ? ' · ' : ''}${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : ''}</div>` : ''}</td>
+    <td data-l="Exam">${(() => { const mod = wlModBadges(it.modality);
       if (it.exam) return mod + ' <span>' + escapeHtml(it.exam) + '</span>';
       if (p) return mod + ' ' + sh(90);
-      return mod || dash; })()}</td>
-    <td>${it.stage ? wlStageBadge(it.stage)
-        : (it.scanned ? wlStageBadge('imaged')
-          : (it.stagePrelim ? `<span title="checking DePACS…" style="opacity:.5">${wlStageBadge(it.stagePrelim)}</span>`
-            : (p ? sh(64) : wlStageBadge(null))))}
-      ${age ? `<div style="font-size:10px;color:var(--muted);margin-top:2px" title="time since ordered">${age} ago</div>` : ''}</td>
-    <td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
-    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Check</button></td>
+      return mod || dash; })()}
+      ${acc ? `<div style="font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums" title="DICOM accession">🔗 ${escapeHtml(String(acc))}</div>` : ''}</td>
+    <td data-l="Ordered" style="white-space:nowrap">${ordered ? `<div style="font-size:12px">${escapeHtml(ordered)}</div>` : dash}
+      ${age ? `<div style="font-size:10.5px;color:var(--muted)" title="waiting time">${age} waiting</div>` : ''}</td>
+    <td data-l="Status">${wlRisStatusBadge(it)}</td>
+    <td data-l="Safety"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Open</button></td>
   </tr>
   <tr id="wl-dr-${key}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px">${wlTrack(it)}<div id="wl-d-${key}"></div></td></tr>`;
 }
