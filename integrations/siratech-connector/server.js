@@ -867,8 +867,11 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     // window count — an old same-modality study must not flip a fresh order.
     const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
     const studiesBy = new Map();
-    await pool(mrns, 6, async (m) => {
-      try { studiesBy.set(m, await results.depacsStudies(m, { light: true })); } catch (e) { /* leave unknown */ }
+    // light + short-TTL cached (see depacsStudies): the board re-checks every patient
+    // on each refresh, so caching the recent-window lookup is what kills the lag. A
+    // manual force-refresh (noCache) bypasses the cache for truly-fresh status.
+    await pool(mrns, 8, async (m) => {
+      try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
     });
     const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
     for (const it of items) {
