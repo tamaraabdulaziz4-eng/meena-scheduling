@@ -6,7 +6,7 @@
 // now" view — the operational heart of the platform replacing Siratech's own
 // order list. Read-only.
 
-let odState = { branches: [], site: '', state: 'attention', qtext: '', data: null, loading: false, timer: null, attnCount: 0 };
+let odState = { branches: [], site: '', state: 'attention', qtext: '', data: null, loading: false, timer: null, attnCount: 0, orphanCount: 0 };
 const OD_REFRESH_MS = 60000;
 
 async function renderOrdersPage() {
@@ -55,6 +55,7 @@ async function renderOrdersPage() {
 
 const OD_STATES = [
   { key: 'attention', label: '⚠️ Needs attention' },
+  { key: 'orphan', label: '🔎 Orphan reports' },
   { key: '', label: 'All' },
   { key: 'ordered', label: 'Ordered' },
   { key: 'reported', label: 'Reported' },
@@ -64,9 +65,13 @@ function odRenderTabs() {
   const host = document.getElementById('od-states');
   if (!host) return;
   host.innerHTML = OD_STATES.map(s => {
-    // The attention tab carries a live count so a manager sees "3 stuck" from anywhere.
-    const badge = (s.key === 'attention' && odState.attnCount > 0)
-      ? ` <span class="badge badge-red" style="padding:0 6px">${odState.attnCount}</span>` : '';
+    // The attention + orphan tabs carry a live count so a manager sees "3 stuck" /
+    // "2 unconfirmed" from anywhere.
+    let badge = '';
+    if (s.key === 'attention' && odState.attnCount > 0)
+      badge = ` <span class="badge badge-red" style="padding:0 6px">${odState.attnCount}</span>`;
+    else if (s.key === 'orphan' && odState.orphanCount > 0)
+      badge = ` <span class="badge badge-orange" style="padding:0 6px">${odState.orphanCount}</span>`;
     return `<button class="btn btn-sm ${odState.state === s.key ? 'btn-primary' : 'btn-ghost'}"
        onclick="odSetState('${s.key}')">${s.label}${badge}</button>`;
   }).join('');
@@ -138,13 +143,36 @@ function odRender() {
   const body = document.getElementById('od-body');
   if (!body) return;
 
+  // Orphan count comes straight from the server (scope-aware) on every load, so the tab
+  // badge is accurate from any tab.
+  if (typeof d.orphanCount === 'number') odState.orphanCount = d.orphanCount;
+
   // "Needs attention" = every still-in-flight order past its SLA (reported-not-filed, or
   // ordered-no-report), worst first. When the loaded set includes in-flight orders we can
   // refresh the tab badge count; otherwise we keep the last known count.
   const attn = orders.filter(o => odAttention(o));
   if (odState.state === 'attention' || !odState.state || odState.state === 'ordered' || odState.state === 'reported') {
     odState.attnCount = attn.length;
-    odRenderTabs();
+  }
+  odRenderTabs();
+
+  if (odState.state === 'orphan') {
+    if (!orders.length) {
+      body.innerHTML = `<div class="empty" style="padding:34px;text-align:center">
+        <div style="font-size:34px">✅</div>
+        <p style="font-weight:600;margin-top:6px">No orphan reports — every verified report is accounted for.</p>
+        <p style="color:var(--muted);font-size:13px">A report lands here only if it was verified, left the worklist, and Meena never filed it.</p></div>`;
+      return;
+    }
+    body.innerHTML = `<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--warn,#e0a800)">
+        <div style="font-size:13px">
+          <strong>${orders.length} report(s) may not have reached the file.</strong>
+          Each was verified and left the worklist, but Meena never filed it — open it on the worklist and
+          confirm the report is attached (file it if not). Fully automatic matching needs the vendor's
+          accession feed.
+        </div></div>`
+      + orders.map(odRow).join('');
+    return;
   }
 
   if (odState.state === 'attention') {
@@ -177,6 +205,11 @@ function odAttnAge(o) {
 function odJumpWorklist(mrno) {
   window._wlPendingFilter = String(mrno || '');
   showPage('worklist');
+}
+// A verified report that left the board without Meena filing it (mirrors the backend's
+// orphan predicate) — a report exists but we can't confirm it reached the patient file.
+function odIsOrphan(o) {
+  return o.state === 'filed' && o.filedSource === 'external' && !o.studyId && !!o.reportedAt;
 }
 
 function odStat(label, val, color, icon) {
@@ -263,10 +296,11 @@ function odRow(o) {
         ${odModBadges(o.modality)}
         ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
         ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
+        ${odIsOrphan(o) ? '<span class="badge badge-orange" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
         ${stateBadge}
-        ${o.state !== 'filed' && o.mrno
-          ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" title="Open this patient on the worklist"
-               onclick="odJumpWorklist('${escapeHtml(String(o.mrno))}')">Open in Worklist →</button>` : ''}
+        ${(o.state !== 'filed' || odIsOrphan(o)) && o.mrno
+          ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" title="Open this patient on the worklist to confirm / file the report"
+               onclick="odJumpWorklist('${escapeHtml(String(o.mrno))}')">${odIsOrphan(o) ? 'Verify in Worklist →' : 'Open in Worklist →'}</button>` : ''}
       </div>
     </div>
     ${odTimeline(o, step)}

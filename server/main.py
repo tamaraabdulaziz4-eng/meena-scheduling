@@ -6827,6 +6827,12 @@ def _rad_reconcile_resolved(items):
         pass
     return 0
 
+# A verified report was seen ready (reported_at) but Meena never filed it (study_id NULL)
+# and it has left the board (reconciled filed-elsewhere) — so we cannot confirm the report
+# actually reached the patient file. One place, used by both the list filter and the count.
+_RAD_ORPHAN_PREDICATE = ("state='filed' AND filed_source='external' "
+                         "AND reported_at IS NOT NULL AND study_id IS NULL")
+
 @app.get("/api/radiology/orders")
 def radiology_orders(request: Request, user=Depends(require_radiology)):
     """RIS Phase 2 — the persisted order lifecycle store with turnaround (TAT) in
@@ -6836,12 +6842,24 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
     p = request.query_params
     clauses, params = [], []
     scope = _rad_scope_site(user)
+    site_scope_sql, site_scope_params = None, []
     if scope is not None:
-        clauses.append("site=%s"); params.append(scope)
+        site_scope_sql = "site=%s"; site_scope_params = [scope]
     elif (p.get("site") or "").strip().isdigit():
-        clauses.append("site=%s"); params.append(int(p.get("site")))
+        site_scope_sql = "site=%s"; site_scope_params = [int(p.get("site"))]
+    if site_scope_sql:
+        clauses.append(site_scope_sql); params.extend(site_scope_params)
     st = (p.get("state") or "").strip()
-    if st in ("ordered", "reported", "filed"):
+    if st == "orphan":
+        # Orphan reports: a verified report was seen ready (reported_at set), the order
+        # then left the live board and was reconciled as filed-elsewhere (filed_source
+        # 'external'), yet Meena never bound/filed a study to it (study_id NULL). So a
+        # report existed but we can't confirm it reached the patient file — a human must
+        # verify. This is the reliable, ledger-only half of the durable-ledger fix; the
+        # deterministic version (matching every report to its study) needs the vendor
+        # accession feed.
+        clauses.append(_RAD_ORPHAN_PREDICATE)
+    elif st in ("ordered", "reported", "filed"):
         clauses.append("state=%s"); params.append(st)
     mr = (p.get("mrno") or "").strip()
     if mr:
@@ -6872,7 +6890,19 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
     by_state = {}
     for r in rows:
         by_state[r["state"]] = by_state.get(r["state"], 0) + 1
-    return {"ok": True, "count": len(orders), "byState": by_state, "orders": orders}
+    # Always surface the orphan count (scope-aware) so the tab badge shows from any tab.
+    ocl = [_RAD_ORPHAN_PREDICATE]
+    oparams = []
+    if site_scope_sql:
+        ocl.append(site_scope_sql); oparams.extend(site_scope_params)
+    try:
+        oc = q("SELECT COUNT(*) AS n FROM scheduling.radiology_orders WHERE " + " AND ".join(ocl),
+               tuple(oparams), one=True)
+        orphan_count = int(oc["n"]) if oc and oc.get("n") is not None else 0
+    except Exception:
+        orphan_count = 0
+    return {"ok": True, "count": len(orders), "byState": by_state,
+            "orphanCount": orphan_count, "orders": orders}
 
 @app.get("/api/radiology/autofile/config")
 def radiology_autofile_get(user=Depends(require_admin)):
