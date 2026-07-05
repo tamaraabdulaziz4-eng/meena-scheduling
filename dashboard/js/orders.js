@@ -6,7 +6,7 @@
 // now" view — the operational heart of the platform replacing Siratech's own
 // order list. Read-only.
 
-let odState = { branches: [], site: '', state: '', qtext: '', data: null, loading: false, timer: null };
+let odState = { branches: [], site: '', state: 'attention', qtext: '', data: null, loading: false, timer: null, attnCount: 0 };
 const OD_REFRESH_MS = 60000;
 
 async function renderOrdersPage() {
@@ -54,6 +54,7 @@ async function renderOrdersPage() {
 }
 
 const OD_STATES = [
+  { key: 'attention', label: '⚠️ Needs attention' },
   { key: '', label: 'All' },
   { key: 'ordered', label: 'Ordered' },
   { key: 'reported', label: 'Reported' },
@@ -62,9 +63,13 @@ const OD_STATES = [
 function odRenderTabs() {
   const host = document.getElementById('od-states');
   if (!host) return;
-  host.innerHTML = OD_STATES.map(s =>
-    `<button class="btn btn-sm ${odState.state === s.key ? 'btn-primary' : 'btn-ghost'}"
-       onclick="odSetState('${s.key}')">${s.label}</button>`).join('');
+  host.innerHTML = OD_STATES.map(s => {
+    // The attention tab carries a live count so a manager sees "3 stuck" from anywhere.
+    const badge = (s.key === 'attention' && odState.attnCount > 0)
+      ? ` <span class="badge badge-red" style="padding:0 6px">${odState.attnCount}</span>` : '';
+    return `<button class="btn btn-sm ${odState.state === s.key ? 'btn-primary' : 'btn-ghost'}"
+       onclick="odSetState('${s.key}')">${s.label}${badge}</button>`;
+  }).join('');
 }
 function odSetState(k) { odState.state = k; odRenderTabs(); odLoad(true); }
 function odOnBranch() { odState.site = document.getElementById('od-branch').value; odLoad(true); }
@@ -95,7 +100,9 @@ async function odLoad(force, silent) {
   if (!silent) body.innerHTML = LOADING_HTML;
   const qs = new URLSearchParams();
   if (odState.site) qs.set('site', odState.site);
-  if (odState.state) qs.set('state', odState.state);
+  // 'attention' isn't a server state — it's a client-side filter over the whole
+  // in-flight set, so we ask for everything and pick the stuck ones out below.
+  if (odState.state && odState.state !== 'attention') qs.set('state', odState.state);
   if (odState.qtext) qs.set('mrno', odState.qtext);
   try {
     odState.data = await API.get('/radiology/orders?' + qs.toString());
@@ -130,8 +137,46 @@ function odRender() {
   if (cnt) cnt.textContent = `${d.count || 0} order(s)`;
   const body = document.getElementById('od-body');
   if (!body) return;
+
+  // "Needs attention" = every still-in-flight order past its SLA (reported-not-filed, or
+  // ordered-no-report), worst first. When the loaded set includes in-flight orders we can
+  // refresh the tab badge count; otherwise we keep the last known count.
+  const attn = orders.filter(o => odAttention(o));
+  if (odState.state === 'attention' || !odState.state || odState.state === 'ordered' || odState.state === 'reported') {
+    odState.attnCount = attn.length;
+    odRenderTabs();
+  }
+
+  if (odState.state === 'attention') {
+    if (!attn.length) {
+      body.innerHTML = `<div class="empty" style="padding:34px;text-align:center">
+        <div style="font-size:34px">✅</div>
+        <p style="font-weight:600;margin-top:6px">Nothing stuck — every report is on track.</p>
+        <p style="color:var(--muted);font-size:13px">Orders show up here only when a report sits unfiled or a read runs long.</p></div>`;
+      return;
+    }
+    // worst first: emergencies on top, then the longest-waiting.
+    attn.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || (odAttnAge(b) - odAttnAge(a)));
+    body.innerHTML = `<div style="font-size:12px;color:var(--muted);margin:2px 2px 10px">
+        ${attn.length} order(s) need a human — filed reports and on-track orders are hidden here.</div>`
+      + attn.map(odRow).join('');
+    return;
+  }
+
   if (!orders.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders${odState.state ? ' in this state' : ''} yet. The store fills as the worklist is viewed.</p></div>`; return; }
   body.innerHTML = orders.map(odRow).join('');
+}
+
+// How long an in-flight order has been waiting at its current stage (hours) — drives the
+// worst-first sort on the attention tab.
+function odAttnAge(o) {
+  if (o.state === 'reported') return odHoursSince(o.reportedAt) || 0;
+  if (o.state === 'ordered') return odHoursSince(o.orderedAt) || 0;
+  return 0;
+}
+function odJumpWorklist(mrno) {
+  window._wlPendingFilter = String(mrno || '');
+  showPage('worklist');
 }
 
 function odStat(label, val, color, icon) {
@@ -219,6 +264,9 @@ function odRow(o) {
         ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
         ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
         ${stateBadge}
+        ${o.state !== 'filed' && o.mrno
+          ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" title="Open this patient on the worklist"
+               onclick="odJumpWorklist('${escapeHtml(String(o.mrno))}')">Open in Worklist →</button>` : ''}
       </div>
     </div>
     ${odTimeline(o, step)}
