@@ -9,17 +9,30 @@
   --green:     #00C896;
   --orange:    #FF6B6B;
   --yellow:    #FFBA49;
-  --bg:        #f4f2fc;
-  --card:      #EDEBF9;
-  --card-alt:  #ffffff;
-  --text:      #261E4F;
-  --muted:     #8585A8;
-  --border:    #E0DCF5;
-  --sidebar-bg:    #261E4F;
-  --topbar-bg:     #ffffff;
-  --table-head-bg: #E8E6F8;
-  --table-row-hover: #F0EEFF;
+  --bg:        #f6f5fb;
+  --card:      #ffffff;
+  --card-alt:  #faf9fe;
+  --text:      #1f1940;
+  --muted:     #7c7a99;
+  --border:    #ececf3;
+  --border-strong: #e0dcf0;
+  --sidebar-bg:    #211a45;
+  --topbar-bg:     rgba(255,255,255,.72);
+  --table-head-bg: #fbfaff;
+  --table-row-hover: #f6f4ff;
   --td-color:  #3A3660;
+
+  /* Premium surface scale — solid cards, hairline borders, restrained layered
+     shadows (not the old heavy glass). Consistent radii. */
+  --surface-2: #efedf7;   /* sunken tint — progress tracks, inset fills that were the old lavender --card */
+  --radius-sm: 10px;
+  --radius:    14px;
+  --radius-lg: 18px;
+  --shadow-xs: 0 1px 2px rgba(31,25,64,.04), 0 1px 1px rgba(31,25,64,.03);
+  --shadow-sm: 0 1px 3px rgba(31,25,64,.05), 0 2px 8px rgba(31,25,64,.04);
+  --shadow-md: 0 4px 14px rgba(31,25,64,.07), 0 2px 6px rgba(31,25,64,.04);
+  --shadow-lg: 0 12px 32px rgba(31,25,64,.10), 0 4px 12px rgba(31,25,64,.05);
+  --ring: 0 0 0 3px rgba(107,78,255,.14);
 
   /* Shift colour overrides — can be customised */
   --shift-M:   #2B9FFF;
@@ -43,22 +56,31 @@ body.dark {
   --primary:   #A89EF8;
   --accent:    #7C6BFF;
   --accent2:   #9A8DFF;
-  --bg:        #0f0d1e;
-  --card:      #1c1a35;
-  --card-alt:  #1c1a35;
-  --text:      #e6edf3;
-  --muted:     #9B98C0;
-  --border:    #2e2b4a;
-  --sidebar-bg:    #13112a;
-  --topbar-bg:     #1c1a35;
-  --table-head-bg: #211e38;
-  --table-row-hover: #251f42;
+  --bg:        #0d0b1a;
+  --card:      #17152b;
+  --card-alt:  #1b1934;
+  --text:      #e9e7f5;
+  --muted:     #9b98c0;
+  --border:    #262340;
+  --border-strong: #322e52;
+  --sidebar-bg:    #100e22;
+  --topbar-bg:     rgba(23,21,43,.72);
+  --table-head-bg: #1b1834;
+  --table-row-hover: #201d3c;
   --td-color:  #c9d1d9;
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.28);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.32), 0 2px 8px rgba(0,0,0,.24);
+  --shadow-md: 0 4px 14px rgba(0,0,0,.38), 0 2px 6px rgba(0,0,0,.26);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,.46), 0 4px 12px rgba(0,0,0,.30);
+  --ring: 0 0 0 3px rgba(124,107,255,.26);
+  --surface-2: #221f3d;
 }
 
 body {
   font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg); color: var(--text); font-size: 14px;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility; letter-spacing: -0.006em; line-height: 1.5;
   transition: background 0.2s, color 0.2s;
   /* No grey flash on tap and no rubber-band overscroll — feels native. */
   -webkit-tap-highlight-color: transparent;
@@ -94,20 +116,20 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .layout {
   display: flex; height: 100vh; height: 100dvh; overflow: hidden;
   gap: 16px; padding: 16px;
-  background: linear-gradient(160deg, #f7f6fc 0%, #f0eef9 100%);
+  background: var(--bg);
 }
 
 /* ── Sidebar — clean white panel ── */
 .sidebar {
   width: 232px; flex-shrink: 0;
-  background: #ffffff;
+  background: var(--card);
   color: var(--text);
   display: flex; flex-direction: column;
   height: calc(100vh - 32px);
-  border-radius: 26px;
+  border-radius: 20px;
   overflow: hidden;
   transition: width 0.25s, transform 0.25s;
-  box-shadow: 0 18px 44px rgba(43,36,88,.10);
+  box-shadow: var(--shadow-md);
   border: 1px solid var(--border);
   position: relative;
 }
@@ -176,17 +198,21 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 /* ── Main — detached floating panel ── */
 .main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: #ffffff;
-  border-radius: 26px;
-  box-shadow: 0 14px 40px rgba(43,36,88,.10), inset 0 1px 1px rgba(255,255,255,.8);
+  background: var(--card);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border);
   height: calc(100vh - 32px);
 }
 
 .topbar {
-  background: transparent; border-bottom: 1px solid var(--border);
+  background: var(--topbar-bg); border-bottom: 1px solid var(--border);
   padding: 16px 24px 12px; display: flex; align-items: center;
   justify-content: space-between; gap: 16px; flex-shrink: 0;
-  border-radius: 26px 26px 0 0;
+  border-radius: 20px 20px 0 0;
+  backdrop-filter: saturate(140%) blur(10px);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  position: sticky; top: 0; z-index: 20;
 }
 .topbar-title { font-size: 14px; font-weight: 700; color: var(--primary); }
 .topbar-meta  { font-size: 11px; color: var(--muted); margin-top: 1px; }
@@ -203,14 +229,14 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   z-index: 0; filter: blur(2px);
 }
 .content::before {
-  width: 280px; height: 280px; top: 8%; right: 6%; opacity: .08;
+  width: 340px; height: 340px; top: -4%; right: -2%; opacity: .035;
   background: radial-gradient(circle at 30% 30%, #A78BFF, #6B4EFF 60%, transparent 72%);
-  animation: contentFloat 18s ease-in-out infinite;
+  animation: contentFloat 26s ease-in-out infinite;
 }
 .content::after {
-  width: 220px; height: 220px; bottom: 6%; left: 4%; opacity: .06;
+  width: 260px; height: 260px; bottom: 2%; left: -2%; opacity: .025;
   background: radial-gradient(circle at 30% 30%, #C7B8FF, #8B76FF 60%, transparent 72%);
-  animation: contentFloat 22s ease-in-out infinite reverse;
+  animation: contentFloat 30s ease-in-out infinite reverse;
 }
 @keyframes contentFloat {
   0%,100% { transform: translateY(0) translateX(0) scale(1); }
@@ -393,7 +419,7 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .hm-card-title { font-size: 16px; font-weight: 700; color: var(--primary); }
 .hm-card-meta { font-size: 12.5px; color: var(--muted); }
 .hm-card-meta b { color: var(--text); }
-.home-bar { height: 9px; border-radius: 6px; background: var(--card); overflow: hidden; margin-bottom: 4px; }
+.home-bar { height: 9px; border-radius: 6px; background: var(--surface-2); overflow: hidden; margin-bottom: 4px; }
 .home-bar-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #8B76FF, #6B4EFF); transition: width .6s cubic-bezier(.22,.61,.36,1); }
 .home-bar-fill.done { background: linear-gradient(90deg, #00C896, #00A87C); }
 .hm-branch-list { margin-top: 8px; }
@@ -719,11 +745,12 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--accent); color: #fff; border: none;
-  border-radius: 20px; padding: 8px 16px; font-size: 12.5px;
+  border-radius: 12px; padding: 8px 16px; font-size: 12.5px;
   font-weight: 600; cursor: pointer; white-space: nowrap;
-  transition: background 0.2s, transform 0.1s; font-family: inherit;
+  box-shadow: var(--shadow-xs);
+  transition: background 0.2s, transform 0.1s, box-shadow .2s; font-family: inherit;
 }
-.btn:hover { background: var(--accent2); }
+.btn:hover { background: var(--accent2); box-shadow: var(--shadow-sm); }
 .btn:active { transform: scale(0.97); }
 .btn.btn-outline {
   background: transparent; color: var(--accent);
@@ -787,23 +814,19 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .kpi-label { font-size: 11px; color: var(--muted); margin-top: 5px; font-weight: 500; }
 
 .card {
-  background: rgba(255,255,255,.78);
-  backdrop-filter: blur(12px) saturate(130%);
-  -webkit-backdrop-filter: blur(12px) saturate(130%);
-  border: 1px solid rgba(255,255,255,.7);
-  border-radius: 20px; padding: 18px 20px;
-  box-shadow: 0 14px 40px rgba(43,36,88,.10), inset 0 1px 1px rgba(255,255,255,.8);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
 }
 .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 14px; }
 
 /* ── Tables ── */
 .table-wrap {
-  overflow-x: auto; overflow-y: auto; border-radius: 20px;
-  border: 1px solid rgba(255,255,255,.7);
-  background: rgba(255,255,255,.82);
-  backdrop-filter: blur(12px) saturate(130%);
-  -webkit-backdrop-filter: blur(12px) saturate(130%);
-  box-shadow: 0 14px 40px rgba(43,36,88,.10), inset 0 1px 1px rgba(255,255,255,.8);
+  overflow-x: auto; overflow-y: auto; border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
 }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {
@@ -1239,10 +1262,11 @@ tr:hover td { background: var(--table-row-hover); }
 .stat-pill strong { color: var(--primary); font-size: 15px; }
 
 /* ── Scrollbars ── */
-::-webkit-scrollbar { width: 7px; height: 7px; }
-::-webkit-scrollbar-track { background: var(--border); border-radius: 4px; }
-::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent2); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(124,107,255,.22); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(124,107,255,.4); border: 3px solid transparent; background-clip: padding-box; }
+* { scrollbar-width: thin; scrollbar-color: rgba(124,107,255,.28) transparent; }
 
 /* ── Action btn small ── */
 .action-btn {
@@ -1275,11 +1299,15 @@ tr:hover td { background: var(--table-row-hover); }
 
 /* Cards / panels get a gentle lift on hover */
 .card, .stat-card, .branch-card {
-  transition: transform .2s ease, box-shadow .2s ease;
+  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
 }
-.card:hover, .stat-card:hover, .branch-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 16px 40px rgba(43,36,88,.12);
+/* Static content cards stay put (the old universal bounce read as "busy").
+   Only cards that are actually clickable lift — those opt in via .card-interactive
+   or the genuinely-interactive stat/branch tiles. */
+.stat-card:hover, .branch-card:hover, .card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
 }
 
 /* Buttons: soft depth + press feedback */
@@ -1925,8 +1953,8 @@ body.dark .seg { background: rgba(255,255,255,.05); }
 
 /* Primary + tiny buttons (were unstyled before → looked generic) */
 .btn.btn-primary { background: linear-gradient(135deg, var(--accent2), var(--accent));
-  color: #fff; border: none; box-shadow: 0 6px 18px rgba(107,78,255,.32); }
-.btn.btn-primary:hover { box-shadow: 0 9px 24px rgba(107,78,255,.42); }
+  color: #fff; border: none; box-shadow: 0 3px 10px rgba(107,78,255,.24); }
+.btn.btn-primary:hover { box-shadow: 0 6px 18px rgba(107,78,255,.32); transform: translateY(-1px); }
 .btn.btn-xs { padding: 4px 10px; font-size: 11px; border-radius: 9px; }
 
 /* A solid select that matches the inputs */

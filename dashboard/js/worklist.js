@@ -409,6 +409,7 @@ function wlRender() {
     + strip('img', imaged, `<span class="badge badge-orange">📷 ${imaged.length}</span>`, 'Imaged — awaiting the report', 'i')
     + strip('rep', reported, `<span class="badge badge-green">✅ ${reported.length}</span>`, 'Reported — filing to the patient file', 'r');
   wlRestoreOpenState();   // a live refresh must not collapse strips/drills the operator opened
+  wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
 }
 
 // Which strips + Check drills the operator has open — preserved across every repaint
@@ -493,7 +494,43 @@ function wlPregEl(it) {
   const cached = wlState.pregCache.get(mr);
   const id = 'wl-preg-' + mr.replace(/[^A-Za-z0-9_-]/g, '');
   if (cached) return `<span id="${id}">${wlPregBadge(cached)}</span>`;
-  return `<span id="${id}"><button class="btn btn-sm btn-ghost" style="padding:1px 7px;font-size:11px" title="Check pregnancy / β-hCG lab before imaging" onclick="wlPregCheck('${jsAttr(mr)}',${Number(it.site) || 0},'${id}',this)">🤰 Preg check</button></span>`;
+  // Auto-checks in the background (wlAutoPreg) — no click needed.
+  return `<span id="${id}"><span class="badge" style="background:var(--card-alt);color:var(--muted);border:1px solid var(--border)" title="Checking pregnancy / β-hCG status…">🤰 <span class="wl-shimmer" style="width:40px;display:inline-block;vertical-align:middle"></span></span></span>`;
+}
+// Automatically check pregnancy status for every female row on the visible board —
+// no button. Throttled (small concurrency) and cached, so a 30-row board makes a
+// steady trickle of calls instead of a burst, and a live refresh never re-fetches
+// a patient we already know.
+let _wlPregBusy = 0;
+const _WL_PREG_MAX = 2;
+const _wlPregQueue = [];
+function wlAutoPreg() {
+  const items = (wlState.data && wlState.data.items) || [];
+  const seen = new Set(_wlPregQueue.map((x) => x.mr));
+  for (const it of items) {
+    if (!wlIsFemale(it.gender)) continue;
+    const mr = String(it.mrno || '');
+    if (!mr || wlState.pregCache.has(mr) || seen.has(mr)) continue;
+    seen.add(mr);
+    _wlPregQueue.push({ mr, site: Number(it.site) || 0 });
+  }
+  wlPregPump();
+}
+function wlPregPump() {
+  while (_wlPregBusy < _WL_PREG_MAX && _wlPregQueue.length) {
+    const { mr, site } = _wlPregQueue.shift();
+    if (wlState.pregCache.has(mr)) continue;
+    _wlPregBusy++;
+    const qs = new URLSearchParams({ mrno: mr }); if (site) qs.set('site', String(site));
+    API.get('/radiology/labs/pregnancy?' + qs.toString())
+      .then((r) => {
+        wlState.pregCache.set(mr, r);
+        const el = document.getElementById('wl-preg-' + mr.replace(/[^A-Za-z0-9_-]/g, ''));
+        if (el) el.innerHTML = wlPregBadge(r);
+      })
+      .catch(() => { /* leave the shimmer; a later refresh retries */ })
+      .finally(() => { _wlPregBusy--; wlPregPump(); });
+  }
 }
 function wlPregBadge(r) {
   if (!r || !r.found || !r.hasPregnancyTest) {
