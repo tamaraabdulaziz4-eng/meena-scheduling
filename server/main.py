@@ -9858,7 +9858,11 @@ def _radiology_autostamp_sweep():
             cand = [o for o in orders
                     if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
             cur_hist = str(s.get("clinical_history") or "").strip()
-            if len(cand) == 1:
+            # Write the moment images arrive (empty history). If a history already exists
+            # (a prior stamp or a human's richer note), leave it — never clobber. This
+            # empty-history gate is checked BEFORE the expensive /patient enrichment, so a
+            # steady board (studies already stamped) costs no extra HIS calls.
+            if len(cand) == 1 and not cur_hist:
                 o = cand[0]
                 emergency = bool(o.get("emergency"))
                 # Enrich with the REAL clinical indication + the ordering doctor's name
@@ -9870,18 +9874,12 @@ def _radiology_autostamp_sweep():
                 doctor = str(enr.get("provider") or o.get("doctorName") or "").strip()
                 doc_id = str(enr.get("providerId") or "").strip()
                 # Build: "<indication> — Dr <name> (#<id>) — EMERGENCY|ROUTINE"
-                parts = []
-                parts.append(indication or str(o.get("exam") or "").strip())
+                parts = [indication or str(o.get("exam") or "").strip()]
                 if doctor:
                     parts.append("Dr " + doctor + (" (#" + doc_id + ")" if doc_id else ""))
                 parts.append("EMERGENCY" if emergency else "ROUTINE")
                 text = " — ".join([p for p in parts if p])
-                # Write the moment images arrive (empty history). If a history already
-                # exists (a prior stamp or a human's richer note), leave it — never clobber.
-                already = bool(cur_hist) and (
-                    cur_hist == text
-                    or (indication and indication.lower() in cur_hist.lower()))
-                if text and not cur_hist:
+                if text:
                     try:
                         _elite_write_history(sid, text, set_emergency=emergency)
                         stamped += 1
@@ -9890,10 +9888,6 @@ def _radiology_autostamp_sweep():
                                                  "history": text[:160], "site": o.get("site")}))
                     except Exception as e:
                         print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
-                elif cur_hist and not already:
-                    # There's existing text without our indication — record it so we can
-                    # decide later whether to force-refresh; do NOT overwrite a human note.
-                    print(f"[rad-autostamp] {mrno}/{sid}: history present, left as-is")
             # accession: deterministic key from the MWL feed — only when unambiguous
             # (single entry for the patient today, or exactly one of this modality).
             if sid not in _autostamp_acc_done:
