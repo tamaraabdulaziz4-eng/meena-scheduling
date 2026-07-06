@@ -342,6 +342,7 @@ function rsStartAuto() {
   radstats.timer = setInterval(() => {
     if (typeof currentPage !== 'undefined' && currentPage !== 'radstats') { rsStopAuto(); return; }
     if (!document.getElementById('rs-body')) { rsStopAuto(); return; }
+    if (document.hidden) return;               // don't poll a backgrounded tab
     rsLoad(true);
   }, 60000);
 }

@@ -256,6 +256,7 @@ async function renderHomeRadstats() {
     if (!document.getElementById('hm-radstats') || (typeof currentPage !== 'undefined' && currentPage !== 'home')) {
       clearInterval(_hmRadTimer); _hmRadTimer = null; return;
     }
+    if (document.hidden) return;               // don't poll a backgrounded tab
     _hmRadFetch(site, scopeName);
   }, 90000);
 }
