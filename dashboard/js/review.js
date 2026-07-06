@@ -101,6 +101,9 @@ function renderReviewList() {
   else if (reviewFilter === 'not_submitted') items = items.filter(b => b.status === 'not_submitted');
   else if (reviewFilter === 'approved') items = items.filter(b => b.status === 'approved');
 
+  const sub = document.getElementById('review-board-sub');
+  if (sub) sub.textContent = `${monthLabel(reviewYear, reviewMonth)} · ${items.length} branch${items.length !== 1 ? 'es' : ''}`;
+
   if (!items.length) {
     list.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><p>No schedules in this view</p></div>`;
     return;
@@ -114,30 +117,29 @@ function renderReviewList() {
     let actions = '';
     if (b.status === 'submitted' || b.status === 'reviewed') {
       actions = `
-        <button class="btn review" onclick="openReviewSchedule(${b.branch_id})">Review</button>
-        <button class="btn approve" onclick="reviewAction(${b.schedule_id}, 'approved')">Approve</button>
-        <button class="btn return" onclick="reviewAction(${b.schedule_id}, 'returned')">Return</button>`;
+        <button class="ghost" onclick="openReviewSchedule(${b.branch_id})">Review</button>
+        <button class="open" onclick="reviewAction(${b.schedule_id}, 'approved')">Approve</button>
+        <button class="ghost" onclick="reviewAction(${b.schedule_id}, 'returned')" style="color:var(--danger,#E63946)">Return</button>`;
     } else if (b.status === 'approved') {
       // Already approved but the team wants to change something — reopen it
       // (unlocks it and sends it back to the team lead for edits).
       actions = `
-        <button class="btn review" onclick="openReviewSchedule(${b.branch_id})">View</button>
-        <button class="btn return" onclick="reviewAction(${b.schedule_id}, 'returned')">↩ Reopen</button>`;
+        <button class="ghost" onclick="openReviewSchedule(${b.branch_id})">View</button>
+        <button class="ghost" onclick="reviewAction(${b.schedule_id}, 'returned')">↩ Reopen</button>`;
     } else if (b.status === 'not_submitted') {
-      actions = `<button class="btn review" onclick="openReviewSchedule(${b.branch_id})">Open</button>`;
+      actions = `<button class="ghost" onclick="openReviewSchedule(${b.branch_id})">Open</button>`;
     } else {
-      actions = `<button class="btn review" onclick="openReviewSchedule(${b.branch_id})">View</button>`;
+      actions = `<button class="ghost" onclick="openReviewSchedule(${b.branch_id})">View</button>`;
     }
     return `
-      <div class="review-row">
-        <div>
-          <div class="branch">${escapeHtml(b.branch_name)}</div>
-          <div class="meta">${b.staff_count || 0} staff${submitted ? ` · ${b.shift_count || 0} shifts` : ''}</div>
+      <div class="lrow">
+        <div style="flex:2;min-width:150px">
+          <div style="font-weight:700">${escapeHtml(b.branch_name)}</div>
+          <div style="font-size:11.5px;color:var(--muted)">${b.staff_count || 0} staff${submitted ? ` · ${b.shift_count || 0} shifts` : ''}</div>
         </div>
-        <div class="grow"></div>
-        <div class="who">${who}${when ? `<br>${when}` : ''}</div>
-        <span class="rbadge ${meta.cls}">${meta.label}</span>
-        <div class="ractions">${actions}</div>
+        <div style="flex:1.5;min-width:120px;font-size:12px;color:var(--muted)">${who}${when ? `<br>${when}` : ''}</div>
+        <div style="flex:none">${meta.html}</div>
+        <div style="display:flex;gap:6px;white-space:nowrap;flex:none">${actions}</div>
       </div>`;
   }).join('');
 }

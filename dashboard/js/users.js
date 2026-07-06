@@ -12,12 +12,14 @@ function renderUsersPage() {
   );
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Accounts, roles & access', 'Users')}
-    <div class="table-wrap" id="users-wrap">
-      <table>
-        <thead><tr><th>#</th><th>Username</th><th>Role</th><th>Branch</th><th>Created</th><th>Actions</th></tr></thead>
-        <tbody id="users-tbody"></tbody>
-      </table>
+    <div class="board" id="users-wrap">
+      <div class="bhead"><div class="bhrow">
+        <div class="btitle">Users <span>${allUsers.length} account${allUsers.length !== 1 ? 's' : ''}</span></div>
+        <div class="bh-actions"><button class="open pri" onclick="openUserModal()">+ Add User</button></div>
+      </div></div>
+      <div class="rows" id="users-rows"></div>
     </div>
     ${currentUser?.role === 'superadmin' ? `
     <div class="danger-zone">

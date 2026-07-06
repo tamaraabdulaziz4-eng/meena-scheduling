@@ -336,25 +336,26 @@ function hmRadDrillRender() {
     label = (rows[0] && rows[0].branch) || 'Branch';
   }
   // Mark the active tile.
-  document.querySelectorAll('#hm-radstats .hm-rad-kpi').forEach(el => {
+  document.querySelectorAll('#hm-radstats .kpi').forEach(el => {
     if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`'${_hmRadDrill}'`)) el.classList.add('active');
   });
   const trunc = d.requestsTruncated ? ` · showing first ${all.length} of ${d.requestsTruncated}` : '';
   const list = rows.length ? rows.map(r => `
-    <button type="button" class="hm-rad-req" onclick="openPatientLookup('${escapeHtml(r.mrno || '')}')">
-      <div class="hm-rad-req-main">
-        <div class="hm-rad-req-name">${escapeHtml(r.name || '(no name)')}</div>
-        <div class="hm-rad-req-sub">${escapeHtml(r.exam || '—')}${r.branch ? ' · ' + escapeHtml(r.branch) : ''}${r.doctor ? ' · ' + escapeHtml(r.doctor) : ''}</div>
+    <button type="button" class="lrow" style="display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;text-align:start;font:inherit;cursor:pointer;background:none;border:none;border-bottom:1px solid var(--border);padding:9px 12px" onclick="openPatientLookup('${escapeHtml(r.mrno || '')}')">
+      <div style="min-width:0">
+        <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name || '(no name)')}</div>
+        <div style="font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.exam || '—')}${r.branch ? ' · ' + escapeHtml(r.branch) : ''}${r.doctor ? ' · ' + escapeHtml(r.doctor) : ''}</div>
       </div>
-      <div class="hm-rad-req-side">
-        ${r.priority === 'emergency' ? '<span class="badge badge-red">ER</span>' : ''}
-        <span class="hm-rad-req-mrn">${escapeHtml(r.mrno || '')}</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${r.priority === 'emergency' ? '<span class="sc no">ER</span>' : ''}
+        <span style="font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums">${escapeHtml(r.mrno || '')}</span>
       </div>
     </button>`).join('') : `<div style="padding:10px;color:var(--muted);font-size:12.5px">No requests in this group.</div>`;
-  panel.innerHTML = `<div class="hm-rad-drillbox">
-    <div class="hm-rad-drill-head">${escapeHtml(label)} · ${rows.length}${trunc}
-      <button class="btn btn-xs btn-ghost" style="float:inline-end" onclick="hmRadDrillToggle('${_hmRadDrill}')">✕ close</button></div>
-    <div class="hm-rad-reqlist">${list}</div>
+  panel.innerHTML = `<div class="listcard" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;font-size:12.5px;font-weight:700">
+      <span>${escapeHtml(label)} · ${rows.length}${trunc}</span>
+      <button class="ghost" onclick="hmRadDrillToggle('${_hmRadDrill}')">✕ close</button></div>
+    <div style="max-height:320px;overflow:auto">${list}</div>
   </div>`;
 }
 
@@ -526,19 +527,19 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
   let d = null;
   try { d = await API.get('/employee-of-month'); } catch (e) { box.innerHTML = ''; return; }
   if (!d || !d.staff) {
-    box.innerHTML = isReviewer ? `
-      <div class="hm-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+    box.innerHTML = isReviewer ? `<div class="cc">
+      <div class="listcard" style="margin-bottom:14px"><div class="lrow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px">
         <div><b>Employee of the Month</b>
           <span class="hm-muted" style="margin-left:6px">not set</span></div>
-        <button class="btn btn-sm" onclick="openEotmModal()">Choose</button>
-      </div>` : '';
+        <button class="open" onclick="openEotmModal()">Choose</button>
+      </div></div></div>` : '';
     return;
   }
   const s = d.staff;
-  box.innerHTML = `
-    <div class="hm-card hm-eotm-card hm-eotm-filled">
+  box.innerHTML = `<div class="cc">
+    <div class="listcard hm-eotm-card hm-eotm-filled" style="margin-bottom:14px">
       <div class="hm-eotm-shine"></div>
-      <div class="hm-eotm-row">
+      <div class="hm-eotm-row lrow" style="padding:14px 16px">
         <div class="hm-eotm-medal">🏆</div>
         <div class="hm-eotm-main">
           <div class="hm-eotm-kicker">Employee of the Month${d.period ? ' · ' + escapeHtml(d.period) : ''}</div>
@@ -547,11 +548,11 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
           ${d.note ? `<div class="hm-eotm-note">“${escapeHtml(d.note)}”</div>` : ''}
         </div>
         ${isReviewer ? `<div class="hm-eotm-actions">
-          <button class="btn btn-sm btn-ghost" onclick="openEotmModal()">Change</button>
-          <button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="clearEotm()">Clear</button>
+          <button class="ghost" onclick="openEotmModal()">Change</button>
+          <button class="ghost" style="color:var(--danger,#E25555)" onclick="clearEotm()">Clear</button>
         </div>` : ''}
       </div>
-    </div>`;
+    </div></div>`;
 }
 
 async function clearEotm() {
@@ -643,20 +644,18 @@ async function renderHomeShiftChecks(containerId = 'hm-shiftcheck') {
   if (!branches.length) { box.innerHTML = ''; return; }
   const pill = (c) => {
     const done = c.done;
-    const color = done ? '#2BAE66' : '#E8A33D';
     const who = done && c.confirmed_by_name ? ` title="By ${escapeHtml(c.confirmed_by_name)}"` : '';
-    return `<span${who} style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
-      font-weight:700;padding:2px 9px;border-radius:10px;margin-left:6px">${done ? '✓' : '○'} ${c.label}</span>`;
+    return `<span class="sc ${done ? 'ok' : 'warn'}"${who} style="margin-left:6px">${done ? '✓' : '○'} ${c.label}</span>`;
   };
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head"><div class="hm-card-title">Equipment checks today</div></div>
-    <div style="margin-top:6px">
+  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">Equipment checks today</div></div></div>
+    <div class="rows">
       ${branches.map(b => `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <div class="lrow" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 18px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:600">${escapeHtml(b.branch_name)}</div>
           <div>${b.checks.map(pill).join('')}</div>
         </div>`).join('')}
-    </div></div>`;
+    </div></div></div>`;
 }
 
 // ── On duty today: who's on shift right now, per branch, with contact ─────────
@@ -668,26 +667,28 @@ async function renderHomeOnDuty(containerId = 'hm-onduty') {
   try { d = await API.get('/on-duty'); } catch (e) { box.innerHTML = ''; return; }
   const branches = (d && d.branches) || [];
   if (!branches.length) {
-    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">On duty today</div></div>
-      <div class="hm-muted" style="padding:6px 2px">No one is scheduled on duty today.</div></div>`;
+    box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">On duty today</div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px;color:var(--muted);font-size:13px">No one is scheduled on duty today.</div></div></div></div>`;
     return;
   }
   const total = branches.reduce((a, b) => a + b.staff.length, 0);
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head"><div class="hm-card-title">On duty today</div>
-      <div class="hm-card-meta">${total} on shift</div></div>
+  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">On duty today <span>${total} on shift</span></div></div></div>
+    <div class="rows">
     ${branches.map(b => `
-      <div style="margin-top:8px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:4px">${escapeHtml(b.branch_name)}</div>
+      <div style="padding:4px 0">
+        <div style="font-weight:700;font-size:13px;padding:8px 18px 2px">${escapeHtml(b.branch_name)}</div>
         ${b.staff.map(onDutyRow).join('')}
       </div>`).join('')}
-  </div>`;
+    </div>
+  </div></div>`;
 }
 
 function onDutyRow(s) {
   const st = (typeof allShiftTypes !== 'undefined' && allShiftTypes)
     ? allShiftTypes.find(x => x.code === s.shift_code) : null;
-  const color = st?.color || '#5B8DEF';
+  const color = st?.color || '#5B8DEF';   // functional: shift-type colour comes from data
   const badge = `<span style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
     font-weight:700;padding:2px 8px;border-radius:9px">${escapeHtml(s.shift_code)}</span>`;
   const sec = s.section === 'US' ? 'US' : 'General';
@@ -695,7 +696,7 @@ function onDutyRow(s) {
     ? `<a href="tel:${encodeURIComponent(s.phone)}" style="color:var(--accent);text-decoration:none">${escapeHtml(s.phone)}</a>` : '';
   const tags = [sec, s.is_oncall ? 'On-call' : '', s.covering_at ? 'covering ' + escapeHtml(s.covering_at) : '']
     .filter(Boolean).join(' · ');
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">
+  return `<div class="lrow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 18px">
       <div style="min-width:0">
         <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(s.name)}</div>
         <div style="font-size:12px;color:var(--muted)">${tags}${phone ? ' · ' + phone : ''}</div>

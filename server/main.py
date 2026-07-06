@@ -6979,6 +6979,106 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
     return {"ok": True, "count": len(orders), "byState": by_state,
             "orphanCount": orphan_count, "orders": orders}
 
+@app.get("/api/radiology/throughput")
+def radiology_throughput(
+    from_: str = Query("", alias="from"),
+    to: str = Query(""),
+    sites: str = Query(""),
+    user=Depends(require_admin),
+):
+    """Daily imaging throughput (منجز vs ما جا) for the Statistics page, aggregated
+    from the local order ledger (scheduling.radiology_orders). Read-only.
+
+    · "imaged" is bucketed by the IMAGING date (KSA calendar day, UTC+3), NOT the
+      order date — patients often arrive days after the order was placed. The
+      done-signal is imaged_at; rows persisted before imaged_at existed (or filed
+      without an imaging stamp) fall back to reported_at, counted in
+      `fallbackReported` and noted in `basis`.
+    · "noShow" = orders whose ORDER date (KSA day) falls in the range and that never
+      reached imaging (imaged_at IS NULL, no report, state still 'ordered').
+    Access mirrors /api/radiology/stats: require_admin, and a branch-locked team
+    lead is confined to their own HIS site regardless of the `sites` param."""
+    def _day(s, default):
+        s = (s or "").strip()
+        return s if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else default
+    ksa_today = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d")
+    d_to = _day(to, ksa_today)
+    d_from = _day(from_, d_to[:8] + "01")
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+    # Branch isolation — same rule as /api/radiology/stats (_rad_scope_site).
+    scope = _rad_scope_site(user)
+    if scope is not None:
+        site_ids = [int(scope)]
+    else:
+        site_ids = [int(x) for x in (sites or "").split(",") if x.strip().isdigit()]
+    site_sql, site_params = "", []
+    if site_ids:
+        site_sql = " AND site = ANY(%s)"
+        site_params = [site_ids]
+
+    ksa = "AT TIME ZONE 'Asia/Riyadh'"
+    done_rows = q(f"""
+        SELECT to_char(COALESCE(imaged_at, reported_at) {ksa}, 'YYYY-MM-DD') AS day,
+               modality, mrno, patient_name, bill_no, department,
+               ordered_at, imaged_at, reported_at,
+               (imaged_at IS NULL) AS used_reported
+          FROM scheduling.radiology_orders
+         WHERE COALESCE(imaged_at, reported_at) IS NOT NULL
+           AND to_char(COALESCE(imaged_at, reported_at) {ksa}, 'YYYY-MM-DD') BETWEEN %s AND %s{site_sql}
+         ORDER BY COALESCE(imaged_at, reported_at) ASC
+         LIMIT 5000""", tuple([d_from, d_to] + site_params))
+    noshow_rows = q(f"""
+        SELECT to_char(ordered_at {ksa}, 'YYYY-MM-DD') AS day, modality
+          FROM scheduling.radiology_orders
+         WHERE ordered_at IS NOT NULL
+           AND imaged_at IS NULL AND reported_at IS NULL AND state = 'ordered'
+           AND to_char(ordered_at {ksa}, 'YYYY-MM-DD') BETWEEN %s AND %s{site_sql}
+         LIMIT 5000""", tuple([d_from, d_to] + site_params))
+
+    def _mods(m):
+        toks = [t.strip().upper() for t in str(m or "").split(",") if t.strip()]
+        return toks or ["?"]
+    def _iso(v):
+        return v.isoformat() if v is not None else None
+
+    days, items, tot_by_mod, fallback = {}, [], {}, 0
+    for r in done_rows:
+        d = r["day"]
+        bucket = days.setdefault(d, {"date": d, "imaged": 0, "byModality": {}})
+        bucket["imaged"] += 1
+        if r.get("used_reported"):
+            fallback += 1
+        for mo in _mods(r.get("modality")):
+            bucket["byModality"][mo] = bucket["byModality"].get(mo, 0) + 1
+            tot_by_mod[mo] = tot_by_mod.get(mo, 0) + 1
+        items.append({
+            "date": d, "mrno": r.get("mrno"), "patientName": r.get("patient_name"),
+            "modality": r.get("modality"), "exam": None,   # exam name isn't persisted in the ledger
+            "billNo": r.get("bill_no"), "department": r.get("department"),
+            "orderedAt": _iso(r.get("ordered_at")),
+            "imagedAt": _iso(r.get("imaged_at") or r.get("reported_at")),
+            "basisReported": bool(r.get("used_reported")),
+        })
+    noshow = {}
+    for r in noshow_rows:
+        d = r["day"]
+        bucket = noshow.setdefault(d, {"date": d, "count": 0, "byModality": {}})
+        bucket["count"] += 1
+        for mo in _mods(r.get("modality")):
+            bucket["byModality"][mo] = bucket["byModality"].get(mo, 0) + 1
+    return {
+        "ok": True,
+        "range": {"from": d_from, "to": d_to},
+        "basis": ("imaged_at" if not fallback
+                  else f"imaged_at (reported_at fallback for {fallback} row(s) without an imaging stamp)"),
+        "fallbackReported": fallback,
+        "days": [days[d] for d in sorted(days)],
+        "noShow": [noshow[d] for d in sorted(noshow)],
+        "totals": {"imaged": len(done_rows), "noShow": len(noshow_rows), "byModality": tot_by_mod},
+        "items": items,
+    }
+
 @app.post("/api/radiology/mwl/push")
 async def radiology_mwl_push(request: Request, user=Depends(require_admin)):
     """Ingest DICOM Modality Worklist entries from the on-site MWL agent (a small
