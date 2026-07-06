@@ -446,7 +446,10 @@ async function discoverOrderSite(file, wantBillNo) {
 // accession is empty and the matcher falls back to fuzzy matching — this just makes the
 // link EXACT the moment the accession is available, with zero code change. Keyed by
 // invPatTestResultId (clean 1:1 with the result-entry test rows) + a billNo|service key.
-async function emrRadiologyDetails(mrno, site) {
+const _emrCache = new Map();   // mrno -> { ts, map } : short-TTL so the worklist pass reuses it
+const EMR_TTL_MS = Number(process.env.EMR_TTL_MS || 60000);
+async function emrRadiologyDetails(mrno, site, opts = {}) {
+  if (!opts.noCache) { const e = _emrCache.get(String(mrno)); if (e && Date.now() - e.ts < EMR_TTL_MS) return e.map; }
   const map = new Map();
   try {
     // Use the PROVEN minimal body ({mrno}) — the same call discoverOrderSite relies on,
@@ -465,9 +468,24 @@ async function emrRadiologyDetails(mrno, site) {
       };
       if (d.invPatTestResultId != null) map.set(String(d.invPatTestResultId), rec);
       if (rec.billNo && rec.serviceName) map.set('bs:' + rec.billNo + '|' + rec.serviceName.toLowerCase(), rec);
+      if (rec.billNo) { const bk = 'bill:' + rec.billNo; if (!map.has(bk)) map.set(bk, []); map.get(bk).push(rec); }
     }
   } catch (e) { /* best-effort enrichment — never blocks matching */ }
+  _emrCache.set(String(mrno), { ts: Date.now(), map });
+  if (_emrCache.size > 800) _emrCache.delete(_emrCache.keys().next().value);
   return map;
+}
+// Best accession for a worklist row (billNo + exam name) from the EMR map.
+function emrAccessionForRow(emrMap, billNo, exam) {
+  if (!emrMap || billNo == null) return null;
+  const onBill = emrMap.get('bill:' + billNo);
+  if (!Array.isArray(onBill) || !onBill.length) return null;
+  const ex = String(exam || '').toLowerCase();
+  const rec = (onBill.length === 1 ? onBill[0]
+    : onBill.find((r) => (r.serviceName || '').toLowerCase() === ex)
+      || onBill.find((r) => results.normMod(r.modality || r.serviceName || '') === results.normMod(exam || ''))
+      || onBill[0]);
+  return rec ? { accession: rec.accession || null, pacsId: rec.pacsId || null, cpacsUrl: rec.cpacsUrl || null } : null;
 }
 function emrLookup(emrMap, t, row) {
   if (!emrMap) return null;
@@ -867,16 +885,36 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     // window count — an old same-modality study must not flip a fresh order.
     const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
     const studiesBy = new Map();
+    const emrBy = new Map();
     // light + short-TTL cached (see depacsStudies): the board re-checks every patient
     // on each refresh, so caching the recent-window lookup is what kills the lag. A
     // manual force-refresh (noCache) bypasses the cache for truly-fresh status.
+    // Also pull the EMR view once per patient (cached) for the DICOM accession — the
+    // deterministic key that makes stage detection EXACT (order.accession === study.accession).
     await pool(mrns, 8, async (m) => {
       try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
+      try { emrBy.set(m, await emrRadiologyDetails(m, 0, { noCache })); } catch (e) { /* fuzzy fallback */ }
     });
     const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
     for (const it of items) {
       const all = studiesBy.get(it.mrno);
       if (!all) continue;                            // lookup failed → keep preliminary stage
+      // Deterministic path: the order's own DICOM accession (SIRA####) vs the study's.
+      // When both carry it, this is an EXACT 1:1 link — no modality/time guessing.
+      const emrAcc = emrAccessionForRow(emrBy.get(it.mrno), it.billNo, it.exam);
+      if (emrAcc && emrAcc.accession) {
+        it.accession = emrAcc.accession;
+        if (emrAcc.pacsId) it.pacsId = emrAcc.pacsId;
+        if (emrAcc.cpacsUrl) it.cpacsUrl = emrAcc.cpacsUrl;
+        const hit = all.find((s) => s.accession && String(s.accession).trim() === String(it.accession).trim());
+        if (hit) {
+          it.stage = results.isReported(hit.status) ? 'reported'
+            : (results.isDraftReport(hit.status) ? 'draft' : 'imaged');
+          it.readyToFile = it.stage === 'reported';
+          it.accessionSource = 'siratech';
+          continue;                                  // exact match — skip the fuzzy fallback
+        }
+      }
       const mod = results.normMod(it.modality || it.exam || '');
       // normMod returns the RAW string when it can't classify — that would never equal a
       // study's normalized modality and would force EVERY unmapped exam to 'ordered' even

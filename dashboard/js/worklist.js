@@ -352,7 +352,8 @@ function wlMergeEnrich(d, isReady) {
   for (const it of ((d && d.items) || [])) {
     const k = wlRowKey(it);
     if (!k) continue;                            // keyless → don't cache/merge (collision-safe)
-    enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage });
+    enr.set(k, { modality: it.modality, exam: it.exam, stage: it.stage,
+      accession: it.accession, accessionSource: it.accessionSource, pacsId: it.pacsId, cpacsUrl: it.cpacsUrl });
     if (it.modality || it.exam) wlState.modCache.set(k, { modality: it.modality, exam: it.exam });
     // Cache the HIGHEST stage ever seen for this row (ratchet), so a refresh restores
     // the furthest-along state instead of letting a weaker later reading win.
@@ -368,6 +369,10 @@ function wlMergeEnrich(d, isReady) {
       if (!e) continue;
       if (e.modality && it.modality !== e.modality) it.modality = e.modality;
       if (e.exam && it.exam !== e.exam) it.exam = e.exam;
+      // The deterministic accession link (+ PACS pointers) rides along when known.
+      if (e.accession && !it.accession) { it.accession = e.accession; it.accessionSource = e.accessionSource; }
+      if (e.pacsId && !it.pacsId) it.pacsId = e.pacsId;
+      if (e.cpacsUrl && !it.cpacsUrl) it.cpacsUrl = e.cpacsUrl;
       // Stage is authoritative ONLY from the ready pass — and only ever moves forward.
       if (isReady && e.stage && wlStageRank(e.stage) > wlCurRank(it)) it.stage = e.stage;
     }
