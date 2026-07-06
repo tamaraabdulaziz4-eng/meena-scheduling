@@ -753,12 +753,26 @@ async function wlToggle(key, mrno, site, btn) {
   row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
   wlState.openDrills.add(key);
   wlState.drillHtml = wlState.drillHtml || new Map();
+  // Re-entrancy guard: the match call is heavy (DePACS lookup); a second click while
+  // it's in flight must not fire a duplicate request.
+  wlState._drillLoading = wlState._drillLoading || new Set();
+  if (wlState._drillLoading.has(key)) return;
+  wlState._drillLoading.add(key);
   try {
     const d = await API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`);
-    box.innerHTML = wlMatch(d);
-    wlState.drillHtml.set(key, box.innerHTML);   // cache so a repaint can restore it without a refetch
+    const html = wlMatch(d);
+    // Cache FIRST so wlRestoreOpenState paints the result (not a blank box) if a
+    // 45s silent refresh already repainted the board while we were awaiting.
+    wlState.drillHtml.set(key, html);
+    // …and write to the CURRENT node — the one captured before the await may have
+    // been detached by that repaint, which left the drill stuck on "loading".
+    const live = document.getElementById('wl-d-' + key);
+    if (live && wlState.openDrills.has(key)) live.innerHTML = html;
   } catch (e) {
-    box.innerHTML = `<div class="ho-note">${escapeHtml(e.message || 'Result match failed')}</div>`;
+    const live = document.getElementById('wl-d-' + key);
+    if (live) live.innerHTML = `<div class="ho-note">${escapeHtml(e.message || 'Result match failed')}</div>`;
+  } finally {
+    wlState._drillLoading.delete(key);
   }
 }
 
