@@ -2643,3 +2643,70 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .ps-consent-row { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12.5px;
   padding:7px 10px; border:1px solid var(--border); border-radius:10px; }
 .cn-poll { margin-top:16px; font-size:13.5px; font-weight:700; color:var(--muted); }
+
+/* ══════════════════════ Clinical Calm — motion & polish ══════════════════════
+   Premium hospital-grade layer (design panel winner). SOLID states only — motion is
+   opacity/transform/colour, fires ONCE on a view's first paint (never on the 45s silent
+   repaint, because #wl-body persists and only its innerHTML changes), and is pinned for
+   prefers-reduced-motion. No per-row network, nothing waits on data. */
+
+/* Calmer elevation + a whisper more warmth in the tint */
+:root { --shadow-sm: 0 1px 2px rgba(38,30,79,.05), 0 8px 22px rgba(38,30,79,.05);
+        --shadow-md: 0 2px 6px rgba(38,30,79,.06), 0 16px 38px rgba(38,30,79,.08); }
+
+/* One-time entrance for a view's top-level sections (runs on nav, not on poll) */
+@keyframes ccRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.content > .card,
+.content > #wl-body,
+.content > .phero,
+.content > [class*="hero"] { animation: ccRise .44s cubic-bezier(.2,.75,.25,1) both; }
+.content > *:nth-child(1) { animation-delay: 0s; }
+.content > *:nth-child(2) { animation-delay: .06s; }
+.content > *:nth-child(3) { animation-delay: .12s; }
+.content > *:nth-child(4) { animation-delay: .18s; }
+
+/* Warm touch (from Warm Care) — a soft violet wash behind the page hero, no per-row cost */
+.phero { position: relative; background:
+  radial-gradient(120% 140% at 0% 0%, rgba(131,88,253,.10), transparent 60%),
+  radial-gradient(120% 140% at 100% 0%, rgba(107,78,255,.07), transparent 55%),
+  var(--card); }
+
+/* Micro-interactions — snappy, purposeful, user-triggered (never on repaint) */
+.nav-item, .wl-tab, .wl-mchip, .hm-chip, .btn, .card-interactive, .stat-card, .branch-card { will-change: transform; }
+.wl-tab, .wl-mchip { transition: background .16s ease, color .16s ease, border-color .16s ease, transform .12s ease; }
+.wl-tab:active, .wl-mchip:active { transform: scale(.97); }
+.wl-tab.on { box-shadow: var(--shadow-sm); }
+/* Active-tab underline that slides in via transform (no layout shift) */
+.wl-tab.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px;
+  border-radius: 2px; background: currentColor; opacity: .0; transform: scaleX(.2);
+  transition: transform .22s cubic-bezier(.2,.75,.25,1), opacity .22s; }
+.wl-tab { position: relative; }
+
+/* Worklist rows: warm hover tint + gentle 1px lift, solid (no shadow stacking) */
+.wl-table tbody tr:not([id]) { transition: background .15s ease; }
+.wl-table tbody tr:not([id]):hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+/* Status pills settle their colour without any layout change */
+.wl-st { transition: background .2s ease, color .2s ease; }
+/* Final report reads strongest (filled), Preliminary is a tint — hierarchy by weight,
+   one green family, per the design panel. Violet stays reserved for ACTIONS only. */
+.wl-st-final  { background: var(--green); color: #fff; }
+.wl-st-done   { background: rgba(0,200,150,.14); color: #0e9f6e; }
+.wl-st-prelim { background: rgba(59,160,255,.15); color: #1f74c9; }
+body.dark .wl-st-final { color: #06231b; }
+body.dark .wl-st-done  { color: #2dd8a7; }
+body.dark .wl-st-prelim{ color: #7ac0ff; }
+
+/* KPI numbers settle in (once, from data already in the batched payload) */
+@keyframes ccSettle { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.hm-chip-n, .hm-card-title, .rs-kpi-v, .rsr-kpi-v { animation: ccSettle .5s cubic-bezier(.2,.75,.25,1) both; }
+
+/* Focus ring — the one place besides actions violet is allowed */
+.btn:focus-visible, .input:focus-visible, .wl-tab:focus-visible, .nav-item:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px rgba(107,78,255,.28); }
+
+/* Honour reduced-motion: pin every final state, no transforms */
+@media (prefers-reduced-motion: reduce) {
+  .content > *, .phero, .hm-chip-n, .hm-card-title, .rs-kpi-v, .rsr-kpi-v,
+  .wl-tab, .wl-mchip, .wl-table tbody tr { animation: none !important; transition: none !important; }
+}
