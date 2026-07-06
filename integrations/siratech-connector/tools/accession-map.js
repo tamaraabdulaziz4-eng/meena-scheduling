@@ -32,32 +32,38 @@ function get(path) {
 
 (async () => {
   if (!TOKEN) console.error('(note: CONNECTOR_TOKEN not set in this shell — pass the service env; see the command)\n');
+  // /results/match gives the DePACS studies (allStudies) — but its Siratech side is
+  // PENDING orders only. A completed/verified exam has left the pending list, so we
+  // ALSO pull /patient, which returns EVERY radiology order (incl. finished ones)
+  // with its Bill No / order id — that's where the number to compare lives.
   const r = await get('/results/match/' + encodeURIComponent(MRN));
   if (r.status !== 200 || !r.json) { console.error('connector returned HTTP', r.status, r.text || ''); process.exit(2); }
   const d = r.json;
-  const orders = d.orders || [];
+  const pendingOrders = d.orders || [];
   const studies = d.allStudies || [];
+  const pr = await get('/patient/' + encodeURIComponent(MRN));
+  const patOrders = (pr.json && pr.json.orders) || [];
 
   const orderNums = [];
-  console.log('═══ Siratech ORDERS for ' + MRN + ' ═══');
-  if (!orders.length) console.log('  (no pending orders returned)');
-  for (const o of orders) {
+  const pushNum = (label, v) => { if (v != null && String(v).trim() !== '') orderNums.push({ label, v: String(v).trim() }); };
+
+  console.log('═══ Siratech ORDERS for ' + MRN + '  (pending + all) ═══');
+  for (const o of pendingOrders) {
     const ord = o.order || {};
-    console.log(`• Bill No: ${ord.billNo}   genPatBillingId: ${ord.genPatBillingId}   date: ${ord.orderDate}`);
-    if (ord.billNo != null) orderNums.push({ label: 'billNo', v: String(ord.billNo) });
-    if (ord.genPatBillingId != null) orderNums.push({ label: 'genPatBillingId', v: String(ord.genPatBillingId) });
+    console.log(`• [pending] Bill No: ${ord.billNo}   genPatBillingId: ${ord.genPatBillingId}   date: ${ord.orderDate}`);
+    pushNum('billNo', ord.billNo); pushNum('genPatBillingId', ord.genPatBillingId);
     for (const t of (o.tests || [])) {
       const tt = t.test || {};
-      console.log(`    - ${tt.serviceName || '?'}   orderId: ${tt.orderId}   order-side accession: ${t.orderAccession || '(none)'}`);
-      if (tt.orderId != null) orderNums.push({ label: 'orderId', v: String(tt.orderId) });
-      // rawAcc surfaces every accession/id-ish field on the Siratech order+detail rows
+      pushNum('orderId', tt.orderId);
       const raw = t.rawAcc || {};
-      for (const side of ['order', 'detail']) {
-        for (const [k, v] of Object.entries(raw[side] || {})) {
-          if (v != null && String(v).trim() !== '') orderNums.push({ label: side + '.' + k, v: String(v) });
-        }
-      }
+      for (const side of ['order', 'detail']) for (const [k, v] of Object.entries(raw[side] || {})) pushNum(side + '.' + k, v);
     }
+  }
+  if (!patOrders.length) console.log('  (/patient returned no orders)');
+  for (const o of patOrders) {
+    console.log(`• [${o.imaged ? 'imaged' : 'ordered'}${o.hasReport ? '/reported' : ''}] ${o.service || '?'}  (${o.modality || '?'})  Bill No: ${o.billNo}   orderId: ${o.orderId}   acc: ${o.accessionNumber || '(none)'}   date: ${o.orderedDate}`);
+    pushNum('billNo', o.billNo); pushNum('orderId', o.orderId); pushNum('accessionNumber', o.accessionNumber);
+    pushNum('pacsId', o.pacsId);
   }
 
   console.log('\n═══ DePACS STUDIES for ' + MRN + ' ═══');
