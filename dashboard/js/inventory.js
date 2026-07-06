@@ -12,12 +12,14 @@ async function renderInventoryPage() {
   const c = document.getElementById('content');
   const canPickBranch = ['manager', 'superadmin'].includes(currentUser?.role);
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Inventory', 'Inventory', 'Track consumables — staff log what they take, the lead is alerted at the reorder level')}
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       ${canPickBranch ? `<select id="inv-branch" class="rep-select" style="max-width:220px"></select>` : '<div></div>'}
-      ${_invIsAdmin() ? `<button class="btn btn-sm btn-primary" onclick="openInvItemModal()">+ Add item</button>` : ''}
+      ${_invIsAdmin() ? `<button class="open pri" style="width:auto" onclick="openInvItemModal()">+ Add item</button>` : ''}
     </div>
-    <div id="inv-list">${LOADING_HTML}</div>`;
+    <div id="inv-list">${LOADING_HTML}</div>
+    </div>`;
   if (canPickBranch) {
     try { if (!allBranches.length) await loadBranches(); } catch (e) {}
     const sel = document.getElementById('inv-branch');
@@ -41,33 +43,35 @@ async function loadInventory() {
   _invItems = d.items || [];
   const isAdmin = _invIsAdmin();
   if (!_invItems.length) {
-    box.innerHTML = `<div class="rep-card"><div class="rep-empty">No stock items yet.${isAdmin ? ' Add one to start tracking.' : ''}</div></div>`;
+    box.innerHTML = `<div class="listcard"><div class="lrow" style="justify-content:center;padding:24px;color:var(--muted)">No stock items yet.${isAdmin ? ' Add one to start tracking.' : ''}</div></div>`;
     return;
   }
-  box.innerHTML = `<div class="rep-card" style="padding:0;overflow:hidden"><div class="table-wrap" style="box-shadow:none;border:none;border-radius:0;background:transparent"><table>
-    <thead><tr><th>Item</th><th style="min-width:160px">Stock</th><th>Remaining</th><th></th></tr></thead>
-    <tbody>${_invItems.map(it => {
+  box.innerHTML = `<div class="listcard">${_invItems.map(it => {
       const unit = it.unit ? ' ' + escapeHtml(it.unit) : '';
       const fill = Math.max(3, Math.min(100, it.pct));
       const bar = `<div class="rep-load"><div class="rep-load-track"><div class="rep-load-fill${it.low ? ' hot' : ''}" style="width:${fill}%"></div></div></div>`;
       const status = it.low
-        ? `<span class="rep-pill rep-pill-red">Reorder</span>`
-        : (it.pct <= 75 ? `<span class="rep-pill rep-pill-amber">${it.pct}%</span>` : `<span class="rep-pill rep-pill-ok">${it.pct}%</span>`);
+        ? `<span class="sc no">Reorder</span>`
+        : (it.pct <= 75 ? `<span class="sc warn">${it.pct}%</span>` : `<span class="sc ok">${it.pct}%</span>`);
       const adminBtns = isAdmin ? `
-        <button class="btn btn-xs btn-ghost" onclick="openInvRestock(${it.id})">Restock</button>
-        <button class="btn btn-xs btn-ghost" onclick="openInvHistory(${it.id})">History</button>
-        <button class="btn btn-xs btn-ghost" onclick='openInvItemModal(${JSON.stringify(it).replace(/'/g, "&#39;")})'>Edit</button>
-        <button class="btn btn-xs btn-ghost" style="color:#E25555" onclick="deleteInvItem(${it.id})">Delete</button>` : '';
-      return `<tr>
-        <td style="font-weight:600">${escapeHtml(it.name)}${it.unit ? ` <span style="font-size:11px;color:var(--muted)">(${escapeHtml(it.unit)})</span>` : ''}</td>
-        <td>${bar}</td>
-        <td><b style="color:${it.low ? '#E25555' : 'inherit'}">${it.qty}</b> / ${it.full_qty}${unit} &nbsp; ${status}</td>
-        <td style="text-align:right;white-space:nowrap">
-          <button class="btn btn-xs btn-primary" onclick="openInvTake(${it.id})">Take</button>
+        <button class="ghost" onclick="openInvRestock(${it.id})">Restock</button>
+        <button class="ghost" onclick="openInvHistory(${it.id})">History</button>
+        <button class="ghost" onclick='openInvItemModal(${JSON.stringify(it).replace(/'/g, "&#39;")})'>Edit</button>
+        <button class="ghost" style="color:var(--danger,#E25555)" onclick="deleteInvItem(${it.id})">Delete</button>` : '';
+      return `
+      <div class="lrow" style="flex-wrap:wrap">
+        <div style="flex:1;min-width:150px">
+          <strong>${escapeHtml(it.name)}</strong>${it.unit ? ` <span style="font-size:11px;color:var(--muted)">(${escapeHtml(it.unit)})</span>` : ''}
+          <div style="margin-top:5px;max-width:220px">${bar}</div>
+        </div>
+        <div style="font-size:13px;white-space:nowrap"><b style="color:${it.low ? 'var(--danger,#E25555)' : 'inherit'}">${it.qty}</b> / ${it.full_qty}${unit}</div>
+        ${status}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="open pri" style="width:auto" onclick="openInvTake(${it.id})">Take</button>
           ${adminBtns}
-        </td>
-      </tr>`;
-    }).join('')}</tbody></table></div></div>
+        </div>
+      </div>`;
+    }).join('')}</div>
     <div style="font-size:12px;color:var(--muted);margin-top:10px">When an item drops to its reorder level it turns red and the branch lead is notified to reorder.</div>`;
 }
 

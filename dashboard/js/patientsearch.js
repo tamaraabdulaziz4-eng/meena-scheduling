@@ -71,15 +71,20 @@ function renderPsResults() {
     return;
   }
   if (pts.length === 1) { box.innerHTML = ''; return; }   // single match auto-opens; no picker
-  box.innerHTML = `<div class="ho-lbl" style="margin:0 0 6px">${pts.length} matches — pick the patient</div>` +
+  box.innerHTML = `<div class="ho-lbl" style="margin:0 0 6px">${pts.length} matches — pick the patient</div>
+    <div class="listcard">` +
     pts.map((p, i) => `
-      <label class="ho-row ${i === psState.sel ? 'sel' : ''}">
-        <input type="radio" name="ps-pt" ${i === psState.sel ? 'checked' : ''} onchange="psOpen(${i})">
-        <div class="ho-row-main">
-          <div class="ho-row-title">${escapeHtml(p.name || '—')}${p.nameArabic ? ' · ' + escapeHtml(p.nameArabic) : ''}</div>
-          <div class="ho-row-sub">🆔 ${escapeHtml(p.mrno || '—')}${p.nationalId ? ' · ' + escapeHtml(p.nationalId) : ''}${p.phone ? ' · 📞 ' + escapeHtml(p.phone) : ''}${p.age ? ' · ' + escapeHtml(p.age) : ''}</div>
+      <div class="lrow" role="button" tabindex="0" onclick="psOpen(${i})"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psOpen(${i})}"
+           style="cursor:pointer${i === psState.sel ? ';background:var(--violet-wash,#F0EDFF)' : ''}">
+        <div class="pt" style="flex:1;min-width:0">
+          <div class="pname">${escapeHtml(p.name || '—')}${p.nameArabic ? ' <span style="font-weight:500;color:var(--muted)">· ' + escapeHtml(p.nameArabic) + '</span>' : ''}</div>
+          <div class="pmeta"><span>🆔 ${escapeHtml(p.mrno || '—')}</span>${p.nationalId ? '<i></i><span>' + escapeHtml(p.nationalId) + '</span>' : ''}${p.phone ? '<i></i><span>📞 ' + escapeHtml(p.phone) + '</span>' : ''}${p.age ? '<i></i><span>' + escapeHtml(p.age) + '</span>' : ''}</div>
         </div>
-      </label>`).join('');
+        ${i === psState.sel
+          ? '<span class="ris arrived"><span class="rd"></span>Selected</span>'
+          : '<button class="ghost" tabindex="-1" onclick="event.stopPropagation();psOpen(' + i + ')">Open →</button>'}
+      </div>`).join('') + '</div>';
 }
 
 async function psOpen(i) {
@@ -119,13 +124,16 @@ function psInitials(name) {
   if (!parts.length) return '؟';
   return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
 }
-// A big, glanceable stat tile (height / weight / BMI / blood group).
-function psTile(label, value, unit) {
+// A big, glanceable stat tile (height / weight / BMI / blood group) — Clinical Calm
+// .kpi card (accent variants: a=amber b=blue c=green d=violet).
+const PS_TILE_DOT = { a: 'var(--yellow,#FFBA49)', b: 'var(--blue,#3BA0FF)', c: 'var(--green,#00C896)', d: 'var(--accent,#6B4EFF)' };
+function psTile(label, value, unit, accent) {
   const v = (value == null || String(value).trim() === '') ? '' : String(value);
   if (!v) return '';
-  return `<div class="ps-tile">
-    <div class="ps-tile-v">${escapeHtml(v)}${unit ? `<span class="ps-tile-u">${escapeHtml(unit)}</span>` : ''}</div>
-    <div class="ps-tile-l">${escapeHtml(label)}</div>
+  const acc = accent || 'b';
+  return `<div class="kpi ${acc}">
+    <div class="kl"><span class="kd" style="background:${PS_TILE_DOT[acc] || PS_TILE_DOT.b}"></span>${escapeHtml(label)}</div>
+    <div class="kv">${escapeHtml(v)}${unit ? `<small>${escapeHtml(unit)}</small>` : ''}</div>
   </div>`;
 }
 
@@ -136,10 +144,10 @@ function renderPsDetail() {
   const p = d.patient || {};
   const orders = d.orders || [];
   const tiles = [
-    psTile('Height', p.height, p.height && Number(p.height) > 3 ? 'cm' : ''),
-    psTile('Weight', p.weight, p.weight ? 'kg' : ''),
-    psTile('BMI', p.bmi, ''),
-    psTile('Blood', p.bloodGroup, ''),
+    psTile('Height', p.height, p.height && Number(p.height) > 3 ? 'cm' : '', 'b'),
+    psTile('Weight', p.weight, p.weight ? 'kg' : '', 'c'),
+    psTile('BMI', p.bmi, '', 'd'),
+    psTile('Blood', p.bloodGroup, '', 'a'),
   ].filter(Boolean).join('');
   // Contrast-safety: a known allergy must be impossible to miss on a radiology screen.
   const allergyAlert = p.allergy
@@ -164,7 +172,7 @@ function renderPsDetail() {
       </div>
       ${allergyAlert}
       <div id="ps-labs" style="margin-top:10px"></div>
-      ${tiles ? `<div class="ps-tiles">${tiles}</div>` : ''}
+      ${tiles ? `<div class="kpis" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">${tiles}</div>` : ''}
       <div class="ps-grid ps-idgrid">
         ${psField('National ID / Iqama', p.nationalId)}
         ${psField('Phone', p.phone)}
@@ -292,23 +300,27 @@ function psToggleExam(btn) {
 
 function psExamCard(o, open) {
   const imaged = o.imaged || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
+  const ris = (state, label) => `<span class="ris ${state}"><span class="rd"></span>${label}</span>`;
   const chips = [
-    o.isER ? `<span class="badge badge-red">🚨 ER</span>` : '',
-    o.encounter && !o.isER ? `<span class="badge badge-purple">${escapeHtml(o.encounter)}</span>` : '',
-    o.billingStatus ? `<span class="badge badge-purple">${escapeHtml(o.billingStatus)}</span>` : '',
-    imaged ? `<span class="badge badge-green">✅ Imaged</span>` : `<span class="badge badge-orange">⏳ Awaiting imaging</span>`,
-    o.hasReport ? `<span class="badge badge-green">📄 Report ready</span>` : '',
-    o.cpacsUrl ? `<a class="badge" style="background:#3b6fd4;color:#fff;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 Images</a>` : '',
+    o.isER ? `<span class="sc no" title="Emergency encounter">🚨 ER</span>` : '',
+    o.encounter && !o.isER ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml(o.encounter)}</span>` : '',
+    o.billingStatus ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml(o.billingStatus)}</span>` : '',
+    imaged ? ris('completed', 'Imaged') : ris('scheduled', 'Awaiting imaging'),
+    o.hasReport ? ris('final', 'Report ready') : '',
+    o.cpacsUrl ? `<a class="ghost" style="text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer" onclick="event.stopPropagation()">🖼 Images</a>` : '',
   ].filter(Boolean).join('');
+  const mods = (typeof odModBadges === 'function') ? odModBadges(o.modality) : '';
   const day = (o.orderedDate || o.reportDate || '').toString().slice(0, 10);
+  const acc = (o.accessionNumber != null && String(o.accessionNumber).trim() !== '')
+    ? `<span class="acc" title="DICOM accession — the exact image↔order link">🔗 ${escapeHtml(String(o.accessionNumber))}</span>` : '';
   const repId = psRepId(o);
   return `
     <div class="card ps-exam${open ? ' open' : ''}">
       <button type="button" class="ps-exam-summary" onclick="psToggleExam(this)">
         <span class="ps-exam-caret">▸</span>
         <span class="ps-exam-sum-main">
-          <span class="ps-exam-title">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:500">(${escapeHtml(o.modality || '—')})</span></span>
-          ${day ? `<span class="ps-exam-date">${escapeHtml(day)}</span>` : ''}
+          <span class="exline">${mods}<span class="proc" style="white-space:normal">${escapeHtml(o.service || '—')}</span></span>
+          <span class="ps-exam-date">${day ? escapeHtml(day) : ''}${day && acc ? ' ' : ''}${acc}</span>
         </span>
         <span class="ps-exam-badges">${chips}</span>
       </button>
@@ -337,7 +349,7 @@ function psExamCard(o, open) {
           ${psField('Report date', o.reportDate)}
         </div>
         <div class="ps-sec-l">Report</div>
-        ${o.cpacsUrl ? `<div style="margin-bottom:8px"><a class="btn btn-sm" style="background:#3b6fd4;color:#fff;border:none;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener">🖼 View images</a></div>` : ''}
+        ${o.cpacsUrl ? `<div style="margin-bottom:8px"><a class="ghost" style="text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener">🖼 View images</a></div>` : ''}
         <div id="${repId}"><span style="color:var(--muted);font-size:12px">${(o.hasReport || imaged) ? 'Loading report…' : '⏳ Awaiting imaging — no report yet.'}</span></div>
       </div>
     </div>`;

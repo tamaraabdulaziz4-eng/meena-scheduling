@@ -13,37 +13,41 @@ async function renderDowntimePage() {
   const canPickBranch = ['manager', 'superadmin'].includes(currentUser?.role);
   const isReviewer = ['manager', 'superadmin'].includes(currentUser?.role);
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Downtime', 'Downtime', 'System down? Register the patient — we mint a unique Accession Number')}
     ${isReviewer ? `<div id="dt-link-card"></div>` : ''}
-    <div class="rep-card" style="margin-bottom:16px">
-      <div class="rep-card-head"><div class="rep-card-title">Register a patient</div></div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
-        <label style="font-size:13px">Patient name
-          <input id="dt-name" class="input" style="width:100%;margin-top:4px" maxlength="120"></label>
-        <label style="font-size:13px">National ID / Iqama
-          <input id="dt-pid" class="input" style="width:100%;margin-top:4px" inputmode="numeric" maxlength="20"></label>
-        <label style="font-size:13px">Exam / Modality
-          <select id="dt-modality" class="input" style="width:100%;margin-top:4px">${_dtModalities.map(m => `<option>${m}</option>`).join('')}</select></label>
-        <label style="font-size:13px">Procedure <span style="color:var(--muted)">(optional)</span>
-          <input id="dt-procedure" class="input" style="width:100%;margin-top:4px" maxlength="120" placeholder="e.g. CT Brain"></label>
-        <label style="font-size:13px">Indication <span style="color:var(--muted)">(optional)</span>
-          <input id="dt-indication" class="input" style="width:100%;margin-top:4px" maxlength="200"></label>
-        <label style="font-size:13px">Ward / Area <span style="color:var(--muted)">(optional)</span>
-          <input id="dt-ward" class="input" style="width:100%;margin-top:4px" maxlength="80"></label>
-        ${canPickBranch ? `<label style="font-size:13px">Branch
-          <select id="dt-branch" class="input" style="width:100%;margin-top:4px"></select></label>` : ''}
+    <div class="board" style="margin-bottom:16px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">Register a patient</div></div></div>
+      <div style="padding:12px 18px 18px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+          <label style="font-size:13px">Patient name
+            <input id="dt-name" class="input" style="width:100%;margin-top:4px" maxlength="120"></label>
+          <label style="font-size:13px">National ID / Iqama
+            <input id="dt-pid" class="input" style="width:100%;margin-top:4px" inputmode="numeric" maxlength="20"></label>
+          <label style="font-size:13px">Exam / Modality
+            <select id="dt-modality" class="input" style="width:100%;margin-top:4px">${_dtModalities.map(m => `<option>${m}</option>`).join('')}</select></label>
+          <label style="font-size:13px">Procedure <span style="color:var(--muted)">(optional)</span>
+            <input id="dt-procedure" class="input" style="width:100%;margin-top:4px" maxlength="120" placeholder="e.g. CT Brain"></label>
+          <label style="font-size:13px">Indication <span style="color:var(--muted)">(optional)</span>
+            <input id="dt-indication" class="input" style="width:100%;margin-top:4px" maxlength="200"></label>
+          <label style="font-size:13px">Ward / Area <span style="color:var(--muted)">(optional)</span>
+            <input id="dt-ward" class="input" style="width:100%;margin-top:4px" maxlength="80"></label>
+          ${canPickBranch ? `<label style="font-size:13px">Branch
+            <select id="dt-branch" class="input" style="width:100%;margin-top:4px"></select></label>` : ''}
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:14px">
+          <button class="open pri" style="width:auto;padding:10px 20px" onclick="submitDowntime()">Register &amp; get Accession</button>
+        </div>
+        <div id="dt-result"></div>
       </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:14px">
-        <button class="btn btn-primary" onclick="submitDowntime()">Register &amp; get Accession</button>
-      </div>
-      <div id="dt-result"></div>
     </div>
-    <div class="rep-card" style="padding:0;overflow:hidden">
-      <div class="rep-card-head" style="padding:18px 20px 0">
-        <div class="rep-card-title">Downtime log</div>
-        <button class="btn btn-sm btn-ghost" onclick="printDowntimeLog()">Print / PDF</button>
-      </div>
-      <div id="dt-log" style="padding:14px 18px 18px">${LOADING_HTML}</div>
+    <div class="board">
+      <div class="bhead"><div class="bhrow">
+        <div class="btitle">Downtime log</div>
+        <div class="bh-actions"><button class="ghost" onclick="printDowntimeLog()">Print / PDF</button></div>
+      </div></div>
+      <div id="dt-log" style="padding:12px 0 0">${LOADING_HTML}</div>
+    </div>
     </div>`;
   if (canPickBranch) {
     try { if (!allBranches.length) await loadBranches(); } catch (e) {}
@@ -60,13 +64,15 @@ async function renderDowntimeLink() {
   if (!box) return;
   let d;
   try { d = await API.get('/downtime/public-link'); } catch (e) { box.innerHTML = ''; return; }
-  box.innerHTML = `<div class="rep-card" style="margin-bottom:16px">
-    <div class="rep-card-head"><div class="rep-card-title">Public link (no login)</div></div>
-    <div style="font-size:12px;color:var(--muted);margin:-6px 0 10px">Share this in the staff group. Anyone can open it, pick a branch, fill the data and get an Accession — no account needed.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <input id="dt-link-input" class="input" readonly value="${escapeHtml(d.url || '')}" style="flex:1;min-width:200px;font-size:12px">
-      <button class="btn btn-sm btn-primary" onclick="copyDowntimeLink()">Copy link</button>
-      <button class="btn btn-sm btn-ghost" onclick="regenDowntimeLink()">Regenerate</button>
+  box.innerHTML = `<div class="board" style="margin-bottom:16px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">Public link <span>no login needed</span></div></div></div>
+    <div style="padding:8px 18px 16px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Share this in the staff group. Anyone can open it, pick a branch, fill the data and get an Accession — no account needed.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="dt-link-input" class="input" readonly value="${escapeHtml(d.url || '')}" style="flex:1;min-width:200px;font-size:12px">
+        <button class="open pri" style="width:auto" onclick="copyDowntimeLink()">Copy link</button>
+        <button class="ghost" onclick="regenDowntimeLink()">Regenerate</button>
+      </div>
     </div></div>`;
 }
 
@@ -135,13 +141,13 @@ function showDowntimeResult(r) {
   box.innerHTML = `
     <div style="margin-top:14px;border:1px solid var(--border);border-radius:14px;background:var(--card-alt);padding:16px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-        <span class="rep-pill rep-pill-ok">Registered</span>
+        <span class="sc ok">✓ Registered</span>
         <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Accession</span>
-        <span style="font-size:18px;font-weight:800;letter-spacing:.5px;color:var(--primary)">${escapeHtml(acc)}</span>
+        <span style="font-size:18px;font-weight:800;letter-spacing:.5px;color:var(--accent2,var(--primary))">${escapeHtml(acc)}</span>
       </div>
       <pre id="dt-msg" style="white-space:pre-wrap;font-family:inherit;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin:0">${escapeHtml(r.message || '')}</pre>
       <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center">
-        <button class="btn btn-primary btn-sm" onclick="copyDowntimeMessage()">Copy message</button>
+        <button class="open pri" style="width:auto" onclick="copyDowntimeMessage()">Copy message</button>
         <span style="font-size:12px;color:var(--muted)">Send this to the reporting company — we also WhatsApp'd it to you.</span>
       </div>
     </div>`;
@@ -172,32 +178,34 @@ async function loadDowntimeLog() {
   _dtStudies = rows;
   const isAdmin = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
   const hasActions = isAdmin || rows.some(s => s.can_delete);
-  if (!rows.length) { box.innerHTML = `<div class="rep-empty">No downtime studies logged yet.</div>`; return; }
-  box.innerHTML = `<div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
-    <thead><tr><th>Accession</th><th>Patient</th><th>ID</th><th>Exam</th><th>Indication</th><th>By</th><th>Time</th><th>Status</th>${hasActions ? '<th></th>' : ''}</tr></thead>
-    <tbody>${rows.map(s => {
-      const exam = escapeHtml(s.modality) + (s.procedure_name ? ' / ' + escapeHtml(s.procedure_name) : '');
-      const pill = s.status === 'reconciled'
-        ? '<span class="rep-pill rep-pill-ok">Reconciled</span>'
-        : '<span class="rep-pill rep-pill-amber">Pending</span>';
-      const actions = (isAdmin
-          ? (s.status === 'reconciled'
-              ? `<button class="btn btn-xs btn-ghost" onclick="reconcileDowntime(${s.id},'pending')">Undo</button>`
-              : `<button class="btn btn-xs btn-ghost" onclick="reconcileDowntime(${s.id},'reconciled')">Mark done</button>`)
-          : '')
-        + (s.can_delete ? `<button class="btn btn-xs btn-ghost" style="color:#E25555;margin-left:4px" onclick="deleteDowntime(${s.id})">Delete</button>` : '');
-      return `<tr>
-        <td style="font-weight:700">${escapeHtml(s.accession)}</td>
-        <td>${escapeHtml(s.patient_name)}</td>
-        <td>${escapeHtml(s.patient_id)}</td>
-        <td>${exam}</td>
-        <td>${escapeHtml(s.indication || '—')}</td>
-        <td>${escapeHtml(s.created_by_name || '')}</td>
-        <td>${s.created_at ? new Date(s.created_at).toLocaleString('en-GB') : ''}</td>
-        <td>${pill}</td>
-        ${hasActions ? `<td style="text-align:right;white-space:nowrap">${actions}</td>` : ''}
-      </tr>`;
-    }).join('')}</tbody></table></div>`;
+  if (!rows.length) { box.innerHTML = `<div class="lrow" style="justify-content:center;padding:24px;color:var(--muted);border-bottom:none">No downtime studies logged yet.</div>`; return; }
+  box.innerHTML = rows.map(s => {
+    const exam = escapeHtml(s.modality) + (s.procedure_name ? ' / ' + escapeHtml(s.procedure_name) : '');
+    const pill = s.status === 'reconciled'
+      ? '<span class="ris final"><span class="rd"></span>Reconciled</span>'
+      : '<span class="ris progress"><span class="rd"></span>Pending</span>';
+    const actions = (isAdmin
+        ? (s.status === 'reconciled'
+            ? `<button class="ghost" onclick="reconcileDowntime(${s.id},'pending')">Undo</button>`
+            : `<button class="ghost" onclick="reconcileDowntime(${s.id},'reconciled')">Mark done</button>`)
+        : '')
+      + (s.can_delete ? `<button class="ghost" style="color:var(--danger,#E25555)" onclick="deleteDowntime(${s.id})">Delete</button>` : '');
+    return `
+      <div class="lrow" style="align-items:flex-start;flex-wrap:wrap">
+        <div style="width:120px;flex-shrink:0">
+          <strong>${escapeHtml(s.accession)}</strong>
+          <div style="font-size:11px;color:var(--muted)">${s.created_at ? new Date(s.created_at).toLocaleString('en-GB') : ''}</div>
+        </div>
+        <div style="flex:1;min-width:180px">
+          <strong>${escapeHtml(s.patient_name)}</strong>
+          <span style="font-size:12px;color:var(--muted)"> · ID ${escapeHtml(s.patient_id)}</span>
+          <div style="font-size:12.5px;margin-top:2px">${exam}${s.indication ? ` <span style="color:var(--muted)">— ${escapeHtml(s.indication)}</span>` : ''}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">by ${escapeHtml(s.created_by_name || '—')}</div>
+        </div>
+        ${pill}
+        ${hasActions ? `<div style="display:flex;gap:6px;flex-shrink:0">${actions}</div>` : ''}
+      </div>`;
+  }).join('');
 }
 
 async function deleteDowntime(id) {

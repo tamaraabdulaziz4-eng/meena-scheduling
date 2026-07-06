@@ -76,11 +76,12 @@ function renderHandoffPage() {
   setTopbar('Radiology handoff', 'One patient, step by step');
   handoffStopPolling();
   const c = document.getElementById('content');
-  c.innerHTML = `
+  c.innerHTML = `<div class="cc">
     ${pageHero('Handoff', 'Radiology handoff', 'Look up the order, send to DePACS, write the indication, message the group')}
     <div id="ho-reports-link"></div>
     <div id="ho-steps" class="ho-steps"></div>
-    <div id="ho-body"></div>`;
+    <div id="ho-body"></div>
+  </div>`;
   renderHandoffSteps();
   renderHandoffStep();
   handoffRenderReportsLink();
@@ -104,8 +105,8 @@ async function handoffRenderReportsLink() {
     <div style="font-size:12px;color:var(--muted);margin:2px 0 10px">Share privately with doctors. They open it, type a file number, and read the finished radiology report — no account needed. Anyone with the link can read reports, so keep it private and regenerate if it leaks.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <input id="ho-rlink" class="input" readonly value="${escapeHtml(d.url || '')}" style="flex:1;min-width:200px;font-size:12px">
-      <button class="btn btn-sm btn-primary" onclick="handoffCopyReportsLink()">Copy</button>
-      <button class="btn btn-sm btn-ghost" onclick="handoffRegenReportsLink()">Regenerate</button>
+      <button class="open pri" style="width:auto" onclick="handoffCopyReportsLink()">Copy</button>
+      <button class="ghost" onclick="handoffRegenReportsLink()">Regenerate</button>
     </div></div>`;
 }
 async function handoffCopyReportsLink() {
@@ -150,8 +151,8 @@ function handoffBack() { handoffGo(handoff.step - 1); }
 
 function handoffNav(backLabel, nextLabel, nextEnabled, nextFn) {
   return `<div class="ho-nav">
-    ${handoff.step > 1 ? `<button class="btn btn-ghost" onclick="handoffBack()">← ${escapeHtml(backLabel || 'Back')}</button>` : '<span></span>'}
-    ${nextLabel ? `<button class="btn btn-primary" ${nextEnabled ? '' : 'disabled'} onclick="${nextFn || 'handoffNext()'}">${escapeHtml(nextLabel)} →</button>` : '<span></span>'}
+    ${handoff.step > 1 ? `<button class="ghost" onclick="handoffBack()">← ${escapeHtml(backLabel || 'Back')}</button>` : '<span></span>'}
+    ${nextLabel ? `<button class="open pri" style="width:auto" ${nextEnabled ? '' : 'disabled'} onclick="${nextFn || 'handoffNext()'}">${escapeHtml(nextLabel)} →</button>` : '<span></span>'}
   </div>`;
 }
 
@@ -174,7 +175,7 @@ function hoStep1(b) {
         <input id="ho-file" class="input" inputmode="numeric" placeholder="File / MRN number"
                value="${escapeHtml(handoff.file)}" style="flex:1;min-width:200px"
                onkeydown="if(event.key==='Enter')handoffLookup()">
-        <button class="btn btn-primary" onclick="handoffLookup()">Look up</button>
+        <button class="open pri" style="width:auto" onclick="handoffLookup()">Look up</button>
       </div>
       <div id="ho-patient" style="margin:16px 0 4px 32px"></div>
       ${handoffNav('Back', 'Next', handoffHasOrders())}
@@ -228,9 +229,9 @@ function renderHandoffPatient() {
         // is usually null on this HIS), so accept pacsId/hasReport too.
         const imaged = o.imaged || !!o.pacsId || !!o.hasReport || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
         const chips = [
-          o.isER ? `<span class="badge badge-red">🚨 ER</span>` : '',
-          o.billingStatus ? `<span class="badge badge-purple">${escapeHtml(o.billingStatus)}</span>` : '',
-          imaged ? `<span class="badge badge-green">✅ تم التصوير</span>` : `<span class="badge badge-orange">⏳ بانتظار التصوير</span>`,
+          o.isER ? `<span class="sc no" title="Emergency encounter">🚨 ER</span>` : '',
+          o.billingStatus ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml(o.billingStatus)}</span>` : '',
+          imaged ? `<span class="ris completed"><span class="rd"></span>تم التصوير</span>` : `<span class="ris scheduled"><span class="rd"></span>بانتظار التصوير</span>`,
         ].filter(Boolean).join('');
         const ci = [o.clinicalIndication, o.reasonForOrder].filter(Boolean).join(' · ');
         return `<label class="ho-row ${i === handoff.order ? 'sel' : ''}">
@@ -332,8 +333,8 @@ function renderHandoffDE() {
           : `<div class="ho-note">⚠️ Make sure this is the exam you just sent before writing.</div>`}
       </div>
       <div class="ho-actions">
-        <button class="btn btn-primary" onclick="handoffWrite(this)">Write indication to DePACS</button>
-        <button class="btn btn-sm btn-ghost" onclick="handoffRepoll()">Re-check / change study</button>
+        <button class="open pri" style="width:auto" onclick="handoffWrite(this)">Write indication to DePACS</button>
+        <button class="ghost" onclick="handoffRepoll()">Re-check / change study</button>
       </div>`;
     return;
   }
@@ -354,10 +355,10 @@ function renderHandoffDE() {
     ? `<div class="ho-de-box" style="display:flex;gap:10px;align-items:center">
          <span style="font-size:16px">⏳</span>
          <span style="font-size:13px;color:var(--muted);flex:1">Waiting for the study in DePACS… (check ${handoff.pollN}/${HO_POLL_MAX})</span>
-         <button class="btn btn-sm btn-ghost" onclick="handoffStopPolling(true)">Stop</button></div>`
+         <button class="ghost" onclick="handoffStopPolling(true)">Stop</button></div>`
     : `<div class="ho-actions" style="margin-top:0">
-         <button class="btn btn-primary" onclick="handoffStartPolling()">✅ Images sent — find the study</button>
-         <button class="btn btn-sm btn-ghost" onclick="handoffFindExisting()">It's already there</button>
+         <button class="open pri" style="width:auto" onclick="handoffStartPolling()">✅ Images sent — find the study</button>
+         <button class="ghost" onclick="handoffFindExisting()">It's already there</button>
        </div>`;
 }
 
@@ -376,12 +377,12 @@ async function handoffFindExisting() {
   } catch (e) {
     if (box) box.innerHTML = `<div class="empty" style="padding:18px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Could not load studies')}</p>
-      <div class="ho-actions" style="margin-top:8px"><button class="btn btn-sm btn-primary" onclick="handoffFindExisting()">Try again</button></div></div>`;
+      <div class="ho-actions" style="margin-top:8px"><button class="open pri" style="width:auto" onclick="handoffFindExisting()">Try again</button></div></div>`;
     return;
   }
   if (!(handoff.studies || []).length) {
     if (box) box.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">No studies on this file in DePACS yet.</div>
-      <div class="ho-actions" style="margin-top:0"><button class="btn btn-primary" onclick="handoffStartPolling()">Wait for images</button></div>`;
+      <div class="ho-actions" style="margin-top:0"><button class="open pri" style="width:auto" onclick="handoffStartPolling()">Wait for images</button></div>`;
     return;
   }
   handoffPickAny();   // one study → auto-select; several → list them to choose
@@ -456,8 +457,8 @@ async function handoffPollTick(gen) {
     const box = document.getElementById('ho-de');
     if (box) box.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">No new study in DePACS yet — the images may still be on the way.</div>
       <div class="ho-actions" style="margin-top:0">
-        <button class="btn btn-primary" onclick="handoffStartPolling()">Check again</button>
-        <button class="btn btn-sm btn-ghost" onclick="handoffPickAny()">Pick from all studies</button></div>`;
+        <button class="open pri" style="width:auto" onclick="handoffStartPolling()">Check again</button>
+        <button class="ghost" onclick="handoffPickAny()">Pick from all studies</button></div>`;
     return;
   }
   handoff.pollTimer = setTimeout(() => handoffPollTick(gen), HO_POLL_EVERY_MS);
@@ -557,8 +558,8 @@ function hoStep4(b) {
       <div class="ho-msg-head">
         <div class="ho-step-title"><span class="ho-step-num">4</span> WhatsApp message</div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm btn-ghost" onclick="handoffCopy(this)">Copy</button>
-          <button class="btn btn-sm btn-primary" onclick="handoffSendWhatsApp()">Send on WhatsApp</button>
+          <button class="ghost" onclick="handoffCopy(this)">Copy</button>
+          <button class="open pri" style="width:auto" onclick="handoffSendWhatsApp()">Send on WhatsApp</button>
         </div>
       </div>
       <textarea id="ho-message" class="input" rows="6" oninput="handoffMsgInput(this)"></textarea>
@@ -566,15 +567,15 @@ function hoStep4(b) {
       <div class="ho-results-sec">
         <div class="ho-msg-head" style="margin-top:4px">
           <div class="ho-lbl" style="margin:0">🔬 Radiology report — is it back yet?</div>
-          <button class="btn btn-sm" onclick="handoffCheckResults(this)">Check report</button>
+          <button class="ghost" onclick="handoffCheckResults(this)">Check report</button>
         </div>
         <div style="font-size:12px;color:var(--muted);margin:2px 0 8px">
           Matches the finished DePACS report to the correct order/exam — never guesses. Ready ones can be filed in Siratech.</div>
         <div id="ho-results"></div>
       </div>
       <div class="ho-nav">
-        <button class="btn btn-ghost" onclick="handoffBack()">← Back</button>
-        <button class="btn btn-primary" onclick="handoffReset()">Done · new patient</button>
+        <button class="ghost" onclick="handoffBack()">← Back</button>
+        <button class="open pri" style="width:auto" onclick="handoffReset()">Done · new patient</button>
       </div>
     </div>`;
   // Build the message once from the details; do NOT force-rebuild on re-entry.
@@ -627,12 +628,12 @@ function renderHandoffResults(d) {
           ${escapeHtml(String(s.studyDate || '').slice(0,16).replace('T',' '))} · study #${escapeHtml(String(s.studyId))}
           ${rep.pdfOk ? ' · 📄 PDF' : ''}</div>
         ${rep.preview ? `<textarea class="input" rows="4" readonly style="font-size:12px">${escapeHtml(rep.preview)}${rep.preview.length >= 590 ? '…' : ''}</textarea>
-        <button class="btn btn-sm" style="margin-top:6px" onclick="handoffCopyText(this)">📋 Copy report</button>` : ''}
+        <button class="ghost" style="margin-top:6px" onclick="handoffCopyText(this)">📋 Copy report</button>` : ''}
         <div class="ho-actions" style="margin-top:8px">
           ${isFiled
-            ? `<button class="btn btn-sm" disabled>✅ Filed</button>`
+            ? `<button class="ghost" disabled>✅ Filed</button>`
             : canFileRadiology()
-              ? `<button class="btn btn-sm btn-primary" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>`
+              ? `<button class="open pri" style="width:auto" onclick='handoffFileResult(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(sid))}, ${Number(site) || 0}, this)'>📤 File to Siratech + Authorize</button>`
               : `<span style="font-size:12px;color:var(--muted)">View only — ask an admin to enable radiology filing for your account.</span>`}
         </div>
         <div class="ho-file-out" style="margin-top:8px"></div>
@@ -649,7 +650,7 @@ function renderHandoffResults(d) {
     const tests = (o.tests || []).map(t => testCard(t, o.order.billNo)).join('');
     return `<div style="margin-bottom:10px">
       <div class="ho-lbl" style="margin:6px 0 4px">Order ${escapeHtml(o.order.billNo || '')}
-        ${o.allUnique ? '<span class="badge badge-green">all matched</span>' : '<span class="badge badge-red">review needed</span>'}</div>
+        ${o.allUnique ? '<span class="ris completed"><span class="rd"></span>all matched</span>' : '<span class="sc no">⚠ review needed</span>'}</div>
       ${tests}</div>`;
   }).join('');
 }
@@ -683,8 +684,8 @@ async function handoffFileResult(billNo, serviceId, site, btn) {
         ${rep.pdfOk ? '📄 PDF ' + Math.round((rep.pdfBytes || 0) / 1024) + 'KB' : '⚠️ no PDF'} ·
         range: ${escapeHtml(rng)}</div>
       <div class="ho-actions" style="margin-top:6px">
-        <button class="btn btn-sm btn-primary" onclick='handoffFileConfirm(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(serviceId || ''))}, ${Number(site) || 0}, this, ${JSON.stringify(String(st.studyId || ''))})'>✅ Confirm — file + authorize</button>
-        <button class="btn btn-sm btn-ghost" onclick="this.closest('.ho-file-out').innerHTML=''">Cancel</button>
+        <button class="open pri" style="width:auto" onclick='handoffFileConfirm(${JSON.stringify(String(billNo || ''))}, ${JSON.stringify(String(serviceId || ''))}, ${Number(site) || 0}, this, ${JSON.stringify(String(st.studyId || ''))})'>✅ Confirm — file + authorize</button>
+        <button class="ghost" onclick="this.closest('.ho-file-out').innerHTML=''">Cancel</button>
       </div></div>`;
   } catch (e) {
     out.innerHTML = `<div class="empty" style="padding:14px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Check failed')}</p></div>`;
@@ -719,7 +720,7 @@ async function handoffFileConfirm(billNo, serviceId, site, btn, expectStudyId) {
       // neutralise the current button immediately.
       (handoff.filed || (handoff.filed = {}))[`${billNo}|${serviceId}`] = true;
       const card = out.closest('.ho-de-box');
-      const fileBtn = card && card.querySelector('.ho-actions .btn-primary');
+      const fileBtn = card && card.querySelector('.ho-actions .open.pri');
       if (fileBtn) { fileBtn.disabled = true; fileBtn.textContent = '✅ Filed'; fileBtn.onclick = null; }
     } else {
       out.innerHTML = `<div class="ho-note">Not filed — ${escapeHtml((r && (r.note || r.reason || r.step)) || 'unknown reason')}.</div>`;
