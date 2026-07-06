@@ -119,6 +119,20 @@ function sideOf(s) {
   return null;
 }
 
+// The DePACS `accession_number` field is a deterministic key ONLY when it holds a real
+// accession CODE (e.g. "SIRA2245", a barcode-like alphanumeric). On this instance the
+// modality sometimes puts the BODY-PART TEXT there instead ("T SPINE", "X L.SPNE") —
+// which is NOT unique, so matching on it would file an unrelated study's report onto a
+// new exam. Only accept: a SIRA-prefixed number, a short-alpha-then-digits code, or pure
+// digits — never anything with a space/dot/other punctuation (that's body-part text).
+function cleanAccession(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s || /[\s.]/.test(s)) return null;
+  if (/^sira[-_]?\d{2,}$/i.test(s)) return s;
+  if (/^[A-Za-z]{0,6}\d{3,}$/.test(s)) return s;   // ACC12345 / 20250705 / 1629836
+  return null;
+}
+
 // A study carries a FINAL, fileable report when its status is any of these. This
 // mirrors server/main.py `_study_is_reported` so the forward flow's notion of
 // "report ready" and the reverse flow's matcher agree on the SAME set of studies.
@@ -346,9 +360,10 @@ async function depacsStudies(mrno, opts = {}) {
         studyId: s.study_id, iuid: s.study_iuid, modality: s.modality, desc,
         studyDate: s.study_date, status: s.study_status, patName: s.pat_name, patId: s.pat_id,
         // Only the REAL DICOM accession is a deterministic key. The study-UID's last
-        // arc is NOT the accession (it just happens to coincide sometimes), so it must
-        // never drive the primary match — that would risk a wrong-study bind.
-        accession: s.accession_number || null,
+        // arc is NOT the accession, and this instance often puts body-part text in the
+        // field — cleanAccession() keeps only a genuine accession code, else null, so a
+        // non-unique value can never drive the primary match (wrong-study bind).
+        accession: cleanAccession(s.accession_number),
       };
     }
   };
@@ -384,7 +399,9 @@ function matchStudy(order, studies, { windowBeforeH = 24, windowAfterH = 96 } = 
   const orderAnat = bodyTokens(order.serviceName);
   const orderSide = sideOf(order.serviceName);
   const orderTime = order.orderDate ? new Date(order.orderDate).getTime() : null;
-  const orderAcc = order.accession ? String(order.accession).trim() : null;
+  // Only a CLEAN accession may drive the deterministic primary key — a body-part-text
+  // "accession" must fall through to the strict modality+body-part+time fuzzy gate.
+  const orderAcc = cleanAccession(order.accession);
 
   // GATE 0 — the file number (MRN) is the FIRST, non-negotiable key: a study may
   // only ever bind to an order for the SAME patient file. DePACS is inconsistent
@@ -530,7 +547,7 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 }
 
 module.exports = {
-  dpAgent, normMod, bodyTokens, sideOf, isReported, isDraftReport,
+  dpAgent, normMod, bodyTokens, sideOf, isReported, isDraftReport, sameMrn, cleanAccession,
   depacsStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
   // exposed for the deep DePACS probe tool (read-only diagnostics)

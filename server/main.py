@@ -9753,6 +9753,7 @@ def _mod_bucket(m):
     return s or None
 
 _autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
+_autostamp_hist_done = set()  # study ids whose clinical-history stamp already ran this process
 
 def _claim_sweep_lock(name, ttl_sec):
     """Cross-worker single-flight for a background sweep. Claims the lock only if it's
@@ -9787,21 +9788,23 @@ def _autostamp_enrich(mrno, bill_no, cache):
     if key not in cache:
         try:
             import urllib.parse
-            cache[key] = _bridge_request("/his/patient/" + urllib.parse.quote(str(mrno)), timeout=60)
+            cache[key] = _bridge_request("/his/patient/" + urllib.parse.quote(str(mrno)), timeout=30)
         except Exception:
             cache[key] = {}
     d = cache.get(key) or {}
     orders = d.get("orders") if isinstance(d, dict) else None
     orders = orders or []
+    # Match the order STRICTLY by bill number. No "lone order" fallback — adopting
+    # orders[0] on a billNo mismatch would import a wrong order's indication + ER flag
+    # (the exact anti-pattern enrichOrder was fixed to remove). No match → no indication
+    # (the caller falls back to the exam name), never a wrong one.
     o = None
     if bill_no is not None:
         o = next((x for x in orders if str(x.get("billNo")) == str(bill_no)), None)
-    if o is None and len(orders) == 1:
-        o = orders[0]
     o = o or {}
     return {"indication": o.get("clinicalIndication") or o.get("reasonForOrder"),
             "provider": o.get("provider"), "providerId": o.get("providerId"),
-            "isER": bool(o.get("isER"))}
+            "isER": bool(o.get("isER")), "matched": bool(o)}
 
 def _radiology_autostamp_sweep():
     """The moment a patient's images land in DePACS, stamp what the radiologist needs
@@ -9840,6 +9843,15 @@ def _radiology_autostamp_sweep():
                  if re.sub(r"\D", "", str(s.get("study_date") or ""))[:8] in fresh_days]
         if not fresh:
             continue
+        # How many fresh studies of each modality — we only stamp when a modality has
+        # EXACTLY ONE fresh study (a clean 1:1 with its one order). Two fresh CT studies +
+        # one CT order would otherwise BOTH inherit that order's indication + emergency
+        # flag, writing the wrong clinical history (and a wrong EMERGENCY) into one of them.
+        fresh_mod_count = {}
+        for _s in fresh:
+            _fm = _AUTOSTAMP_MOD.get(str(_s.get("modality") or "").strip().upper())
+            if _fm:
+                fresh_mod_count[_fm] = fresh_mod_count.get(_fm, 0) + 1
         try:
             mwl = q("""SELECT accession, modality FROM scheduling.radiology_mwl
                        WHERE mrno=%s AND sps_date=%s""",
@@ -9858,11 +9870,16 @@ def _radiology_autostamp_sweep():
             cand = [o for o in orders
                     if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
             cur_hist = str(s.get("clinical_history") or "").strip()
-            # Write the moment images arrive (empty history). If a history already exists
-            # (a prior stamp or a human's richer note), leave it — never clobber. This
-            # empty-history gate is checked BEFORE the expensive /patient enrichment, so a
-            # steady board (studies already stamped) costs no extra HIS calls.
-            if len(cand) == 1 and not cur_hist:
+            # Write the moment images arrive (empty history). Guards, in order:
+            #   • exactly ONE fresh study of this modality AND exactly one matching order
+            #     → a clean 1:1 (never stamp when it's ambiguous which study↔order);
+            #   • history is empty → never clobber a prior stamp or a human's richer note;
+            #   • not already stamped this process → never re-write the same study every
+            #     sweep (belt-and-suspenders if the list endpoint under-reports history).
+            # The empty-history gate is checked BEFORE the expensive /patient enrichment,
+            # so a steady board (studies already stamped) costs no extra HIS calls.
+            if (smod and fresh_mod_count.get(smod, 0) == 1 and len(cand) == 1
+                    and not cur_hist and sid not in _autostamp_hist_done):
                 o = cand[0]
                 emergency = bool(o.get("emergency"))
                 # Enrich with the REAL clinical indication + the ordering doctor's name
@@ -9882,6 +9899,7 @@ def _radiology_autostamp_sweep():
                 if text:
                     try:
                         _elite_write_history(sid, text, set_emergency=emergency)
+                        _autostamp_hist_done.add(sid)   # don't re-stamp this study this process
                         stamped += 1
                         insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP", str(mrno),
                                      json.dumps({"studyId": sid, "emergency": bool(emergency),
@@ -9923,7 +9941,9 @@ def _radiology_autostamp_loop():
             # Default ON (scoped to N3 via rad_autostamp_sites) — the operator asked for
             # it to run now on Al Rawdah. Flip rad_autostamp_enabled to '0' to stop.
             if (get_setting("rad_autostamp_enabled", "1") or "1").strip() == "1":
-                if _claim_sweep_lock("autostamp", 300):
+                # 900s TTL (>> the worst-case sweep time) so a slow sweep can never let a
+                # second gunicorn worker start a concurrent sweep and double-write.
+                if _claim_sweep_lock("autostamp", 900):
                     try: _radiology_autostamp_sweep()
                     finally: _release_sweep_lock("autostamp")
         except Exception as e:
