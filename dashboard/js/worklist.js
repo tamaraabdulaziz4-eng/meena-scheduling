@@ -1,7 +1,7 @@
 // ── RIS Worklist — pure RIS panel + consent ───────────────────────────────────
 // A clean radiology worklist mirroring the Siratech RIS panel: every order still
 // AWAITING a result, one row each — patient, exam + modality, ordering doctor,
-// priority, live pipeline stage, and turnaround age. Emergency first, oldest first.
+// priority, live pipeline stage, and turnaround age. Emergency first, newest first.
 //
 // It runs itself:
 //  · the day is TODAY automatically (you can step to another day);
@@ -479,6 +479,10 @@ function wlRender() {
 
   // ── Modality filter chips (only modalities actually present) ────────────────
   const present = new Set(items.map(wlRowMod).filter(Boolean));
+  // If the active modality filter is no longer on the board (its rows all filed/dropped),
+  // auto-clear it — otherwise the chip bar hides and the board strands empty with no way
+  // to reset the filter.
+  if (wlState.modFilter && !present.has(wlState.modFilter)) wlState.modFilter = null;
   const MOD_ORDER = [['CT', 'CT'], ['MR', 'MRI'], ['US', 'US'], ['XR', 'X-Ray'], ['MG', 'Mammo']];
   const modChips = present.size > 1 ? `<div class="wl-modbar">
       <button class="wl-mchip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All</button>
@@ -525,9 +529,9 @@ function wlToggleStrip(id) {
   if (open) wlState.openStrips.delete(id); else wlState.openStrips.add(id);
 }
 
-// RIS worklist table. Sort the way a real RIS orders an actionable queue: STAT /
-// emergency pinned to the very top, then LONGEST-WAITING first (highest age) so the
-// order breaching its turnaround is never buried under fresh arrivals.
+// RIS worklist table. Sort: STAT / emergency pinned to the very top, then by workflow
+// phase (to-scan → reported), then NEWEST first within a phase (freshest order on top —
+// the operator's chosen order).
 function wlTable(items, prefix) {
   const p = prefix || 'a';   // namespace row ids — several tables coexist
   const border = { waiting: 0, imaged: 1, reporting: 2, reported: 3 };
@@ -581,10 +585,19 @@ function wlPregEl(it) {
   if (!wlIsFemale(it.gender)) return '';
   const mr = String(it.mrno || '');
   const cached = wlState.pregCache.get(mr);
-  const id = 'wl-preg-' + mr.replace(/[^A-Za-z0-9_-]/g, '');
-  if (cached) return `<span id="${id}">${wlPregBadge(cached)}</span>`;
+  // A patient can occupy several rows (one per exam on a bundled bill), so key the cell
+  // by a data attribute (not a DOM id) — an id would be duplicated and only the first
+  // row's badge would ever resolve. wlPregSet() updates EVERY cell for the MRN.
+  const attr = ` class="wl-pregcell" data-mr="${escapeHtml(mr)}"`;
+  if (cached) return `<span${attr}>${wlPregBadge(cached)}</span>`;
   // Auto-checks in the background (wlAutoPreg) — no click needed.
-  return `<span id="${id}"><span class="badge" style="background:var(--card-alt);color:var(--muted);border:1px solid var(--border)" title="Checking pregnancy / β-hCG status…">🤰 <span class="wl-shimmer" style="width:40px;display:inline-block;vertical-align:middle"></span></span></span>`;
+  return `<span${attr}><span class="badge" style="background:var(--card-alt);color:var(--muted);border:1px solid var(--border)" title="Checking pregnancy / β-hCG status…">🤰 <span class="wl-shimmer" style="width:40px;display:inline-block;vertical-align:middle"></span></span></span>`;
+}
+// Paint the pregnancy verdict into EVERY row that belongs to this MRN (CSS-escape the
+// value for the attribute selector).
+function wlPregSet(mr, r) {
+  const sel = '.wl-pregcell[data-mr="' + String(mr).replace(/["\\]/g, '\\$&') + '"]';
+  document.querySelectorAll(sel).forEach((el) => { el.innerHTML = wlPregBadge(r); });
 }
 // Automatically check pregnancy status for every female row on the visible board —
 // no button. Throttled (small concurrency) and cached, so a 30-row board makes a
@@ -593,13 +606,14 @@ function wlPregEl(it) {
 let _wlPregBusy = 0;
 const _WL_PREG_MAX = 2;
 const _wlPregQueue = [];
+const _wlPregInflight = new Set();   // MRNs currently being fetched — never double-request
 function wlAutoPreg() {
   const items = (wlState.data && wlState.data.items) || [];
   const seen = new Set(_wlPregQueue.map((x) => x.mr));
   for (const it of items) {
     if (!wlIsFemale(it.gender)) continue;
     const mr = String(it.mrno || '');
-    if (!mr || wlState.pregCache.has(mr) || seen.has(mr)) continue;
+    if (!mr || wlState.pregCache.has(mr) || seen.has(mr) || _wlPregInflight.has(mr)) continue;
     seen.add(mr);
     _wlPregQueue.push({ mr, site: Number(it.site) || 0 });
   }
@@ -608,17 +622,13 @@ function wlAutoPreg() {
 function wlPregPump() {
   while (_wlPregBusy < _WL_PREG_MAX && _wlPregQueue.length) {
     const { mr, site } = _wlPregQueue.shift();
-    if (wlState.pregCache.has(mr)) continue;
-    _wlPregBusy++;
+    if (wlState.pregCache.has(mr) || _wlPregInflight.has(mr)) continue;
+    _wlPregBusy++; _wlPregInflight.add(mr);
     const qs = new URLSearchParams({ mrno: mr }); if (site) qs.set('site', String(site));
     API.get('/radiology/labs/pregnancy?' + qs.toString())
-      .then((r) => {
-        wlState.pregCache.set(mr, r);
-        const el = document.getElementById('wl-preg-' + mr.replace(/[^A-Za-z0-9_-]/g, ''));
-        if (el) el.innerHTML = wlPregBadge(r);
-      })
+      .then((r) => { wlState.pregCache.set(mr, r); wlPregSet(mr, r); })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })
-      .finally(() => { _wlPregBusy--; wlPregPump(); });
+      .finally(() => { _wlPregBusy--; _wlPregInflight.delete(mr); wlPregPump(); });
   }
 }
 function wlPregBadge(r) {
@@ -671,6 +681,11 @@ function wlRisStatusBadge(it) {
   return `<span class="wl-st ${s.cls}"><span>${s.icon}</span>${escapeHtml(s.label)}</span>`;
 }
 function wlRow(it, key) {
+  // Drill identity must be STABLE per order, NOT the row's position — otherwise a live
+  // refresh that re-sorts the board (a new STAT order jumps to top) would re-open the
+  // drill onto a DIFFERENT patient's row and show the previous patient's cached report.
+  // Use the per-order key; fall back to the positional key only for keyless rows.
+  const dkey = 'k' + String(wlRowKey(it) || key).replace(/[^A-Za-z0-9_-]/g, '');
   const edge = it.emergency ? 'box-shadow:inset 3px 0 0 var(--danger,#E25555);' : '';
   const age = wlAge(it.ageHours);
   // While the background HIS enrichment is still running, show a loading shimmer for
@@ -694,9 +709,9 @@ function wlRow(it, key) {
     <td data-l="Ordered" style="white-space:nowrap;font-size:11.5px;color:var(--muted)">${ordered ? escapeHtml(ordered) : dash}</td>
     <td data-l="Status"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${wlRisStatusBadge(it)}${(age && it.__bucket !== 'reported') ? `<span style="font-size:11px;color:var(--muted)" title="waiting time">${age} waiting</span>` : ''}</div></td>
     <td data-l="Safety"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
-    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${key}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Open</button></td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${dkey}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Open</button></td>
   </tr>
-  <tr id="wl-dr-${key}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px">${wlTrack(it)}<div id="wl-d-${key}"></div></td></tr>`;
+  <tr id="wl-dr-${dkey}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px">${wlTrack(it)}<div id="wl-d-${dkey}"></div></td></tr>`;
 }
 
 // Patient-journey tracker (RIS "arrival → exam → done"), built from Siratech's own

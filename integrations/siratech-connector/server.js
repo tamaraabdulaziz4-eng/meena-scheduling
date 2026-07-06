@@ -521,7 +521,10 @@ async function buildMatch(file, wantBillNo, site) {
     throw new Error(`HIS result search failed (${sr ? 'HTTP ' + sr.status : 'unreachable'})`);
   }
   const rows = sr.json.data || [];
-  const orderRows = wantBillNo ? rows.filter((r) => r.billNo === wantBillNo) : rows;
+  // Compare bill numbers as STRINGS — the search row's billNo may be numeric while the
+  // caller passes a string (or vice-versa); a strict === would then silently drop the
+  // order and report "no matching order" for a patient who has one.
+  const orderRows = wantBillNo ? rows.filter((r) => String(r.billNo) === String(wantBillNo)) : rows;
 
   // 2) the patient's VERIFIED DePACS studies (once)
   const studies = await results.depacsStudies(file);
@@ -892,36 +895,21 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     // window count — an old same-modality study must not flip a fresh order.
     const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
     const studiesBy = new Map();
-    const emrBy = new Map();
     // light + short-TTL cached (see depacsStudies): the board re-checks every patient
     // on each refresh, so caching the recent-window lookup is what kills the lag. A
-    // manual force-refresh (noCache) bypasses the cache for truly-fresh status.
-    // Also pull the EMR view once per patient (cached) for the DICOM accession — the
-    // deterministic key that makes stage detection EXACT (order.accession === study.accession).
+    // manual force-refresh (noCache) bypasses the cache for truly-fresh status. ONE
+    // lookup per patient — no extra EMR round-trip (the matched study already carries
+    // the accession we display, so a second per-patient HIS call would just re-add lag).
     await pool(mrns, 8, async (m) => {
       try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
-      try { emrBy.set(m, await emrRadiologyDetails(m, 0, { noCache })); } catch (e) { /* fuzzy fallback */ }
     });
     const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
     for (const it of items) {
-      const all = studiesBy.get(it.mrno);
-      if (!all) continue;                            // lookup failed → keep preliminary stage
-      // Deterministic path: the order's own DICOM accession (SIRA####) vs the study's.
-      // When both carry it, this is an EXACT 1:1 link — no modality/time guessing.
-      const emrAcc = emrAccessionForRow(emrBy.get(it.mrno), it.billNo, it.exam);
-      if (emrAcc && emrAcc.accession) {
-        it.accession = emrAcc.accession;
-        if (emrAcc.pacsId) it.pacsId = emrAcc.pacsId;
-        if (emrAcc.cpacsUrl) it.cpacsUrl = emrAcc.cpacsUrl;
-        const hit = all.find((s) => s.accession && String(s.accession).trim() === String(it.accession).trim());
-        if (hit) {
-          it.stage = results.isReported(hit.status) ? 'reported'
-            : (results.isDraftReport(hit.status) ? 'draft' : 'imaged');
-          it.readyToFile = it.stage === 'reported';
-          it.accessionSource = 'siratech';
-          continue;                                  // exact match — skip the fuzzy fallback
-        }
-      }
+      if (!studiesBy.has(it.mrno)) continue;         // DePACS lookup failed → keep preliminary stage
+      // MRN GATE: DePACS matches patient_id as a SUBSTRING, so the raw result can include
+      // OTHER patients' studies. Filter to THIS file only, or another patient's reported
+      // study could flip this row's stage (cross-patient contamination of the board).
+      const all = (studiesBy.get(it.mrno) || []).filter((s) => results.sameMrn(s.patId, it.mrno));
       const mod = results.normMod(it.modality || it.exam || '');
       // normMod returns the RAW string when it can't classify — that would never equal a
       // study's normalized modality and would force EVERY unmapped exam to 'ordered' even
@@ -938,7 +926,12 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         return Number.isFinite(st) ? (st >= ot - 24 * 36e5 && st <= ot + 96 * 36e5) : true;
       });
       if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; continue; }
-      if (matched.some((s) => results.isReported(s.status))) { it.stage = 'reported'; it.readyToFile = true; }
+      const reportedHit = matched.find((s) => results.isReported(s.status));
+      const chosen = reportedHit || matched.find((s) => s.accession) || matched[0];
+      // Surface the real DICOM accession from the matched study (cleaned in depacsStudies,
+      // so body-part text is never shown as an accession).
+      if (chosen && chosen.accession) { it.accession = chosen.accession; it.accessionSource = 'depacs'; }
+      if (reportedHit) { it.stage = 'reported'; it.readyToFile = true; }
       else if (matched.some((s) => results.isDraftReport(s.status))) { it.stage = 'draft'; it.readyToFile = false; }
       else { it.stage = 'imaged'; it.readyToFile = false; }
     }
