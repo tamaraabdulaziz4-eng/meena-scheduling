@@ -202,12 +202,12 @@ async function renderHomeCredentials() {
       <div style="font-size:13px"><b>${escapeHtml(r.staff_name || '')}</b> · ${escapeHtml(kindLabel(r.kind))}${r.label ? ' · ' + escapeHtml(r.label) : ''} <span class="hm-muted">(${escapeHtml(r.expiry_date || '')})</span></div>
       <div style="font-size:12px;font-weight:700;color:${col}">${txt}</div></div>`;
   }).join('');
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head">
-      <div class="hm-card-title">Expiring credentials <span class="badge badge-orange">${items.length}</span></div>
-      <button class="action-btn" onclick="showPage('reports')">Manage →</button>
-    </div>
-    <div style="margin-top:6px">${rows}</div></div>`;
+  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow">
+      <div class="btitle">Expiring credentials <span class="sc warn">${items.length}</span></div>
+      <div class="bh-actions"><button class="ghost" onclick="showPage('reports')">Manage →</button></div>
+    </div></div>
+    <div style="padding:6px 18px 14px">${rows}</div></div></div>`;
 }
 
 // TODAY's radiology across all branches — the live centrepiece of the manager

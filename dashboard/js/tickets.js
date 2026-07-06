@@ -37,12 +37,22 @@ function ticketStatusBadge(s) {
     font-weight:700;padding:2px 9px;border-radius:10px">${m.label}</span>`;
 }
 
+// Clinical Calm dotted pill for the list (inside .cc only — the detail modal
+// lives outside .cc so it keeps ticketStatusBadge above).
+function ticketStatusPill(s) {
+  if (s === 'escalated') return '<span class="sc no">Escalated</span>';
+  const map = { open: 'progress', in_progress: 'arrived', resolved: 'final', closed: 'scheduled' };
+  const m = TICKET_STATUS_META[s] || { label: s };
+  return `<span class="ris ${map[s] || 'scheduled'}"><span class="rd"></span>${m.label}</span>`;
+}
+
 function renderTicketsPage() {
   const isManager = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
   setTopbar('Support', 'Raise and track tickets',
     `<button class="btn btn-sm" onclick="openCreateTicketModal()">+ New Ticket</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     <div class="phero no-print">
       <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
       <div class="phero-inner">
@@ -73,8 +83,10 @@ function renderTicketsPage() {
         <option value="request">Request</option>
         <option value="other">Other</option>
       </select>
+      <button class="open pri" style="width:auto;margin-inline-start:auto" onclick="openCreateTicketModal()">+ New Ticket</button>
     </div>
-    <div id="tickets-list">${LOADING_HTML}</div>`;
+    <div id="tickets-list">${LOADING_HTML}</div>
+    </div>`;
   // Wire the segmented filter.
   c.querySelectorAll('#tickets-filter button').forEach(b => {
     b.classList.toggle('on', b.getAttribute('data-f') === ticketsFilter);
@@ -103,30 +115,28 @@ function renderTicketsList() {
   const list = document.getElementById('tickets-list');
   if (!list) return;
   if (!ticketsData.length) {
-    list.innerHTML = `<div class="empty">
-      <p>No tickets here.</p>
-      <button class="btn btn-sm" style="margin-top:12px" onclick="openCreateTicketModal()">+ Raise a ticket</button></div>`;
+    list.innerHTML = `<div class="listcard"><div class="lrow" style="flex-direction:column;justify-content:center;padding:24px;color:var(--muted)">
+      <p style="margin:0">No tickets here.</p>
+      <button class="open pri" style="width:auto;margin-top:12px" onclick="openCreateTicketModal()">+ Raise a ticket</button></div></div>`;
     return;
   }
   const isManager = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
-  list.innerHTML = `<div>${ticketsData.map(t => {
+  list.innerHTML = `<div class="listcard">${ticketsData.map(t => {
     const cat = TICKET_CATEGORY_META[t.category] || TICKET_CATEGORY_META.other;
-    const pri = TICKET_PRIORITY_META[t.priority] || TICKET_PRIORITY_META.normal;
-    const hi = t.priority === 'high' ? `<span style="color:${pri.color};font-weight:700;font-size:11px">● High</span>` : '';
+    const hi = t.priority === 'high' ? '<span class="sc no">High</span>' : '';
     return `
-      <div class="ticket-row" onclick="openTicketDetail(${t.id})"
-           style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--border);
-                  border-radius:14px;margin-bottom:10px;cursor:pointer;background:var(--card)">
+      <div class="lrow ticket-row" onclick="openTicketDetail(${t.id})" style="cursor:pointer;flex-wrap:wrap">
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">#${t.id} · ${escapeHtml(t.subject)}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px">
-            ${cat.label}${hi ? ' · ' + hi : ''}
+            ${cat.label}
             ${isManager ? ' · ' + escapeHtml(t.staff_name || t.created_by_name || '') : ''}
             ${t.branch_name ? ' · ' + escapeHtml(t.branch_name) : ''}
             · ${ticketTimeAgo(t.updated_at)}${Number(t.updates) ? ' · ' + t.updates + ' replies' : ''}
           </div>
         </div>
-        ${ticketStatusBadge(t.status)}
+        ${hi}
+        ${ticketStatusPill(t.status)}
       </div>`;
   }).join('')}</div>`;
 }

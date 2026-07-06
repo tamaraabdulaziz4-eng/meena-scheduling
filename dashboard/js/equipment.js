@@ -8,14 +8,14 @@ let _eqKinds = ['preventive', 'corrective', 'calibration', 'inspection', 'other'
 
 function _eqIsAdmin() { return ['admin', 'manager', 'superadmin'].includes(currentUser?.role); }
 
+// Returns [label, .sc chip modifier] — overdue/due → no (red), soon → warn, healthy → ok.
 function _eqStatus(d) {
-  if (d === null || d === undefined || d === '') return ['No PM set', 'rep-pill-muted'];
+  if (d === null || d === undefined || d === '') return ['No PM set', ''];
   d = Number(d);
-  if (d < 0) return [`Overdue ${Math.abs(d)}d`, 'rep-pill-red'];
-  if (d === 0) return ['Due today', 'rep-pill-red'];
-  if (d <= 7) return [`${d}d left`, 'rep-pill-amber'];
-  if (d <= 30) return [`${d}d left`, 'rep-pill-gold'];
-  return [`${d}d left`, 'rep-pill-ok'];
+  if (d < 0) return [`Overdue ${Math.abs(d)}d`, 'no'];
+  if (d === 0) return ['Due today', 'no'];
+  if (d <= 30) return [`${d}d left`, 'warn'];
+  return [`${d}d left`, 'ok'];
 }
 
 async function renderEquipmentPage() {
@@ -23,13 +23,15 @@ async function renderEquipmentPage() {
   const c = document.getElementById('content');
   const canPickBranch = ['manager', 'superadmin'].includes(currentUser?.role);
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Maintenance', 'Maintenance', 'Track devices and preventive maintenance — get reminded before each PM is due')}
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       ${canPickBranch ? `<select id="eq-branch" class="rep-select" style="max-width:220px"></select>` : '<div></div>'}
-      ${_eqIsAdmin() ? `<button class="btn btn-sm btn-primary" onclick="openEqModal()">+ Add device</button>` : ''}
+      ${_eqIsAdmin() ? `<button class="open pri" style="width:auto" onclick="openEqModal()">+ Add device</button>` : ''}
     </div>
     <div id="eq-checks"></div>
-    <div id="eq-list">${LOADING_HTML}</div>`;
+    <div id="eq-list">${LOADING_HTML}</div>
+    </div>`;
   if (typeof renderHomeShiftChecks === 'function') renderHomeShiftChecks('eq-checks');   // "Equipment checks today" moved here from Home
   if (canPickBranch) {
     try { if (!allBranches.length) await loadBranches(); } catch (e) {}
@@ -55,27 +57,27 @@ async function loadEquipment() {
   if (d.kinds) _eqKinds = d.kinds;
   const isAdmin = _eqIsAdmin();
   if (!_eqList.length) {
-    box.innerHTML = `<div class="rep-card"><div class="rep-empty">No devices yet.${isAdmin ? ' Add one to start tracking maintenance.' : ''}</div></div>`;
+    box.innerHTML = `<div class="listcard"><div class="lrow" style="justify-content:center;padding:24px;color:var(--muted)">No devices yet.${isAdmin ? ' Add one to start tracking maintenance.' : ''}</div></div>`;
     return;
   }
-  box.innerHTML = `<div class="rep-card" style="padding:0;overflow:hidden"><div class="table-wrap" style="box-shadow:none;border:none;border-radius:0;background:transparent"><table>
-    <thead><tr><th>Device</th><th>Serial</th><th>Vendor</th><th>Next PM</th><th>Status</th><th></th></tr></thead>
-    <tbody>${_eqList.map(e => {
+  box.innerHTML = `<div class="listcard">${_eqList.map(e => {
       const [txt, cls] = _eqStatus(e.days_left);
       const adminBtns = isAdmin ? `
-        <button class="btn btn-xs btn-primary" onclick="openMaintModal(${e.id})">Log service</button>
-        <button class="btn btn-xs btn-ghost" onclick="openEqHistory(${e.id})">History</button>
-        <button class="btn btn-xs btn-ghost" onclick='openEqModal(${JSON.stringify(e).replace(/'/g, "&#39;")})'>Edit</button>
-        <button class="btn btn-xs btn-ghost" style="color:#E25555" onclick="deleteEquipment(${e.id})">Delete</button>` : '';
-      return `<tr>
-        <td style="font-weight:600">${escapeHtml(e.name)}${e.model ? ` <span style="font-size:11px;color:var(--muted)">${escapeHtml(e.model)}</span>` : ''}</td>
-        <td>${escapeHtml(e.serial || '—')}</td>
-        <td>${escapeHtml(e.vendor || '—')}</td>
-        <td>${escapeHtml(e.next_pm_date || '—')}</td>
-        <td><span class="rep-pill ${cls}">${txt}</span></td>
-        <td style="text-align:right;white-space:nowrap">${adminBtns}</td>
-      </tr>`;
-    }).join('')}</tbody></table></div></div>`;
+        <button class="open pri" style="width:auto" onclick="openMaintModal(${e.id})">Log service</button>
+        <button class="ghost" onclick="openEqHistory(${e.id})">History</button>
+        <button class="ghost" onclick='openEqModal(${JSON.stringify(e).replace(/'/g, "&#39;")})'>Edit</button>
+        <button class="ghost" style="color:var(--danger,#E25555)" onclick="deleteEquipment(${e.id})">Delete</button>` : '';
+      return `
+      <div class="lrow" style="flex-wrap:wrap">
+        <div style="flex:1;min-width:170px">
+          <strong>${escapeHtml(e.name)}</strong>${e.model ? ` <span style="font-size:11px;color:var(--muted)">${escapeHtml(e.model)}</span>` : ''}
+          <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Serial ${escapeHtml(e.serial || '—')} · ${escapeHtml(e.vendor || 'No vendor')}</div>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);white-space:nowrap">Next PM <b style="color:var(--ink,inherit)">${escapeHtml(e.next_pm_date || '—')}</b></div>
+        <span class="sc ${cls}">${txt}</span>
+        ${adminBtns ? `<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${adminBtns}</div>` : ''}
+      </div>`;
+    }).join('')}</div>`;
 }
 
 function _eqItem(id) { return _eqList.find(e => e.id === id) || {}; }
