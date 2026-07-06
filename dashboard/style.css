@@ -2049,82 +2049,6 @@ body.dark .rep-card { background: var(--card); border-color: var(--border);
   background-size: 400% 100%; animation: wlsh 1.3s ease infinite; }
 @keyframes wlsh { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
-/* ── Worklist: card layout on phones ──────────────────────────────────────────
-   The board is a 6-column table with nowrap cells; on a phone that is far wider
-   than the screen, so the patient column scrolled off the left and rows bled off
-   both edges. On narrow screens we turn every row into a stacked card instead. */
-@media (max-width: 640px) {
-  .wl-table thead { display: none; }
-  .wl-table, .wl-table tbody, .wl-table tr, .wl-table td { display: block; width: 100%; }
-  /* Each order is ONE tight card — no per-field labels, no wasted vertical space. */
-  .wl-table tbody tr:not([id]) {
-    padding: 12px 14px; border-bottom: 1px solid var(--border);
-  }
-  .wl-table tbody tr:not([id]):last-child { border-bottom: none; }
-  .wl-table td { border-bottom: none; padding: 0; white-space: normal; }
-  .wl-table td::before { content: none !important; }     /* kill the ORDERED/STATUS/SAFETY labels */
-  .wl-table td:hover, .wl-table tr:hover td { background: transparent; }
-  .wl-table td[data-l="Exam"]   { margin-top: 7px; font-size: 13px; }
-  .wl-table td[data-l="Status"] { margin-top: 8px; }
-  .wl-table td[data-l="Ordered"] { display: none; }       /* the "Xh waiting" in Status already carries timing */
-  .wl-table td[data-l="Safety"] { margin-top: 8px; }
-  .wl-table td[data-l="Safety"] > div { flex-direction: row; flex-wrap: wrap; gap: 6px; }
-  /* safety = small chips, never big buttons */
-  .wl-table td[data-l="Safety"] .btn { width: auto; padding: 4px 11px; font-size: 11px; border-radius: 8px; }
-  /* Open = a compact action, right-aligned, not a giant full-width slab */
-  .wl-table td:last-child { margin-top: 10px; text-align: right; }
-  .wl-table td:last-child .btn { width: auto; padding: 7px 22px; }
-  .wl-table tr[id^="wl-dr-"] td { padding: 0; }
-  /* status tabs scroll sideways instead of wrapping into a tall block */
-  .wl-tabbar { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
-  .wl-tabbar::-webkit-scrollbar { display: none; }
-}
-
-/* ── RIS worklist: status tabs, modality chips, status badges ────────────────── */
-.wl-tabbar {
-  display: flex; gap: 6px; margin: 2px 0 10px; padding-bottom: 2px;
-}
-.wl-tab {
-  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
-  background: var(--card); color: var(--muted);
-  border: 1px solid var(--border); border-radius: 11px;
-  padding: 7px 13px; font-size: 12.5px; font-weight: 600; font-family: inherit;
-  white-space: nowrap; transition: all .16s;
-}
-.wl-tab:hover { border-color: var(--border-strong); color: var(--text); }
-.wl-tab.on { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--shadow-sm); }
-.wl-tab-n {
-  font-size: 11px; font-weight: 800; min-width: 18px; text-align: center;
-  padding: 1px 6px; border-radius: 8px; background: var(--surface-2); color: var(--text);
-}
-.wl-tab.on .wl-tab-n { background: rgba(255,255,255,.24); color: #fff; }
-.wl-modbar { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
-.wl-mchip {
-  cursor: pointer; background: transparent; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 20px;
-  padding: 4px 12px; font-size: 11.5px; font-weight: 600; font-family: inherit; transition: all .15s;
-}
-.wl-mchip:hover { border-color: var(--accent); color: var(--accent); }
-.wl-mchip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-/* Workflow status badge — one per exam-lifecycle phase, colour-coded. */
-.wl-st {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 8px;
-  white-space: nowrap; border: 1px solid transparent;
-}
-.wl-st-sched  { background: rgba(133,133,168,.12); color: #6b6b85; }
-.wl-st-arr    { background: rgba(255,186,73,.16);  color: #b7791f; }
-.wl-st-prog   { background: rgba(43,159,255,.14);  color: #1f74c9; }
-.wl-st-done   { background: rgba(255,159,67,.16);  color: #c26510; }
-.wl-st-prelim { background: rgba(124,92,255,.15);  color: #6a4bd6; }
-.wl-st-final  { background: rgba(0,200,150,.15);   color: #009e78; }
-body.dark .wl-st-sched  { color: #b6b6d0; }
-body.dark .wl-st-arr    { color: #ffcf7a; }
-body.dark .wl-st-prog   { color: #7ac0ff; }
-body.dark .wl-st-done   { color: #ffb877; }
-body.dark .wl-st-prelim { color: #b9a6ff; }
-body.dark .wl-st-final  { color: #59e6bd; }
-
 /* Date pickers read left-to-right even on an Arabic phone, so the numerals line up. */
 input[type="date"].input { direction: ltr; text-align: left; font-variant-numeric: tabular-nums; }
 
@@ -2689,37 +2613,283 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 /* Micro-interactions — snappy, purposeful, user-triggered (never on repaint).
    will-change is applied ONLY on hover (never statically) so per-row buttons are never
    permanently promoted to GPU layers — at 128+ rows that would jank scrolling. */
-.nav-item:hover, .wl-tab:hover, .wl-mchip:hover, .hm-chip:hover,
+.nav-item:hover, .hm-chip:hover,
 .card-interactive:hover, .stat-card:hover, .branch-card:hover { will-change: transform; }
-.wl-tab, .wl-mchip { transition: background .16s ease, color .16s ease, border-color .16s ease, transform .12s ease; }
-.wl-tab:active, .wl-mchip:active { transform: scale(.97); }
-.wl-tab.on { box-shadow: var(--shadow-sm); }
-
-/* Worklist rows: warm hover tint, solid (no shadow stacking, no reflow) */
-.wl-table tbody tr:not([id]) { transition: background .15s ease; }
-.wl-table tbody tr:not([id]):hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
-
-/* Status pills settle their colour without any layout change */
-.wl-st { transition: background .2s ease, color .2s ease; }
-/* Final = strongest (filled DEEP green + white text, AA-contrast); Completed = green
-   tint; Preliminary = blue tint. One-hue family; violet reserved for ACTIONS only. */
-.wl-st-final  { background: #0b7a52; color: #fff; }
-.wl-st-done   { background: rgba(0,200,150,.16); color: #0a7d55; }
-.wl-st-prelim { background: rgba(59,160,255,.15); color: #1f74c9; }
-body.dark .wl-st-final { background: #10b981; color: #04211a; }
-body.dark .wl-st-done  { color: #2dd8a7; }
-body.dark .wl-st-prelim{ color: #7ac0ff; }
 
 /* KPI numbers settle in (once, from data already in the batched payload) */
 @keyframes ccSettle { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .hm-chip-n, .hm-card-title, .rs-kpi-v, .rsr-kpi-v { animation: ccSettle .5s cubic-bezier(.2,.75,.25,1) both; }
 
 /* Focus ring — the one place besides actions violet is allowed */
-.btn:focus-visible, .input:focus-visible, .wl-tab:focus-visible, .nav-item:focus-visible {
+.btn:focus-visible, .input:focus-visible, .nav-item:focus-visible {
   outline: none; box-shadow: 0 0 0 3px rgba(107,78,255,.28); }
 
 /* Honour reduced-motion: pin every final state, no transforms */
 @media (prefers-reduced-motion: reduce) {
-  .content > *, .phero, .hm-chip-n, .hm-card-title, .rs-kpi-v, .rsr-kpi-v,
-  .wl-tab, .wl-mchip, .wl-table tbody tr { animation: none !important; transition: none !important; }
+  .content > *, .phero, .hm-chip-n, .hm-card-title, .rs-kpi-v, .rsr-kpi-v {
+    animation: none !important; transition: none !important; }
+  /* Clinical Calm component motion — pin to final state */
+  .cc *, .cc *::before, .cc *::after,
+  .wl-board *, .wl-board *::before, .wl-board *::after {
+    animation: none !important; transition: none !important; }
+}
+
+/* ═══════════════════ Clinical Calm component system (.cc) ═══════════════════
+   The shared class contract from the approved mockup
+   (scratchpad/designs/clinical-calm-hospital-g.html). EVERY selector here is
+   scoped under the .cc page-root (or .wl-board) so the mockup's generic inner
+   class names (.row/.tab/.chip/.exam/.board/.kpi/.ris …) can never bleed into
+   the existing .form-row/.ho-row/.hm-chip/.seg-chip/.tab-btn families.
+   Pages opt in by wrapping their body in <div class="cc">. */
+
+@keyframes rise  { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+@keyframes grow  { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0,200,150,.55); }
+                   70% { box-shadow: 0 0 0 7px transparent; }
+                   100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ── Hero + live tag ── */
+.cc .hero { display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap; animation: rise .5s ease both; }
+.cc .hero h1 { font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+.cc .hero .sub { color: var(--ink-2); font-size: 13.5px; margin-top: 4px; }
+.cc .hero .sub b { color: var(--accent2); font-weight: 600; }
+.cc .liveTag { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+  font-weight: 600; color: var(--green-ink); background: rgba(0,200,150,.12);
+  padding: 6px 12px; border-radius: 999px; }
+.cc .liveTag i { width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 0 rgba(0,200,150,.6); animation: pulse 2.2s infinite; }
+
+/* ── KPI stat cards ── */
+.cc .kpis { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+.cc .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 16px 18px; box-shadow: var(--shadow); position: relative; overflow: hidden;
+  animation: rise .5s ease both; }
+.cc .kpi:nth-child(2) { animation-delay: .05s; }
+.cc .kpi:nth-child(3) { animation-delay: .1s; }
+.cc .kpi:nth-child(4) { animation-delay: .15s; }
+.cc .kpi .kl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink-3); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.cc .kpi .kl .kd { width: 8px; height: 8px; border-radius: 3px; }
+.cc .kpi .kv { font-size: 30px; font-weight: 700; letter-spacing: -.03em; margin-top: 9px; line-height: 1; }
+.cc .kpi .kv small { font-size: 14px; color: var(--ink-3); font-weight: 600; letter-spacing: 0; }
+.cc .kpi .kt { font-size: 12px; margin-top: 7px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+.cc .kpi .up { color: var(--green-ink); font-weight: 600; }
+.cc .kpi .dn { color: var(--orange); font-weight: 600; }
+.cc .kpi::after { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0;
+  width: 3px; border-radius: 3px; }
+.cc .kpi.a::after { background: var(--yellow); }
+.cc .kpi.b::after { background: var(--blue); }
+.cc .kpi.c::after { background: var(--green); }
+.cc .kpi.d::after { background: var(--accent); }
+
+/* ── Board card ── */
+.cc .board { background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+  box-shadow: var(--shadow); overflow: hidden; animation: rise .5s ease .12s both; }
+.cc .bhead { padding: 16px 18px 0; display: flex; flex-direction: column; gap: 14px; }
+.cc .bhrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cc .btitle { font-size: 16px; font-weight: 700; }
+.cc .btitle span { color: var(--ink-3); font-weight: 500; font-size: 13px; margin-inline-start: 6px; }
+.cc .bh-actions { margin-inline-start: auto; display: flex; gap: 8px; }
+.cc .ghost { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+  font-weight: 600; color: var(--ink-2); padding: 8px 13px; border: 1px solid var(--border);
+  border-radius: 10px; background: transparent; cursor: pointer; font-family: inherit;
+  transition: border-color .16s, background .16s; }
+.cc .ghost:hover { border-color: var(--border-strong); background: var(--card-alt); }
+
+/* ── Tabs (underline style, violet count pill on active) ── */
+.cc .tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--border); margin: 0 -18px; padding: 0 18px; }
+.cc .tabs::-webkit-scrollbar { display: none; }
+.cc .tab { position: relative; white-space: nowrap; padding: 11px 4px 14px;
+  font-size: 13.5px; font-weight: 600; color: var(--ink-3); display: flex;
+  align-items: center; gap: 8px; margin-inline-end: 18px; background: none; border: none;
+  cursor: pointer; font-family: inherit; transition: color .16s; }
+.cc .tab:hover { color: var(--ink-2); }
+.cc .tab .n { font-size: 11px; font-weight: 700; background: var(--card-alt);
+  border: 1px solid var(--border); color: var(--ink-2); padding: 0 7px;
+  border-radius: 999px; line-height: 17px; }
+.cc .tab.on { color: var(--accent2); }
+.cc .tab.on .n { background: var(--accent); color: #fff; border-color: transparent; }
+.cc .tab.on::after { content: ""; position: absolute; inset-inline: 0; bottom: -1px;
+  height: 2.5px; border-radius: 3px; background: var(--accent2);
+  animation: grow .26s cubic-bezier(.2,.7,.2,1); }
+
+/* ── Modality chips ── */
+.cc .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 18px; }
+.cc .chip { font-size: 12.5px; font-weight: 600; color: var(--ink-2); padding: 7px 13px;
+  border: 1px solid var(--border); border-radius: 999px; display: inline-flex;
+  align-items: center; gap: 7px; background: transparent; cursor: pointer;
+  font-family: inherit; white-space: nowrap; transition: all .16s; }
+.cc .chip:hover { border-color: var(--border-strong); color: var(--text); }
+.cc .chip .cn { font-size: 11px; color: var(--ink-3); font-weight: 600; }
+.cc .chip.on { background: var(--violet-wash); border-color: transparent; color: var(--accent2); }
+.cc .chip.on .cn { color: var(--accent2); }
+.cc .chip .md { width: 7px; height: 7px; border-radius: 50%; }
+
+/* ── Board grid: header + rows ── */
+.cc .thead { display: grid; grid-template-columns: 2.4fr 2fr 1.2fr 1.5fr 96px; gap: 14px;
+  padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--card-alt); }
+.cc .thead > div { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--ink-3); font-weight: 600; }
+.cc .rows { display: flex; flex-direction: column; }
+.cc .rowwrap { display: block; }
+.cc .row { display: grid; grid-template-columns: 2.4fr 2fr 1.2fr 1.5fr 96px; gap: 14px;
+  align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border);
+  transition: background .16s; animation: rise .45s ease both; }
+.cc .rows > .row:nth-child(1), .cc .rows > :nth-child(1) > .row { animation-delay: .16s; }
+.cc .rows > .row:nth-child(2), .cc .rows > :nth-child(2) > .row { animation-delay: .21s; }
+.cc .rows > .row:nth-child(3), .cc .rows > :nth-child(3) > .row { animation-delay: .26s; }
+.cc .rows > .row:nth-child(4), .cc .rows > :nth-child(4) > .row { animation-delay: .31s; }
+.cc .rows > .row:nth-child(5), .cc .rows > :nth-child(5) > .row { animation-delay: .36s; }
+.cc .rows > .row:last-child, .cc .rows > .rowwrap:last-child > .row { border-bottom: none; }
+.cc .row:hover { background: var(--card-alt); }
+/* Emergency row: red inset accent bar (replaces the old inline shadow) */
+.cc .row.stat { box-shadow: inset 3px 0 0 var(--orange, #FF6B6B); }
+/* Poll opt-out: JS may add .cc-still to the .cc root during silent repaints so
+   the entrance never replays on the 45s refresh. */
+.cc.cc-still .row, .cc.cc-still .kpi, .cc.cc-still .board, .cc.cc-still .hero { animation: none; }
+
+/* Drill-down panel. CRITICAL: no `display` here — wlToggle drives visibility via
+   the inline style (style.display='none' ⇄ ''); a CSS display rule would make the
+   inline reset fall back to the stylesheet and the drill could never open. */
+.cc .rdetail { padding: 14px 18px; background: var(--card-alt);
+  border-bottom: 1px solid var(--border); }
+.cc .rows > .rowwrap:last-child > .rdetail { border-bottom: none; }
+
+/* ── Patient cell ── */
+.cc .pt { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cc .pname { display: flex; align-items: center; gap: 8px; font-size: 14.5px;
+  font-weight: 600; color: var(--text); }
+/* STAT badge — scoped to .pname so it can never collide with the .row.stat modifier */
+.cc .pname .stat { font-size: 9.5px; font-weight: 800; letter-spacing: .05em; color: #fff;
+  background: var(--orange); padding: 2px 7px; border-radius: 5px;
+  box-shadow: 0 3px 8px rgba(255,107,107,.4); }
+.cc .pname .stat i { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: #fff; margin-inline-end: 4px; vertical-align: middle; animation: blink 1.4s infinite; }
+.cc .pmeta { font-size: 11.5px; color: var(--ink-2); display: flex; gap: 6px;
+  flex-wrap: wrap; align-items: center; }
+.cc .pmeta .dr { color: var(--accent2); font-weight: 600; }
+.cc .pmeta i { width: 3px; height: 3px; border-radius: 50%; background: var(--ink-3); display: inline-block; }
+.cc .safe { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
+.cc .sc { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 4px; border: none; cursor: default;
+  font-family: inherit; white-space: nowrap; }
+button.cc-scbtn, .cc button.sc { cursor: pointer; }
+.cc .sc.ok   { color: var(--green-ink); background: rgba(0,200,150,.13); }
+.cc .sc.no   { color: var(--orange);    background: rgba(255,107,107,.13); }
+.cc .sc.warn { color: #B77800;          background: rgba(255,186,73,.2); }
+
+/* ── Exam cell ── */
+.cc .exam { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cc .exline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cc .mod { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; padding: 3px 8px;
+  border-radius: 6px; color: #fff; flex-shrink: 0; background: #8a8f98; }
+.cc .mod.ct  { background: #6B4EFF; }
+.cc .mod.mri { background: #3BA0FF; }
+.cc .mod.us  { background: #00C896; }
+.cc .mod.xr  { background: #8358FD; }
+.cc .mod.mm  { background: #E4739B; }
+.cc .proc { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.cc .acc { font-size: 11px; color: var(--ink-3); font-weight: 500;
+  font-variant-numeric: tabular-nums; text-decoration: none; cursor: pointer;
+  width: fit-content; transition: color .16s; }
+.cc .acc:hover { color: var(--accent2); }
+
+/* ── Ordered / timing cell ── */
+.cc .when { display: flex; flex-direction: column; gap: 3px; font-variant-numeric: tabular-nums; }
+.cc .when .big { font-size: 13px; font-weight: 600; }
+.cc .when .sm { font-size: 11px; color: var(--ink-3); }
+.cc .when .sm.wait, .cc .when .wait { color: var(--orange); font-weight: 600; }
+
+/* ── RIS status pills (dotted) — palette ported from the approved .wl-st-* map ── */
+.cc .ris { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+  font-weight: 600; padding: 5px 11px; border-radius: 999px; width: fit-content;
+  white-space: nowrap; transition: background .2s ease, color .2s ease; }
+.cc .ris .rd { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.cc .ris.scheduled { color: var(--slate); background: rgba(100,116,139,.13); }
+.cc .ris.scheduled .rd { background: var(--slate); }
+.cc .ris.arrived { color: var(--accent2); background: var(--violet-wash); }
+.cc .ris.arrived .rd { background: var(--accent); }
+.cc .ris.progress { color: #B77800; background: rgba(255,186,73,.18); }
+.cc .ris.progress .rd { background: var(--yellow); animation: blink 1.3s infinite; }
+.cc .ris.completed { color: var(--green-ink); background: rgba(0,200,150,.14); }
+.cc .ris.completed .rd { background: var(--green); }
+.cc .ris.prelim { color: #1f74c9; background: rgba(59,160,255,.15); }
+.cc .ris.prelim .rd { background: var(--blue); }
+/* Final = the strongest state: filled deep green + white text (AA), per the
+   approved palette (old .wl-st-final). */
+.cc .ris.final { color: #fff; background: #0b7a52; }
+.cc .ris.final .rd { background: rgba(255,255,255,.92); }
+
+/* ── Open action button ── */
+.cc .open { width: 100%; display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--accent2);
+  background: var(--violet-wash); padding: 9px 12px; border-radius: 10px; border: none;
+  cursor: pointer; font-family: inherit; transition: all .16s; }
+.cc .open:hover { background: var(--accent); color: #fff; transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(107,78,255,.32); }
+.cc .open.pri { background: var(--accent); color: #fff; }
+.cc .open.pri:hover { filter: brightness(1.06); }
+
+/* ── Mobile-only field label (hidden on desktop) ── */
+.cc .rlabel { display: none; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-3); font-weight: 600; margin-bottom: 3px; }
+
+/* ── Generic card list (replaces .table-wrap>table on staff/schedule/admin pages) ── */
+.cc .listcard { background: var(--card); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+  animation: rise .5s ease both; }
+.cc .lrow { display: flex; align-items: center; gap: 14px; padding: 13px 18px;
+  border-bottom: 1px solid var(--border); transition: background .16s; }
+.cc .lrow:last-child { border-bottom: none; }
+.cc .lrow:hover { background: var(--card-alt); }
+
+/* ── Focus rings for the .cc controls (matches the app-wide violet ring) ── */
+.cc .tab:focus-visible, .cc .chip:focus-visible, .cc .ghost:focus-visible,
+.cc .open:focus-visible, .cc .acc:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px rgba(107,78,255,.28); }
+
+/* ── Dark mode overrides (tokens carry most of it; pin the fixed-colour pieces) ── */
+body.dark .cc .sc.warn { color: var(--yellow); }
+body.dark .cc .sc.no { color: #ff8f8f; }
+body.dark .cc .ris.scheduled { color: #b6b6d0; }
+body.dark .cc .ris.progress { color: var(--yellow); }
+body.dark .cc .ris.prelim { color: #7ac0ff; }
+body.dark .cc .ris.completed { color: var(--green-ink); }
+body.dark .cc .ris.final { background: #10b981; color: #04211a; }
+body.dark .cc .ris.final .rd { background: #04211a; }
+body.dark .cc .liveTag { background: rgba(0,200,150,.16); }
+body.dark .cc .tab .n { background: var(--surface-2); }
+
+/* ══════════════ Worklist board (.wl-board) — responsive behaviour ══════════════ */
+@media (max-width: 980px) {
+  .cc .kpis { grid-template-columns: repeat(2,1fr); }
+  .wl-board .thead { grid-template-columns: 2fr 1.6fr 1.4fr 96px; }
+  .wl-board .thead .h-time { display: none; }
+  .wl-board .row { grid-template-columns: 2fr 1.6fr 1.4fr 96px; }
+  .wl-board .row .when { display: none; }
+}
+@media (max-width: 720px) {
+  .cc .kpis { grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 10px; }
+  .wl-board .thead { display: none; }
+  /* Each order becomes ONE stacked card */
+  .wl-board .row { grid-template-columns: 1fr; gap: 12px; padding: 16px 15px;
+    border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px;
+    box-shadow: var(--shadow-sm); background: var(--card); }
+  .wl-board .row .when { display: flex; }           /* timing comes back inside the card */
+  .wl-board .rows { background: transparent; padding: 0 12px 12px; }
+  .wl-board .rows > .row:last-child,
+  .wl-board .rowwrap:last-child > .row { margin-bottom: 0; }
+  /* Open drill reads as a panel attached to its card */
+  .wl-board .rdetail { border: 1px solid var(--border); border-radius: 14px;
+    margin: -6px 0 12px; }
+  .cc .rlabel { display: block; }
+  .cc .ris { width: auto; }
+  .cc .open { padding: 11px 12px; }
+  .cc .tabs, .cc .chips { overflow-x: auto; flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .cc .tabs::-webkit-scrollbar, .cc .chips::-webkit-scrollbar { display: none; }
 }

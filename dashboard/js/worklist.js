@@ -476,21 +476,23 @@ function wlRender() {
   const tabs = _WL_BUCKETS.map((b) => {
     const n = counts[b.key] || 0;
     const on = wlState.statusTab === b.key;
-    return `<button class="wl-tab${on ? ' on' : ''}" onclick="wlSetTab('${b.key}')">
-      <span>${b.icon}</span><span>${b.label}</span><span class="wl-tab-n">${n}</span></button>`;
+    return `<button class="tab${on ? ' on' : ''}" onclick="wlSetTab('${b.key}')">${b.icon} ${b.label}<span class="n">${n}</span></button>`;
   }).join('');
 
   // ── Modality filter chips (only modalities actually present) ────────────────
-  const present = new Set(items.map(wlRowMod).filter(Boolean));
+  const modCounts = {};
+  for (const it of items) { const m = wlRowMod(it); if (m) modCounts[m] = (modCounts[m] || 0) + 1; }
+  const present = new Set(Object.keys(modCounts));
   // If the active modality filter is no longer on the board (its rows all filed/dropped),
   // auto-clear it — otherwise the chip bar hides and the board strands empty with no way
   // to reset the filter.
   if (wlState.modFilter && !present.has(wlState.modFilter)) wlState.modFilter = null;
   const MOD_ORDER = [['CT', 'CT'], ['MR', 'MRI'], ['US', 'US'], ['XR', 'X-Ray'], ['MG', 'Mammo']];
-  const modChips = present.size > 1 ? `<div class="wl-modbar">
-      <button class="wl-mchip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All</button>
+  const MOD_DOT = { CT: '#6B4EFF', MR: '#3BA0FF', US: '#00C896', XR: '#8358FD', MG: '#E4739B' };
+  const modChips = present.size > 1 ? `<div class="chips">
+      <button class="chip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All modalities</button>
       ${MOD_ORDER.filter(([k]) => present.has(k)).map(([k, lbl]) =>
-        `<button class="wl-mchip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')">${lbl}</button>`).join('')}
+        `<button class="chip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')"><span class="md" style="background:${MOD_DOT[k]}"></span>${lbl}<span class="cn">${modCounts[k] || 0}</span></button>`).join('')}
     </div>` : '';
 
   // Filter to the selected bucket + modality.
@@ -498,7 +500,7 @@ function wlRender() {
   if (wlState.statusTab !== 'all') rows = rows.filter((it) => it.__bucket === wlState.statusTab);
   if (wlState.modFilter) rows = rows.filter((it) => wlRowMod(it) === wlState.modFilter);
 
-  const bar = `<div class="wl-tabbar">${tabs}</div>${modChips}`;
+  const bar = `<div class="tabs">${tabs}</div>${modChips}`;
   body.innerHTML = bar + (rows.length
     ? wlTable(rows, 'a')
     : `<div class="empty" style="padding:22px"><p>Nothing in this view.</p></div>`);
@@ -634,21 +636,21 @@ function wlPregPump() {
 }
 function wlPregBadge(r) {
   if (!r || !r.found || !r.hasPregnancyTest) {
-    return '<span class="badge" style="background:#e0a800;color:#fff" title="No recent pregnancy / β-hCG lab found in Siratech — confirm status before imaging">🤰 No recent test</span>';
+    return '<span class="sc warn" title="No recent pregnancy / β-hCG lab found in Siratech — confirm status before imaging">🤰 No recent test</span>';
   }
   const when = r.resultDate || r.orderDate;
   const dstr = when ? (' · ' + escapeHtml(String(when).slice(0, 10))) : '';
   const nm = r.testName ? escapeHtml(String(r.testName)) : 'pregnancy test';
   if (r.verdict === 'positive') {
-    return `<span class="badge badge-red" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — POSITIVE. Do NOT irradiate without physician review.">🤰 POSITIVE${dstr}</span>`;
+    return `<span class="sc no" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — POSITIVE. Do NOT irradiate without physician review.">⚠ Pregnancy: positive${dstr}</span>`;
   }
   if (r.verdict === 'negative') {
-    return `<span class="badge badge-green" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — negative">🤰 Negative${dstr}</span>`;
+    return `<span class="sc ok" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — negative">✓ Pregnancy: negative${dstr}</span>`;
   }
   if (r.resulted) {
-    return `<span class="badge" style="background:#6b7280;color:#fff" title="${nm} resulted${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — read the value">🤰 Resulted${dstr}</span>`;
+    return `<span class="sc warn" title="${nm} resulted${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — read the value">🤰 Resulted${dstr}</span>`;
   }
-  return `<span class="badge" style="background:#e0a800;color:#fff" title="${nm} ordered but result still pending">🤰 Test pending${dstr}</span>`;
+  return `<span class="sc warn" title="${nm} ordered but result still pending">🤰 Test pending${dstr}</span>`;
 }
 async function wlPregCheck(mrno, site, id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'checking…'; }
@@ -732,6 +734,13 @@ function wlParseTs(s) {
   if (!s) return 0;
   const t = Date.parse(String(s));
   return isNaN(t) ? 0 : t;
+}
+// HH:MM for the board's "Ordered" column; falls back to the raw-ish string when the
+// timestamp doesn't parse.
+function wlTimeOnly(s) {
+  const t = wlParseTs(s);
+  if (t) return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return s ? wlTrackFmt(s) : '';
 }
 function wlTrack(it) {
   const reported = it.stage === 'reported' || it.stage === 'draft';
