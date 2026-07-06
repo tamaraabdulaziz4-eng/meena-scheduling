@@ -146,6 +146,7 @@ function wlCheckNewEmergencies(items) {
 async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Live RIS status board · STAT first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
+  wlState._paintedOnce = false;                        // entrance animation once per visit
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
   // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
   // that patient (search finds them even if they're not on today's board).
@@ -454,6 +455,11 @@ function wlRender() {
   if (!body) return;
   // A cross-branch search result view is showing — don't let a live refresh clobber it.
   if (wlState.searchView) return;
+  // Entrance animation fires ONCE per visit. Every later repaint (45s poll, enrich
+  // merge, tab/chip switch) recreates the board nodes, which would replay the row
+  // stagger as a visible flicker — the .cc-still class pins those repaints.
+  const ccRoot = document.querySelector('#content > .cc');
+  if (ccRoot) { ccRoot.classList.toggle('cc-still', !!wlState._paintedOnce); wlState._paintedOnce = true; }
   // Live typeahead: as the operator types digits, filter the board to the MRNs that
   // START WITH what's typed (prefix), so the patient narrows down live — no need to
   // type the whole number or press Enter.
