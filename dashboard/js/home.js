@@ -40,6 +40,7 @@ async function renderHomePage() {
   const c0 = _hmClockParts();
 
   document.getElementById('content').innerHTML = `
+    <div class="cc">
     <div class="phero phero-lg">
       <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
       <div class="phero-orb p3"></div>
@@ -75,6 +76,7 @@ async function renderHomePage() {
       </div>
       <div id="hm-recent" class="hm-recent"></div>
       <div id="hm-staff-results" class="hm-results"></div>
+    </div>
     </div>
     `;
 
@@ -141,17 +143,18 @@ async function renderHomeApprovals() {
   const swapPending = (swaps || []).filter(s => ['pending', 'pending_lead', 'pending_manager'].includes(s.status));
 
   if (!groups.length && !tbPending.length && !swapPending.length) {
-    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Needs your approval</div></div>
-      <div class="hm-muted" style="padding:6px 2px">You're all caught up 🎉</div></div>`;
+    box.innerHTML = `<div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">Needs your approval</div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px;color:var(--muted);font-size:13px">You're all caught up 🎉</div></div></div>`;
     return;
   }
-  const row = (left, right) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
-      <div style="font-size:13px">${left}</div><div style="font-size:12px">${right}</div></div>`;
+  const row = (left, right) => `<div class="lrow" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 18px">
+      <div style="font-size:13px;min-width:0">${left}</div><div style="font-size:12px;flex-shrink:0">${right}</div></div>`;
   const section = (title, count, link, rows) => !count ? '' : `
-    <div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-        <div style="font-weight:700;font-size:13px">${title} <span class="badge badge-orange">${count}</span></div>
-        <button class="action-btn" onclick="showPage('${link}')">View all →</button>
+    <div style="margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 18px 2px">
+        <div style="font-weight:700;font-size:13px">${title} <span class="sc warn">${count}</span></div>
+        <button class="ghost" onclick="showPage('${link}')">View all →</button>
       </div>
       ${rows}
     </div>`;
@@ -159,18 +162,18 @@ async function renderHomeApprovals() {
   const leaveRows = groups.slice(0, 5).map(g => {
     const span = g.date_to && g.date_to !== g.date_from ? `${fmtDateDisplay(g.date_from)}–${fmtDateDisplay(g.date_to)}` : fmtDateDisplay(g.date_from);
     return row(`<b>${escapeHtml(g.staff_name || '')}</b> · ${escapeHtml(g.leave_type)} · ${span} <span class="hm-muted">(${g.day_count}d)</span>`,
-      `<button class="action-btn" onclick='homeApproveLeave(${JSON.stringify(g.ids)})'>✓ Approve</button>`);
+      `<button class="open" onclick='homeApproveLeave(${JSON.stringify(g.ids)})'>✓ Approve</button>`);
   }).join('');
   const tbRows = tbPending.slice(0, 5).map(t => row(
     `<b>${escapeHtml(t.staff_name || '')}</b> · ${t.days}d · ${fmtDateDisplay(t.date)}`,
-    `<button class="action-btn" onclick="homeApproveTimeback(${t.id})">✓ Approve</button>`)).join('');
+    `<button class="open" onclick="homeApproveTimeback(${t.id})">✓ Approve</button>`)).join('');
   const swapRows = swapPending.slice(0, 5).map(s => row(
     `<b>${escapeHtml(s.staff_a_name || '')}</b> ↔ ${escapeHtml(s.staff_b_name || '?')} · ${fmtDateDisplay(s.date_a)}`,
-    `<span class="badge badge-yellow">${escapeHtml(s.status.replace('pending_', 'awaiting '))}</span>`)).join('');
+    `<span class="ris progress"><span class="rd"></span>${escapeHtml(s.status.replace('pending_', 'awaiting '))}</span>`)).join('');
 
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head"><div class="hm-card-title">Needs your approval</div></div>
-    <div style="margin-top:6px">
+  box.innerHTML = `<div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">Needs your approval <span>${groups.length + tbPending.length + swapPending.length} pending</span></div></div></div>
+    <div class="rows">
       ${section('Leave requests', groups.length, 'leaves', leaveRows)}
       ${section('Time-back', tbPending.length, 'leaves', tbRows)}
       ${section('Shift swaps', swapPending.length, 'swaps', swapRows)}
@@ -234,15 +237,17 @@ async function renderHomeRadstats() {
     else {
       // FAIL CLOSED — a team lead whose branch we can't resolve must NOT get an
       // unscoped (all-branch) query.
-      box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Radiology</div></div>
-        <div class="rs-loadnote" style="margin:8px 0 0;color:var(--muted)">Your branch isn't linked to the hospital system yet — ask an admin to link it.</div></div>`;
+      box.innerHTML = `<div class="board" style="margin-bottom:14px">
+        <div class="bhead"><div class="bhrow"><div class="btitle">Radiology</div></div></div>
+        <div class="rows"><div class="lrow" style="padding:12px 18px;color:var(--muted);font-size:13px">Your branch isn't linked to the hospital system yet — ask an admin to link it.</div></div></div>`;
       return;
     }
   }
   if (!box.dataset.loaded) {
-    const t = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
-    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">${t}</div></div>
-      <div class="rs-loadnote" style="margin:8px 0 0"><span class="mini-spin"></span> Loading live data…</div></div>`;
+    const t = scopeName ? escapeHtml(scopeName) : 'all branches';
+    box.innerHTML = `<div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">Radiology today <span>${t}</span></div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px"><span class="mini-spin"></span> Loading live data…</div></div></div>`;
   }
   await _hmRadFetch(site, scopeName);
   // Live auto-refresh; self-stops when the user leaves Home.
@@ -268,22 +273,39 @@ async function _hmRadFetch(site, scopeName) {
   const rtn = (d.priority && d.priority.routine) || 0;
   const top = (d.byBranch || []).filter(b => b.count > 0)[0];
   const upd = _hmClockParts();
-  const title = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
+  const scope = scopeName ? escapeHtml(scopeName) : 'all branches';
   // Tiles are buttons — tapping one lists the actual requests behind it (patient +
   // exam), filtered to that tile. The active tile is highlighted.
-  const kpi = (n, l, cls, filter) => `<button type="button" class="hm-rad-kpi${cls ? ' ' + cls : ''}${filter && _hmRadDrill === filter ? ' active' : ''}"${filter ? ` onclick="hmRadDrillToggle('${filter}')"` : ''}><b>${Number(n).toLocaleString()}</b><span>${l}</span></button>`;
-  const tiles = [kpi(total, 'requests', '', 'all'), kpi(emg, 'emergency', emg ? 'warn' : '', 'emergency'), kpi(rtn, 'routine', '', 'routine')];
-  if (!site && top) tiles.push(`<button type="button" class="hm-rad-kpi${_hmRadDrill === 'branch:' + top.site ? ' active' : ''}" onclick="hmRadDrillToggle('branch:${top.site}')"><b style="font-size:15px">${escapeHtml(top.name || ('Branch ' + top.site))}</b><span>busiest branch</span></button>`);
-  else if (!site) tiles.push(`<div class="hm-rad-kpi"><b style="font-size:15px">—</b><span>busiest branch</span></div>`);
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head">
-      <div class="hm-card-title">${title}
-        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2BAE66;box-shadow:0 0 0 3px rgba(43,174,102,.18);margin-left:6px;vertical-align:middle"></span></div>
-      <button class="action-btn" onclick="showPage('radstats')">Open →</button>
+  const kpi = (n, l, cls, dot, cap, filter) => `<button type="button"
+    class="kpi ${cls}${filter && _hmRadDrill === filter ? ' active' : ''}"
+    style="text-align:start;font:inherit;cursor:pointer"${filter ? ` onclick="hmRadDrillToggle('${filter}')"` : ''}>
+    <div class="kl"><span class="kd" style="background:${dot}"></span>${l}</div>
+    <div class="kv">${Number(n).toLocaleString()}</div>
+    <div class="kt">${cap}</div></button>`;
+  const tiles = [
+    kpi(total, 'Requests', 'b', 'var(--blue,#3BA0FF)', 'today · tap for the list', 'all'),
+    kpi(emg, 'Emergency', 'a', emg ? 'var(--danger,#E25555)' : 'var(--amber,#F4B740)', emg ? '<span class="dn">needs attention</span>' : 'none so far', 'emergency'),
+    kpi(rtn, 'Routine', 'c', 'var(--green,#00C896)', 'scheduled flow', 'routine'),
+  ];
+  if (!site && top) tiles.push(`<button type="button" class="kpi d${_hmRadDrill === 'branch:' + top.site ? ' active' : ''}"
+      style="text-align:start;font:inherit;cursor:pointer" onclick="hmRadDrillToggle('branch:${top.site}')">
+      <div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>Busiest branch</div>
+      <div class="kv" style="font-size:17px;line-height:1.3">${escapeHtml(top.name || ('Branch ' + top.site))}</div>
+      <div class="kt">${Number(top.count).toLocaleString()} requests</div></button>`);
+  else if (!site) tiles.push(`<div class="kpi d"><div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>Busiest branch</div>
+      <div class="kv">—</div><div class="kt">no activity yet</div></div>`);
+  box.innerHTML = `<div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow">
+      <div class="btitle">Radiology today <span>${scope}</span></div>
+      <div class="bh-actions">
+        <span class="liveTag"><i></i>Live · updated ${upd.hm}:${upd.ss} Riyadh</span>
+        <button class="ghost" onclick="showPage('radstats')">Open →</button>
+      </div>
+    </div></div>
+    <div style="padding:14px 18px 16px">
+      <div class="kpis">${tiles.join('')}</div>
+      <div id="hm-rad-drill"></div>
     </div>
-    <div class="hm-rad-kpis">${tiles.join('')}</div>
-    <div id="hm-rad-drill"></div>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px">🟢 Live · updated ${upd.hm}:${upd.ss} Riyadh · tap a number for the list</div>
   </div>`;
   if (_hmRadDrill) hmRadDrillRender();
 }
@@ -292,7 +314,7 @@ async function _hmRadFetch(site, scopeName) {
 function hmRadDrillToggle(filter) {
   _hmRadDrill = (_hmRadDrill === filter) ? '' : filter;
   // Re-highlight the tiles + (re)render the list without a full refetch.
-  document.querySelectorAll('#hm-radstats .hm-rad-kpi').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#hm-radstats .kpi').forEach(el => el.classList.remove('active'));
   hmRadDrillRender();
 }
 function hmRadDrillRender() {

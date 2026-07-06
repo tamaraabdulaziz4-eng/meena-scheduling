@@ -2776,7 +2776,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cc .sc { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
   display: inline-flex; align-items: center; gap: 4px; border: none; cursor: default;
   font-family: inherit; white-space: nowrap; }
-button.cc-scbtn, .cc button.sc { cursor: pointer; }
+.cc button.sc { cursor: pointer; }   /* consent "needed" chip is a live button */
 .cc .sc.ok   { color: var(--green-ink); background: rgba(0,200,150,.13); }
 .cc .sc.no   { color: var(--orange);    background: rgba(255,107,107,.13); }
 .cc .sc.warn { color: #B77800;          background: rgba(255,186,73,.2); }
@@ -2879,7 +2879,6 @@ body.dark .cc .tab .n { background: var(--surface-2); }
   .wl-board .row { grid-template-columns: 1fr; gap: 12px; padding: 16px 15px;
     border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px;
     box-shadow: var(--shadow-sm); background: var(--card); }
-  .wl-board .row .when { display: flex; }           /* timing comes back inside the card */
   .wl-board .rows { background: transparent; padding: 0 12px 12px; }
   .wl-board .rows > .row:last-child,
   .wl-board .rowwrap:last-child > .row { margin-bottom: 0; }

@@ -22,6 +22,7 @@ function renderSwapsPage() {
   const crossBranch = ['superadmin','manager'].includes(currentUser?.role);
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Request & approve shift exchanges', 'Shift Swaps')}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <select id="swap-filter-status" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none">
@@ -34,22 +35,23 @@ function renderSwapsPage() {
       </select>
       ${crossBranch ? `<select id="swap-filter-branch" onchange="refreshSwaps()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select>` : ''}
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>#</th><th>Branch</th><th>Swap</th><th>Progress</th><th>Actions</th>
-        </tr></thead>
-        <tbody id="swaps-tbody"></tbody>
-      </table>
+    <div class="board">
+      <div class="bhead">
+        <div class="bhrow">
+          <div class="btitle">Swap requests <span>colleague → team lead → manager</span></div>
+        </div>
+      </div>
+      <div class="rows" id="swaps-tbody"></div>
+    </div>
     </div>`;
   refreshSwaps();
 }
 
 async function refreshSwaps() {
   const tb = document.getElementById('swaps-tbody');
-  if (tb) tb.innerHTML = `<tr><td colspan="5">${LOADING_HTML}</td></tr>`;
+  if (tb) tb.innerHTML = `<div style="padding:16px">${LOADING_HTML}</div>`;
   try { await loadSwaps(); renderSwapsList(); animateIn('swaps-tbody'); }
-  catch (e) { if (tb) tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">${escapeHtml(e.message||'Failed to load')}</td></tr>`; }
+  catch (e) { if (tb) tb.innerHTML = `<div style="text-align:center;color:var(--muted);padding:20px">${escapeHtml(e.message||'Failed to load')}</div>`; }
 }
 
 // The 3-step approval chain, rendered as a stepper.
@@ -95,29 +97,41 @@ function swapActionsFor(s) {
   const amRequester = role === 'staff' && myStaff === s.staff_a;
 
   let html = '';
-  if (primary) html += `<button class="action-btn" onclick="actSwap(${s.id},'${primary==='Accept'?'accept':'approve'}','${primary}')">${primary}</button> `;
-  if (canReject) html += `<button class="action-btn danger" onclick="actSwap(${s.id},'reject')">${amRequester && s.status==='pending_peer' ? 'Cancel' : 'Reject'}</button>`;
-  return html || '—';
+  if (primary) html += `<button class="open" onclick="actSwap(${s.id},'${primary==='Accept'?'accept':'approve'}','${primary}')">${primary}</button> `;
+  if (canReject) html += `<button class="ghost" onclick="actSwap(${s.id},'reject')" style="color:var(--danger,#E63946)">${amRequester && s.status==='pending_peer' ? 'Cancel' : 'Reject'}</button>`;
+  return html || '<span style="font-size:11px;color:var(--muted)">—</span>';
+}
+
+// Clinical Calm dotted status pill for a swap's overall state.
+function swapStatusPill(s) {
+  const map = {
+    pending_peer:    '<span class="ris scheduled"><span class="rd"></span>Awaiting colleague</span>',
+    pending_lead:    '<span class="ris progress"><span class="rd"></span>Awaiting team lead</span>',
+    pending_manager: '<span class="ris prelim"><span class="rd"></span>Awaiting manager</span>',
+    approved:        '<span class="ris final"><span class="rd"></span>Approved</span>',
+    rejected:        '<span class="sc no">✕ Rejected</span>',
+  };
+  return map[s.status] || `<span class="sc warn">${escapeHtml(s.status || '')}</span>`;
 }
 
 function renderSwapsList() {
   const tb = document.getElementById('swaps-tbody');
   if (!tb) return;
   if (!allSwaps.length) {
-    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No swap requests</td></tr>`;
+    tb.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted)">No swap requests</div>`;
     return;
   }
   tb.innerHTML = allSwaps.map((s, i) => `
-    <tr>
-      <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
-      <td style="font-size:12px;color:var(--muted)">${escapeHtml(s.branch_name || '—')}</td>
-      <td>
-        <div style="font-weight:600">${escapeHtml(s.staff_a_name)} <span style="color:var(--accent)">↔</span> ${escapeHtml(s.staff_b_name)}</div>
-        <div style="font-size:12px;color:var(--muted)">${fmtDateDisplay(s.date_a)} ↔ ${fmtDateDisplay(s.date_b)}</div>
-      </td>
-      <td>${swapStepper(s)}</td>
-      <td style="white-space:nowrap">${swapActionsFor(s)}</td>
-    </tr>`).join('');
+    <div class="lrow">
+      <div style="width:26px;text-align:center;color:var(--muted);font-size:12px;flex:none">${i+1}</div>
+      <div style="flex:2;min-width:170px">
+        <div style="font-weight:700">${escapeHtml(s.staff_a_name)} <span style="color:var(--accent)">↔</span> ${escapeHtml(s.staff_b_name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${fmtDateDisplay(s.date_a)} ↔ ${fmtDateDisplay(s.date_b)} · ${escapeHtml(s.branch_name || '—')}</div>
+      </div>
+      <div style="flex:2;min-width:200px">${swapStepper(s)}</div>
+      <div style="flex:none">${swapStatusPill(s)}</div>
+      <div style="white-space:nowrap;display:flex;gap:6px;flex:none">${swapActionsFor(s)}</div>
+    </div>`).join('');
 }
 
 async function actSwap(id, action, label) {

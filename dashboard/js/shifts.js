@@ -24,8 +24,10 @@ function renderShiftsPage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Global shift list — all branches', 'Shift Types')}
-    <div id="shift-tables-wrap"></div>`;
+    <div id="shift-tables-wrap"></div>
+    </div>`;
 
   renderShiftTable();
 }
@@ -38,48 +40,43 @@ function renderShiftTable() {
 
   const rowsHtml = shifts.map((st, idx) => {
     const hours = calcHours(st.start_time, st.end_time);
-    const flags = [st.is_off && 'Off', st.is_leave && 'Leave', st.is_oncall && 'On-Call'].filter(Boolean).join(', ') || '—';
+    const flags = [st.is_off && 'Off', st.is_leave && 'Leave', st.is_oncall && 'On-Call'].filter(Boolean);
 
     let actions = '';
     if (canEdit) {
-      actions = `<button class="action-btn" onclick="openShiftModal(${st.id})">Edit</button>`;
+      actions = `<button class="ghost" onclick="openShiftModal(${st.id})">Edit</button>`;
     }
 
-    return `<tr>
-      <td style="color:var(--muted);font-size:12px;text-align:center;width:36px">${idx + 1}</td>
-      <td>
+    return `<div class="lrow">
+      <div style="width:26px;text-align:center;color:var(--muted);font-size:12px;flex:none">${idx + 1}</div>
+      <div style="flex:none">
         <span style="display:inline-flex;padding:4px 12px;border-radius:6px;background:${st.color};color:${contrastColor(st.color)};font-weight:700;font-size:12px">${st.code}</span>
-      </td>
-      <td>${st.label}</td>
-      <td>${fmt12(st.start_time)}</td>
-      <td>${fmt12(st.end_time)}</td>
-      <td>${hours}</td>
-      <td><div style="width:24px;height:24px;border-radius:6px;background:${st.color};border:1px solid var(--border)"></div></td>
-      <td><span style="font-size:11px;color:var(--muted)">${flags}</span></td>
-      ${canEdit ? `<td>${actions}</td>` : ''}
-    </tr>`;
+      </div>
+      <div style="flex:2;min-width:120px;font-weight:600">${st.label}</div>
+      <div style="flex:2;min-width:140px;font-size:12px;color:var(--muted)">
+        ${(st.start_time && st.end_time) ? `${fmt12(st.start_time)} – ${fmt12(st.end_time)} · ${hours}` : '—'}
+      </div>
+      <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${flags.length ? flags.map(f => `<span class="sc warn">${f}</span>`).join('') : '<span style="font-size:11px;color:var(--muted)">—</span>'}
+      </div>
+      <div style="width:24px;height:24px;border-radius:6px;background:${st.color};border:1px solid var(--border);flex:none" title="Shift colour"></div>
+      ${canEdit ? `<div style="white-space:nowrap;flex:none">${actions}</div>` : ''}
+    </div>`;
   }).join('');
 
   const total = shifts.length;
   const workCount = shifts.filter(s => !s.is_off && !s.is_leave && !s.is_oncall).length;
 
   wrap.innerHTML = `
-    <div style="margin-bottom:10px;font-size:13px;color:var(--muted)">
-      <strong style="color:var(--text)">${total}</strong> shift types
-      &nbsp;·&nbsp; <strong style="color:var(--text)">${workCount}</strong> work shifts
-      &nbsp;·&nbsp; <strong style="color:var(--text)">${total - workCount}</strong> status codes
+    <div class="kpis">
+      <div class="kpi a"><div class="kl"><span class="kd" style="background:var(--amber,#F59E0B)"></span>Shift types</div><div class="kv">${total}</div><div class="kt">global — all branches</div></div>
+      <div class="kpi b"><div class="kl"><span class="kd" style="background:var(--blue,#3BA0FF)"></span>Work shifts</div><div class="kv">${workCount}</div><div class="kt">scheduled duty codes</div></div>
+      <div class="kpi c"><div class="kl"><span class="kd" style="background:var(--green,#00C896)"></span>Status codes</div><div class="kv">${total - workCount}</div><div class="kt">off / leave / on-call</div></div>
     </div>
-    <div class="table-wrap" id="shifts-wrap">
-      <table>
-        <thead><tr>
-          <th style="width:36px">#</th><th>Code</th><th>Label</th><th>Start</th><th>End</th><th>Hours</th><th>Colour</th><th>Type</th>
-          ${canEdit ? '<th>Actions</th>' : ''}
-        </tr></thead>
-        <tbody>${rowsHtml || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">No shifts</td></tr>'}</tbody>
-      </table>
+    <div class="listcard" id="shifts-wrap">
+      ${rowsHtml || '<div style="text-align:center;color:var(--muted);padding:20px">No shifts</div>'}
     </div>`;
   animateIn('shifts-wrap');
-  revealTable('shifts-wrap');
 }
 
 function calcHours(start, end) {

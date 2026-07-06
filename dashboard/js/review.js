@@ -4,35 +4,45 @@ let reviewMonth = new Date().getMonth() + 1;
 let reviewFilter = 'all';
 let reviewData   = { branches: [], summary: {} };
 
+// Clinical Calm pill per schedule state (rejected-like states → red chip).
 const STATUS_META = {
-  submitted:     { label: 'Pending review', cls: 'pending'  },
-  reviewed:      { label: 'Pending review', cls: 'pending'  },
-  approved:      { label: 'Approved',       cls: 'approved' },
-  not_submitted: { label: 'Not submitted',  cls: 'notsub'   },
-  draft:         { label: 'Draft',          cls: 'draft'    },
-  returned:      { label: 'Returned',       cls: 'returned' },
+  submitted:     { html: '<span class="ris progress"><span class="rd"></span>Pending review</span>' },
+  reviewed:      { html: '<span class="ris progress"><span class="rd"></span>Pending review</span>' },
+  approved:      { html: '<span class="ris final"><span class="rd"></span>Approved</span>' },
+  not_submitted: { html: '<span class="sc no">✕ Not submitted</span>' },
+  draft:         { html: '<span class="ris scheduled"><span class="rd"></span>Draft</span>' },
+  returned:      { html: '<span class="sc warn">↩ Returned</span>' },
 };
 
 async function renderReviewPage() {
   setTopbar('Review', '', '');
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Approve or return schedules across all branches', 'Schedule Review')}
-    <div class="rep-kpis screen-kpis" id="review-kpis"></div>
+    <div class="kpis" id="review-kpis"></div>
     <div class="review-filters">
       <div class="month-nav" style="margin:0">
         <button onclick="changeReviewMonth(-1)">&#8249;</button>
         <span class="month-label" id="review-month-label"></span>
         <button onclick="changeReviewMonth(1)">&#8250;</button>
       </div>
-      <div class="seg" id="review-seg">
-        <button data-f="all" class="on">All</button>
-        <button data-f="pending">Pending</button>
-        <button data-f="not_submitted">Not submitted</button>
-        <button data-f="approved">Approved</button>
+      <div class="tabs" id="review-seg">
+        <button data-f="all" class="tab on">All</button>
+        <button data-f="pending" class="tab">Pending</button>
+        <button data-f="not_submitted" class="tab">Not submitted</button>
+        <button data-f="approved" class="tab">Approved</button>
       </div>
     </div>
-    <div class="review-list" id="review-list"></div>`;
+    <div class="board">
+      <div class="bhead">
+        <div class="bhrow">
+          <div class="btitle">Branch schedules <span id="review-board-sub"></span></div>
+        </div>
+      </div>
+      <div class="rows" id="review-list"></div>
+    </div>
+    </div>`;
 
   document.getElementById('review-month-label').textContent = monthLabel(reviewYear, reviewMonth);
   document.querySelectorAll('#review-seg button').forEach(b => {
@@ -71,16 +81,16 @@ async function loadReviewData() {
 function renderReviewKpis() {
   const s = reviewData.summary || {};
   const kpis = [
-    { v: s.pending || 0,       l: 'Pending review', sub: 'Awaiting your action', c: (s.pending ? 'r' : 'v') },
-    { v: s.not_submitted || 0, l: 'Not submitted',  sub: 'No rota yet',          c: (s.not_submitted ? 'r' : 'v') },
-    { v: s.approved || 0,      l: 'Approved',        sub: 'Signed off',           c: 'v' },
-    { v: s.total || 0,         l: 'Total branches',  sub: monthLabel(reviewYear, reviewMonth), c: 'v' },
+    { v: s.pending || 0,       l: 'Pending review', sub: 'Awaiting your action', a: 'a', dot: 'var(--amber,#F59E0B)' },
+    { v: s.not_submitted || 0, l: 'Not submitted',  sub: 'No rota yet',          a: 'b', dot: 'var(--blue,#3BA0FF)' },
+    { v: s.approved || 0,      l: 'Approved',       sub: 'Signed off',           a: 'c', dot: 'var(--green,#00C896)' },
+    { v: s.total || 0,         l: 'Total branches', sub: monthLabel(reviewYear, reviewMonth), a: 'd', dot: 'var(--violet,#6B4EFF)' },
   ];
   document.getElementById('review-kpis').innerHTML = kpis.map(k => `
-    <div class="rep-kpi">
-      <div class="rep-kpi-top"><span class="rep-dot ${k.c}"></span><span class="rep-kpi-label">${k.l}</span></div>
-      <div class="rep-kpi-num">${k.v}</div>
-      <div class="rep-kpi-sub">${escapeHtml(k.sub)}</div>
+    <div class="kpi ${k.a}">
+      <div class="kl"><span class="kd" style="background:${k.dot}"></span>${k.l}</div>
+      <div class="kv">${k.v}</div>
+      <div class="kt">${escapeHtml(k.sub)}</div>
     </div>`).join('');
 }
 
