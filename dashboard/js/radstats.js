@@ -57,6 +57,7 @@ async function renderRadStatsPage(opts) {
   const scopeName = radstats.leadLocked ? (radstats.leadBranchName || 'your branch') : '';
   if (!embed) setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
   rsStopAuto();
+  radstats._paintedOnce = false;         // entrance animation once per visit/mount
   if (radstats.preset && radstats.preset !== 'custom') {
     const r = rsPresetRange(radstats.preset);
     radstats.from = r.from; radstats.to = r.to;
@@ -563,6 +564,12 @@ function rsRenderBody() {
   const banner = document.getElementById('rs-billing-banner');
   if (!body) return;
   body.classList.remove('rs-refreshing');
+  // Entrance animation fires ONCE per visit — the 60s Auto refresh (and every
+  // silent repaint) recreates the KPI/list nodes, which would replay the rise
+  // stagger as a visible flicker. Same .cc-still pin as the worklist; closest()
+  // finds the right root whether we're the page or embedded in Home.
+  const ccRoot = body.closest('.cc');
+  if (ccRoot) { ccRoot.classList.toggle('cc-still', !!radstats._paintedOnce); radstats._paintedOnce = true; }
 
   if (banner) {
     banner.innerHTML = `<div class="rs-note">

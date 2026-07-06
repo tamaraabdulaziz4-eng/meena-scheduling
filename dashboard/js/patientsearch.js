@@ -295,7 +295,10 @@ function psParseDate(s) {
 }
 function psToggleExam(btn) {
   const card = btn.closest('.ps-exam');
-  if (card) card.classList.toggle('open');
+  // State class is 'expanded', NOT 'open' — this card lives inside the .cc page
+  // root, where `.cc .open` is the action-button component; a state class named
+  // 'open' would restyle the whole card as a giant violet button.
+  if (card) card.classList.toggle('expanded');
 }
 
 function psExamCard(o, open) {
@@ -315,7 +318,7 @@ function psExamCard(o, open) {
     ? `<span class="acc" title="DICOM accession — the exact image↔order link">🔗 ${escapeHtml(String(o.accessionNumber))}</span>` : '';
   const repId = psRepId(o);
   return `
-    <div class="card ps-exam${open ? ' open' : ''}">
+    <div class="card ps-exam${open ? ' expanded' : ''}">
       <button type="button" class="ps-exam-summary" onclick="psToggleExam(this)">
         <span class="ps-exam-caret">▸</span>
         <span class="ps-exam-sum-main">

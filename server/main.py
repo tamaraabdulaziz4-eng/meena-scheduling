@@ -7006,6 +7006,13 @@ def radiology_throughput(
     d_from = _day(from_, d_to[:8] + "01")
     if d_from > d_to:
         d_from, d_to = d_to, d_from
+    # Cap the window at ~3 months. The UI only ever asks for one month; a hand-crafted
+    # ?from=2016-01-01 would otherwise aggregate the whole ledger in one request.
+    try:
+        if (date.fromisoformat(d_to) - date.fromisoformat(d_from)).days > 92:
+            d_from = (date.fromisoformat(d_to) - timedelta(days=92)).isoformat()
+    except ValueError:                     # regex-valid but non-calendar (e.g. 2026-02-31)
+        d_from = d_to
     # Branch isolation — same rule as /api/radiology/stats (_rad_scope_site).
     scope = _rad_scope_site(user)
     if scope is not None:

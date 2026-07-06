@@ -267,6 +267,12 @@ async function _hmRadFetch(site, scopeName) {
   let d;
   try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { return; }   // keep last-good on a blip
   if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; return; }
+  // Entrance animation fires ONCE per visit — the 90s auto-refresh recreates the
+  // board/KPI nodes, which would replay the rise stagger as a visible flicker.
+  // Mirror the worklist's .cc-still pin; dataset.loaded lives on the DOM node, so
+  // a fresh Home render naturally animates again.
+  const ccRoot = box.closest('.cc');
+  if (ccRoot) ccRoot.classList.toggle('cc-still', !!box.dataset.loaded);
   box.dataset.loaded = '1';
   _hmRadData = d;
   const total = d.total || 0, emg = (d.priority && d.priority.emergency) || 0;

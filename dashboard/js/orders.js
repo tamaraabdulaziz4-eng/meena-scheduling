@@ -11,6 +11,7 @@ const OD_REFRESH_MS = 60000;
 
 async function renderOrdersPage() {
   setTopbar('Radiology orders', 'Every order and where it is — ordered · reported · filed');
+  odState._paintedOnce = false;          // entrance animation once per visit
   const c = document.getElementById('content');
   c.innerHTML = `<div class="cc">
     ${pageHero('Orders', 'Radiology orders', 'The full lifecycle of every order — ordered, reported, filed, with turnaround times')}
@@ -121,6 +122,11 @@ async function odLoad(force, silent) {
 
 function odRender() {
   const d = odState.data || {}, orders = d.orders || [], by = d.byState || {};
+  // Entrance animation fires ONCE per visit — the 60s silent poll recreates the
+  // KPI tiles and order cards, which would replay the rise stagger as a visible
+  // flicker every refresh. Same .cc-still pin as the worklist.
+  const ccRoot = document.querySelector('#content > .cc');
+  if (ccRoot) { ccRoot.classList.toggle('cc-still', !!odState._paintedOnce); odState._paintedOnce = true; }
   // Summary: the pipeline counts + a couple of average turnaround figures. Only orders
   // filed THROUGH Meena carry a real turnaround — 'external' rows were reconciled off the
   // board (filed elsewhere) with an unknown file time, so they're kept out of the averages
