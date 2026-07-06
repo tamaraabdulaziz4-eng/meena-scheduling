@@ -11,6 +11,7 @@ let handoff = {
   file: '', lookup: null, order: 0, priority: 'routine', history: '',
   studies: null, matched: null, studyId: '', candidates: null,
   baseline: null, polling: false, pollN: 0, pollTimer: null,
+  written: null, writing: false,
   msg: '', msgEdited: false,
 };
 
@@ -433,8 +434,12 @@ async function handoffPollTick(gen) {
     if (!handoff.polling || gen !== handoff.pollGen) return;   // stopped/superseded mid-flight
     handoff.studies = r.studies || [];
     const base = handoff.baseline instanceof Set ? handoff.baseline : new Set();
-    let pool = handoff.studies.filter(s => !base.has(String(s.study_id)));
-    if (!pool.length) pool = handoff.studies.filter(s => _isToday(s.study_date));
+    // Studies already written to in THIS handoff must never resurface in the
+    // worklist — otherwise the one you just filed pops back in on the next tick
+    // (and the today-fallback below would re-list it for another write).
+    const done = handoff.written instanceof Set ? handoff.written : new Set();
+    let pool = handoff.studies.filter(s => !base.has(String(s.study_id)) && !done.has(String(s.study_id)));
+    if (!pool.length) pool = handoff.studies.filter(s => _isToday(s.study_date) && !done.has(String(s.study_id)));
     if (pool.length === 1) { handoff.matched = pool[0]; handoff.studyId = String(pool[0].study_id); handoffStopPolling(); renderHandoffDE();
       // Auto-write ONLY when the arrived study safely matches the picked order
       // (modality + — when the patient has other exams — body part). On a multi-exam
@@ -473,6 +478,12 @@ function handoffChoose(studyId) {
   renderHandoffDE();
 }
 async function handoffWriteCore() {
+  // Re-entrancy guard: auto-write (poll match) and a manual Write click can both
+  // fire for the same study — the second one would write twice and leave the UI
+  // stuck on "Writing…". One write at a time.
+  if (handoff.writing) return;
+  handoff.writing = true;
+  try {
   const history = (handoff.history || '').trim();
   const body = handoff.priority === 'emergency' ? `🚨 ER — ${history}` : history;
   // Pass the selected order's accession so the server stamps it onto the DePACS study.
@@ -480,6 +491,8 @@ async function handoffWriteCore() {
   // deterministic accession key (blank is fine — the server just skips the stamp).
   const accession = (handoffOrder().accessionNumber != null ? String(handoffOrder().accessionNumber).trim() : '');
   const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file, priority: handoff.priority, accession });
+  // Remember we've handled this study so polling won't resurface it.
+  (handoff.written || (handoff.written = new Set())).add(String(handoff.studyId));
   const res = document.getElementById('ho-result');
   let flag = '';
   // Surface a stamped accession so staff know the return-match is now deterministic.
@@ -500,11 +513,16 @@ async function handoffWriteCore() {
     flag += ` · Routine · Category ${escapeHtml(w.category)}`;
   }
   if (res) res.innerHTML = `<div class="ho-de-box ok">✅ <b>Indication written into DePACS</b> study #${escapeHtml(String(handoff.studyId))}${flag}. Continue to the message →</div>`;
-  try {
-    const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
-    const st = (r.studies || []).find(x => String(x.study_id) === String(handoff.studyId));
-    if (st) { handoff.matched = st; renderHandoffDE(); }
-  } catch (e) {}
+  // Refresh the matched study's status in the BACKGROUND — don't hold the write
+  // (and the disabled button) on a second full HIS lookup, which made it hang.
+  const sid = String(handoff.studyId);
+  API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`).then((r) => {
+    const st = (r.studies || []).find(x => String(x.study_id) === sid);
+    if (st && String(handoff.studyId) === sid) { handoff.matched = st; renderHandoffDE(); }
+  }).catch(() => {});
+  } finally {
+    handoff.writing = false;
+  }
 }
 
 // Manual write (from the button) — asks to confirm the study first.
@@ -722,7 +740,8 @@ function handoffReset() {
   handoffStopPolling();
   handoff = { step: 1, file: '', lookup: null, order: 0, priority: 'routine', history: '',
               studies: null, matched: null, studyId: '', candidates: null,
-              baseline: null, polling: false, pollN: 0, pollTimer: null, msg: '', msgEdited: false };
+              baseline: null, polling: false, pollN: 0, pollTimer: null,
+              written: null, writing: false, msg: '', msgEdited: false };
   renderHandoffSteps(); renderHandoffStep();
 }
 
