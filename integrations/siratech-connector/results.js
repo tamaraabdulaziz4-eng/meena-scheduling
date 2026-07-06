@@ -287,7 +287,9 @@ function _fileCandidates(mrno) {
 // recent, small window); the filing matcher's full-history lookups are never cached
 // (correctness-critical). TTL is short so a just-arrived study still surfaces fast.
 const _lightCache = new Map();   // mrno -> { ts, data }
-const DEPACS_LIGHT_TTL = Number(process.env.DEPACS_LIGHT_TTL_MS || 30000);
+// 60s — longer than the 45s UI poll, so the steady board actually reuses the cached
+// stage lookup instead of re-querying DePACS for every patient on each refresh.
+const DEPACS_LIGHT_TTL = Number(process.env.DEPACS_LIGHT_TTL_MS || 60000);
 // How far back the light stage-check looks. The live board only shows recent orders,
 // and a study for such an order is dated near it — so a wide window just pages through
 // years of irrelevant history. 120 days covers any realistic board range with slack.

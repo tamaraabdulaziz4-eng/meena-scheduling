@@ -6744,13 +6744,15 @@ def _rad_upsert_orders(items):
             continue
         ready = it.get("readyToFile") is True
         imaged = ready or it.get("stage") in ("imaged", "draft", "reported")
+        acc = str(it.get("accession") or "").strip() or None
         dedup[gpb] = (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), gpb,
                       it.get("patientName"), it.get("department"), it.get("doctorName"),
                       bool(it.get("emergency")), _rad_ts(it.get("orderedDate")),
                       "reported" if ready else "ordered",
                       (datetime.now(timezone.utc) if ready else None),
                       (it.get("modality") or None),
-                      (datetime.now(timezone.utc) if imaged else None))
+                      (datetime.now(timezone.utc) if imaged else None),
+                      acc, (str(it.get("accessionSource") or "").strip() or None) if acc else None)
     rows = list(dedup.values())
     if not rows:
         return 0
@@ -6761,7 +6763,8 @@ def _rad_upsert_orders(items):
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO scheduling.radiology_orders
                     (site, mrno, bill_no, gen_pat_billing_id, patient_name, department, doctor,
-                     emergency, ordered_at, state, reported_at, modality, imaged_at)
+                     emergency, ordered_at, state, reported_at, modality, imaged_at,
+                     accession, accession_source)
                 VALUES %s
                 ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                     site=EXCLUDED.site, mrno=EXCLUDED.mrno, bill_no=EXCLUDED.bill_no,
@@ -6774,6 +6777,10 @@ def _rad_upsert_orders(items):
                     reported_at=COALESCE(scheduling.radiology_orders.reported_at, EXCLUDED.reported_at),
                     modality=COALESCE(EXCLUDED.modality, scheduling.radiology_orders.modality),
                     imaged_at=COALESCE(scheduling.radiology_orders.imaged_at, EXCLUDED.imaged_at),
+                    -- surface the board's deterministic accession on the Orders page too,
+                    -- without waiting for filing (COALESCE keeps a filed accession intact)
+                    accession=COALESCE(scheduling.radiology_orders.accession, EXCLUDED.accession),
+                    accession_source=COALESCE(scheduling.radiology_orders.accession_source, EXCLUDED.accession_source),
                     updated_at=NOW()""", rows)
         conn.commit()
         pool.putconn(conn)
@@ -7143,7 +7150,10 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # ready=1 (per-patient match) and modality=1 (per-order RadiologyDetails) both do
     # heavy per-order HIS work — give them the long timeout.
     heavy = p.get("ready") == "1" or p.get("modality") == "1"
-    data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 90)
+    # 130s fast-pass ceiling: comfortably above the worst-case headless HIS-login refresh
+    # (~90-100s, once per ~55min token lapse) so a token refresh racing a poll shows the
+    # board, not the retry card. Steady polls return from the 60s worklist cache anyway.
+    data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 130)
     # RIS Phase 2: persist the lifecycle store off the live board. Best-effort — a DB
     # hiccup never breaks the worklist view. On a ?ready=1 pass readyToFile is known,
     # so orders promote ordered → reported here.

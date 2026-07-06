@@ -2671,29 +2671,27 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
   radial-gradient(120% 140% at 100% 0%, rgba(107,78,255,.07), transparent 55%),
   var(--card); }
 
-/* Micro-interactions — snappy, purposeful, user-triggered (never on repaint) */
-.nav-item, .wl-tab, .wl-mchip, .hm-chip, .btn, .card-interactive, .stat-card, .branch-card { will-change: transform; }
+/* Micro-interactions — snappy, purposeful, user-triggered (never on repaint).
+   will-change is applied ONLY on hover (never statically) so per-row buttons are never
+   permanently promoted to GPU layers — at 128+ rows that would jank scrolling. */
+.nav-item:hover, .wl-tab:hover, .wl-mchip:hover, .hm-chip:hover,
+.card-interactive:hover, .stat-card:hover, .branch-card:hover { will-change: transform; }
 .wl-tab, .wl-mchip { transition: background .16s ease, color .16s ease, border-color .16s ease, transform .12s ease; }
 .wl-tab:active, .wl-mchip:active { transform: scale(.97); }
 .wl-tab.on { box-shadow: var(--shadow-sm); }
-/* Active-tab underline that slides in via transform (no layout shift) */
-.wl-tab.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px;
-  border-radius: 2px; background: currentColor; opacity: .0; transform: scaleX(.2);
-  transition: transform .22s cubic-bezier(.2,.75,.25,1), opacity .22s; }
-.wl-tab { position: relative; }
 
-/* Worklist rows: warm hover tint + gentle 1px lift, solid (no shadow stacking) */
+/* Worklist rows: warm hover tint, solid (no shadow stacking, no reflow) */
 .wl-table tbody tr:not([id]) { transition: background .15s ease; }
 .wl-table tbody tr:not([id]):hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 
 /* Status pills settle their colour without any layout change */
 .wl-st { transition: background .2s ease, color .2s ease; }
-/* Final report reads strongest (filled), Preliminary is a tint — hierarchy by weight,
-   one green family, per the design panel. Violet stays reserved for ACTIONS only. */
-.wl-st-final  { background: var(--green); color: #fff; }
-.wl-st-done   { background: rgba(0,200,150,.14); color: #0e9f6e; }
+/* Final = strongest (filled DEEP green + white text, AA-contrast); Completed = green
+   tint; Preliminary = blue tint. One-hue family; violet reserved for ACTIONS only. */
+.wl-st-final  { background: #0b7a52; color: #fff; }
+.wl-st-done   { background: rgba(0,200,150,.16); color: #0a7d55; }
 .wl-st-prelim { background: rgba(59,160,255,.15); color: #1f74c9; }
-body.dark .wl-st-final { color: #06231b; }
+body.dark .wl-st-final { background: #10b981; color: #04211a; }
 body.dark .wl-st-done  { color: #2dd8a7; }
 body.dark .wl-st-prelim{ color: #7ac0ff; }
 
