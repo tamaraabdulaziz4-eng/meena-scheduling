@@ -48,7 +48,11 @@ function normMod(m) {
   if (MOD_MAP[s]) return MOD_MAP[s];
   // The Siratech category can be a label ("GENERAL X-RAY", "ULTRASOUND") rather than
   // a DICOM code — map those too, else a legitimate report would never match.
-  if (/X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
+  // \bXR\b covers exam names that carry the modality as a prefix — "XR - TMJ JOINTS",
+  // "XR LUMBO SACRAL SPINE". Without it these (the most common exams) never classify,
+  // so the board's ready-pass can't match their study and the row stays stuck on
+  // "Scheduled" even after the report is signed. DX/CR/DR are the DICOM XR codes.
+  if (/\bXR\b|X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
   if (/ULTRA\s?SOUND|SONOGRAM|\bUS\b/.test(s)) return 'US';
   if (/\bCT\b|COMPUTED\s+TOMOG/.test(s)) return 'CT';
   if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
