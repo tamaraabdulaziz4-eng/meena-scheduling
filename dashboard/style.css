@@ -14,8 +14,18 @@
   --card-alt:  #faf9fe;
   --text:      #1f1940;
   --muted:     #7c7a99;
-  --border:    #ececf3;
-  --border-strong: #e0dcf0;
+  --border:    #ECE9F5;
+  --border-strong: #E0DCEF;
+
+  /* Clinical Calm ink + accent scale (from the approved mockup) */
+  --ink-2:  #5A5470;
+  --ink-3:  #8B85A0;
+  --violet-wash: #F0EDFF;
+  --green-ink:   #0E9F6E;
+  --blue:   #3BA0FF;
+  --slate:  #64748B;
+  --shadow:       0 1px 2px rgba(38,30,79,.06), 0 10px 30px rgba(38,30,79,.06);
+  --shadow-hover: 0 2px 4px rgba(38,30,79,.08), 0 16px 40px rgba(38,30,79,.12);
   --sidebar-bg:    #211a45;
   --topbar-bg:     rgba(255,255,255,.72);
   --table-head-bg: #fbfaff;
@@ -74,6 +84,14 @@ body.dark {
   --shadow-lg: 0 12px 32px rgba(0,0,0,.46), 0 4px 12px rgba(0,0,0,.30);
   --ring: 0 0 0 3px rgba(124,107,255,.26);
   --surface-2: #221f3d;
+
+  /* Clinical Calm ink + accent scale — dark */
+  --ink-2:  #ADA7C8;
+  --ink-3:  #7d769c;
+  --violet-wash: #231d44;
+  --green-ink:   #2DD8A7;
+  --shadow:       0 1px 2px rgba(0,0,0,.4), 0 12px 34px rgba(0,0,0,.4);
+  --shadow-hover: 0 2px 6px rgba(0,0,0,.5), 0 18px 46px rgba(0,0,0,.55);
 }
 
 body {
@@ -166,11 +184,8 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .nav-item:hover { color: var(--accent); background: rgba(107,78,255,.07); }
 .nav-item:hover .nav-icon svg { transform: scale(1.12) rotate(-4deg); }
 .nav-item:active { transform: scale(.98); }
-.nav-item.active { color: var(--accent); font-weight: 700; background: rgba(107,78,255,.12); }
-.nav-item.active::before {
-  content: ''; position: absolute; left: 0; top: 18%; bottom: 18%; width: 3.5px;
-  border-radius: 0 4px 4px 0; background: var(--accent);
-}
+/* Clinical Calm active state (mockup .nav.on): soft violet wash, no side bar */
+.nav-item.active { color: var(--accent2); font-weight: 600; background: var(--violet-wash); }
 .nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
 .nav-item .nav-icon svg { width: 19px; height: 19px; display: block; margin: 0 auto; transition: transform .25s cubic-bezier(.34,1.5,.64,1); }
 
@@ -255,8 +270,8 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   position: relative; overflow: hidden; margin-bottom: 22px;
   border-radius: 26px; padding: 26px 30px;
   background: radial-gradient(ellipse at 28% 18%, #ffffff 0%, #f3f1fc 46%, #e9e5fa 100%);
-  border: 1px solid #e9e3fb;
-  box-shadow: 0 18px 44px rgba(107,78,255,.14);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
   animation: pheroIn .7s cubic-bezier(.16,1,.3,1) both;
 }
 @keyframes pheroIn { from { opacity: 0; transform: translateY(16px) scale(.99); } to { opacity: 1; transform: none; } }
@@ -1365,8 +1380,8 @@ body.dark .sidebar-header h1 { color: rgba(255,255,255,.88); }
 body.dark .sidebar-header p, body.dark .nav-section-label { color: rgba(255,255,255,.45); }
 body.dark .nav-item { color: rgba(255,255,255,.62); }
 body.dark .nav-item:hover { color: #fff; background: rgba(139,118,255,.16); }
-body.dark .nav-item.active { color: #fff; background: rgba(139,118,255,.20); }
-body.dark .nav-item.active::before { background: var(--accent2, #8B76FF); }
+/* dark sidebar (#171430): translucent violet wash + light violet text stays readable */
+body.dark .nav-item.active { color: #CFC4FF; background: rgba(131,88,253,.18); }
 
 /* Surfaces that hardcode white/near-white backgrounds — make them readable in
    dark mode instead of glaring bright cards. */

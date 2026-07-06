@@ -153,6 +153,7 @@ async function renderWorklistPage() {
   const c = document.getElementById('content');
   c.innerHTML = `
     ${pageHero('Worklist', 'Radiology worklist', 'Live status board — scheduled · imaged · reporting · reported')}
+    <div class="cc">
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <div style="display:flex;gap:4px;align-items:center">
@@ -174,7 +175,8 @@ async function renderWorklistPage() {
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
     </div>
-    <div id="wl-body"></div>`;
+    <div id="wl-body"></div>
+    </div>`;
 
   // Only org-wide roles can switch branches; a team lead is scoped server-side to
   // their own branch, so we lock the picker for them and point them at the search
@@ -397,19 +399,20 @@ function wlStageBadge(stage) {
 // Merge) models it, mapped onto the signals Meena has:
 //   Scheduled/Ordered → Arrived → In progress → Completed(imaged) → Preliminary(draft)
 //   → Final(reported)
-// Returns { bucket, label, cls, icon } — bucket drives the status tabs, the rest the badge.
+// Returns { bucket, label, cls, icon, state } — bucket drives the status tabs,
+// `state` the Clinical Calm `.ris` pill; cls/icon kept for legacy references.
 function wlRisStatus(it) {
   if (it.stage === 'reported')
-    return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '✅' };
+    return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '✅', state: 'final' };
   if (it.stage === 'draft')
-    return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '📝' };
+    return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '📝', state: 'prelim' };
   if (it.stage === 'imaged' || it.scanned)
-    return { bucket: 'imaged', label: 'Completed', cls: 'wl-st-done', icon: '📷' };
+    return { bucket: 'imaged', label: 'Completed', cls: 'wl-st-done', icon: '📷', state: 'completed' };
   if (it.examStartAt)
-    return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '🔵' };
+    return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '🔵', state: 'progress' };
   if (it.arrivedAt)
-    return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '🟡' };
-  return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '📋' };
+    return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '🟡', state: 'arrived' };
+  return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '📋', state: 'scheduled' };
 }
 const _WL_BUCKETS = [
   { key: 'all',       label: 'All',        icon: '▦' },
@@ -540,28 +543,26 @@ function wlTable(items, prefix) {
     (Number(b.emergency) - Number(a.emergency))     // STAT / emergency always on top
     || (bk(a) - bk(b))                              // then by workflow phase (to-scan → reported)
     || ((a.ageHours || 0) - (b.ageHours || 0)));    // then NEWEST first (freshest order on top)
-  return `<div class="table-wrap"><table class="wl-table" style="width:100%">
-    <thead><tr>
-      <th>Patient</th><th>Exam</th><th>Ordered</th><th>Status</th><th>Safety</th><th style="width:64px"></th>
-    </tr></thead>
-    <tbody>${rows.map((it, i) => wlRow(it, p + i)).join('')}</tbody>
-  </table></div>`;
+  return `<div class="board wl-board">
+    <div class="thead"><div>Patient</div><div>Exam</div><div class="h-time">Ordered</div><div>RIS status</div><div style="text-align:center">Action</div></div>
+    <div class="rows">${rows.map((it, i) => wlRow(it, p + i)).join('')}</div>
+  </div>`;
 }
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }
 
 // Friendly labels + colour per imaging modality so the board reads at a glance.
 const WL_MOD = {
-  CT: { label: 'CT', bg: '#3b7ddd' }, MR: { label: 'MRI', bg: '#7c5cff' },
-  US: { label: 'US', bg: '#2e9e6b' }, XR: { label: 'X-Ray', bg: '#6b7280' },
-  MG: { label: 'Mammo', bg: '#d6568c' },
+  CT: { label: 'CT', cls: 'ct' }, MR: { label: 'MRI', cls: 'mri' },
+  US: { label: 'US', cls: 'us' }, XR: { label: 'X-Ray', cls: 'xr' },
+  MG: { label: 'Mammo', cls: 'mm' },
 };
 function wlModBadges(modality) {
   if (!modality) return '';
   return String(modality).split(',').map((m) => {
     const k = m.trim().toUpperCase(), info = WL_MOD[k];
-    const label = info ? info.label : k, bg = info ? info.bg : '#8a8f98';
-    return `<span class="badge" style="background:${bg};color:#fff">${escapeHtml(label)}</span>`;
+    if (!info) return `<span class="mod">${escapeHtml(k)}</span>`;
+    return `<span class="mod ${info.cls}">${escapeHtml(info.label)}</span>`;
   }).join(' ');
 }
 
@@ -573,8 +574,8 @@ function wlIsFemale(g) {
 }
 function wlConsentEl(it) {
   if (!wlIsFemale(it.gender)) return '';
-  if (it.consentOnFile) return '<span class="badge badge-green" title="Non-pregnancy consent signed">✓ Consent</span>';
-  return `<button class="btn btn-sm" style="background:#e0a800;color:#fff;border:none" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">⚠ Consent needed</button>`;
+  if (it.consentOnFile) return '<span class="sc ok" title="Non-pregnancy consent signed">✓ Consent</span>';
+  return `<button class="sc no" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">⚠ Consent needed</button>`;
 }
 // Radiation-safety decision support: for a female patient of child-bearing age,
 // let the tech check β-hCG / pregnancy lab status BEFORE imaging — on demand, per
@@ -591,7 +592,7 @@ function wlPregEl(it) {
   const attr = ` class="wl-pregcell" data-mr="${escapeHtml(mr)}"`;
   if (cached) return `<span${attr}>${wlPregBadge(cached)}</span>`;
   // Auto-checks in the background (wlAutoPreg) — no click needed.
-  return `<span${attr}><span class="badge" style="background:var(--card-alt);color:var(--muted);border:1px solid var(--border)" title="Checking pregnancy / β-hCG status…">🤰 <span class="wl-shimmer" style="width:40px;display:inline-block;vertical-align:middle"></span></span></span>`;
+  return `<span${attr}><span class="sc warn" title="Checking pregnancy / β-hCG status…">🤰 <span class="wl-shimmer" style="width:36px"></span></span></span>`;
 }
 // Paint the pregnancy verdict into EVERY row that belongs to this MRN (CSS-escape the
 // value for the attribute selector).
@@ -678,7 +679,7 @@ function wlRisStatusBadge(it) {
   // While the stage is still being checked and we have no signal at all, shimmer.
   if (p && !it.stage && !it.scanned && !it.arrivedAt && !it.stagePrelim) return `<span class="wl-shimmer" style="width:70px"></span>`;
   const s = wlRisStatus(it);
-  return `<span class="wl-st ${s.cls}"><span>${s.icon}</span>${escapeHtml(s.label)}</span>`;
+  return `<span class="ris ${s.state}"><span class="rd"></span>${escapeHtml(s.label)}</span>`;
 }
 function wlRow(it, key) {
   // Drill identity must be STABLE per order, NOT the row's position — otherwise a live
@@ -686,32 +687,34 @@ function wlRow(it, key) {
   // drill onto a DIFFERENT patient's row and show the previous patient's cached report.
   // Use the per-order key; fall back to the positional key only for keyless rows.
   const dkey = 'k' + String(wlRowKey(it) || key).replace(/[^A-Za-z0-9_-]/g, '');
-  const edge = it.emergency ? 'box-shadow:inset 3px 0 0 var(--danger,#E25555);' : '';
   const age = wlAge(it.ageHours);
   // While the background HIS enrichment is still running, show a loading shimmer for
   // the exam instead of a bare "—" so the board reads as "loading", not broken.
   const p = wlState.enriching;
-  const sh = (w) => `<span class="wl-shimmer" style="width:${w}px"></span>`;
   const dash = '<span style="color:var(--muted)">—</span>';
   const acc = it.accession || it.accessionNumber || null;
-  const demo = [it.age, (it.gender ? String(it.gender).charAt(0).toUpperCase() : '')].filter(Boolean).map((x) => escapeHtml(String(x))).join(' · ');
+  const demo = [it.age, (it.gender ? String(it.gender).charAt(0).toUpperCase() : '')].filter(Boolean).map((x) => escapeHtml(String(x))).join(' ');
   const ordered = it.orderedDate ? wlTrackFmt(it.orderedDate) : '';
-  return `<tr style="${edge}">
-    <td data-l="Patient"><div style="font-weight:700">${escapeHtml(it.patientName || '—')}
-        ${it.emergency ? ' <span class="badge badge-red">STAT</span>' : ''}</div>
-      <div style="font-size:11px;color:var(--muted)">${escapeHtml(it.mrno || '')}${demo ? ' · ' + demo : ''}</div>
-      ${(it.branch || it.doctorName) ? `<div style="font-size:10.5px;color:var(--muted)">${escapeHtml(it.branch || '')}${it.branch && it.doctorName ? ' · ' : ''}${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : ''}</div>` : ''}</td>
-    <td data-l="Exam">${(() => { const mod = wlModBadges(it.modality);
-      if (it.exam) return mod + ' <span>' + escapeHtml(it.exam) + '</span>';
-      if (p) return mod + ' ' + sh(90);
-      return mod || dash; })()}
-      ${acc ? `<div style="font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums" title="DICOM accession">🔗 ${escapeHtml(String(acc))}</div>` : ''}</td>
-    <td data-l="Ordered" style="white-space:nowrap;font-size:11.5px;color:var(--muted)">${ordered ? escapeHtml(ordered) : dash}</td>
-    <td data-l="Status"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${wlRisStatusBadge(it)}${(age && it.__bucket !== 'reported') ? `<span style="font-size:11px;color:var(--muted)" title="waiting time">${age} waiting</span>` : ''}</div></td>
-    <td data-l="Safety"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${wlConsentEl(it)}${wlPregEl(it)}</div></td>
-    <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" onclick="wlToggle('${dkey}', '${jsAttr(it.mrno)}', ${Number(it.site) || 0}, this)">Open</button></td>
-  </tr>
-  <tr id="wl-dr-${dkey}" style="display:none"><td colspan="6" style="background:var(--card-alt,#f7f7fa);padding:10px">${wlTrack(it)}<div id="wl-d-${dkey}"></div></td></tr>`;
+  const consent = wlConsentEl(it), preg = wlPregEl(it);
+  const proc = it.exam ? `<span class="proc">${escapeHtml(it.exam)}</span>`
+    : (p ? `<span class="wl-shimmer" style="width:90px"></span>` : dash);
+  return `<div class="rowwrap">
+    <div class="row${it.emergency ? ' stat' : ''}">
+      <div class="pt">
+        <div class="pname">${escapeHtml(it.patientName || '—')}${it.emergency ? ' <span class="stat"><i></i>STAT</span>' : ''}</div>
+        <div class="pmeta">${escapeHtml(it.mrno || '')}${demo ? '<i></i>' + demo : ''}${it.branch ? '<i></i>' + escapeHtml(it.branch) : ''}${it.doctorName ? '<i></i><span class="dr">Dr ' + escapeHtml(it.doctorName) + '</span>' : ''}</div>
+        ${(consent || preg) ? '<div class="safe">' + consent + preg + '</div>' : ''}
+      </div>
+      <div class="exam">
+        <div class="exline">${wlModBadges(it.modality)}${proc}</div>
+        ${acc ? `<a class="acc" title="DICOM accession">🔗 ${escapeHtml(String(acc))}</a>` : ''}
+      </div>
+      <div class="when"><div class="big">${wlTimeOnly(it.orderedDate)}</div>${(age && it.__bucket !== 'reported') ? '<div class="sm wait">waiting ' + age + '</div>' : '<div class="sm">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
+      <div>${wlRisStatusBadge(it)}</div>
+      <div><button class="open${it.emergency ? ' pri' : ''}" onclick="wlToggle('${dkey}','${jsAttr(it.mrno)}',${Number(it.site) || 0},this)">${it.__bucket === 'reported' ? 'View ›' : 'Open ›'}</button></div>
+    </div>
+    <div class="rdetail" id="wl-dr-${dkey}" style="display:none">${wlTrack(it)}<div id="wl-d-${dkey}"></div></div>
+  </div>`;
 }
 
 // Patient-journey tracker (RIS "arrival → exam → done"), built from Siratech's own
