@@ -28,7 +28,7 @@ const HO_MOD_MAP = { DX: 'XR', CR: 'XR', DR: 'XR', XR: 'XR', CT: 'CT', MR: 'MR',
 function hoNormMod(m) {
   const s = String(m || '').toUpperCase().trim();
   if (HO_MOD_MAP[s]) return HO_MOD_MAP[s];
-  if (/X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
+  if (/\bXR\b|X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
   if (/ULTRA\s?SOUND|SONOGRAM|\bUS\b/.test(s)) return 'US';
   if (/\bCT\b|COMPUTED\s+TOMOG/.test(s)) return 'CT';
   if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
