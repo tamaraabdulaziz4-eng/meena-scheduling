@@ -9,6 +9,7 @@ async function renderMySchedulePage() {
   setTopbar('My Schedule', '', `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero(`Welcome, ${currentUser?.username || ''}`, 'My Schedule', 'Your shifts, leave and swaps')}
     <div class="month-nav" style="margin-bottom:14px">
       <button onclick="changePortalMonth(-1)">&#8249;</button>
@@ -22,7 +23,8 @@ async function renderMySchedulePage() {
     <div id="portal-legend" style="margin-top:16px"></div>
     <div id="ms-prefs" style="margin-top:20px"></div>
     <div id="ms-docs" style="margin-top:20px"></div>
-    <div id="portal-requests" style="margin-top:20px"></div>`;
+    <div id="portal-requests" style="margin-top:20px"></div>
+    </div>`;
   await loadMySchedule();
   loadMyRequests();   // "everything that's mine" — open requests + their stage
   if (typeof renderHomeEotm === 'function') renderHomeEotm('ms-eotm');   // celebrate EOTM for staff too
@@ -48,7 +50,7 @@ async function renderMyDocuments() {
     return `<div class="doc-row" style="display:grid;grid-template-columns:1.4fr 1fr auto;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid var(--border)">
       <div>
         <div style="font-weight:600;font-size:13px">${escapeHtml(def.en)}
-          <span class="badge" style="color:${st.color};border:1px solid ${st.color}55;background:${st.color}14;font-size:10px;margin-inline-start:6px">${st.label}</span></div>
+          <span class="sc" style="color:${st.color};border:1px solid ${st.color}55;background:${st.color}14;margin-inline-start:6px">${st.label}</span></div>
         <div style="font-size:11px;color:var(--muted)">${escapeHtml(def.ar)}</div>
         <input class="input" id="doc-num-${def.kind}" placeholder="Number (optional)" value="${escapeHtml(rec.number || '')}" style="margin-top:6px;width:100%;font-size:12px">
       </div>
@@ -179,12 +181,14 @@ async function loadMyRequests() {
     ]);
   } catch (e) { return; }
 
+  // Stage → Clinical Calm pill (matches the Leaves/Swaps pages): awaiting team
+  // lead → progress, awaiting manager → prelim, approved → final, rejected → red chip.
   const LBL = {
-    pending: ['Awaiting team lead', 'badge-orange'], lead_approved: ['Awaiting manager', 'badge-yellow'],
-    pending_lead: ['Awaiting team lead', 'badge-orange'], pending_manager: ['Awaiting manager', 'badge-yellow'],
-    approved: ['Approved', 'badge-green'], rejected: ['Rejected', 'badge-gray'],
+    pending: ['Awaiting team lead', 'progress'], lead_approved: ['Awaiting manager', 'prelim'],
+    pending_lead: ['Awaiting team lead', 'progress'], pending_manager: ['Awaiting manager', 'prelim'],
+    approved: ['Approved', 'final'], rejected: ['Rejected', 'rejected'],
   };
-  const swapLbl = Object.assign({}, LBL, { pending: ['Awaiting peer', 'badge-orange'] });
+  const swapLbl = Object.assign({}, LBL, { pending: ['Awaiting peer', 'scheduled'] });
   const rows = [];
 
   // Leaves — grouped into ranges; show anything not yet fully approved (or rejected).
@@ -213,11 +217,14 @@ async function loadMyRequests() {
         <div class="hm-card-meta">${rows.length} open</div></div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         ${rows.map(r => {
-          const [txt, cls] = r.lbl || ['Pending', 'badge-gray'];
+          const [txt, cls] = r.lbl || ['Pending', 'scheduled'];
+          const pill = cls === 'rejected'
+            ? `<span class="sc no">✕ ${escapeHtml(txt)}</span>`
+            : `<span class="ris ${cls}"><span class="rd"></span>${escapeHtml(txt)}</span>`;
           return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px">
             <div><div style="font-weight:600;font-size:13px">${escapeHtml(r.kind)} · ${escapeHtml(r.what)}</div>
               ${r.note ? `<div style="font-size:11px;color:#E63946">Reason: ${escapeHtml(r.note)}</div>` : ''}</div>
-            <span class="badge ${cls}">${escapeHtml(txt)}</span>
+            ${pill}
           </div>`;
         }).join('')}
       </div>
@@ -267,19 +274,18 @@ function renderPortalGrid() {
     banner.innerHTML = `<div class="tl-status-banner"><div class="ico"></div><div style="flex:1"><div class="ttl">Under review</div><div class="sub">Submitted to the manager — may still change.</div></div></div>`;
   }
 
-  // Leave balance + next-leave countdown card, above the status banner.
+  // Leave balance + next-leave countdown, above the status banner — Clinical
+  // Calm KPI tiles.
   const bal = (d.leave_balance ?? null);
   const up = d.upcoming_leave;
   if (bal !== null || up) {
-    let summary = `<div class="hm-card" style="margin-bottom:12px"><div style="display:flex;gap:26px;flex-wrap:wrap;align-items:center">`;
-    if (bal !== null) summary += `<div><div style="font-size:24px;font-weight:800;color:var(--primary)">${bal}</div><div style="font-size:11px;color:var(--muted)">Leave days left</div></div>`;
+    let tiles = '';
+    if (bal !== null) tiles += `<div class="kpi c"><div class="kl"><span class="kd" style="background:var(--green,#00C896)"></span>Leave balance</div><div class="kv">${bal}</div><div class="kt">days left</div></div>`;
     if (up) {
       const dd = up.days_until;
-      summary += `<div><div style="font-size:24px;font-weight:800;color:var(--accent,#6B4EFF)">${dd === 0 ? 'Today' : dd}</div>
-        <div style="font-size:11px;color:var(--muted)">${dd === 0 ? 'your leave starts today' : 'days until your leave'} · ${fmtDateDisplay(up.date)}</div></div>`;
+      tiles += `<div class="kpi d"><div class="kl"><span class="kd" style="background:var(--accent,#6B4EFF)"></span>Next leave</div><div class="kv">${dd === 0 ? 'Today' : dd}</div><div class="kt">${dd === 0 ? 'your leave starts today' : 'days until your leave'} · ${fmtDateDisplay(up.date)}</div></div>`;
     }
-    summary += `</div></div>`;
-    banner.innerHTML = summary + banner.innerHTML;
+    banner.innerHTML = `<div class="kpis" style="margin-bottom:12px">${tiles}</div>` + banner.innerHTML;
   }
 
   const nDays = daysInMonth(portalYear, portalMonth);
@@ -331,7 +337,7 @@ function renderPortalLegend() {
   const leg = document.getElementById('portal-legend');
   if (!leg) return;
   const shifts = (allShiftTypes || []).filter(st => st.code !== 'O');
-  leg.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">` +
-    shifts.map(st => `<span class="badge" style="background:${st.color}22;color:${st.color};border:1px solid ${st.color}55">
+  leg.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap">` +
+    shifts.map(st => `<span class="sc" style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;color:${st.color};background:${st.color}18;border:1px solid ${st.color}40">
       <b>${st.code}</b> ${escapeHtml(st.label || '')}</span>`).join('') + `</div>`;
 }
