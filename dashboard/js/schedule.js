@@ -54,7 +54,7 @@ async function renderSchedulePage() {
   if (!currentBranchId) {
     setTopbar('Schedule', '', '');
     document.getElementById('content').innerHTML =
-      `<div class="empty"><div class="empty-icon">🏥</div><p>No branches available yet.</p></div>`;
+      `<div class="cc"><div class="empty"><div class="empty-icon">🏥</div><p>No branches available yet.</p></div></div>`;
     return;
   }
 
@@ -329,8 +329,8 @@ function renderNoScheduleState() {
           : 'The team lead hasn’t prepared this month’s schedule yet. You’ll be able to review it once it’s submitted.'}
       </p>
       ${canBuild ? `<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="createBlankSchedule()">➕ Create blank schedule</button>
-        ${canGenerate ? `<button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>` : ''}
+        <button class="open" onclick="createBlankSchedule()">➕ Create blank schedule</button>
+        ${canGenerate ? `<button class="ghost" onclick="openGenerateModal()">⚡ Generate</button>` : ''}
       </div>` : ''}
     </div>`;
 }
@@ -565,40 +565,22 @@ function renderShiftLegend() {
     return t ? `${st.code}: ${t}` : st.label;
   }
 
-  function colorStyle(st) {
-    // Subtle tinted background using the shift color
-    return `style="color:${st.color};background:${st.color}18"`;
-  }
+  // Colour-coded chips (inline colours from each shift, so the printed report —
+  // which embeds this element's outerHTML — keeps the colours too).
+  const chipStyle = st =>
+    `display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;` +
+    `color:${st.color};background:${st.color}18;border:1px solid ${st.color}40`;
 
-  // Build rows: pair work shifts into left/right columns (fill left first then right)
-  const half = Math.ceil(workShifts.length / 2);
-  const leftCol  = workShifts.slice(0, half);
-  const rightCol = workShifts.slice(half);
-
-  // Pad right col to same length
-  while (rightCol.length < leftCol.length) rightCol.push(null);
-
-  const workRows = leftCol.map((l, i) => {
-    const r = rightCol[i];
-    return `<tr>
-      <td class="leg-cell" ${colorStyle(l)}>${cellText(l)}</td>
-      <td class="leg-cell" ${r ? colorStyle(r) : ''}>${r ? cellText(r) : ''}</td>
-    </tr>`;
-  }).join('');
-
-  const statusRows = statusShifts.map(st => {
-    return `<tr>
-      <td class="leg-cell leg-status" colspan="2" style="color:${st.color};background:${st.color}18;text-align:center;font-weight:700">${st.code} (${st.label})</td>
-    </tr>`;
-  }).join('');
+  const workChips = workShifts.map(st =>
+    `<span class="sc" style="${chipStyle(st)}">${cellText(st)}</span>`).join('');
+  const statusChips = statusShifts.map(st =>
+    `<span class="sc" style="${chipStyle(st)}">${st.code} (${st.label})</span>`).join('');
 
   leg.innerHTML = `
-    <table class="legend-table">
-      <tbody>
-        ${workRows}
-        ${statusRows}
-      </tbody>
-    </table>`;
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      ${workChips}
+      ${statusChips}
+    </div>`;
 }
 
 function renderScheduleStats() {
@@ -610,29 +592,21 @@ function renderScheduleStats() {
   const onCall   = Object.values(entryMap).filter(e => e.is_oncall || e.shift_code === 'OC').length;
   const leaves   = Object.values(entryMap).filter(e => ['AL','SL','TB'].includes(e.shift_code)).length;
 
-  const icoStaff = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
-  const icoDays  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>';
-  const icoShift = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
-  const icoCall  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
-  const icoLeaf  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
-
   // Hijri month span for this Gregorian month (e.g. "Dhuʻl-Q. – Dhuʻl-H. 1447").
-  let hijriPill = '';
+  let hijriCaption = monthLabel(scheduleYear, scheduleMonth);
   if (typeof _hijriFullFmt !== 'undefined' && _hijriFullFmt) {
     const part = (d) => new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{month:'short'}).format(new Date(scheduleYear, scheduleMonth-1, d));
     const yr   = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{year:'numeric'}).format(new Date(scheduleYear, scheduleMonth-1, 15));
     const m1 = part(1), m2 = part(nDays);
     const span = (m1 === m2) ? m1 : `${m1}–${m2}`;
-    hijriPill = `<div class="stat-pill" title="Hijri (Umm al-Qura)">🌙 <strong>${span} ${yr}</strong></div>`;
+    hijriCaption = `🌙 ${span} ${yr}`;
   }
 
   bar.innerHTML = `
-    <div class="stat-pill">${icoStaff} <strong data-count="${total}">0</strong> staff</div>
-    <div class="stat-pill">${icoDays} <strong data-count="${nDays}">0</strong> days</div>
-    <div class="stat-pill">${icoShift} <strong data-count="${working}">0</strong> shifts assigned</div>
-    <div class="stat-pill">${icoCall} <strong data-count="${onCall}">0</strong> on-call</div>
-    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>
-    ${hijriPill}`;
+    <div class="kpi a"><div class="kl"><span class="kd" style="background:var(--amber,#F59E0B)"></span>Staff</div><div class="kv"><strong data-count="${total}">0</strong></div><div class="kt">on this rota</div></div>
+    <div class="kpi b"><div class="kl"><span class="kd" style="background:var(--blue,#3BA0FF)"></span>Days</div><div class="kv"><strong data-count="${nDays}">0</strong></div><div class="kt">${hijriCaption}</div></div>
+    <div class="kpi c"><div class="kl"><span class="kd" style="background:var(--green,#00C896)"></span>Shifts assigned</div><div class="kv"><strong data-count="${working}">0</strong></div><div class="kt">this month</div></div>
+    <div class="kpi d"><div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>On-call</div><div class="kv"><strong data-count="${onCall}">0</strong></div><div class="kt">${leaves} leave day${leaves !== 1 ? 's' : ''}</div></div>`;
 
   // Animate each number counting up
   bar.querySelectorAll('strong[data-count]').forEach(el => countUp(el, parseInt(el.dataset.count) || 0));

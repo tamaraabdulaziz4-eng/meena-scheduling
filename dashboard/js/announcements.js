@@ -28,6 +28,7 @@ function renderAnnouncementsPage() {
     annCanPost() ? `<button class="btn btn-sm" onclick="openAnnModal()">+ New Circular</button>` : '');
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     <div class="phero no-print">
       <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
       <div class="phero-inner">
@@ -39,7 +40,8 @@ function renderAnnouncementsPage() {
         </div>
       </div>
     </div>
-    <div id="ann-list">${LOADING_HTML}</div>`;
+    <div id="ann-list">${LOADING_HTML}</div>
+    </div>`;
   loadAnnouncements();
 }
 

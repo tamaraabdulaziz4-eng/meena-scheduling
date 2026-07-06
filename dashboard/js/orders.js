@@ -115,7 +115,7 @@ async function odLoad(force, silent) {
   } catch (e) {
     if (!silent) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Failed to load orders')}</p>
-      <button class="btn btn-sm" onclick="odLoad(true)">Retry</button></div>`;
+      <button class="ghost" onclick="odLoad(true)">Retry</button></div>`;
   } finally { odState.loading = false; }
 }
 
@@ -238,15 +238,15 @@ function odWhen(iso) {
 }
 
 const OD_MOD = {
-  CT: { label: 'CT', bg: '#3b7ddd' }, MR: { label: 'MRI', bg: '#7c5cff' },
-  US: { label: 'US', bg: '#2e9e6b' }, XR: { label: 'X-Ray', bg: '#6b7280' },
-  MG: { label: 'Mammo', bg: '#d6568c' },
+  CT: { label: 'CT', cls: 'ct' }, MR: { label: 'MRI', cls: 'mri' }, MRI: { label: 'MRI', cls: 'mri' },
+  US: { label: 'US', cls: 'us' }, XR: { label: 'X-Ray', cls: 'xr' }, DX: { label: 'X-Ray', cls: 'xr' },
+  CR: { label: 'X-Ray', cls: 'xr' }, MG: { label: 'Mammo', cls: 'mm' },
 };
 function odModBadges(modality) {
   if (!modality) return '';
   return String(modality).split(',').map((m) => {
     const k = m.trim().toUpperCase(), info = OD_MOD[k];
-    return `<span class="badge" style="background:${info ? info.bg : '#8a8f98'};color:#fff">${escapeHtml(info ? info.label : k)}</span>`;
+    return `<span class="mod ${info ? info.cls : 'xr'}">${escapeHtml(info ? info.label : k)}</span>`;
   }).join(' ');
 }
 
@@ -279,37 +279,41 @@ function odRow(o) {
   const step = OD_STEP_ORDER[o.state] ?? 0;
   const emerg = o.emergency;
   const att = odAttention(o);
+  // State → Clinical Calm .ris pill: ordered→scheduled, imaged→completed,
+  // reported→prelim, filed→final ('Filed elsewhere' stays muted/scheduled).
+  const ris = (state, label, title) =>
+    `<span class="ris ${state}"${title ? ` title="${title}"` : ''}><span class="rd"></span>${label}</span>`;
   const stateBadge = o.state === 'filed'
     ? (o.filedSource === 'external'
-        ? '<span class="badge" style="background:#8a8f98;color:#fff" title="Left the board filed/resolved outside Meena — turnaround unknown">Filed elsewhere</span>'
-        : '<span class="badge badge-green">Filed</span>')
-    : o.state === 'reported' ? '<span class="badge badge-orange">Reported</span>'
-      : (o.imagedAt ? '<span class="badge badge-orange" title="Images are in DePACS — awaiting the report">📷 Imaged</span>'
-                    : '<span class="badge">Ordered</span>');
-  const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--warn,#e0a800)') : null;
+        ? ris('scheduled', 'Filed elsewhere', 'Left the board filed/resolved outside Meena — turnaround unknown')
+        : ris('final', 'Filed'))
+    : o.state === 'reported' ? ris('prelim', 'Reported')
+      : (o.imagedAt ? ris('completed', 'Imaged', 'Images are in DePACS — awaiting the report')
+                    : ris('scheduled', 'Ordered'));
+  const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--yellow,#e0a800)') : null;
   const border = attBorder || (emerg ? 'var(--danger,#E25555)' : null);
-  return `<div class="card" style="margin-bottom:8px;padding:12px${border ? ';border-left:3px solid ' + border : ''}">
-    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
-      <div style="flex:1;min-width:200px">
-        <div style="font-weight:700">${escapeHtml(o.patientName || '—')}
-          <span style="color:var(--muted);font-weight:500">· ${escapeHtml(o.mrno || '')}</span></div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">
-          ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}${o.accession ? ' · acc ' + escapeHtml(String(o.accession)) : ''}</div>
+  return `<div class="listcard" style="margin-bottom:10px${border ? ';box-shadow:inset 3px 0 0 ' + border : ''}">
+    <div class="lrow" style="align-items:flex-start;flex-wrap:wrap">
+      <div class="pt" style="flex:1;min-width:200px">
+        <div class="pname">${escapeHtml(o.patientName || '—')}
+          ${emerg ? '<span class="stat"><i></i>STAT</span>' : ''}
+          <span style="color:var(--muted);font-weight:500;font-size:12.5px">· ${escapeHtml(o.mrno || '')}</span></div>
+        <div class="pmeta"><span>
+          ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}</span></div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
         ${odModBadges(o.modality)}
-        ${o.accession ? `<span class="badge badge-green" title="Exact image↔order link — matched on DICOM accession ${escapeHtml(String(o.accession))}${o.accessionSource ? ' (' + escapeHtml(String(o.accessionSource)) + ')' : ''}">🔗 Linked</span>` : ''}
-        ${o.cpacsUrl ? `<a class="badge" style="background:#3b6fd4;color:#fff;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 View images</a>` : ''}
-        ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
-        ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
-        ${odIsOrphan(o) ? '<span class="badge badge-orange" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
+        ${o.accession ? `<span class="acc" title="Exact image↔order link — matched on DICOM accession ${escapeHtml(String(o.accession))}${o.accessionSource ? ' (' + escapeHtml(String(o.accessionSource)) + ')' : ''}">🔗 ${escapeHtml(String(o.accession))}</span>` : ''}
+        ${o.cpacsUrl ? `<a class="ghost" style="text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 View images</a>` : ''}
+        ${att ? `<span class="sc ${att.cls === 'badge-red' ? 'no' : 'warn'}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
+        ${odIsOrphan(o) ? '<span class="sc warn" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
         ${stateBadge}
         ${(o.state !== 'filed' || odIsOrphan(o)) && o.mrno
-          ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" title="Open this patient on the worklist to confirm / file the report"
+          ? `<button class="ghost" title="Open this patient on the worklist to confirm / file the report"
                onclick="odJumpWorklist('${escapeHtml(String(o.mrno))}')">${odIsOrphan(o) ? 'Verify in Worklist →' : 'Open in Worklist →'}</button>` : ''}
       </div>
     </div>
-    ${odTimeline(o, step)}
+    <div style="padding:0 18px 14px">${odTimeline(o, step)}</div>
   </div>`;
 }
 

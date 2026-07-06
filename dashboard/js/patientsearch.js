@@ -18,18 +18,19 @@ function renderPatientSearchPage() {
   // Honour a pending deep-link query (from a Home tile / request row).
   if (psPendingQuery) { psState = { ...psState, q: psPendingQuery, patients: null, sel: null, lookup: null }; }
   const c = document.getElementById('content');
-  c.innerHTML = `
+  c.innerHTML = `<div class="cc">
     ${pageHero('Lookup', 'Patient / exam lookup', 'Search by file number, national ID, Iqama, or mobile — then see the patient and every radiology exam, fully aggregated')}
     <div class="card">
       <div style="display:flex;gap:9px;flex-wrap:wrap">
         <input id="ps-q" class="input" placeholder="File / MRN · National ID · Iqama · Mobile" value="${escapeHtml(psState.q)}"
                style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter')psSearch()">
-        <button class="btn btn-primary" onclick="psSearch()">Search</button>
+        <button class="open pri" style="width:auto" onclick="psSearch()">Search</button>
       </div>
       <div style="font-size:12px;color:var(--muted);margin-top:8px">Type any one of: the patient file/MRN, their national ID / Iqama, or their mobile number.</div>
       <div id="ps-results" style="margin-top:14px"></div>
     </div>
-    <div id="ps-detail"></div>`;
+    <div id="ps-detail"></div>
+  </div>`;
   if (psState.patients) renderPsResults();
   if (psState.lookup) renderPsDetail();
   // Auto-run a deep-link search once the input is on screen.
