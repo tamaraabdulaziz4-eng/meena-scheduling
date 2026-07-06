@@ -7077,6 +7077,36 @@ async def radiology_autofile_set(request: Request, user=Depends(require_superadm
                              "sites": get_setting("rad_autofile_sites", "")}))
     return radiology_autofile_get(user=user)
 
+@app.get("/api/radiology/autostamp/config")
+def radiology_autostamp_get(user=Depends(require_admin)):
+    """Auto-stamp status: does the background worker write the clinical indication +
+    ordering doctor + priority (Others) into a DePACS study the moment its images
+    arrive, for which branches, and when it last stamped one."""
+    last = q("""SELECT target, detail, created_at FROM scheduling.audit_log
+                WHERE action='RADIOLOGY_AUTOSTAMP' ORDER BY created_at DESC LIMIT 1""", one=True)
+    return {"ok": True,
+            "enabled": (get_setting("rad_autostamp_enabled", "1") or "1").strip() == "1",
+            "everySec": _RAD_AUTOSTAMP_EVERY_SEC,
+            "sites": (get_setting("rad_autostamp_sites", "3") or "").strip(),
+            "lastStampedAt": last["created_at"].isoformat() if last and last.get("created_at") else None,
+            "lastStampedFile": last["target"] if last else None}
+
+@app.post("/api/radiology/autostamp/config")
+async def radiology_autostamp_set(request: Request, user=Depends(require_superadmin)):
+    """Turn auto-stamp on/off and pin the branches (default N3 / siteId 3). Superadmin
+    only — this controls automatic writes into DePACS. Audited."""
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Invalid body")
+    if "enabled" in b:
+        set_setting("rad_autostamp_enabled", "1" if b.get("enabled") else "0")
+    if "sites" in b:
+        set_setting("rad_autostamp_sites", re.sub(r"[^0-9,]", "", str(b.get("sites") or "")))
+    insert_audit(user, "RADIOLOGY_AUTOSTAMP_CONFIG", None,
+                 json.dumps({"enabled": (get_setting("rad_autostamp_enabled", "1") == "1"),
+                             "sites": get_setting("rad_autostamp_sites", "3")}))
+    return radiology_autostamp_get(user=user)
+
 # Default worklist look-back (days) when the client picks no date. A worklist is a
 # work queue: it must keep TODAY's orders AND every still-pending order from recent
 # days (a pending order must not vanish at midnight just because the date rolled).
@@ -9749,6 +9779,30 @@ def _release_sweep_lock(name):
     except Exception:
         pass
 
+def _autostamp_enrich(mrno, bill_no, cache):
+    """The order's real clinical indication + ordering doctor (name + id), for the
+    auto-stamp history. Reuses /patient (FetchRISPanel + GetEmrOrderDetails), cached
+    once per patient per sweep. Best-effort — returns {} on any hiccup."""
+    key = str(mrno)
+    if key not in cache:
+        try:
+            import urllib.parse
+            cache[key] = _bridge_request("/his/patient/" + urllib.parse.quote(str(mrno)), timeout=60)
+        except Exception:
+            cache[key] = {}
+    d = cache.get(key) or {}
+    orders = d.get("orders") if isinstance(d, dict) else None
+    orders = orders or []
+    o = None
+    if bill_no is not None:
+        o = next((x for x in orders if str(x.get("billNo")) == str(bill_no)), None)
+    if o is None and len(orders) == 1:
+        o = orders[0]
+    o = o or {}
+    return {"indication": o.get("clinicalIndication") or o.get("reasonForOrder"),
+            "provider": o.get("provider"), "providerId": o.get("providerId"),
+            "isER": bool(o.get("isER"))}
+
 def _radiology_autostamp_sweep():
     """The moment a patient's images land in DePACS, stamp what the radiologist needs
     to START READING with zero delay — the clinical indication (from the order), the
@@ -9760,13 +9814,20 @@ def _radiology_autostamp_sweep():
     data = _bridge_request("/his/worklist", timeout=90)
     if not isinstance(data, dict):
         return 0
+    # Scope: only stamp orders from the configured branch(es). Default N3 (Al Rawdah,
+    # siteId 3) — the pilot branch. Blank setting → every branch.
+    sites_raw = (get_setting("rad_autostamp_sites", "3") or "").strip()
+    site_set = set(s.strip() for s in sites_raw.split(",") if s.strip()) if sites_raw else None
     by_mrn = {}
     for it in (data.get("items") or []):
+        if site_set is not None and str(it.get("site") or "").strip() not in site_set:
+            continue
         m = str(it.get("mrno") or "").strip()
         if m:
             by_mrn.setdefault(m, []).append(it)
     if not by_mrn:
         return 0
+    pat_cache = {}   # mrno -> /patient enrichment (clinical indication + ordering doctor), once per sweep
     ksa_now = datetime.now(timezone.utc) + timedelta(hours=3)
     fresh_days = {ksa_now.strftime("%Y%m%d"), (ksa_now - timedelta(days=1)).strftime("%Y%m%d")}
     stamped = 0
@@ -9796,27 +9857,43 @@ def _radiology_autostamp_sweep():
             # flag and indication. When unsure, leave it for the human handoff.
             cand = [o for o in orders
                     if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
-            has_hist = bool(str(s.get("clinical_history") or "").strip())
-            has_cat = bool(str(s.get("category") or "").strip())
-            if not (has_hist and has_cat) and len(cand) == 1:
+            cur_hist = str(s.get("clinical_history") or "").strip()
+            if len(cand) == 1:
                 o = cand[0]
                 emergency = bool(o.get("emergency"))
-                text = " — ".join([x for x in [
-                    str(o.get("exam") or "").strip() or None,
-                    ("Dr " + str(o.get("doctorName")).strip()) if o.get("doctorName") else None,
-                ] if x])
-                if emergency:
-                    text = (text + " — EMERGENCY") if text else "EMERGENCY"
-                try:
-                    # keep any existing history (never blank it); add category + ER now
-                    _elite_write_history(sid, (str(s.get("clinical_history") or "").strip() or text or ""),
-                                         set_emergency=emergency)
-                    stamped += 1
-                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP", str(mrno),
-                                 json.dumps({"studyId": sid, "emergency": bool(emergency),
-                                             "history": (text or "")[:120]}))
-                except Exception as e:
-                    print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
+                # Enrich with the REAL clinical indication + the ordering doctor's name
+                # AND id (number) — from /patient, cached once per patient this sweep.
+                enr = _autostamp_enrich(mrno, o.get("billNo"), pat_cache)
+                if enr.get("isER"):
+                    emergency = True
+                indication = str(enr.get("indication") or "").strip()
+                doctor = str(enr.get("provider") or o.get("doctorName") or "").strip()
+                doc_id = str(enr.get("providerId") or "").strip()
+                # Build: "<indication> — Dr <name> (#<id>) — EMERGENCY|ROUTINE"
+                parts = []
+                parts.append(indication or str(o.get("exam") or "").strip())
+                if doctor:
+                    parts.append("Dr " + doctor + (" (#" + doc_id + ")" if doc_id else ""))
+                parts.append("EMERGENCY" if emergency else "ROUTINE")
+                text = " — ".join([p for p in parts if p])
+                # Write the moment images arrive (empty history). If a history already
+                # exists (a prior stamp or a human's richer note), leave it — never clobber.
+                already = bool(cur_hist) and (
+                    cur_hist == text
+                    or (indication and indication.lower() in cur_hist.lower()))
+                if text and not cur_hist:
+                    try:
+                        _elite_write_history(sid, text, set_emergency=emergency)
+                        stamped += 1
+                        insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP", str(mrno),
+                                     json.dumps({"studyId": sid, "emergency": bool(emergency),
+                                                 "history": text[:160], "site": o.get("site")}))
+                    except Exception as e:
+                        print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
+                elif cur_hist and not already:
+                    # There's existing text without our indication — record it so we can
+                    # decide later whether to force-refresh; do NOT overwrite a human note.
+                    print(f"[rad-autostamp] {mrno}/{sid}: history present, left as-is")
             # accession: deterministic key from the MWL feed — only when unambiguous
             # (single entry for the patient today, or exactly one of this modality).
             if sid not in _autostamp_acc_done:
@@ -9849,7 +9926,9 @@ def _radiology_autostamp_loop():
     time.sleep(35)   # stagger away from the autofile worker's boot sweep
     while True:
         try:
-            if (get_setting("rad_autostamp_enabled", "0") or "0").strip() == "1":
+            # Default ON (scoped to N3 via rad_autostamp_sites) — the operator asked for
+            # it to run now on Al Rawdah. Flip rad_autostamp_enabled to '0' to stop.
+            if (get_setting("rad_autostamp_enabled", "1") or "1").strip() == "1":
                 if _claim_sweep_lock("autostamp", 300):
                     try: _radiology_autostamp_sweep()
                     finally: _release_sweep_lock("autostamp")

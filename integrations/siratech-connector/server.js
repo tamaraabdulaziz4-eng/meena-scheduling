@@ -207,10 +207,15 @@ async function enrichOrder(mrno, o) {
     const row = rows.find((r) => r.billNo === o.billNo);
     if (!row) return {};
     let indication = null, reason = null, remarks = null;
+    // The ordering doctor's ID (number) — Siratech spells it differently across builds,
+    // so probe the RIS row first, then the order-detail row. Used by the auto-stamp so
+    // the DePACS clinical history carries "Dr <name> (#<id>)".
+    let providerId = row.providerId || row.orderProviderId || row.providerCode || row.doctorId || null;
     if (row.emrPatDtlsInvOrderId) {
       const det = await hisFetch('/billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=' + encodeURIComponent(row.emrPatDtlsInvOrderId), { method: 'GET' });
       const dd = (det.json && det.json.data) || {};
       indication = dd.clinicalIndication || null; reason = dd.reasonForOrder || null; remarks = dd.remarks || null;
+      providerId = providerId || dd.providerId || dd.orderProviderId || dd.referringDoctorId || dd.doctorId || null;
     }
     return {
       clinicalIndication: indication, reasonForOrder: reason, remarks,
@@ -218,6 +223,7 @@ async function enrichOrder(mrno, o) {
       encounter: row.encounter || null,                       // "ER" | "OP" | "IP"
       isER: (row.encounter || '').toUpperCase() === 'ER',
       provider: (row.providerName || '').trim() || null,
+      providerId: providerId != null && String(providerId).trim() !== '' ? String(providerId).trim() : null,
       payer: row.payerName || null,
       orderId: row.emrPatDtlsInvOrderId || null,
       risOrderStatus: row.risOrderStatus || null,
@@ -256,6 +262,7 @@ function normalizeOrder(o, ext) {
     encounter: ext.encounter || null,           // "ER" | "OP" | "IP"
     isER: !!ext.isER,
     provider: ext.provider || null,
+    providerId: ext.providerId || null,
     payer: ext.payer || null,
     orderId: ext.orderId || null,
   };
