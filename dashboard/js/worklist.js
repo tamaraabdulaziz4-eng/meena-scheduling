@@ -1079,7 +1079,7 @@ async function wlToggle(key, mrno, site, btn) {
       API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`),
       API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`).catch(() => null),
     ]);
-    const html = wlMatch(d, wlIndexIndications(lk));
+    const html = wlMatch(d, wlIndexIndications(lk), mrno);
     // Cache FIRST so wlRestoreOpenState paints the result (not a blank box) if a
     // 45s silent refresh already repainted the board while we were awaiting.
     wlState.drillHtml.set(key, html);
@@ -1098,21 +1098,28 @@ async function wlToggle(key, mrno, site, btn) {
 // Build a lookup index of clinical indication keyed by bill (+ service), from the
 // /radiology/lookup order detail, so wlMatch can show each exam's indication.
 function wlIndexIndications(lk) {
-  const idx = {};
+  const idx = {}, er = {};
   const orders = (lk && lk.orders) || [];
   for (const o of orders) {
+    const bn = String(o.billNo || '').trim();
+    if (!bn) continue;
+    const svc = String(o.service || '').trim().toLowerCase();
+    // Emergency flag per exam — so the "Write indication" button sets the same ER
+    // state the auto-stamp would (the match payload doesn't carry it; the lookup does).
+    const isER = !!o.isER;
+    er['b:' + bn + '|' + svc] = isER;
+    if (er['b:' + bn] === undefined) er['b:' + bn] = isER;
     const ind = (o.clinicalIndication || o.reasonForOrder || '').toString().trim();
     if (!ind) continue;
-    const bn = String(o.billNo || '').trim();
-    const svc = String(o.service || '').trim().toLowerCase();
-    if (!bn) continue;
     idx['b:' + bn + '|' + svc] = ind;          // exact exam
     if (!idx['b:' + bn]) idx['b:' + bn] = ind;  // bill-level fallback (single-exam bill)
   }
+  Object.defineProperty(idx, '__er', { value: er, enumerable: false });
   return idx;
 }
-function wlMatch(d, indIdx) {
+function wlMatch(d, indIdx, mrno) {
   indIdx = indIdx || {};
+  mrno = mrno || (d && (d.file || d.mrno)) || '';
   const orders = (d && d.orders) || [];
   if (!orders.length) return `<div class="ho-note">No order awaiting a result for this file.</div>`;
   const card = (t, o) => {
@@ -1130,7 +1137,17 @@ function wlMatch(d, indIdx) {
       || t.clinicalIndication || t.reasonForOrder || t.indication
       || (bn && (indIdx['b:' + bn + '|' + svc] || indIdx['b:' + bn])) || '';
     const indRow = ind ? `<div class="pmeta" style="margin-top:4px"><b>Indication:</b> ${escapeHtml(String(ind))}</div>` : '';
+    const accession = String(s.accession || test.accession || (o && o.accession) || '').trim();
+    const isEmerg = !!(indIdx.__er && (indIdx.__er['b:' + bn + '|' + svc] != null
+      ? indIdx.__er['b:' + bn + '|' + svc] : indIdx.__er['b:' + bn]));
     const acts = [];
+    // One-click: write THIS exam's indication straight into its PACS study. Human-picked
+    // patient + the backend's hard patient/accession gate = no cross-branch guessing.
+    if (studyId != null && ind) {
+      // Collapse whitespace/newlines — the value rides an inline onclick attribute.
+      const indClean = String(ind).replace(/\s+/g, ' ').trim();
+      acts.push(`<button class="ghost" onclick="wlWriteIndication(${Number(studyId)}, '${jsAttr(String(mrno))}', '${jsAttr(indClean)}', '${jsAttr(accession)}', ${isEmerg ? 'true' : 'false'}, this)">${icon('edit')} Write indication → PACS</button>`);
+    }
     if (cpacsUrl) acts.push(`<a class="ghost" target="_blank" rel="noopener" href="${escapeHtml(String(cpacsUrl))}">${icon('image')} View images</a>`);
     if (studyId != null) acts.push(`<button class="ghost" onclick="wlPrintReport(${Number(studyId)})">${icon('printer')} Print report</button>`);
     const actRow = acts.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${acts.join('')}</div>` : '';
@@ -1156,6 +1173,29 @@ function wlMatch(d, indIdx) {
 // /api/reports/study/:studyId/pdf?style=2 already serves it.
 function wlPrintReport(studyId) {
   window.open('/api/reports/study/' + studyId + '/pdf?style=2', '_blank');
+}
+
+// One-click: write this exam's clinical indication into its DePACS study. Goes through
+// /api/handoff/write-history, which re-reads the study and HARD-gates on patient +
+// accession before writing (fails closed) — so the operator picking the patient makes
+// this safe even on a PACS shared across branches. Emergency flag rides from the order.
+async function wlWriteIndication(studyId, mrno, indication, accession, emergency, btn) {
+  if (!studyId || !indication) return;
+  if (!confirm('Write this indication into the PACS study?\n\n' + indication)) return;
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Writing…'; }
+  try {
+    await API.post('/handoff/write-history', {
+      study_id: studyId, history: String(indication), file_no: String(mrno || ''),
+      accession: accession || '', emergency: !!emergency,
+      priority: emergency ? 'emergency' : 'routine',
+    });
+    if (typeof toast === 'function') toast('Indication written to PACS · تمت كتابة الاندكيشن');
+    if (btn) { btn.disabled = true; btn.textContent = '✓ Written'; }
+  } catch (e) {
+    if (typeof toast === 'function') toast(e.message || 'Could not write the indication', 'err');
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
 }
 
 // Deep-link into the trusted Handoff wizard, pre-loaded with this patient's file.
