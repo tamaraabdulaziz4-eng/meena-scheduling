@@ -32,8 +32,11 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 prevPhase: new Map(), movedTags: new Map() };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
-// dropping off) shows without the operator touching anything.
-const WL_REFRESH_MS = 45000;
+// dropping off) shows without the operator touching anything. ~12s to feel like a live
+// HIS terminal — the fast pass is light and shares one connector-cached fetch across all
+// viewers (fast TTL ~12s), and the flicker-free repaint makes each tick seamless. Hidden
+// tabs don't poll (see wlStartTimer), and the heavy DePACS pass stays throttled.
+const WL_REFRESH_MS = 12000;
 
 // Org-wide roles (superadmin/manager) can point the board at any branch; a branch
 // team lead is server-scoped to their own branch, so the picker is locked for them.
