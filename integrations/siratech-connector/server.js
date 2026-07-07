@@ -189,7 +189,7 @@ function orderedDateToISO(s) {
 
 // One-time diagnostics: log the real HIS field names once per process so the
 // order-id + indication spellings can be confirmed from a live response.
-let _enrichKeysLogged = false, _enrichDetailKeysLogged = false;
+let _enrichKeysLogged = false, _enrichDetailKeysLogged = false, _lookupOrderKeysLogged = false;
 
 // Enrich an order from the RIS panel (which carries the internal order id,
 // billing status and encounter/ER) and then GetEmrOrderDetails (the clinical
@@ -392,6 +392,17 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
       throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
     }
     const rawOrders = rad.json.data || [];
+    // One-time diagnostic (key NAMES + non-PHI site values only): reveal which fields
+    // FetchRadiologyDetails carries for the order's OWN branch, so branch is read from
+    // the order's real ordering site (e.g. NEST 3) and not the logged-in/session site.
+    if (!_lookupOrderKeysLogged && rawOrders.length) {
+      _lookupOrderKeysLogged = true;
+      const o0 = rawOrders[0];
+      console.log('[lookup] FetchRadiologyDetails order keys:', Object.keys(o0).join(','));
+      const siteFields = Object.fromEntries(Object.entries(o0)
+        .filter(([k]) => /site|hospital|branch|facility|location|center|clinic/i.test(k)));
+      console.log('[lookup] order site/branch fields:', JSON.stringify(siteFields));
+    }
     // Enrich each order with its clinical indication + billing/ER status.
     const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
     const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
