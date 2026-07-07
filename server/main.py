@@ -3494,7 +3494,15 @@ def delete_shift_type(stid: int, user=Depends(require_superadmin)):
 
 @app.get("/api/schedules")
 def list_schedules(request: Request, user=Depends(get_current_user)):
-    branch_id = request.query_params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
+    # Cross-branch roles (superadmin, manager) can query any/all branches;
+    # everyone else is pinned to their own branch — and if they have none
+    # (e.g. a viewer/admin with no branch), they get a 403, not the whole list.
+    if user["role"] in ("superadmin", "manager"):
+        branch_id = request.query_params.get("branch_id")
+    else:
+        branch_id = user.get("branch_id")
+        if not branch_id:
+            raise HTTPException(403, "No branch assigned to this account")
     if branch_id:
         rows = q("""SELECT s.id,s.branch_id,s.year,s.month,s.status,s.created_at,s.updated_at,
                            b.name AS branch_name
@@ -3915,6 +3923,12 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
         try:
             # For sick leave, remember the shift it replaces so we can suggest cover.
             covered = _current_rota_shift(staff_id, d) if leave_type == "SL" else None
+            # Never let a fresh submission silently overwrite an already-APPROVED
+            # leave: the ON CONFLICT UPDATE would reset its status back to
+            # pending/awaiting without clearing the rota, leaving the AL cell on
+            # the board while the DB says pending (and dropping the leave-conflict
+            # guards). The WHERE skips those rows; we then treat the existing
+            # approved leave as already-saved rather than a failure.
             row = q("""INSERT INTO scheduling.leave_requests
                        (staff_id,date,leave_type,status,note,created_by,covered_shift)
                        VALUES (%s,%s,%s,%s,%s,%s,%s)
@@ -3922,6 +3936,7 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
                        SET leave_type=EXCLUDED.leave_type,note=EXCLUDED.note,
                            status=EXCLUDED.status,created_by=EXCLUDED.created_by,
                            covered_shift=EXCLUDED.covered_shift
+                       WHERE scheduling.leave_requests.status <> 'approved'
                        RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
                                  leave_type,status,note,created_by,created_at,covered_shift""",
                     (staff_id, d, leave_type, new_status, note, user["id"], covered), one=True)
@@ -3931,7 +3946,16 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
                 if new_status == "approved":
                     apply_leave_to_schedule(staff_id, d, leave_type)
             else:
-                failed.append(d)
+                # No row back: either the conflict target is already approved
+                # (keep it — it's on the rota) or the insert genuinely failed.
+                existing = q("""SELECT id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
+                                       leave_type,status,note,created_by,created_at,covered_shift
+                                FROM scheduling.leave_requests
+                                WHERE staff_id=%s AND date=%s""", (staff_id, d), one=True)
+                if existing and existing["status"] == "approved":
+                    leaves.append(existing)
+                else:
+                    failed.append(d)
         except Exception as e:
             # Don't silently drop a day — record it so the caller can surface
             # "saved 3 of 5" instead of pretending everything went through.
@@ -6856,7 +6880,7 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                  (site, mrno, bill_no, gen_pat_billing_id, patient_name,
                   state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source,
                   accession, accession_source, pacs_id, cpacs_url)
-             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),COALESCE(%s::timestamptz, NOW()),NOW(),%s,'meena',%s,%s,%s,%s)
+             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),GREATEST(COALESCE(%s::timestamptz, NOW()), NOW()),NOW(),%s,'meena',%s,%s,%s,%s)
              ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                  state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by,
                  filed_source='meena',
@@ -6867,7 +6891,10 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                  patient_name=COALESCE(scheduling.radiology_orders.patient_name, EXCLUDED.patient_name),
                  -- the real report date, when we have it, is the truth — it overrides the
                  -- board's earlier "seen ready" guess; else keep what's stored, then NOW().
-                 reported_at=COALESCE(%s::timestamptz, scheduling.radiology_orders.reported_at, NOW()),
+                 -- Never let it fall before ordered_at, which would yield a negative TAT.
+                 reported_at=GREATEST(
+                     COALESCE(%s::timestamptz, scheduling.radiology_orders.reported_at, NOW()),
+                     scheduling.radiology_orders.ordered_at),
                  accession=COALESCE(scheduling.radiology_orders.accession, EXCLUDED.accession),
                  accession_source=COALESCE(scheduling.radiology_orders.accession_source, EXCLUDED.accession_source),
                  pacs_id=COALESCE(scheduling.radiology_orders.pacs_id, EXCLUDED.pacs_id),
