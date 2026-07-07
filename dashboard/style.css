@@ -2669,12 +2669,12 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cc .kpi:nth-child(2) { animation-delay: .05s; }
 .cc .kpi:nth-child(3) { animation-delay: .1s; }
 .cc .kpi:nth-child(4) { animation-delay: .15s; }
-.cc .kpi .kl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+.cc .kpi .kl { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--ink-3); font-weight: 600; display: flex; align-items: center; gap: 7px; }
 .cc .kpi .kl .kd { width: 8px; height: 8px; border-radius: 3px; }
 .cc .kpi .kv { font-size: 30px; font-weight: 700; letter-spacing: -.03em; margin-top: 9px; line-height: 1; }
 .cc .kpi .kv small { font-size: 14px; color: var(--ink-3); font-weight: 600; letter-spacing: 0; }
-.cc .kpi .kt { font-size: 12px; margin-top: 7px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+.cc .kpi .kt { font-size: 13px; margin-top: 7px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
 .cc .kpi .up { color: var(--green-ink); font-weight: 600; }
 .cc .kpi .dn { color: var(--orange); font-weight: 600; }
 .cc .kpi::after { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0;
@@ -2710,7 +2710,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
   align-items: center; gap: 8px; margin-inline-end: 18px; background: none; border: none;
   cursor: pointer; font-family: inherit; transition: color .16s; }
 .cc .tab:hover { color: var(--ink-2); }
-.cc .tab .n { font-size: 11px; font-weight: 700; background: var(--card-alt);
+.cc .tab .n { font-size: 12px; font-weight: 700; background: var(--card-alt);
   border: 1px solid var(--border); color: var(--ink-2); padding: 0 7px;
   border-radius: 999px; line-height: 17px; }
 .cc .tab.on { color: var(--accent2); }
@@ -2726,7 +2726,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
   align-items: center; gap: 7px; background: transparent; cursor: pointer;
   font-family: inherit; white-space: nowrap; transition: all .16s; }
 .cc .chip:hover { border-color: var(--border-strong); color: var(--text); }
-.cc .chip .cn { font-size: 11px; color: var(--ink-3); font-weight: 600; }
+.cc .chip .cn { font-size: 12px; color: var(--ink-3); font-weight: 600; }
 .cc .chip.on { background: var(--violet-wash); border-color: transparent; color: var(--accent2); }
 .cc .chip.on .cn { color: var(--accent2); }
 .cc .chip .md { width: 7px; height: 7px; border-radius: 50%; }
@@ -2734,7 +2734,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 /* ── Board grid: header + rows ── */
 .cc .thead { display: grid; grid-template-columns: 2.4fr 2fr 1.2fr 1.5fr 96px; gap: 14px;
   padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--card-alt); }
-.cc .thead > div { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+.cc .thead > div { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
   color: var(--ink-3); font-weight: 600; }
 .cc .rows { display: flex; flex-direction: column; }
 .cc .rowwrap { display: block; }
@@ -2764,20 +2764,20 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 
 /* ── Patient cell ── */
 .cc .pt { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.cc .pname { display: flex; align-items: center; gap: 8px; font-size: 14.5px;
+.cc .pname { display: flex; align-items: center; gap: 8px; font-size: 15.5px;
   font-weight: 600; color: var(--text); }
 /* STAT badge — scoped to .pname so it can never collide with the .row.stat modifier */
-.cc .pname .stat { font-size: 9.5px; font-weight: 800; letter-spacing: .05em; color: #fff;
+.cc .pname .stat { font-size: 10.5px; font-weight: 800; letter-spacing: .05em; color: #fff;
   background: var(--orange); padding: 2px 7px; border-radius: 5px;
   box-shadow: 0 3px 8px rgba(255,107,107,.4); }
 .cc .pname .stat i { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
   background: #fff; margin-inline-end: 4px; vertical-align: middle; animation: blink 1.4s infinite; }
-.cc .pmeta { font-size: 11.5px; color: var(--ink-2); display: flex; gap: 6px;
+.cc .pmeta { font-size: 12.5px; color: var(--ink-2); display: flex; gap: 6px;
   flex-wrap: wrap; align-items: center; }
 .cc .pmeta .dr { color: var(--accent2); font-weight: 600; }
 .cc .pmeta i { width: 3px; height: 3px; border-radius: 50%; background: var(--ink-3); display: inline-block; }
 .cc .safe { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
-.cc .sc { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+.cc .sc { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
   display: inline-flex; align-items: center; gap: 4px; border: none; cursor: default;
   font-family: inherit; white-space: nowrap; }
 .cc button.sc { cursor: pointer; }   /* consent "needed" chip is a live button */
@@ -2790,7 +2790,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 /* ── Exam cell ── */
 .cc .exam { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .cc .exline { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.cc .mod { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; padding: 3px 8px;
+.cc .mod { font-size: 11.5px; font-weight: 700; letter-spacing: .03em; padding: 3px 8px;
   border-radius: 6px; color: #fff; flex-shrink: 0; background: #8a8f98; }
 .cc .mod.ct  { background: #6B4EFF; }
 .cc .mod.mri { background: #3BA0FF; }
@@ -2799,7 +2799,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cc .mod.mm  { background: #E4739B; }
 .cc .proc { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
-.cc .acc { font-size: 11px; color: var(--ink-3); font-weight: 500;
+.cc .acc { font-size: 12px; color: var(--ink-3); font-weight: 500;
   font-variant-numeric: tabular-nums; text-decoration: none; cursor: pointer;
   width: fit-content; transition: color .16s; }
 .cc .acc:hover { color: var(--accent2); }
@@ -2807,11 +2807,11 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 /* ── Ordered / timing cell ── */
 .cc .when { display: flex; flex-direction: column; gap: 3px; font-variant-numeric: tabular-nums; }
 .cc .when .big { font-size: 13px; font-weight: 600; }
-.cc .when .sm { font-size: 11px; color: var(--ink-3); }
+.cc .when .sm { font-size: 12px; color: var(--ink-3); }
 .cc .when .sm.wait, .cc .when .wait { color: var(--orange); font-weight: 600; }
 
 /* ── RIS status pills (dotted) — palette ported from the approved .wl-st-* map ── */
-.cc .ris { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+.cc .ris { display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
   font-weight: 600; padding: 5px 11px; border-radius: 999px; width: fit-content;
   white-space: nowrap; transition: background .2s ease, color .2s ease; }
 .cc .ris .rd { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
@@ -2839,6 +2839,10 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
   box-shadow: 0 6px 16px rgba(107,78,255,.32); }
 .cc .open.pri { background: var(--accent); color: #fff; }
 .cc .open.pri:hover { filter: brightness(1.06); }
+
+/* ── Inline line icon (Feather-style, currentColor stroke) ── */
+.mi-ico { width: 15px; height: 15px; flex: 0 0 auto; vertical-align: -2px; display: inline-block; }
+.cc .ghost .mi-ico, .cc .open .mi-ico { width: 15px; height: 15px; }
 
 /* ── Mobile-only field label (hidden on desktop) ── */
 .cc .rlabel { display: none; font-size: 10px; text-transform: uppercase;

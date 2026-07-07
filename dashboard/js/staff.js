@@ -31,13 +31,28 @@ function renderStaffPage() {
     byBranch[key].push(s);
   });
 
+  // KPI summary row (mockup .cc .kpi cards) computed from the loaded lists.
+  const activeCount = allStaff.filter(s => s.active !== false).length;
+  const usCount = allStaff.filter(s => {
+    const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
+    return specs.includes('US') || specs.includes('ULTRASOUND');
+  }).length;
+  const pendingCount = (pendingRegs || []).length;
+  const kpiRow = `<div class="kpis">
+    <div class="kpi d"><div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>Total staff</div><div class="kv">${allStaff.length}</div><div class="kt">across all branches</div></div>
+    <div class="kpi c"><div class="kl"><span class="kd" style="background:var(--green,#00C896)"></span>Active</div><div class="kv">${activeCount}</div><div class="kt">currently active</div></div>
+    <div class="kpi b"><div class="kl"><span class="kd" style="background:var(--blue,#3BA0FF)"></span>US section</div><div class="kv">${usCount}</div><div class="kt">ultrasound staff</div></div>
+    <div class="kpi a"><div class="kl"><span class="kd" style="background:var(--amber,#F4B740)"></span>Pending</div><div class="kv">${pendingCount}</div><div class="kt">registrations to review</div></div>
+  </div>`;
+
   const c = document.getElementById('content');
   c.innerHTML = `
     <div class="cc">
     ${pageHero('Radiology team directory', 'Staff', `<b>${allStaff.length}</b> member${allStaff.length !== 1 ? 's' : ''}`)}
     ${canEdit ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
-      <button class="ghost" onclick="printStaffDirectory()">🖨️ PDF</button>
-      <button class="ghost" onclick="exportStaffCsv()">⬇️ Export CSV</button></div>` : ''}
+      <button class="ghost" onclick="printStaffDirectory()">${icon('printer')} PDF</button>
+      <button class="ghost" onclick="exportStaffCsv()">${icon('download')} Export CSV</button></div>` : ''}
+    ${kpiRow}
     <div id="staff-eotm"></div>
     <div id="staff-pending"></div>
     <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>
@@ -47,7 +62,7 @@ function renderStaffPage() {
   if (canEdit) renderPendingRegs();
   const container = document.getElementById('staff-branch-sections');
   if (!allStaff.length) {
-    container.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><p>No staff added yet</p><small>Add staff members to get started</small></div>`;
+    container.innerHTML = `<div class="empty"><div class="empty-icon">${icon('users')}</div><p>No staff added yet</p><small>Add staff members to get started</small></div>`;
     return;
   }
 
@@ -98,7 +113,7 @@ function renderPendingRegs() {
     <div class="board" style="margin-bottom:20px">
       <div class="bhead">
         <div class="bhrow">
-          <div class="btitle">⏳ Pending registrations (${pendingRegs.length}) <span>Staff who registered themselves — approve to add them, or reject.</span></div>
+          <div class="btitle">${icon('clock')} Pending registrations (${pendingRegs.length}) <span>Staff who registered themselves — approve to add them, or reject.</span></div>
         </div>
       </div>
       <div class="rows">${pendingRegs.map(r => `

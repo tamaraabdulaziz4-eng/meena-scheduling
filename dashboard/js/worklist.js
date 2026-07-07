@@ -169,9 +169,12 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <input id="wl-search" class="input" placeholder="🔍 Type file # to filter — or full ID / iqama / mobile"
-               style="min-width:230px;flex:1" inputmode="numeric" autocomplete="off"
-               oninput="wlLiveFilter(this.value)" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
+        <div style="position:relative;flex:1;min-width:280px;display:flex;align-items:center">
+          <span style="position:absolute;left:9px;display:flex;color:var(--muted);pointer-events:none">${icon('search')}</span>
+          <input id="wl-search" class="input" placeholder="Search patient, MRN, or accession"
+                 style="width:100%;padding-left:32px" autocomplete="off"
+                 oninput="wlLiveFilter(this.value)" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
+        </div>
         <button class="btn btn-sm btn-ghost" onclick="wlLoad(true)" title="Refresh now">↻</button>
         <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
@@ -252,7 +255,7 @@ async function wlLoad(force, silent) {
       if (wlState.filter || wlState.searchView) {
         if (typeof toast === 'function') toast(e.message || 'Refresh failed', 'err');
       } else {
-        body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
+        body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">${icon('alert')}</div>
           <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
           <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
       }
@@ -389,10 +392,10 @@ function wlMergeEnrich(d, isReady) {
 //   reported — the DePACS study is VERIFIED (signed) → auto-file files it and it
 //              then drops off this board on its own.
 function wlStageBadge(stage) {
-  if (stage === 'reported') return '<span class="badge badge-green" title="Report signed — auto-file will file it, then it leaves the board">✅ Report ready</span>';
-  if (stage === 'draft')    return '<span class="badge" style="background:#7c5cff;color:#fff" title="A report exists but is NOT verified yet — radiologist mid-report">📝 Not verified</span>';
-  if (stage === 'imaged')   return '<span class="badge badge-orange" title="Images are in DePACS — nothing written yet">📷 Imaged</span>';
-  if (stage === 'ordered')  return '<span class="badge" title="Ordered — images not in DePACS yet">📋 Ordered</span>';
+  if (stage === 'reported') return '<span class="badge badge-green" title="Report signed — auto-file will file it, then it leaves the board">Report ready</span>';
+  if (stage === 'draft')    return '<span class="badge" style="background:#7c5cff;color:#fff" title="A report exists but is NOT verified yet — radiologist mid-report">Not verified</span>';
+  if (stage === 'imaged')   return '<span class="badge badge-orange" title="Images are in DePACS — nothing written yet">Imaged</span>';
+  if (stage === 'ordered')  return '<span class="badge" title="Ordered — images not in DePACS yet">Ordered</span>';
   return '<span class="badge" style="opacity:.55">…</span>';
 }
 
@@ -404,23 +407,23 @@ function wlStageBadge(stage) {
 // `state` the Clinical Calm `.ris` pill; cls/icon kept for legacy references.
 function wlRisStatus(it) {
   if (it.stage === 'reported')
-    return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '✅', state: 'final' };
+    return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '', state: 'final' };
   if (it.stage === 'draft')
-    return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '📝', state: 'prelim' };
+    return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '', state: 'prelim' };
   if (it.stage === 'imaged' || it.scanned)
-    return { bucket: 'imaged', label: 'Completed', cls: 'wl-st-done', icon: '📷', state: 'completed' };
+    return { bucket: 'imaged', label: 'Completed', cls: 'wl-st-done', icon: '', state: 'completed' };
   if (it.examStartAt)
-    return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '🔵', state: 'progress' };
+    return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '', state: 'progress' };
   if (it.arrivedAt)
-    return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '🟡', state: 'arrived' };
-  return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '📋', state: 'scheduled' };
+    return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '', state: 'arrived' };
+  return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '', state: 'scheduled' };
 }
 const _WL_BUCKETS = [
-  { key: 'all',       label: 'All',        icon: '▦' },
-  { key: 'waiting',   label: 'To scan',    icon: '🕐' },
-  { key: 'imaged',    label: 'Imaged',     icon: '📷' },
-  { key: 'reporting', label: 'Reporting',  icon: '📝' },
-  { key: 'reported',  label: 'Reported',   icon: '✅' },
+  { key: 'all',       label: 'All' },
+  { key: 'waiting',   label: 'To scan' },
+  { key: 'imaged',    label: 'Imaged' },
+  { key: 'reporting', label: 'Reporting' },
+  { key: 'reported',  label: 'Reported' },
 ];
 // Switching the view re-indexes rows, so drop any open drills (their positional keys
 // would otherwise restore onto a different patient's row).
@@ -482,7 +485,7 @@ function wlRender() {
   const tabs = _WL_BUCKETS.map((b) => {
     const n = counts[b.key] || 0;
     const on = wlState.statusTab === b.key;
-    return `<button class="tab${on ? ' on' : ''}" onclick="wlSetTab('${b.key}')">${b.icon} ${b.label}<span class="n">${n}</span></button>`;
+    return `<button class="tab${on ? ' on' : ''}" onclick="wlSetTab('${b.key}')">${b.label}<span class="n">${n}</span></button>`;
   }).join('');
 
   // ── Modality filter chips (only modalities actually present) ────────────────
@@ -600,7 +603,7 @@ function wlPregEl(it) {
   const attr = ` class="wl-pregcell" data-mr="${escapeHtml(mr)}"`;
   if (cached) return `<span${attr}>${wlPregBadge(cached)}</span>`;
   // Auto-checks in the background (wlAutoPreg) — no click needed.
-  return `<span${attr}><span class="sc warn" title="Checking pregnancy / β-hCG status…">🤰 <span class="wl-shimmer" style="width:36px"></span></span></span>`;
+  return `<span${attr}><span class="sc warn" title="Checking pregnancy / β-hCG status…">${icon('droplet')} <span class="wl-shimmer" style="width:36px"></span></span></span>`;
 }
 // Paint the pregnancy verdict into EVERY row that belongs to this MRN (CSS-escape the
 // value for the attribute selector).
@@ -642,7 +645,7 @@ function wlPregPump() {
 }
 function wlPregBadge(r) {
   if (!r || !r.found || !r.hasPregnancyTest) {
-    return '<span class="sc warn" title="No recent pregnancy / β-hCG lab found in Siratech — confirm status before imaging">🤰 No recent test</span>';
+    return `<span class="sc warn" title="No recent pregnancy / β-hCG lab found in Siratech — confirm status before imaging">${icon('droplet')} No recent test</span>`;
   }
   const when = r.resultDate || r.orderDate;
   const dstr = when ? (' · ' + escapeHtml(String(when).slice(0, 10))) : '';
@@ -654,9 +657,9 @@ function wlPregBadge(r) {
     return `<span class="sc ok" title="${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — negative">✓ Pregnancy: negative${dstr}</span>`;
   }
   if (r.resulted) {
-    return `<span class="sc warn" title="${nm} resulted${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — read the value">🤰 Resulted${dstr}</span>`;
+    return `<span class="sc warn" title="${nm} resulted${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — read the value">${icon('droplet')} Resulted${dstr}</span>`;
   }
-  return `<span class="sc warn" title="${nm} ordered but result still pending">🤰 Test pending${dstr}</span>`;
+  return `<span class="sc warn" title="${nm} ordered but result still pending">${icon('droplet')} Test pending${dstr}</span>`;
 }
 async function wlPregCheck(mrno, site, id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'checking…'; }
@@ -667,7 +670,7 @@ async function wlPregCheck(mrno, site, id, btn) {
     const el = document.getElementById(id);
     if (el) el.innerHTML = wlPregBadge(r);
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = '🤰 Preg check'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Preg check'; }
     if (typeof toast === 'function') toast('Pregnancy lookup failed', 'err');
   }
 }
@@ -715,7 +718,7 @@ function wlRow(it, key) {
       </div>
       <div class="exam">
         <div class="exline">${wlModBadges(it.modality)}${proc}</div>
-        ${acc ? `<a class="acc" title="DICOM accession">🔗 ${escapeHtml(String(acc))}</a>` : ''}
+        ${acc ? `<span class="acc" title="DICOM accession">ACC ${escapeHtml(String(acc))}</span>` : ''}
       </div>
       <div class="when"><div class="big">${wlTimeOnly(it.orderedDate)}</div>${(age && it.__bucket !== 'reported') ? '<div class="sm wait">waiting ' + age + '</div>' : '<div class="sm">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
       <div>${wlRisStatusBadge(it)}</div>
@@ -819,19 +822,43 @@ function wlMatch(d) {
   const orders = (d && d.orders) || [];
   if (!orders.length) return `<div class="ho-note">No order awaiting a result for this file.</div>`;
   const card = (t) => {
-    const s = t.study || {}, rep = t.report || {};
+    const s = t.study || {}, rep = t.report || {}, test = t.test || {};
+    // studyId → Print report; cpacsUrl → View images. Both come straight off the
+    // /radiology/results/match payload; render each action only when its data is present.
+    const studyId = s.studyId != null ? s.studyId : (test.studyId != null ? test.studyId : null);
+    const cpacsUrl = test.cpacsUrl || s.cpacsUrl || '';
+    // Clinical indication, if the match payload already carries it under any of the
+    // known keys. If it's absent we simply don't show it — no extra endpoint is called
+    // here to avoid a 404 (the /patient order-detail lazy fetch is a possible future add).
+    const ind = test.clinicalIndication || test.reasonForOrder || test.indication
+      || t.clinicalIndication || t.reasonForOrder || t.indication || '';
+    const indRow = ind ? `<div class="pmeta" style="margin-top:4px"><b>Indication:</b> ${escapeHtml(String(ind))}</div>` : '';
+    const acts = [];
+    if (cpacsUrl) acts.push(`<a class="ghost" target="_blank" rel="noopener" href="${escapeHtml(String(cpacsUrl))}">${icon('image')} View images</a>`);
+    if (studyId != null) acts.push(`<button class="ghost" onclick="wlPrintReport(${Number(studyId)})">${icon('printer')} Print report</button>`);
+    const actRow = acts.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${acts.join('')}</div>` : '';
     if (t.decision === 'unique') {
       return `<div class="ho-de-box ok" style="display:block;margin-bottom:6px">
-        <div><b>✅ ${escapeHtml(t.test.serviceName || '')}</b> — report ready
+        <div><b>✅ ${escapeHtml(test.serviceName || '')}</b> — report ready
           · ${escapeHtml(s.modality || '')} ${escapeHtml(s.desc || '')}${rep.pdfOk ? ' · 📄 PDF' : ''}</div>
+        ${indRow}
         ${rep.preview ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(rep.preview.slice(0, 200))}…</div>` : ''}
+        ${actRow}
       </div>`;
     }
     return `<div class="ho-de-box" style="display:block;margin-bottom:6px;border-color:var(--warn,#b7791f)">
-      <div><b>⚠️ ${escapeHtml(t.test.serviceName || '')}</b> — ${escapeHtml(t.reason || t.decision)}. Manual review.</div></div>`;
+      <div><b>⚠️ ${escapeHtml(test.serviceName || '')}</b> — ${escapeHtml(t.reason || t.decision)}. Manual review.</div>
+      ${indRow}
+      ${actRow}</div>`;
   };
   return orders.map(o => (o.tests || []).map(card).join('')).join('')
     + `<div style="font-size:12px;color:var(--muted);margin-top:2px">A verified report is filed automatically — it will drop off the board on its own.</div>`;
+}
+
+// Open the study's rendered PDF report (style 2) in a new tab — the backend route
+// /api/reports/study/:studyId/pdf?style=2 already serves it.
+function wlPrintReport(studyId) {
+  window.open('/api/reports/study/' + studyId + '/pdf?style=2', '_blank');
 }
 
 // Deep-link into the trusted Handoff wizard, pre-loaded with this patient's file.
@@ -857,21 +884,25 @@ async function wlSearch(q) {
   q = (q || '').trim();
   if (!q) return;
   const digits = q.replace(/\D/g, '');
-  if (!digits) return;
-  // On THIS board (prefix)? The live filter is already showing them — keep it.
-  const items = (wlState.data && wlState.data.items) || [];
-  if (items.some((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(digits))) {
-    wlState.searchView = false; wlState.filter = digits; wlRender(); return;
+  const isPureDigits = /^\d+$/.test(q);
+  // Pure-digit query keeps the fast local behaviour: if it prefix-matches an MRN on
+  // THIS board, the live filter is already showing them — keep it and don't hit network.
+  if (isPureDigits) {
+    const items = (wlState.data && wlState.data.items) || [];
+    if (items.some((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(digits))) {
+      wlState.searchView = false; wlState.filter = digits; wlRender(); return;
+    }
+    // Not on this board → cross-branch find needs a full identifier.
+    if (digits.length < 6) {
+      if (typeof toast === 'function') toast('Nobody on this board. Type a full file # / ID / iqama / mobile, a name, or an accession to search other branches', 'err');
+      return;
+    }
   }
-  // Not on this board → cross-branch find needs a full identifier.
-  if (digits.length < 6) {
-    if (typeof toast === 'function') toast('Nobody on this board. Type the full file # / ID / iqama / mobile to search other branches', 'err');
-    return;
-  }
+  // Name, accession (e.g. SIRA2599), or a full ID not on this board → cross-branch find.
   try {
     const d = await API.get('/radiology/find?q=' + encodeURIComponent(q));
     const pts = (d && d.patients) || [];
-    if (!pts.length) { if (typeof toast === 'function') toast('No patient with this number on any branch', 'err'); return; }
+    if (!pts.length) { if (typeof toast === 'function') toast('No patient found on any branch for "' + escapeHtml(q) + '"', 'err'); return; }
     wlShowMatches(pts);
   } catch (e) { if (typeof toast === 'function') toast(e.message || 'Search failed', 'err'); }
 }
