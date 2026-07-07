@@ -7502,11 +7502,15 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
             # Is a signed consent ALREADY on the patient's Siratech file on its own
             # (filed at signing)? Tell the connector so its idempotency guard lets the
             # report append alongside the consent instead of reading it as "already filed".
-            _cf = q("""SELECT 1 FROM scheduling.consents
-                        WHERE file_no=%s AND status='signed' AND filed_siratech=true LIMIT 1""",
+            _cf = q("""SELECT COUNT(*) AS n FROM scheduling.consents
+                        WHERE file_no=%s AND status='signed' AND filed_siratech=true""",
                     (_fno,), one=True)
-            if _cf:
+            _cf_n = int((_cf or {}).get("n") or 0)
+            if _cf_n:
                 b["consentAlreadyFiled"] = True
+                # Count so the connector can tell "only the consent(s)" from "a report was
+                # added" even when the HIS echoes attachments without names.
+                b["consentFiledCount"] = _cf_n
             # Otherwise ride the newest signed-but-UNfiled consent along with the report,
             # so it still reaches the file even if standalone filing was unavailable.
             if not b.get("consentPdf"):

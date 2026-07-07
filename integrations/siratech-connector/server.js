@@ -41,6 +41,11 @@ const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
 // category, mark the row's range, save, authorize). 151472 = the "Report" category
 // id captured live at Alworood (site 2); override per-site with env if it differs.
 const FILE_ATTACHMENT_CATEGORY_ID = Number(process.env.FILE_ATTACHMENT_CATEGORY_ID || 151472);
+// HIS spells the service/exam name field several ways across builds — probe them all
+// (mirrors buildWorklist's risServiceOf) so per-service matching never silently misses.
+const _SVC_KEYS = ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
+  'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
+  'invServiceName', 'invmastServiceName', 'ServiceName'];
 // The result "range" classification the row is saved under. The Siratech dropdown
 // is Normal / Abnormal / Critical / Not Applicable → 0 / 1 / 2 / 3. For RADIOLOGY
 // the normal-vs-abnormal "range" is a lab concept that does not apply — the
@@ -221,8 +226,11 @@ async function enrichOrder(mrno, o) {
     if (billRows.length <= 1) {
       row = billRows[0];
     } else {
-      const svc = String(o.serviceName || '').trim().toLowerCase();
-      row = billRows.find((r) => String(r.serviceName || '').trim().toLowerCase() === svc) || null;
+      // Multi-service bill: match THIS order's service. HIS spells the service field
+      // several ways across builds, so probe every known spelling on BOTH sides (same
+      // list buildWorklist uses); no match → null → {} (never another exam's indication).
+      const svc = String(firstOf(o, _SVC_KEYS) || '').trim().toLowerCase();
+      row = svc ? (billRows.find((r) => String(firstOf(r, _SVC_KEYS) || '').trim().toLowerCase() === svc) || null) : null;
     }
     if (!row) return {};
     // One-time: dump the RIS-panel row's key names so the real HIS field spellings
@@ -1236,7 +1244,7 @@ app.get('/labs/pregnancy', requireAuth, async (req, res) => {
 // test resolves to exactly ONE study (file-number + modality + body-part + time).
 // Dry-run returns the raw result-entry template + report + the exact payloads that
 // WOULD be posted, so a human can verify before anything is committed.
-async function buildFilePlan({ file, site, billNo, serviceId, accession, consentOnly, consentAlreadyFiled }) {
+async function buildFilePlan({ file, site, billNo, serviceId, accession, consentOnly, consentAlreadyFiled, consentFiledCount }) {
   await getToken();
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
@@ -1314,8 +1322,13 @@ async function buildFilePlan({ file, site, billNo, serviceId, accession, consent
   const _onlyConsent = _atts.length > 0 && _atts.every((a) => _isConsentName(a));
   let _alreadyFiled = false;
   if (_hasReportDoc || _authorized) _alreadyFiled = true;         // a real report is present → block
-  else if (_onlyConsent) _alreadyFiled = false;                   // only the consent → let the report append
-  else if (_flagSet) _alreadyFiled = !consentAlreadyFiled;        // flag but no names → trust Meena's ledger
+  else if (_onlyConsent) _alreadyFiled = false;                   // named, only the consent → append the report
+  else if (_atts.length > 0)                                      // enumerated but unnamed → go by COUNT:
+    // allow only if every attachment is accounted for by a pre-filed consent; a report
+    // would push the count past consentFiledCount and re-block (prevents a duplicate
+    // report when the HIS echoes attachments without fileNames).
+    _alreadyFiled = !(consentAlreadyFiled && _atts.length <= (consentFiledCount || 0));
+  else if (_flagSet) _alreadyFiled = !consentAlreadyFiled;        // flag only, unenumerated → trust ledger
   if (_alreadyFiled) {
     return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
       decision: 'already_filed', reason: 'a report is already attached to this test in Siratech', writable: false };
@@ -1383,7 +1396,8 @@ app.post('/results/file', requireAuth, async (req, res) => {
   const doAuthorize = authorize !== false;   // default: also authorize after a good save
   try {
     const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId, accession,
-      consentAlreadyFiled: req.body.consentAlreadyFiled === true });
+      consentAlreadyFiled: req.body.consentAlreadyFiled === true,
+      consentFiledCount: Number(req.body.consentFiledCount) || 0 });
     if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
 
     // On CONFIRM, the study MUST be the same one the human reviewed in the dry-run.
