@@ -6478,6 +6478,28 @@ def _elite_file_candidates(file_no):
         add("SIRA" + bare)
     return out
 
+def _elite_bare_id(x):
+    """Normalise a patient identifier to a comparable core: drop a leading 'SIRA'
+    (+ separators) and surrounding whitespace, uppercase. 'SIRA26339429' → '26339429'."""
+    m = re.match(r"(?i)^sira[\s\-_:]*(.+)$", str(x or "").strip())
+    core = m.group(1) if m else str(x or "")
+    return re.sub(r"\s", "", core).strip().upper()
+
+def _elite_same_patient(pat_id, file_no):
+    """True when a DePACS study's pat_id refers to the SAME patient as the Siratech
+    file_no — tolerant of the SIRA-prefix mismatch (SIRA26339429 == 26339429). Used as
+    a hard gate before any clinical-history write so a stray study_id can never land a
+    write on another patient's chart. Empty/unknown pat_id → False (fail closed)."""
+    p = _elite_bare_id(pat_id)
+    return bool(p) and any(_elite_bare_id(c) == p for c in _elite_file_candidates(file_no))
+
+def _elite_is_real_accession(acc):
+    """A REAL DICOM accession on this DePACS instance is a compact token — no
+    whitespace, carries digits (e.g. 'SIRA1661'). The field is overloaded and may
+    instead hold a body-part stub ('T SPINE') which is NOT an accession."""
+    a = str(acc or "").strip()
+    return bool(a) and (not re.search(r"\s", a)) and bool(re.search(r"\d", a))
+
 # Upper date bound for study lookups. It must be well in the FUTURE, not "today":
 # DePACS timestamps a study in its own (KSA, UTC+3) day, so a scan taken at
 # 00:15 KSA is dated "tomorrow" relative to the server's UTC today — capping at
@@ -7614,6 +7636,40 @@ async def handoff_write_history(request: Request, user=Depends(require_radiology
     if not history:
         raise HTTPException(400, "Add the clinical history first")
     sid = _int_or_400(study_id, "study_id")
+    file_no = (b.get("file_no") or "").strip()
+    order_acc = str(b.get("accession") or "").strip()
+    # ── SAFETY GATE: the write must land on THIS patient and THIS exam ──────────
+    # A clinical-history write is destructive and clinical. Before touching DePACS,
+    # read the target study back and assert (1) it belongs to the handoff's patient
+    # and (2) it is the exam the selected order refers to. Fail closed. This is the
+    # single chokepoint every manual write passes through, so one extra read on a
+    # rare, deliberate action is cheap insurance against writing onto the wrong chart
+    # (another patient) or the wrong study (a second exam of the same patient — the
+    # "two exams, one history written on both" bug).
+    if not file_no:
+        raise HTTPException(400, "Missing patient file number — can't verify the study belongs to this patient")
+    try:
+        _sinfo = _elite_get(f"/study_management/get_study_info/{sid}")
+        _sb = (_sinfo.get("body") or {}) if isinstance(_sinfo, dict) else {}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't read the study to verify the patient before writing: {str(e)[:120]}")
+    s_patid = str(_sb.get("pat_id") or "").strip()
+    if not _elite_same_patient(s_patid, file_no):
+        insert_audit(user, "HANDOFF_WRITE_BLOCKED", str(sid),
+                     json.dumps({"reason": "patient_mismatch", "file_no": file_no,
+                                 "study_pat_id": s_patid}))
+        raise HTTPException(409, "This study belongs to a different patient — refused to write. "
+                                 "Re-open the correct patient and pick their study.")
+    s_acc = str(_sb.get("accession_number") or "").strip()
+    if order_acc and _elite_is_real_accession(s_acc) and _elite_bare_id(s_acc) != _elite_bare_id(order_acc):
+        insert_audit(user, "HANDOFF_WRITE_BLOCKED", str(sid),
+                     json.dumps({"reason": "accession_mismatch", "file_no": file_no,
+                                 "order_accession": order_acc, "study_accession": s_acc}))
+        raise HTTPException(409, f"This study is a different exam (accession {s_acc}) than the selected "
+                                 f"order (accession {order_acc}). Pick the study that matches this order "
+                                 f"before writing — its indication must not go on another exam.")
     # The handoff IS the emergency radiology hand-off, so flag Emergency ✓ + Category
     # "Others" by default. Only skip when the staff explicitly marked the study Routine
     # (priority == 'routine' with no emergency override) — a deliberate downgrade, not
@@ -9986,18 +10042,35 @@ def _radiology_autostamp_sweep():
             # flag and indication. When unsure, leave it for the human handoff.
             cand = [o for o in orders
                     if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
+            # Accession-first (deterministic per-exam key): if the STUDY already carries a
+            # real accession that resolves to exactly one order, THAT order owns this study —
+            # even when the patient has two same-modality exams. This is what lets two CT
+            # exams each receive THEIR OWN indication instead of one being written onto both.
+            s_acc = str(s.get("accession_number") or "").strip()
+            acc_cand = ([o for o in orders
+                         if _elite_bare_id(o.get("accessionNumber")) == _elite_bare_id(s_acc)]
+                        if _elite_is_real_accession(s_acc) else [])
             cur_hist = str(s.get("clinical_history") or "").strip()
             # Write the moment images arrive (empty history). Guards, in order:
-            #   • exactly ONE fresh study of this modality AND exactly one matching order
-            #     → a clean 1:1 (never stamp when it's ambiguous which study↔order);
+            #   • a definitive accession key resolves to exactly one order → stamp THAT one.
+            #     If the study declares an accession but it matches no order, DO NOT fall
+            #     back to the fuzzy modality guess — leave it for the human handoff;
+            #   • else, exactly ONE fresh study of this modality AND exactly one matching
+            #     order → a clean 1:1 (never stamp when it's ambiguous which study↔order);
             #   • history is empty → never clobber a prior stamp or a human's richer note;
             #   • not already stamped this process → never re-write the same study every
             #     sweep (belt-and-suspenders if the list endpoint under-reports history).
             # The empty-history gate is checked BEFORE the expensive /patient enrichment,
             # so a steady board (studies already stamped) costs no extra HIS calls.
-            if (smod and fresh_mod_count.get(smod, 0) == 1 and len(cand) == 1
+            chosen = None
+            if _elite_is_real_accession(s_acc):
+                if len(acc_cand) == 1:
+                    chosen = acc_cand[0]                          # exact per-exam key
+            elif smod and fresh_mod_count.get(smod, 0) == 1 and len(cand) == 1:
+                chosen = cand[0]                                  # unambiguous modality 1:1
+            if (chosen is not None
                     and not cur_hist and sid not in _autostamp_hist_done):
-                o = cand[0]
+                o = chosen
                 emergency = bool(o.get("emergency"))
                 # Enrich with the REAL clinical indication + the ordering doctor's name
                 # AND id (number) — from /patient, cached once per patient this sweep.
