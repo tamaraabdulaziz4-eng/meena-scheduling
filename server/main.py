@@ -10112,6 +10112,23 @@ def _mod_bucket(m):
 
 _autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
 _autostamp_hist_done = set()  # study ids whose clinical-history stamp already ran this process
+_autostamp_branch_blocked = set()  # study ids skipped as not-the-scoped-branch (audit once)
+_autostamp_keys_logged = False     # one-time dump of a DePACS study's field names
+
+def _autostamp_study_station(s):
+    """A DePACS study's originating station / institution / source-AE — whatever the
+    PACS exposes. DePACS is shared across branches and a study carries no branch id, so
+    this (matched against rad_autostamp_n3_stations) is how a study is confirmed to
+    belong to the scoped branch before any write. Probes several likely field spellings;
+    None when the PACS surfaces none of them."""
+    for k in ("station_name", "station", "institution_name", "institution",
+              "source_ae", "source_ae_title", "source_aet", "calling_ae",
+              "calling_ae_title", "aet", "ae_title", "performed_station",
+              "performing_station", "scanner", "modality_station"):
+        v = s.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return None
 
 def _claim_sweep_lock(name, ttl_sec):
     """Cross-worker single-flight for a background sweep. Claims the lock only if it's
@@ -10189,6 +10206,7 @@ def _radiology_autostamp_sweep():
     Replaces waiting for a human handoff; a later handoff simply overwrites with the
     staff's richer text. Idempotent: a study already carrying history+category is
     skipped, and the accession stamp has its own no-clobber guards."""
+    global _autostamp_keys_logged
     data = _bridge_request("/his/worklist", timeout=90)
     if not isinstance(data, dict):
         return 0
@@ -10196,6 +10214,10 @@ def _radiology_autostamp_sweep():
     # siteId 3) — the pilot branch. Blank setting → every branch.
     sites_raw = (get_setting("rad_autostamp_sites", "3") or "").strip()
     site_set = set(s.strip() for s in sites_raw.split(",") if s.strip()) if sites_raw else None
+    # Shared-PACS branch guard (see the per-study check below): the DePACS station /
+    # institution values that identify the scoped branch. Comma-separated, case-insensitive.
+    n3_stations_raw = (get_setting("rad_autostamp_n3_stations", "") or "").strip()
+    n3_stations = set(x.strip().upper() for x in n3_stations_raw.split(",") if x.strip())
     by_mrn = {}
     for it in (data.get("items") or []):
         if site_set is not None and str(it.get("site") or "").strip() not in site_set:
@@ -10229,10 +10251,14 @@ def _radiology_autostamp_sweep():
                 fresh_mod_count[_fm] = fresh_mod_count.get(_fm, 0) + 1
         try:
             mwl = q("""SELECT accession, modality FROM scheduling.radiology_mwl
-                       WHERE mrno=%s AND sps_date=%s""",
-                    (mrno, ksa_now.strftime("%Y%m%d"))) or []
+                       WHERE mrno=%s AND sps_date = ANY(%s)""",
+                    (mrno, list(fresh_days))) or []
         except Exception:
             mwl = []
+        # Accessions the scoped branch's MWL agent pushed for this patient — a positive,
+        # branch-specific signal (the agent runs at N3, so any accession here is N3).
+        mwl_accs = set(_elite_bare_id(r.get("accession")) for r in mwl
+                       if _elite_is_real_accession(r.get("accession")))
         for s in fresh:
             sid = s.get("study_id")
             if not sid:
@@ -10253,6 +10279,30 @@ def _radiology_autostamp_sweep():
                          if _elite_bare_id(o.get("accessionNumber")) == _elite_bare_id(s_acc)]
                         if _elite_is_real_accession(s_acc) else [])
             cur_hist = str(s.get("clinical_history") or "").strip()
+            # One-time: dump a study's field names so the DePACS branch/station field can
+            # be pinned from a live response (to configure rad_autostamp_n3_stations).
+            if not _autostamp_keys_logged:
+                _autostamp_keys_logged = True
+                try:
+                    print("[rad-autostamp] study keys:", ",".join(sorted(str(k) for k in s.keys())))
+                    print("[rad-autostamp] station/accession sample:",
+                          repr(_autostamp_study_station(s)), repr(s_acc))
+                except Exception:
+                    pass
+            # SHARED-PACS BRANCH GUARD. DePACS holds EVERY branch's studies but the
+            # auto-stamp is scoped (rad_autostamp_sites, default N3). A study carries no
+            # branch id, so it must be POSITIVELY confirmed as the scoped branch before
+            # any write — otherwise a same-patient study scanned at another branch could
+            # inherit an N3 order's indication (a wrong cross-branch write). Positive
+            # signals: the study's accession is in the branch MWL feed, OR its DePACS
+            # station/institution matches rad_autostamp_n3_stations. Unscoped (blank
+            # sites) → write everywhere, as configured. Unconfirmed under a scope → skip.
+            _station = _autostamp_study_station(s)
+            n3_confirmed = (
+                (bool(n3_stations) and _station is not None and _station.strip().upper() in n3_stations)
+                or (_elite_is_real_accession(s_acc) and _elite_bare_id(s_acc) in mwl_accs)
+            )
+            branch_ok = (site_set is None) or n3_confirmed
             # Write the moment images arrive (empty history). Guards, in order:
             #   • a definitive accession key resolves to exactly one order → stamp THAT one.
             #     If the study declares an accession but it matches no order, DO NOT fall
@@ -10289,7 +10339,15 @@ def _radiology_autostamp_sweep():
                                              "study_accession": s_acc, "order_accession": _cand_acc}))
                 else:
                     chosen = cand[0]                              # unambiguous modality 1:1 (fallback)
-            if (chosen is not None
+            if (chosen is not None and not branch_ok
+                    and not cur_hist and sid not in _autostamp_hist_done):
+                # Would have stamped, but the study isn't confirmed as the scoped branch.
+                if sid not in _autostamp_branch_blocked:
+                    _autostamp_branch_blocked.add(sid)
+                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                 json.dumps({"studyId": sid, "reason": "branch_unconfirmed",
+                                             "station": _station, "study_accession": s_acc}))
+            elif (chosen is not None and branch_ok
                     and not cur_hist and sid not in _autostamp_hist_done):
                 o = chosen
                 # HARD PATIENT GATE (defence in depth): never write onto a study whose
@@ -10325,7 +10383,9 @@ def _radiology_autostamp_sweep():
                         print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
             # accession: deterministic key from the MWL feed — only when unambiguous
             # (single entry for the patient today, or exactly one of this modality).
-            if sid not in _autostamp_acc_done:
+            # Same branch guard: never stamp the scoped branch's accession onto a study
+            # that isn't confirmed to be that branch's.
+            if branch_ok and sid not in _autostamp_acc_done:
                 acc = None
                 if len(mwl) == 1:
                     acc = mwl[0].get("accession")
