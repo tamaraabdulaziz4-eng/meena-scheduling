@@ -787,7 +787,8 @@ function wlTrack(it) {
 async function wlToggle(key, mrno, site, btn) {
   const row = document.getElementById('wl-dr-' + key), box = document.getElementById('wl-d-' + key);
   if (!row || !box) return;
-  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = 'Check'; wlState.openDrills.delete(key); return; }
+  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = btn.dataset.lbl || 'Open ›'; wlState.openDrills.delete(key); return; }
+  if (!btn.dataset.lbl) btn.dataset.lbl = btn.textContent;   // remember "Open ›"/"View ›" to restore on close
   row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
   wlState.openDrills.add(key);
   wlState.drillHtml = wlState.drillHtml || new Map();

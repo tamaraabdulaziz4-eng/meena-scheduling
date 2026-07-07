@@ -2683,6 +2683,9 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cc .kpi.b::after { background: var(--blue); }
 .cc .kpi.c::after { background: var(--green); }
 .cc .kpi.d::after { background: var(--accent); }
+/* Active drill tile — Home's radiology KPIs are buttons that toggle .active
+   (home.js hmRadDrillToggle); parity with the retired .hm-rad-kpi.active rule. */
+.cc .kpi.active { border-color: var(--accent); box-shadow: var(--shadow), var(--ring); }
 
 /* ── Board card ── */
 .cc .board { background: var(--card); border: 1px solid var(--border); border-radius: 18px;
@@ -2778,9 +2781,11 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
   display: inline-flex; align-items: center; gap: 4px; border: none; cursor: default;
   font-family: inherit; white-space: nowrap; }
 .cc button.sc { cursor: pointer; }   /* consent "needed" chip is a live button */
-.cc .sc.ok   { color: var(--green-ink); background: rgba(0,200,150,.13); }
-.cc .sc.no   { color: var(--orange);    background: rgba(255,107,107,.13); }
-.cc .sc.warn { color: #B77800;          background: rgba(255,186,73,.2); }
+/* Ink shades deepened for WCAG AA on the tinted washes (10px safety text):
+   ok 4.8:1, no 5.2:1, warn 5.0:1 — dark mode re-pins its own inks below. */
+.cc .sc.ok   { color: #0A7A55; background: rgba(0,200,150,.13); }
+.cc .sc.no   { color: #B83232; background: rgba(255,107,107,.13); }
+.cc .sc.warn { color: #8F5E00; background: rgba(255,186,73,.2); }
 
 /* ── Exam cell ── */
 .cc .exam { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
@@ -2814,9 +2819,9 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cc .ris.scheduled .rd { background: var(--slate); }
 .cc .ris.arrived { color: var(--accent2); background: var(--violet-wash); }
 .cc .ris.arrived .rd { background: var(--accent); }
-.cc .ris.progress { color: #B77800; background: rgba(255,186,73,.18); }
+.cc .ris.progress { color: #8F5E00; background: rgba(255,186,73,.18); } /* 5.1:1 AA (was #B77800 · 3.4:1) */
 .cc .ris.progress .rd { background: var(--yellow); animation: blink 1.3s infinite; }
-.cc .ris.completed { color: var(--green-ink); background: rgba(0,200,150,.14); }
+.cc .ris.completed { color: #0A7A55; background: rgba(0,200,150,.14); } /* 4.8:1 AA; dark pinned below */
 .cc .ris.completed .rd { background: var(--green); }
 .cc .ris.prelim { color: #1f74c9; background: rgba(59,160,255,.15); }
 .cc .ris.prelim .rd { background: var(--blue); }
