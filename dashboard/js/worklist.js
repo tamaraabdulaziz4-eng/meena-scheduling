@@ -611,7 +611,7 @@ function wlRender() {
   //    mess and nothing vanishes: قيد الانتظار (waiting) · تم التصوير (imaged) ·
   //    التقارير (reported). Every patient sits under exactly one section; counts live
   //    in the headers. Waiting is open; the done sections start collapsed (click to open).
-  wlState.collapsedSections = wlState.collapsedSections || new Set(['imaged', 'reported']);
+  wlState.collapsedSections = wlState.collapsedSections || new Set();   // all sections open by default
   const grp = { waiting: [], imaged: [], reported: [] };
   for (const it of rows) {
     const b = it.__bucket;
@@ -623,9 +623,9 @@ function wlRender() {
     body.innerHTML = modChips + `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`;
   } else {
     body.innerHTML = modChips
-      + wlSection('waiting', 'قيد الانتظار', 'Waiting to scan', grp.waiting, 'w')
-      + wlSection('imaged', 'تم التصوير', 'Imaged', grp.imaged, 'i')
-      + wlSection('reported', 'التقارير', 'Reported', grp.reported, 'r');
+      + wlSection('waiting', 'Waiting to scan', grp.waiting, 'w')
+      + wlSection('imaged', 'Imaged', grp.imaged, 'i')
+      + wlSection('reported', 'Reported', grp.reported, 'r');
   }
   wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
@@ -635,20 +635,20 @@ function wlRender() {
 // One collapsible board section. Rows sort STAT→newest within the section. The done
 // sections (imaged/reported) dim their rows via `.done`. Collapse state persists in
 // wlState.collapsedSections across every repaint (poll, enrich, modality switch).
-function wlSection(key, titleAr, titleEn, secRows, prefix) {
+function wlSection(key, title, secRows, prefix) {
   const n = secRows.length;
   const collapsed = wlState.collapsedSections.has(key);
   const sorted = secRows.slice().sort((a, b) =>
     (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
-  const doneSec = (key === 'imaged' || key === 'reported') ? ' donesec' : '';
   const inner = collapsed ? ''
     : (n ? `<div class="board"><div class="rows">${sorted.map((it, i) => wlRow(it, prefix + i)).join('')}</div></div>`
-         : `<div class="wl-sec-empty">لا يوجد · none right now</div>`);
-  return `<div class="wl-sec${doneSec}${collapsed ? ' collapsed' : ''}" data-sec="${key}">
+         : `<div class="wl-sec-empty">No studies in this stage right now.</div>`);
+  return `<div class="wl-sec sec-${key}${collapsed ? ' collapsed' : ''}" data-sec="${key}">
     <button class="wl-sec-h" onclick="wlToggleSection('${key}')">
-      <span class="wl-sec-chev">${collapsed ? '▸' : '▾'}</span>
-      <span class="wl-sec-t">${titleAr}<span class="en"> · ${titleEn}</span></span>
+      <span class="wl-sec-dot"></span>
+      <span class="wl-sec-t">${title}</span>
       <span class="wl-sec-n">${n}</span>
+      <span class="wl-sec-chev">${collapsed ? '›' : '⌄'}</span>
     </button>${inner}</div>`;
 }
 function wlToggleSection(key) {
