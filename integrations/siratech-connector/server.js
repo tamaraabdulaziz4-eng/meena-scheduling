@@ -187,6 +187,10 @@ function orderedDateToISO(s) {
   return m ? `${m[3]}-${m[1]}-${m[2]}` : null;
 }
 
+// One-time diagnostics: log the real HIS field names once per process so the
+// order-id + indication spellings can be confirmed from a live response.
+let _enrichKeysLogged = false, _enrichDetailKeysLogged = false;
+
 // Enrich an order from the RIS panel (which carries the internal order id,
 // billing status and encounter/ER) and then GetEmrOrderDetails (the clinical
 // indication). FetchRISPanel is site-scoped, so it MUST use the order's siteId.
@@ -204,17 +208,32 @@ async function enrichOrder(mrno, o) {
     // Only enrich from the RIS row that matches THIS order's bill. The old
     // `|| rows[0]` fallback borrowed another same-day order's billingStatus / ER
     // flag / payer / indication when the billNo didn't match — a wrong-data risk.
-    const row = rows.find((r) => r.billNo === o.billNo);
+    // billNo is numeric in one HIS subsystem and a string in another — compare as
+    // String() so a type mismatch never silently drops the whole enrichment (the
+    // same bug the match path already fixed; the indication was empty for everyone).
+    const row = rows.find((r) => String(r.billNo) === String(o.billNo));
     if (!row) return {};
+    // One-time: dump the RIS-panel row's key names so the real HIS field spellings
+    // (order-id, indication) can be pinned from a live response without guessing.
+    if (!_enrichKeysLogged) { _enrichKeysLogged = true; console.log('[enrichOrder] RIS row keys:', Object.keys(row).join(',')); }
     let indication = null, reason = null, remarks = null;
     // The ordering doctor's ID (number) — Siratech spells it differently across builds,
     // so probe the RIS row first, then the order-detail row. Used by the auto-stamp so
     // the DePACS clinical history carries "Dr <name> (#<id>)".
     let providerId = row.providerId || row.orderProviderId || row.providerCode || row.doctorId || null;
-    if (row.emrPatDtlsInvOrderId) {
-      const det = await hisFetch('/billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=' + encodeURIComponent(row.emrPatDtlsInvOrderId), { method: 'GET' });
+    // The order-detail id field is spelled differently across Siratech builds — probe
+    // every known spelling. If it's wrong, GetEmrOrderDetails never runs and the
+    // indication is null for EVERY order (the owner's "I don't see the indication").
+    const orderDetailId = row.emrPatDtlsInvOrderId || row.invPatOrderId || row.emrPatInvOrderId
+      || row.emrPatDtlsInvId || row.invPatDtlsOrderId || row.patInvOrderId || row.orderId || row.emrOrderId || null;
+    if (orderDetailId) {
+      const det = await hisFetch('/billing-api/api/v1/ServicePanel/GetEmrOrderDetails?EmrPatDtlsInvOrderId=' + encodeURIComponent(orderDetailId), { method: 'GET' });
       const dd = (det.json && det.json.data) || {};
-      indication = dd.clinicalIndication || null; reason = dd.reasonForOrder || null; remarks = dd.remarks || null;
+      if (!_enrichDetailKeysLogged) { _enrichDetailKeysLogged = true; console.log('[enrichOrder] GetEmrOrderDetails keys:', Object.keys(dd).join(',')); }
+      // Indication/reason/remarks — probe several spellings each.
+      indication = dd.clinicalIndication || dd.clinicalindication || dd.indication || dd.clinicalNotes || dd.clinicalHistory || null;
+      reason = dd.reasonForOrder || dd.reason || dd.orderReason || dd.reasonForExam || null;
+      remarks = dd.remarks || dd.remark || dd.notes || dd.comments || null;
       providerId = providerId || dd.providerId || dd.orderProviderId || dd.referringDoctorId || dd.doctorId || null;
     }
     return {
