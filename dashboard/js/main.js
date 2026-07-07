@@ -129,6 +129,20 @@ async function initApp() {
   // Radiology CD transfers.
   const cdxferNav = document.getElementById('nav-cdxfer');
   if (cdxferNav) cdxferNav.style.display = canRad ? 'flex' : 'none';
+  // RIS-first: for anyone who works radiology, float the whole Radiology section to the
+  // TOP of the sidebar so the RIS is the base of the app (the operator's home). Purely a
+  // reorder of existing nodes — role gating + handlers are untouched. Non-radiology users
+  // keep the scheduling-first order (the radiology section stays hidden for them).
+  if (canRad) {
+    const nav = document.querySelector('.sidebar-nav');
+    const radIds = ['nav-section-radiology', 'nav-worklist', 'nav-orders', 'nav-handoff',
+                    'nav-patientsearch', 'nav-radstats', 'nav-cdxfer'];
+    if (nav) {
+      // Insert each at the front in REVERSE so the original visual order is preserved on top.
+      radIds.map((id) => document.getElementById(id)).filter(Boolean).reverse()
+        .forEach((el) => nav.insertBefore(el, nav.firstChild));
+    }
+  }
   // Swaps page for everyone except plain viewers (staff request & track theirs).
   const swapsNav = document.getElementById('nav-swaps');
   if (swapsNav) swapsNav.style.display = (role === 'viewer') ? 'none' : 'flex';

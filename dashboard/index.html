@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Staff Scheduling — Meena Health</title>
+<title>Meena RIS — Radiology</title>
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#f4f2fc">
@@ -40,8 +40,8 @@
 
     <!-- Sign-in view -->
     <div id="login-view">
-      <h2>Staff Scheduling</h2>
-      <p>Sign in to manage your rota</p>
+      <h2>Meena RIS</h2>
+      <p>Radiology Information System · sign in to continue</p>
       <!-- A real <form> with a submit button so the browser/password manager
            reliably offers to save and autofill credentials (esp. on desktop). -->
       <form id="login-form" onsubmit="doLogin(); return false;">
@@ -316,12 +316,12 @@
       <div class="logo-box">
         <img src="/meena_logo.png" alt="Meena" style="display:block;width:100%;max-width:170px;height:auto;margin:0 auto">
       </div>
-      <h1>Staff Scheduling</h1>
+      <h1>Meena RIS</h1>
       <p id="sidebar-user"></p>
     </div>
 
     <nav class="sidebar-nav">
-      <div class="nav-section-label">Main</div>
+      <div class="nav-section-label" id="nav-section-workplace">Scheduling &amp; Ops</div>
       <button class="nav-item" id="nav-home" onclick="showPage('home')" style="display:none">
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span> Home
       </button>
@@ -1067,7 +1067,7 @@
 <script src="/js/tickets.js?v=20260707dd"></script>
 <script src="/js/reports.js?v=20260707dd"></script>
 <script src="/js/handoff.js?v=20260707dd"></script>
-<script src="/js/worklist.js?v=20260707dd"></script>
+<script src="/js/worklist.js?v=20260707ee"></script>
 <script src="/js/orders.js?v=20260707dd"></script>
 <script src="/js/patientsearch.js?v=20260707dd"></script>
 <script src="/js/consent.js?v=20260707dd"></script>
@@ -1081,6 +1081,6 @@
 <script src="/js/review.js?v=20260707dd"></script>
 <script src="/js/export.js?v=20260707dd"></script>
 <script src="/js/audit.js?v=20260707dd"></script>
-<script src="/js/main.js?v=20260707dd"></script>
+<script src="/js/main.js?v=20260707ee"></script>
 </body>
 </html>

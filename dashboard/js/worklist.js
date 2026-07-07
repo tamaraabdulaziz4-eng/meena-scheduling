@@ -801,8 +801,14 @@ async function wlToggle(key, mrno, site, btn) {
   if (wlState._drillLoading.has(key)) return;
   wlState._drillLoading.add(key);
   try {
-    const d = await API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`);
-    const html = wlMatch(d);
+    // Fetch the report match AND the order detail (which carries the clinical indication,
+    // reason and remarks — the /match payload doesn't) in parallel. The lookup is
+    // best-effort: if it fails, the drill still shows the report, just without indication.
+    const [d, lk] = await Promise.all([
+      API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`),
+      API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`).catch(() => null),
+    ]);
+    const html = wlMatch(d, wlIndexIndications(lk));
     // Cache FIRST so wlRestoreOpenState paints the result (not a blank box) if a
     // 45s silent refresh already repainted the board while we were awaiting.
     wlState.drillHtml.set(key, html);
@@ -818,10 +824,27 @@ async function wlToggle(key, mrno, site, btn) {
   }
 }
 
-function wlMatch(d) {
+// Build a lookup index of clinical indication keyed by bill (+ service), from the
+// /radiology/lookup order detail, so wlMatch can show each exam's indication.
+function wlIndexIndications(lk) {
+  const idx = {};
+  const orders = (lk && lk.orders) || [];
+  for (const o of orders) {
+    const ind = (o.clinicalIndication || o.reasonForOrder || '').toString().trim();
+    if (!ind) continue;
+    const bn = String(o.billNo || '').trim();
+    const svc = String(o.service || '').trim().toLowerCase();
+    if (!bn) continue;
+    idx['b:' + bn + '|' + svc] = ind;          // exact exam
+    if (!idx['b:' + bn]) idx['b:' + bn] = ind;  // bill-level fallback (single-exam bill)
+  }
+  return idx;
+}
+function wlMatch(d, indIdx) {
+  indIdx = indIdx || {};
   const orders = (d && d.orders) || [];
   if (!orders.length) return `<div class="ho-note">No order awaiting a result for this file.</div>`;
-  const card = (t) => {
+  const card = (t, o) => {
     const s = t.study || {}, rep = t.report || {}, test = t.test || {};
     // studyId → Print report; cpacsUrl → View images. Both come straight off the
     // /radiology/results/match payload; render each action only when its data is present.
@@ -830,8 +853,11 @@ function wlMatch(d) {
     // Clinical indication, if the match payload already carries it under any of the
     // known keys. If it's absent we simply don't show it — no extra endpoint is called
     // here to avoid a 404 (the /patient order-detail lazy fetch is a possible future add).
+    const bn = String((o && o.billNo) || (t.order && t.order.billNo) || t.billNo || '').trim();
+    const svc = String(test.serviceName || test.service || '').trim().toLowerCase();
     const ind = test.clinicalIndication || test.reasonForOrder || test.indication
-      || t.clinicalIndication || t.reasonForOrder || t.indication || '';
+      || t.clinicalIndication || t.reasonForOrder || t.indication
+      || (bn && (indIdx['b:' + bn + '|' + svc] || indIdx['b:' + bn])) || '';
     const indRow = ind ? `<div class="pmeta" style="margin-top:4px"><b>Indication:</b> ${escapeHtml(String(ind))}</div>` : '';
     const acts = [];
     if (cpacsUrl) acts.push(`<a class="ghost" target="_blank" rel="noopener" href="${escapeHtml(String(cpacsUrl))}">${icon('image')} View images</a>`);
@@ -851,7 +877,7 @@ function wlMatch(d) {
       ${indRow}
       ${actRow}</div>`;
   };
-  return orders.map(o => (o.tests || []).map(card).join('')).join('')
+  return orders.map(o => (o.tests || []).map(t => card(t, o)).join('')).join('')
     + `<div style="font-size:12px;color:var(--muted);margin-top:2px">A verified report is filed automatically — it will drop off the board on its own.</div>`;
 }
 
