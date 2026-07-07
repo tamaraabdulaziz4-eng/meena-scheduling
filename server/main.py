@@ -10062,12 +10062,15 @@ def _radiology_autostamp_sweep():
             #     sweep (belt-and-suspenders if the list endpoint under-reports history).
             # The empty-history gate is checked BEFORE the expensive /patient enrichment,
             # so a steady board (studies already stamped) costs no extra HIS calls.
+            # ADDITIVE resolution: prefer the exact accession key when it resolves to one
+            # order, but ALWAYS fall back to the unambiguous modality 1:1 guard otherwise —
+            # never SKIP a stamp just because the study carries an accession the (accession-
+            # less) worklist feed can't echo. Two-exam safety is still held by fresh_mod_count.
             chosen = None
-            if _elite_is_real_accession(s_acc):
-                if len(acc_cand) == 1:
-                    chosen = acc_cand[0]                          # exact per-exam key
+            if len(acc_cand) == 1:
+                chosen = acc_cand[0]                              # exact per-exam key (best)
             elif smod and fresh_mod_count.get(smod, 0) == 1 and len(cand) == 1:
-                chosen = cand[0]                                  # unambiguous modality 1:1
+                chosen = cand[0]                                  # unambiguous modality 1:1 (fallback)
             if (chosen is not None
                     and not cur_hist and sid not in _autostamp_hist_done):
                 o = chosen
