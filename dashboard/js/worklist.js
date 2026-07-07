@@ -1137,13 +1137,16 @@ function wlMatch(d, indIdx, mrno) {
       || t.clinicalIndication || t.reasonForOrder || t.indication
       || (bn && (indIdx['b:' + bn + '|' + svc] || indIdx['b:' + bn])) || '';
     const indRow = ind ? `<div class="pmeta" style="margin-top:4px"><b>Indication:</b> ${escapeHtml(String(ind))}</div>` : '';
-    const accession = String(s.accession || test.accession || (o && o.accession) || '').trim();
+    // The ORDER's accession (independent of the study), so the backend's mismatch gate is
+    // meaningful — passing the study's own accession would trivially pass its own check.
+    const accession = String(test.accession || (o && o.accession) || (t && t.accession) || '').trim();
     const isEmerg = !!(indIdx.__er && (indIdx.__er['b:' + bn + '|' + svc] != null
       ? indIdx.__er['b:' + bn + '|' + svc] : indIdx.__er['b:' + bn]));
     const acts = [];
-    // One-click: write THIS exam's indication straight into its PACS study. Human-picked
-    // patient + the backend's hard patient/accession gate = no cross-branch guessing.
-    if (studyId != null && ind) {
+    // One-click: write THIS exam's indication straight into its PACS study. Only offered on
+    // a UNIQUE study↔order match (never an ambiguous one — that could target the wrong exam);
+    // the human picks the patient and the backend hard-gates patient + accession → fail closed.
+    if (t.decision === 'unique' && studyId != null && ind) {
       // Collapse whitespace/newlines — the value rides an inline onclick attribute.
       const indClean = String(ind).replace(/\s+/g, ' ').trim();
       acts.push(`<button class="ghost" onclick="wlWriteIndication(${Number(studyId)}, '${jsAttr(String(mrno))}', '${jsAttr(indClean)}', '${jsAttr(accession)}', ${isEmerg ? 'true' : 'false'}, this)">${icon('edit')} Write indication → PACS</button>`);
