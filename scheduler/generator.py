@@ -550,11 +550,30 @@ def generate_schedule(nest_name: str, year: int, month: int,
             # Per-section per-month min/max M and N per day (configurable, default min=1 max=2)
             sec_staff_count = sum(1 for p, sn, _ in all_staff if sn == sec_name)
             already_covered_codes = set((sec.get("exact") or {}).keys()) | set(coverage.keys())
+            sec_allowed_codes = set(sec.get("allowed_shifts") or [])
+            # The min_m/min_n defaults are the app's auto-M/N staffing model, used
+            # only when a section declares no explicit coverage/exact (the server
+            # always sends empty coverage and relies on these settings). When a
+            # section DOES declare coverage/exact, that dict is its complete daily
+            # spec — M/N are opt-in via coverage — so the default min of 1 must not
+            # be layered on top. Doing so forced a morning/night shift the section
+            # never asked for: it made coverage-only sections that omit M/N
+            # INFEASIBLE (e.g. 2 staff owing D+EV can't also staff a 3rd M) and
+            # silently over-staffed others with a phantom daily M.
+            section_has_explicit_spec = bool(sec.get("coverage")) or bool(sec.get("exact"))
             mn_limits = {
                 "M": (int(sec.get("min_m", 1)), int(sec.get("max_m", 2))),
                 "N": (int(sec.get("min_n", 1)), int(sec.get("max_n", 2))),
             }
             for code, (mn_min, mn_max) in mn_limits.items():
+                if section_has_explicit_spec:
+                    continue
+                # Only enforce M/N staffing on sections that actually run that
+                # shift. Otherwise the code is absent from every person's
+                # decision-variable domain (it's pinned to 0), so a default
+                # min of 1 becomes 0 >= 1 and makes the whole nest INFEASIBLE.
+                if code not in sec_allowed_codes:
+                    continue
                 # Min coverage is a HARD requirement: if too few staff are
                 # available that day (e.g. due to leave) the model is INFEASIBLE
                 # and the caller surfaces a clear diagnostic — we never silently

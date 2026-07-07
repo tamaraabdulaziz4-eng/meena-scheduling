@@ -3053,7 +3053,7 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
         q("UPDATE scheduling.users SET password=%s, token_epoch=COALESCE(token_epoch,0)+1 WHERE id=%s",
           (hashed, uid), exec_only=True)
     sets, params = [], []
-    if body.get("username") is not None: sets.append("username=%s"); params.append(body["username"])
+    if body.get("username") is not None: sets.append("username=%s"); params.append((body["username"] or "").strip().lower())
     if body.get("role")     is not None: sets.append("role=%s");     params.append(body["role"])
     if "email" in body: sets.append("email=%s"); params.append((body.get("email") or "").strip() or None)
     if "email_notifications" in body: sets.append("email_notifications=%s"); params.append(bool(body["email_notifications"]))
@@ -3494,7 +3494,15 @@ def delete_shift_type(stid: int, user=Depends(require_superadmin)):
 
 @app.get("/api/schedules")
 def list_schedules(request: Request, user=Depends(get_current_user)):
-    branch_id = request.query_params.get("branch_id") if user["role"] in ("superadmin","manager") else user.get("branch_id")
+    # Cross-branch roles (superadmin, manager) can query any/all branches;
+    # everyone else is pinned to their own branch — and if they have none
+    # (e.g. a viewer/admin with no branch), they get a 403, not the whole list.
+    if user["role"] in ("superadmin", "manager"):
+        branch_id = request.query_params.get("branch_id")
+    else:
+        branch_id = user.get("branch_id")
+        if not branch_id:
+            raise HTTPException(403, "No branch assigned to this account")
     if branch_id:
         rows = q("""SELECT s.id,s.branch_id,s.year,s.month,s.status,s.created_at,s.updated_at,
                            b.name AS branch_name
@@ -3915,6 +3923,12 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
         try:
             # For sick leave, remember the shift it replaces so we can suggest cover.
             covered = _current_rota_shift(staff_id, d) if leave_type == "SL" else None
+            # Never let a fresh submission silently overwrite an already-APPROVED
+            # leave: the ON CONFLICT UPDATE would reset its status back to
+            # pending/awaiting without clearing the rota, leaving the AL cell on
+            # the board while the DB says pending (and dropping the leave-conflict
+            # guards). The WHERE skips those rows; we then treat the existing
+            # approved leave as already-saved rather than a failure.
             row = q("""INSERT INTO scheduling.leave_requests
                        (staff_id,date,leave_type,status,note,created_by,covered_shift)
                        VALUES (%s,%s,%s,%s,%s,%s,%s)
@@ -3922,6 +3936,7 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
                        SET leave_type=EXCLUDED.leave_type,note=EXCLUDED.note,
                            status=EXCLUDED.status,created_by=EXCLUDED.created_by,
                            covered_shift=EXCLUDED.covered_shift
+                       WHERE scheduling.leave_requests.status <> 'approved'
                        RETURNING id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
                                  leave_type,status,note,created_by,created_at,covered_shift""",
                     (staff_id, d, leave_type, new_status, note, user["id"], covered), one=True)
@@ -3931,7 +3946,16 @@ async def create_leave(request: Request, user=Depends(get_current_user)):
                 if new_status == "approved":
                     apply_leave_to_schedule(staff_id, d, leave_type)
             else:
-                failed.append(d)
+                # No row back: either the conflict target is already approved
+                # (keep it — it's on the rota) or the insert genuinely failed.
+                existing = q("""SELECT id,staff_id,TO_CHAR(date,'YYYY-MM-DD') AS date,
+                                       leave_type,status,note,created_by,created_at,covered_shift
+                                FROM scheduling.leave_requests
+                                WHERE staff_id=%s AND date=%s""", (staff_id, d), one=True)
+                if existing and existing["status"] == "approved":
+                    leaves.append(existing)
+                else:
+                    failed.append(d)
         except Exception as e:
             # Don't silently drop a day — record it so the caller can surface
             # "saved 3 of 5" instead of pretending everything went through.
@@ -6765,7 +6789,11 @@ def _rad_upsert_orders(items):
         except Exception:
             continue
         ready = it.get("readyToFile") is True
-        imaged = ready or it.get("stage") in ("imaged", "draft", "reported")
+        # Only stamp imaged_at from an AUTHORITATIVE signal: a ready/verified report or the
+        # hard `scanned` exam-timestamp. The fast pass's `stage` is the PRELIMINARY HIS
+        # status text, which must never be treated as PACS-confirmed imaging — otherwise a
+        # later read-back of imaged_at would be untrustworthy.
+        imaged = ready or bool(it.get("scanned"))
         acc = str(it.get("accession") or "").strip() or None
         dedup[gpb] = (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), gpb,
                       it.get("patientName"), it.get("department"), it.get("doctorName"),
@@ -6856,7 +6884,7 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                  (site, mrno, bill_no, gen_pat_billing_id, patient_name,
                   state, study_id, service_id, ordered_at, reported_at, filed_at, filed_by, filed_source,
                   accession, accession_source, pacs_id, cpacs_url)
-             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),COALESCE(%s::timestamptz, NOW()),NOW(),%s,'meena',%s,%s,%s,%s)
+             VALUES (%s,%s,%s,%s,%s,'filed',%s,%s,NOW(),GREATEST(COALESCE(%s::timestamptz, NOW()), NOW()),NOW(),%s,'meena',%s,%s,%s,%s)
              ON CONFLICT (gen_pat_billing_id) DO UPDATE SET
                  state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by,
                  filed_source='meena',
@@ -6867,7 +6895,10 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                  patient_name=COALESCE(scheduling.radiology_orders.patient_name, EXCLUDED.patient_name),
                  -- the real report date, when we have it, is the truth — it overrides the
                  -- board's earlier "seen ready" guess; else keep what's stored, then NOW().
-                 reported_at=COALESCE(%s::timestamptz, scheduling.radiology_orders.reported_at, NOW()),
+                 -- Never let it fall before ordered_at, which would yield a negative TAT.
+                 reported_at=GREATEST(
+                     COALESCE(%s::timestamptz, scheduling.radiology_orders.reported_at, NOW()),
+                     scheduling.radiology_orders.ordered_at),
                  accession=COALESCE(scheduling.radiology_orders.accession, EXCLUDED.accession),
                  accession_source=COALESCE(scheduling.radiology_orders.accession_source, EXCLUDED.accession_source),
                  pacs_id=COALESCE(scheduling.radiology_orders.pacs_id, EXCLUDED.pacs_id),
@@ -7250,6 +7281,41 @@ async def radiology_autostamp_set(request: Request, user=Depends(require_superad
 # drill-down to a single day, not the default view.
 _RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
 
+def _rad_seed_confirmed_stages(items):
+    """Fast-pass cold-open seed: flag rows that already have a DePACS-CONFIRMED verified
+    report in our lifecycle store, so a brand-new browser open shows them as Final
+    immediately instead of parking them in Waiting until the slow ready pass runs. Only
+    state='reported' is trusted — it's written exclusively on the DePACS ready pass, so
+    it's authoritative; we never seed 'imaged' (that column isn't DePACS-grounded). One
+    query for the whole board. Best-effort — never breaks the worklist."""
+    if not isinstance(items, list) or not items:
+        return
+    ids = []
+    for it in items:
+        try:
+            g = it.get("genPatBillingId")
+            if g:
+                ids.append(int(g))
+        except Exception:
+            pass
+    if not ids:
+        return
+    try:
+        rows = q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
+                    WHERE gen_pat_billing_id = ANY(%s) AND state='reported'""", (ids,)) or []
+        reported = {r["gen_pat_billing_id"] for r in rows}
+        if not reported:
+            return
+        for it in items:
+            try:
+                g = int(it.get("genPatBillingId")) if it.get("genPatBillingId") else None
+            except Exception:
+                g = None
+            if g in reported:
+                it["stageConfirmed"] = "reported"
+    except Exception:
+        pass
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_radiology)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -7288,6 +7354,11 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # so orders promote ordered → reported here.
     try:
         if isinstance(data, dict):
+            # Fast pass only: seed DePACS-confirmed Final from the store so cold opens paint
+            # reported rows correctly without waiting on the ready pass. The heavy ready pass
+            # already carries authoritative stage, so it doesn't need (or want) the seed.
+            if not heavy:
+                _rad_seed_confirmed_stages(data.get("items"))
             _rad_upsert_orders(data.get("items"))
             _rad_reconcile_resolved(data.get("items"))
             _annotate_worklist_consent(data.get("items"))
@@ -9402,7 +9473,18 @@ def whatsapp_diagnose(user=Depends(require_admin)):
            "dns": None, "tcp_connect": None, "http_status": None,
            "latency_ms": None, "error": None}
     # Private/loopback host the hosted server can never reach from the cloud.
-    if host in ("localhost", "127.0.0.1", "::1") or host.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.")):
+    def _is_private_host(h: str) -> bool:
+        if h in ("localhost", "127.0.0.1", "::1") or h.startswith(("10.", "192.168.")):
+            return True
+        # 172.16.0.0/12 spans 172.16.x.x through 172.31.x.x
+        parts = h.split(".")
+        if len(parts) == 4 and parts[0] == "172":
+            try:
+                return 16 <= int(parts[1]) <= 31
+            except ValueError:
+                return False
+        return False
+    if _is_private_host(host):
         out["error"] = (f"The bridge URL points to a private/local address ({host}). "
                         "A hosted server can't reach that — the bridge must be on a public URL.")
     try:
@@ -9837,7 +9919,11 @@ def _cases_reminder_loop():
             if 0 <= hour <= 23:
                 ksa = datetime.now(timezone.utc) + timedelta(hours=3)
                 mins_since_start = (ksa.hour - hour) * 60 + ksa.minute
-                if 0 <= mins_since_start < _CASES_REMIND_WINDOW_HOURS * 60:
+                # Stop at the 08:00 operational-date rollover so we don't start
+                # nagging about the next, freshly-started (empty) day. A window
+                # that begins before 08:00 must not run past it.
+                crossed_rollover = hour < 8 <= ksa.hour
+                if 0 <= mins_since_start < _CASES_REMIND_WINDOW_HOURS * 60 and not crossed_rollover:
                     date = _operational_date_server()
                     slot = mins_since_start // _CASES_REMIND_EVERY_MIN
                     claimed = q("""INSERT INTO scheduling.app_settings (key,value)

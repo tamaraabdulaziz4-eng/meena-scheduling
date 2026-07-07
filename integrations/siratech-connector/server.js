@@ -652,6 +652,12 @@ app.post('/results/match', requireAuth, async (req, res) => {
 // N distinct patients are matched against DePACS so the board flags which orders
 // already have a VERIFIED report ready to file. READ-ONLY.
 const WORKLIST_CACHE_TTL = Number(process.env.WORKLIST_CACHE_TTL_MS || 60000);
+// The FAST pass (no ready/modality) is light — one RadiologySearch + one FetchRISPanel
+// per site — so it can refresh far more often to make the board feel live, without
+// touching the heavy per-patient DePACS pass (which keeps the 60s TTL above). HIS load
+// from the fast pass is bounded by this TTL, NOT by the number of open boards, because
+// every viewer shares the one cached fetch per window.
+const WORKLIST_FAST_CACHE_TTL = Number(process.env.WORKLIST_FAST_CACHE_TTL_MS || 12000);
 const worklistCache = new Map();
 
 // Cap on how many worklist rows we enrich with real modality per request. The
@@ -678,7 +684,10 @@ function parseHisDate(s) {
 
 async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, noCache = false }) {
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality });
-  if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < WORKLIST_CACHE_TTL) return e.data; }
+  // Fast board pass refreshes on the short TTL; the heavy ready/modality pass keeps the
+  // long TTL so DePACS/per-order load is unchanged.
+  const ttl = (ready || modality) ? WORKLIST_CACHE_TTL : WORKLIST_FAST_CACHE_TTL;
+  if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < ttl) return e.data; }
   await getToken();
   const empId = currentEmpId() || '0';
   const now = Date.now();
@@ -863,9 +872,11 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const kept = items.filter(inRange);
   items.length = 0; items.push(...kept);
   // Re-sort AFTER expansion: the ER-encounter flag and the per-bill order time were
-  // applied during expansion, so the emergency-first / newest-first order computed
+  // applied during expansion, so the emergency-first / oldest-first order computed
   // before expansion is now stale (a fresh ER row could otherwise sit mid-list).
-  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
+  // Must match the documented invariant (oldest-first = highest TAT first) that the
+  // board and the auto-file candidate sweep both rely on: descending ageHours.
+  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
 
   // Fallback: any rows the RIS panel didn't cover (or if the service field guess
   // missed) get the old per-order RadiologyDetails lookup — bounded and concurrent —

@@ -205,6 +205,15 @@ async function tick() {
 (async () => {
   say(`MWL agent starting — broker ${HOST}:${PORT} AE ${CALLED_AE} (calling as ${CALLING_AES.join(', ')}), Meena ${MEENA_URL}, every ${POLL_SEC}s`);
   try { await meenaLogin(); say('Meena login OK'); } catch (e) { console.error('✗ ' + e.message); process.exit(1); }
-  await tick();
-  setInterval(tick, POLL_SEC * 1000);
+  // Self-scheduling loop (NOT setInterval): tick() is async and may await a long
+  // backoff sleep when the broker is down. setInterval would keep launching fresh,
+  // overlapping tick()s every POLL_SEC — defeating the backoff (the sick broker is
+  // still hit every 60s) and corrupting the shared cycle/consecFail/badAes state via
+  // concurrent runs. Scheduling the next tick only after the current one settles
+  // guarantees a single in-flight cycle and makes the backoff actually space queries.
+  const loop = async () => {
+    await tick();
+    setTimeout(loop, POLL_SEC * 1000);
+  };
+  loop();
 })();

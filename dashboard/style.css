@@ -3064,6 +3064,9 @@ body.dark .wl2 { --amber-wash: #2C2312; --red-wash: #2E1618; }
 .wl2 .ris.progress .rd { background: var(--amber); animation: blink 1.3s infinite; }
 .wl2 .ris.completed, .wl2 .ris.imaged { color: #0A7A55; background: rgba(0,200,150,.13); }
 .wl2 .ris.completed .rd, .wl2 .ris.imaged .rd { background: var(--green); }
+/* Imaged from the HIS preliminary status, not yet PACS-confirmed: pulse the dot in place
+   (no row movement) until the DePACS ready pass confirms and clears `pending`. */
+.wl2 .ris.confirming .rd { animation: blink 1.3s infinite; }
 .wl2 .ris.prelim { color: #1f74c9; background: rgba(59,146,240,.15); }
 .wl2 .ris.prelim .rd { background: var(--blue); }
 .wl2 .ris.final { color: var(--green-ink); background: rgba(14,159,110,.15);
