@@ -863,9 +863,11 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const kept = items.filter(inRange);
   items.length = 0; items.push(...kept);
   // Re-sort AFTER expansion: the ER-encounter flag and the per-bill order time were
-  // applied during expansion, so the emergency-first / newest-first order computed
+  // applied during expansion, so the emergency-first / oldest-first order computed
   // before expansion is now stale (a fresh ER row could otherwise sit mid-list).
-  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
+  // Must match the documented invariant (oldest-first = highest TAT first) that the
+  // board and the auto-file candidate sweep both rely on: descending ageHours.
+  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
 
   // Fallback: any rows the RIS panel didn't cover (or if the service field guess
   // missed) get the old per-order RadiologyDetails lookup — bounded and concurrent —
