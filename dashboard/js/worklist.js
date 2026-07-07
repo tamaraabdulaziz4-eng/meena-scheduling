@@ -12,14 +12,24 @@
 //  · a female patient shows a one-tap non-pregnancy consent right on her row.
 // No knobs, no banners — just the board.
 
-let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
+let wlState = { branches: [], site: '', data: null, loading: false, timer: null, liveTimer: null,
                 seenEmerg: null, from: wlTodayLocal(), to: wlTodayLocal(), filter: null, searchView: false,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
                 modCache: new Map(), stageCache: new Map(), pregCache: new Map(),
-                // RIS-style worklist: which status bucket + modality is the board filtered to.
-                statusTab: 'all', modFilter: null };
+                // Per-MRN clinical-indication index cache (bug #2 — inline row indication).
+                indCache: new Map(),
+                // Modality is the only board filter now — the phase strip HIGHLIGHTS
+                // + scrolls (bug #1), it never hides a patient. `phaseHi` is the currently
+                // highlighted phase (or null).
+                modFilter: null, phaseHi: null,
+                // Live-pill + watchdog bookkeeping (bug #3): the timestamp of the last
+                // good load, a "reconnecting" flag, and a monotonic load generation so a
+                // hung request that the watchdog gave up on can never paint stale data.
+                lastGood: 0, reconnecting: false, _loadGen: 0,
+                // Bucket-per-order from the previous render → transient "moved from …" tag.
+                prevPhase: new Map(), movedTags: new Map() };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
 // dropping off) shows without the operator touching anything.
@@ -94,7 +104,7 @@ function wlSyncDayControls() {
   const t = document.getElementById('wl-to'); if (t) t.value = wlState.to;
   const btn = document.getElementById('wl-today-btn');
   const isToday = wlState.from === wlTodayLocal() && wlState.to === wlTodayLocal();
-  if (btn) btn.className = 'btn btn-sm ' + (isToday ? 'btn-primary' : 'btn-ghost');
+  if (btn) btn.className = 'tbtn' + (isToday ? ' today' : '');
 }
 
 // A new EMERGENCY order arriving is the one event a radiology operator must not
@@ -147,39 +157,52 @@ async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Live RIS status board · STAT first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState._paintedOnce = false;                        // entrance animation once per visit
+  wlState.phaseHi = null;                              // no phase highlighted on entry
+  wlState.reconnecting = false; wlState.lastGood = Date.now();
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
   // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
   // that patient (search finds them even if they're not on today's board).
   const jumpMrn = window._wlPendingFilter; window._wlPendingFilter = null;
+  const branch = (typeof currentUser !== 'undefined' && currentUser &&
+    (currentUser.branchName || currentUser.branch || currentUser.siteName)) || '';
+  const dateStr = new Date().toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
   const c = document.getElementById('content');
+  // ── Slim top bar (approved mockup): brand · live pill · search · Today · Date ·
+  //    branch · refresh. The controls live in the STATIC shell (not #wl-body) so a
+  //    45s poll never interrupts typing or steals focus. ──
   c.innerHTML = `
-    ${pageHero('Worklist', 'Radiology worklist', 'Live status board — scheduled · imaged · reporting · reported')}
-    <div class="cc">
-    <div class="card" style="margin-bottom:12px">
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <div style="display:flex;gap:4px;align-items:center">
-          <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(-1)" title="Previous day">◀</button>
-          <span style="font-size:12px;color:var(--muted)">From</span>
-          <input type="date" id="wl-from" class="input" value="${wlState.from}" onchange="wlSetFrom(this.value)" style="width:145px" title="From date">
-          <span style="font-size:12px;color:var(--muted)">To</span>
-          <input type="date" id="wl-to" class="input" value="${wlState.to}" onchange="wlSetTo(this.value)" style="width:145px" title="To date">
-          <button class="btn btn-sm btn-ghost" onclick="wlShiftDay(1)" title="Next day">▶</button>
-          <button id="wl-today-btn" class="btn btn-sm btn-primary" onclick="wlTodayRange()" title="Today only">Today</button>
+    <div class="cc wl2">
+      <div class="top">
+        <div class="brand">
+          <div class="logo">م</div>
+          <div>
+            <h1>Meena RIS · Worklist</h1>
+            <div class="sub">${branch ? escapeHtml(String(branch)) + ' · ' : ''}${escapeHtml(dateStr)}</div>
+          </div>
         </div>
-        <select id="wl-branch" class="input" style="min-width:160px" onchange="wlOnBranch()">
+        <span class="live" id="wl-live"><i></i>Live · updated 0s ago</span>
+        <div class="spacer"></div>
+        <label class="search">
+          ${icon('search')}
+          <input id="wl-search" placeholder="Search patient, MRN, or accession" autocomplete="off"
+                 oninput="wlLiveFilter(this.value)" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
+        </label>
+        <button class="tbtn today" id="wl-today-btn" onclick="wlTodayRange()">Today</button>
+        <button class="tbtn" onclick="wlToggleDate()">${icon('calendar')}Date</button>
+        <select id="wl-branch" class="tbtn wl-branchsel" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <div style="position:relative;flex:1;min-width:280px;display:flex;align-items:center">
-          <span style="position:absolute;left:9px;display:flex;color:var(--muted);pointer-events:none">${icon('search')}</span>
-          <input id="wl-search" class="input" placeholder="Search patient, MRN, or accession"
-                 style="width:100%;padding-left:32px" autocomplete="off"
-                 oninput="wlLiveFilter(this.value)" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
-        </div>
-        <button class="btn btn-sm btn-ghost" onclick="wlLoad(true)" title="Refresh now">↻</button>
-        <span id="wl-summary" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
+        <button class="tbtn icon" title="Refresh now" onclick="wlLoad(true)">${icon('refresh')}</button>
       </div>
-    </div>
-    <div id="wl-body"></div>
+      <div class="datepop" id="wl-datepop" style="display:none">
+        <button class="tbtn icon" onclick="wlShiftDay(-1)" title="Previous day">‹</button>
+        <span class="dl">From</span>
+        <input type="date" id="wl-from" value="${wlState.from}" onchange="wlSetFrom(this.value)" title="From date">
+        <span class="dl">To</span>
+        <input type="date" id="wl-to" value="${wlState.to}" onchange="wlSetTo(this.value)" title="To date">
+        <button class="tbtn icon" onclick="wlShiftDay(1)" title="Next day">›</button>
+      </div>
+      <div id="wl-body"></div>
     </div>`;
 
   // Only org-wide roles can switch branches; a team lead is scoped server-side to
@@ -208,6 +231,38 @@ async function renderWorklistPage() {
     wlSearch(jumpMrn);   // filters the board, or finds the patient cross-branch if not on it
   }
   wlStartTimer();
+  wlStartLiveTicker();
+}
+
+// Reveal / hide the compact From–To date popover under the Date button.
+function wlToggleDate() {
+  const el = document.getElementById('wl-datepop');
+  if (el) el.style.display = (el.style.display === 'none' ? '' : 'none');
+}
+
+// ── Live pill (bug #3) ──────────────────────────────────────────────────────
+// A light ticker keeps "#wl-live" honest — "Live · updated Xs ago" every few
+// seconds, and "Reconnecting…" (amber) the moment a fetch aborts/fails, so the
+// board never looks frozen. It recovers on its own on the next good poll.
+function wlPaintLive() {
+  const el = document.getElementById('wl-live');
+  if (!el) return;
+  if (wlState.reconnecting) {
+    el.className = 'live recon';
+    el.innerHTML = '<i></i>Reconnecting…';
+    return;
+  }
+  const secs = wlState.lastGood ? Math.max(0, Math.round((Date.now() - wlState.lastGood) / 1000)) : 0;
+  el.className = 'live';
+  el.innerHTML = `<i></i>Live · updated ${secs}s ago`;
+}
+function wlStartLiveTicker() {
+  if (wlState.liveTimer) clearInterval(wlState.liveTimer);
+  wlPaintLive();
+  wlState.liveTimer = setInterval(() => {
+    if (!document.getElementById('wl-live')) { clearInterval(wlState.liveTimer); wlState.liveTimer = null; return; }
+    wlPaintLive();
+  }, 3000);
 }
 
 function wlStartTimer() {
@@ -227,6 +282,16 @@ async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
   if (!body || wlState.loading) return;
   wlState.loading = true;
+  const gen = ++wlState._loadGen;
+  // WATCHDOG (bug #3): a hung /radiology/worklist must never wedge the board. If this
+  // load hasn't settled in ~120s, release the lock so the next poll can retry and flip
+  // the pill to "Reconnecting…". The stale request is then ignored (gen guard below).
+  const watchdog = setTimeout(() => {
+    if (wlState._loadGen === gen && wlState.loading) {
+      wlState.loading = false;
+      wlState.reconnecting = true; wlPaintLive();
+    }
+  }, 120000);
   if (!silent && !wlState.filter) body.innerHTML = LOADING_HTML;
   // FAST load: no ready/modality — just the pending list, so the board paints in one
   // round-trip. The pipeline stage + exam/modality (per-order HIS work) come in a
@@ -236,7 +301,9 @@ async function wlLoad(force, silent) {
   qs.set('from', wlState.from); qs.set('to', wlState.to);   // explicit range (defaults to today only)
   if (force) qs.set('nocache', '1');
   try {
-    wlState.data = await API.get('/radiology/worklist?' + qs.toString());
+    const data = await API.get('/radiology/worklist?' + qs.toString());
+    if (wlState._loadGen !== gen) return;         // superseded — the watchdog gave up, a newer load owns the board
+    wlState.data = data;
     // The fast pass carries only a PRELIMINARY stage (from the HIS RIS status text),
     // which can be wrong ("Not Verified" etc). Demote it: it may hint the badge, but it
     // must NOT move a row into the imaged/reported strips — only the authoritative
@@ -245,10 +312,14 @@ async function wlLoad(force, silent) {
     for (const it of (wlState.data.items || [])) {
       if (it.stage) { it.stagePrelim = it.stage; delete it.stage; }
     }
+    wlState.lastGood = Date.now(); wlState.reconnecting = false; wlPaintLive();
     wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
     wlEnrich(silent);                             // background: fill stage + modality for unknown rows
   } catch (e) {
+    // A failed/aborted fetch flips the live pill to amber "Reconnecting…" instead of
+    // freezing the board — the next good poll clears it on its own.
+    wlState.reconnecting = true; wlPaintLive();
     if (!silent) {
       // In a search view, replacing the body with a retry card would wipe the results —
       // surface the failure as a toast instead so the operator still sees the error.
@@ -260,7 +331,10 @@ async function wlLoad(force, silent) {
           <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
       }
     }
-  } finally { wlState.loading = false; }
+  } finally {
+    clearTimeout(watchdog);
+    if (wlState._loadGen === gen) wlState.loading = false;   // ALWAYS release our own lock
+  }
 }
 
 // Paint modality/exam AND pipeline stage onto the freshly-loaded board from the
@@ -302,6 +376,9 @@ async function wlEnrich(silent) {
   // only ever fill in progress, never cause flicker.
   if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 30000)) return;
   _wlEnrichBusy = true;
+  // WATCHDOG (bug #3): never let a hung enrichment pass wedge the busy lock forever —
+  // release it after ~120s so a later refresh can retry the pipeline-stage lookups.
+  const enrichWatch = setTimeout(() => { _wlEnrichBusy = false; }, 120000);
   // Show the loading shimmer on the not-yet-filled cells while this pass runs.
   if (anyMissing) { wlState.enriching = true; if (document.getElementById('wl-body')) wlRender(); }
   const mkQs = (flags) => {
@@ -326,6 +403,7 @@ async function wlEnrich(silent) {
     ]);
     wlState.lastEnrich = Date.now();
   } finally {
+    clearTimeout(enrichWatch);
     _wlEnrichBusy = false;
     // Settle: turn the shimmer off and repaint with whatever filled in (rows still
     // empty after this pass fall back to "—" — that's the connector's per-order cap).
@@ -411,23 +489,46 @@ function wlRisStatus(it) {
   if (it.stage === 'draft')
     return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '', state: 'prelim' };
   if (it.stage === 'imaged' || it.scanned)
-    return { bucket: 'imaged', label: 'Completed', cls: 'wl-st-done', icon: '', state: 'completed' };
+    return { bucket: 'imaged', label: 'Imaged', cls: 'wl-st-done', icon: '', state: 'completed' };
   if (it.examStartAt)
     return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '', state: 'progress' };
   if (it.arrivedAt)
     return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '', state: 'arrived' };
   return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '', state: 'scheduled' };
 }
-const _WL_BUCKETS = [
-  { key: 'all',       label: 'All' },
-  { key: 'waiting',   label: 'To scan' },
-  { key: 'imaged',    label: 'Imaged' },
-  { key: 'reporting', label: 'Reporting' },
-  { key: 'reported',  label: 'Reported' },
+// The five workflow phases shown on the strip. Finer than the coarse RIS bucket
+// (To scan splits into scheduled/arrived; In progress is the on-table state).
+const _WL_PHASES = [
+  { key: 'toscan',     label: 'To scan',     dot: 'var(--slate)' },
+  { key: 'inprogress', label: 'In progress', dot: 'var(--amber)' },
+  { key: 'imaged',     label: 'Imaged',      dot: 'var(--green)' },
+  { key: 'reporting',  label: 'Reporting',   dot: 'var(--blue)' },
+  { key: 'final',      label: 'Final',       dot: 'var(--green-ink)' },
 ];
-// Switching the view re-indexes rows, so drop any open drills (their positional keys
-// would otherwise restore onto a different patient's row).
-function wlSetTab(t) { wlState.statusTab = t; if (wlState.openDrills) wlState.openDrills.clear(); wlRender(); }
+const _WL_PHASE_RANK = { toscan: 0, inprogress: 1, imaged: 2, reporting: 3, final: 4 };
+function wlPhaseLabel(k) { const p = _WL_PHASES.find((x) => x.key === k); return p ? p.label : k; }
+// A row's workflow phase, derived from its RIS status state.
+function wlPhase(it) {
+  const s = (it.__ris || wlRisStatus(it)).state;
+  if (s === 'progress') return 'inprogress';
+  if (s === 'completed') return 'imaged';
+  if (s === 'prelim') return 'reporting';
+  if (s === 'final') return 'final';
+  return 'toscan';   // scheduled / arrived
+}
+// BUG #1: clicking a phase HIGHLIGHTS it + scrolls to its first row — it never hides
+// any patient. Clicking the active phase again clears the highlight.
+function wlPhaseJump(key) {
+  wlState.phaseHi = (wlState.phaseHi === key) ? null : key;
+  wlRender();
+  if (wlState.phaseHi) {
+    const target = wlState.phaseHi;
+    setTimeout(() => {
+      const el = document.querySelector('.wl2 .row[data-phase="' + target + '"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 40);
+  }
+}
 function wlSetMod(m) { wlState.modFilter = (m === '' || wlState.modFilter === m) ? null : m; if (wlState.openDrills) wlState.openDrills.clear(); wlRender(); }
 // Modality of a row, normalised to the coarse RIS bucket for filtering.
 function wlRowMod(it) {
@@ -441,25 +542,32 @@ function wlRowMod(it) {
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);
-  // The main board is ONLY the pre-scan queue (who still needs consent + imaging).
-  // The moment images land in DePACS the row moves to the "Imaged" strip; the moment
-  // the report is signed it moves to the "Reported" strip (auto-file takes it from
-  // there). Both strips open with one click, so nothing is ever silently lost.
+  // Classify every row once: RIS status, coarse bucket, and the finer workflow phase.
   // `scanned` = Siratech recorded an exam start/end (a hard fact) → imaged, even before
   // the DePACS pass and regardless of the demoted preliminary stage text.
-  // Bucket every row by its RIS status, and count per bucket for the tabs.
-  for (const it of items) it.__bucket = wlRisStatus(it).bucket;
-  const counts = { all: items.length, waiting: 0, imaged: 0, reporting: 0, reported: 0 };
-  for (const it of items) counts[it.__bucket] = (counts[it.__bucket] || 0) + 1;
-  const sum = document.getElementById('wl-summary');
-  if (sum) sum.textContent = `${counts.waiting} to scan · ${counts.imaged} imaged · ${counts.reporting} reporting · ${counts.reported} reported`
-    + (d.sites && d.sites.failed && d.sites.failed.length ? ` · ${d.sites.failed.length} branch(es) unreachable` : '');
+  for (const it of items) { it.__ris = wlRisStatus(it); it.__bucket = it.__ris.bucket; it.__phase = wlPhase(it); }
+  const counts = { toscan: 0, inprogress: 0, imaged: 0, reporting: 0, final: 0 };
+  for (const it of items) counts[it.__phase] = (counts[it.__phase] || 0) + 1;
+
+  // BUG #1: a row that ADVANCES a phase between renders gets a transient "moved from …"
+  // tag (~8s) so the promotion is visible in place — the patient never vanishes.
+  const _now = Date.now();
+  for (const it of items) {
+    const rk = wlRowKey(it); if (!rk) continue;
+    const cur = it.__phase, prev = wlState.prevPhase.get(rk);
+    if (prev !== undefined && prev !== cur && _WL_PHASE_RANK[cur] > _WL_PHASE_RANK[prev])
+      wlState.movedTags.set(rk, { from: wlPhaseLabel(prev), at: _now });
+    wlState.prevPhase.set(rk, cur);
+  }
+  // Drop expired "moved from …" tags so the Map can't grow across a long shift.
+  for (const [k, v] of wlState.movedTags) if (_now - v.at > 8000) wlState.movedTags.delete(k);
+
   const body = document.getElementById('wl-body');
   if (!body) return;
   // A cross-branch search result view is showing — don't let a live refresh clobber it.
   if (wlState.searchView) return;
   // Entrance animation fires ONCE per visit. Every later repaint (45s poll, enrich
-  // merge, tab/chip switch) recreates the board nodes, which would replay the row
+  // merge, chip/phase switch) recreates the board nodes, which would replay the row
   // stagger as a visible flicker — the .cc-still class pins those repaints.
   const ccRoot = document.querySelector('#content > .cc');
   if (ccRoot) { ccRoot.classList.toggle('cc-still', !!wlState._paintedOnce); wlState._paintedOnce = true; }
@@ -469,52 +577,53 @@ function wlRender() {
   if (wlState.filter) {
     const f = wlState.filter;
     const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(f));
-    const banner = `<div style="display:flex;align-items:center;gap:8px;margin:2px 2px 12px">
-      <span style="font-weight:700">${match.length} on this board starting with "${escapeHtml(f)}"</span>
-      <button class="btn btn-sm btn-ghost" onclick="wlClearFilter()">← Back to full board</button></div>`;
+    const banner = `<div class="wl-filterbar"><span>${match.length} on this board starting with "${escapeHtml(f)}"</span>
+      <button class="tbtn" onclick="wlClearFilter()">← Back to full board</button></div>`;
     body.innerHTML = banner + (match.length
       ? wlTable(match)
       : `<div class="empty" style="padding:20px"><p>No patient on this board starts with "${escapeHtml(f)}".${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
-    wlAutoPreg();
+    wlAutoPreg(); wlAutoIndication();
     return;
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
 
-  // ── RIS status tabs (worklist buckets) ──────────────────────────────────────
-  if (!(wlState.statusTab in counts)) wlState.statusTab = 'all';
-  const tabs = _WL_BUCKETS.map((b) => {
-    const n = counts[b.key] || 0;
-    const on = wlState.statusTab === b.key;
-    return `<button class="tab${on ? ' on' : ''}" onclick="wlSetTab('${b.key}')">${b.label}<span class="n">${n}</span></button>`;
-  }).join('');
+  // ── Phase strip (highlights + counts, never hides) ──────────────────────────
+  const phases = `<div class="phases">${_WL_PHASES.map((p) => {
+    const on = wlState.phaseHi === p.key;
+    const warn = p.key === 'inprogress';
+    const extra = p.key === 'final' ? ' <small>today</small>' : '';
+    return `<button class="phase${on ? ' on' : ''}${warn ? ' warn' : ''}" onclick="wlPhaseJump('${p.key}')">
+      <span class="pl"><i style="background:${p.dot}"></i>${p.label}</span>
+      <span class="pv tnum">${counts[p.key] || 0}${extra}</span></button>`;
+  }).join('')}</div>`;
 
   // ── Modality filter chips (only modalities actually present) ────────────────
   const modCounts = {};
   for (const it of items) { const m = wlRowMod(it); if (m) modCounts[m] = (modCounts[m] || 0) + 1; }
   const present = new Set(Object.keys(modCounts));
   // If the active modality filter is no longer on the board (its rows all filed/dropped),
-  // auto-clear it — otherwise the chip bar hides and the board strands empty with no way
-  // to reset the filter.
+  // auto-clear it — otherwise the chip bar strands the board empty with no way to reset.
   if (wlState.modFilter && !present.has(wlState.modFilter)) wlState.modFilter = null;
   const MOD_ORDER = [['CT', 'CT'], ['MR', 'MRI'], ['US', 'US'], ['XR', 'X-Ray'], ['MG', 'Mammo']];
   const MOD_DOT = { CT: '#6B4EFF', MR: '#3BA0FF', US: '#00C896', XR: '#8358FD', MG: '#E4739B' };
-  const modChips = present.size > 1 ? `<div class="chips">
-      <button class="chip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All modalities</button>
+  const modChips = present.size > 1 ? `<div class="mods">
+      <span class="lbl">Modality</span>
+      <button class="chip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All</button>
       ${MOD_ORDER.filter(([k]) => present.has(k)).map(([k, lbl]) =>
-        `<button class="chip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')"><span class="md" style="background:${MOD_DOT[k]}"></span>${lbl}<span class="cn">${modCounts[k] || 0}</span></button>`).join('')}
+        `<button class="chip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')"><span class="dot" style="background:${MOD_DOT[k]}"></span>${lbl}<span class="c">${modCounts[k] || 0}</span></button>`).join('')}
     </div>` : '';
 
-  // Filter to the selected bucket + modality.
+  // BUG #1: the board shows EVERY row (STAT→phase→newest). Modality is the only filter;
+  // imaged/reported rows get `.done` (dimmed) but STAY on the board.
   let rows = items;
-  if (wlState.statusTab !== 'all') rows = rows.filter((it) => it.__bucket === wlState.statusTab);
   if (wlState.modFilter) rows = rows.filter((it) => wlRowMod(it) === wlState.modFilter);
 
-  const bar = `<div class="tabs">${tabs}</div>${modChips}`;
-  body.innerHTML = bar + (rows.length
+  body.innerHTML = phases + modChips + (rows.length
     ? wlTable(rows, 'a')
-    : `<div class="empty" style="padding:22px"><p>Nothing in this view.</p></div>`);
+    : `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`);
   wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
+  wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
 }
 
 // Which strips + Check drills the operator has open — preserved across every repaint
@@ -554,8 +663,8 @@ function wlTable(items, prefix) {
     (Number(b.emergency) - Number(a.emergency))     // STAT / emergency always on top
     || (bk(a) - bk(b))                              // then by workflow phase (to-scan → reported)
     || ((a.ageHours || 0) - (b.ageHours || 0)));    // then NEWEST first (freshest order on top)
-  return `<div class="board wl-board">
-    <div class="thead"><div>Patient</div><div>Exam</div><div class="h-time">Ordered</div><div>RIS status</div><div style="text-align:center">Action</div></div>
+  return `<div class="board">
+    <div class="bhead"><div>Patient &amp; indication</div><div>Exam</div><div>Ordered</div><div>RIS status</div><div class="r">Actions</div></div>
     <div class="rows">${rows.map((it, i) => wlRow(it, p + i)).join('')}</div>
   </div>`;
 }
@@ -692,37 +801,138 @@ function wlRisStatusBadge(it) {
   const s = wlRisStatus(it);
   return `<span class="ris ${s.state}"><span class="rd"></span>${escapeHtml(s.label)}</span>`;
 }
+// Inline Feather SVGs for the few glyphs not in util.js's icon() map (link chain,
+// send/handoff). Sized by the .wl2 scope like the shared .mi-ico icons.
+const WL_SVG = {
+  link: '<svg class="mi-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
+  send: '<svg class="mi-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V4s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>',
+};
+
+// ── BUG #2: inline clinical indication on the row ───────────────────────────
+// The cell is keyed by MRN (like the pregnancy cell) so a live refresh keeps it and
+// one patient can span several rows. It ALSO carries the row's bill + service so the
+// per-exam indication resolves correctly for a bundled (multi-exam) bill.
+function wlIndCellHtml(idx, mr, bill, svc) {
+  const ind = (bill && (idx['b:' + bill + '|' + svc] || idx['b:' + bill])) || '';
+  const attr = ` class="ind${ind ? '' : ' none'} wl-indcell" data-mr="${escapeHtml(mr)}" data-bill="${escapeHtml(bill)}" data-svc="${escapeHtml(svc)}"`;
+  return `<div${attr}><b>Indication</b>${ind ? escapeHtml(String(ind)) : 'not recorded in the order'}</div>`;
+}
+function wlIndEl(it) {
+  const mr = String(it.mrno || '');
+  if (!mr) return '';                                  // no MRN → can't look it up
+  const bill = String(it.billNo || '');
+  const svc = String(it.exam || '').trim().toLowerCase();
+  const idx = wlState.indCache.get(mr);
+  if (idx) return wlIndCellHtml(idx, mr, bill, svc);   // resolved from cache
+  // Loading — a throttled wlAutoIndication() pass fills it in.
+  return `<div class="ind wl-indcell" data-mr="${escapeHtml(mr)}" data-bill="${escapeHtml(bill)}" data-svc="${escapeHtml(svc)}"><b>Indication</b><span class="wl-shimmer" style="width:130px"></span></div>`;
+}
+// Paint the resolved indication into EVERY cell that belongs to this MRN, resolving
+// each cell's own bill+service against the index (CSS-escape the attribute value).
+function wlIndSet(mr) {
+  const idx = wlState.indCache.get(mr) || {};
+  const sel = '.wl-indcell[data-mr="' + String(mr).replace(/["\\]/g, '\\$&') + '"]';
+  document.querySelectorAll(sel).forEach((el) => {
+    const bill = el.getAttribute('data-bill') || '';
+    const svc = (el.getAttribute('data-svc') || '').toLowerCase();
+    const ind = (bill && (idx['b:' + bill + '|' + svc] || idx['b:' + bill])) || '';
+    el.className = 'ind' + (ind ? '' : ' none') + ' wl-indcell';
+    el.innerHTML = '<b>Indication</b>' + (ind ? escapeHtml(String(ind)) : 'not recorded in the order');
+  });
+}
+// Auto-fetch the clinical indication for the visible board — mirrors wlAutoPreg
+// exactly (concurrency 2, per-MRN cache, in-flight dedupe). Only for non-`.done`
+// rows (waiting / in-progress / reporting) to limit HIS load: an imaged/reported
+// study's indication is already viewable in the drill.
+let _wlIndBusy = 0;
+const _WL_IND_MAX = 2;
+const _wlIndQueue = [];
+const _wlIndInflight = new Set();
+function wlAutoIndication() {
+  const items = (wlState.data && wlState.data.items) || [];
+  const seen = new Set(_wlIndQueue.map((x) => x.mr));
+  for (const it of items) {
+    const b = it.__bucket || wlRisStatus(it).bucket;
+    if (b === 'imaged' || b === 'reported') continue;   // done rows → skip (limit HIS load)
+    const mr = String(it.mrno || '');
+    if (!mr || wlState.indCache.has(mr) || seen.has(mr) || _wlIndInflight.has(mr)) continue;
+    seen.add(mr);
+    _wlIndQueue.push({ mr });
+  }
+  wlIndPump();
+}
+function wlIndPump() {
+  while (_wlIndBusy < _WL_IND_MAX && _wlIndQueue.length) {
+    const { mr } = _wlIndQueue.shift();
+    if (wlState.indCache.has(mr) || _wlIndInflight.has(mr)) continue;
+    _wlIndBusy++; _wlIndInflight.add(mr);
+    API.get('/radiology/lookup/' + encodeURIComponent(mr))
+      .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlIndSet(mr); })
+      .catch(() => { /* leave the shimmer; a later refresh retries */ })
+      .finally(() => { _wlIndBusy--; _wlIndInflight.delete(mr); wlIndPump(); });
+  }
+}
+
+// Row-level "Report PDF": the actual per-study print links live in the drill (wlMatch
+// → wlPrintReport). Open the drill via its own toggle button so the wiring stays intact,
+// or scroll to it if it's already open.
+function wlRowPdf(dkey) {
+  const row = document.getElementById('wl-dr-' + dkey);
+  const btn = document.getElementById('wl-open-' + dkey);
+  if (!row) return;
+  if (row.style.display === 'none') { if (btn) btn.click(); }
+  else if (row.scrollIntoView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 function wlRow(it, key) {
   // Drill identity must be STABLE per order, NOT the row's position — otherwise a live
   // refresh that re-sorts the board (a new STAT order jumps to top) would re-open the
   // drill onto a DIFFERENT patient's row and show the previous patient's cached report.
   // Use the per-order key; fall back to the positional key only for keyless rows.
   const dkey = 'k' + String(wlRowKey(it) || key).replace(/[^A-Za-z0-9_-]/g, '');
+  const rk = wlRowKey(it);
+  const phase = it.__phase || wlPhase(it);
+  const bucket = it.__bucket || wlRisStatus(it).bucket;
+  const done = (bucket === 'imaged' || bucket === 'reported');   // dimmed, but STAYS (bug #1)
+  const hl = wlState.phaseHi && phase === wlState.phaseHi;
   const age = wlAge(it.ageHours);
   // While the background HIS enrichment is still running, show a loading shimmer for
   // the exam instead of a bare "—" so the board reads as "loading", not broken.
   const p = wlState.enriching;
-  const dash = '<span style="color:var(--muted)">—</span>';
+  const dash = '<span style="color:var(--ink-3)">—</span>';
   const acc = it.accession || it.accessionNumber || null;
   const demo = [it.age, (it.gender ? String(it.gender).charAt(0).toUpperCase() : '')].filter(Boolean).map((x) => escapeHtml(String(x))).join(' ');
   const ordered = it.orderedDate ? wlTrackFmt(it.orderedDate) : '';
   const consent = wlConsentEl(it), preg = wlPregEl(it);
   const proc = it.exam ? `<span class="proc">${escapeHtml(it.exam)}</span>`
     : (p ? `<span class="wl-shimmer" style="width:90px"></span>` : dash);
+  // Transient "moved from …" tag (~8s) — bug #1.
+  const mv = rk && wlState.movedTags.get(rk);
+  const moved = (mv && (Date.now() - mv.at < 8000))
+    ? `<div class="movedtag">${icon('check')}moved from “${escapeHtml(mv.from)}” just now</div>` : '';
+  // Second action: Report PDF for imaged-or-later rows, otherwise Handoff.
+  const secondBtn = (done || bucket === 'reporting')
+    ? `<button class="btn ghost" onclick="wlRowPdf('${dkey}')">${icon('file-text')}Report PDF</button>`
+    : `<button class="btn ghost" onclick="wlOpenHandoff('${jsAttr(it.mrno)}')">${WL_SVG.send}Handoff</button>`;
+  const openLbl = bucket === 'reported' ? 'View ›' : 'Open ›';
   return `<div class="rowwrap">
-    <div class="row${it.emergency ? ' stat' : ''}">
+    <div class="row${it.emergency ? ' stat' : ''}${done ? ' done' : ''}${hl ? ' hl' : ''}" data-phase="${phase}">
       <div class="pt">
-        <div class="pname">${escapeHtml(it.patientName || '—')}${it.emergency ? ' <span class="stat"><i></i>STAT</span>' : ''}</div>
+        <div class="pname">${escapeHtml(it.patientName || '—')}${it.emergency ? ' <span class="stat-b"><i></i>STAT</span>' : ''}</div>
         <div class="pmeta">${escapeHtml(it.mrno || '')}${demo ? '<i></i>' + demo : ''}${it.branch ? '<i></i>' + escapeHtml(it.branch) : ''}${it.doctorName ? '<i></i><span class="dr">Dr ' + escapeHtml(it.doctorName) + '</span>' : ''}</div>
+        ${wlIndEl(it)}
         ${(consent || preg) ? '<div class="safe">' + consent + preg + '</div>' : ''}
       </div>
       <div class="exam">
         <div class="exline">${wlModBadges(it.modality)}${proc}</div>
-        ${acc ? `<span class="acc" title="DICOM accession">ACC ${escapeHtml(String(acc))}</span>` : ''}
+        ${acc ? `<span class="acc" title="DICOM accession">${WL_SVG.link}${escapeHtml(String(acc))}</span>` : ''}
       </div>
-      <div class="when"><div class="big">${wlTimeOnly(it.orderedDate)}</div>${(age && it.__bucket !== 'reported') ? '<div class="sm wait">waiting ' + age + '</div>' : '<div class="sm">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
-      <div>${wlRisStatusBadge(it)}</div>
-      <div><button class="open${it.emergency ? ' pri' : ''}" onclick="wlToggle('${dkey}','${jsAttr(it.mrno)}',${Number(it.site) || 0},this)">${it.__bucket === 'reported' ? 'View ›' : 'Open ›'}</button></div>
+      <div class="when"><div class="big tnum">${wlTimeOnly(it.orderedDate)}</div>${(age && !done && bucket !== 'reported') ? '<div class="sm wait tnum">waiting ' + age + '</div>' : '<div class="sm tnum">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
+      <div>${wlRisStatusBadge(it)}${moved}</div>
+      <div class="acts">
+        <button class="btn ${it.emergency ? 'solid' : 'primary'}" id="wl-open-${dkey}" onclick="wlToggle('${dkey}','${jsAttr(it.mrno)}',${Number(it.site) || 0},this)">${openLbl}</button>
+        ${secondBtn}
+      </div>
     </div>
     <div class="rdetail" id="wl-dr-${dkey}" style="display:none">${wlTrack(it)}<div id="wl-d-${dkey}"></div></div>
   </div>`;
@@ -756,11 +966,11 @@ function wlTrack(it) {
   const steps = [
     { label: 'Ordered', at: it.orderedDate, on: !!it.orderedDate },
     { label: 'Arrived', at: it.arrivedAt, on: !!it.arrivedAt },
-    { label: 'Exam started', at: it.examStartAt, on: !!it.examStartAt },
-    { label: 'Exam done', at: it.examEndAt, on: !!(it.examEndAt || it.scanned) },
+    { label: 'In exam', at: it.examStartAt, on: !!it.examStartAt },
+    { label: 'Imaged', at: it.examEndAt || null, on: !!(it.examEndAt || it.scanned) },
     { label: 'Reported', at: null, on: reported },
   ];
-  // Nothing recorded beyond the order? Show a hint instead of a bare single dot.
+  let lastOn = -1; steps.forEach((s, i) => { if (s.on) lastOn = i; });
   const anyTracking = it.arrivedAt || it.examStartAt || it.examEndAt;
   const dur = (a, b) => {
     const ta = wlParseTs(a), tb = wlParseTs(b);
@@ -768,21 +978,19 @@ function wlTrack(it) {
     const m = Math.round((tb - ta) / 60000);
     return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
   };
-  const node = (s, i) => {
-    const color = s.on ? 'var(--accent,#2e9e6b)' : 'var(--border,#d0d0d5)';
-    const prev = steps[i - 1];
-    const gap = (i > 0 && prev && prev.at && s.at) ? dur(prev.at, s.at) : '';
-    return `${i > 0 ? `<div style="flex:1;height:2px;background:${s.on && prev.on ? 'var(--accent,#2e9e6b)' : 'var(--border,#d0d0d5)'};position:relative;min-width:24px">${gap ? `<span style="position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--muted);white-space:nowrap">${escapeHtml(gap)}</span>` : ''}</div>` : ''}
-      <div style="display:flex;flex-direction:column;align-items:center;min-width:56px">
-        <div style="width:11px;height:11px;border-radius:50%;background:${color};border:2px solid ${color}"></div>
-        <div style="font-size:9.5px;margin-top:3px;color:${s.on ? 'var(--text)' : 'var(--muted)'};text-align:center;white-space:nowrap">${escapeHtml(s.label)}</div>
-        ${s.on && s.at ? `<div style="font-size:9px;color:var(--muted);white-space:nowrap">${escapeHtml(wlTrackFmt(s.at))}</div>` : ''}
-      </div>`;
-  };
-  return `<div style="margin-bottom:10px;padding:12px 8px 6px;background:var(--card,#fff);border:1px solid var(--border);border-radius:8px">
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Patient journey${anyTracking ? '' : ' · <span title="Siratech hasn\'t recorded arrival/exam times for this order yet">arrival &amp; exam times not recorded yet</span>'}</div>
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:2px;overflow-x:auto">${steps.map(node).join('')}</div>
-  </div>`;
+  const hhmm = (s) => { const t = wlParseTs(s); return t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; };
+  let html = '';
+  steps.forEach((s, i) => {
+    if (i > 0) {
+      const prev = steps[i - 1];
+      const gap = (prev.at && s.at) ? dur(prev.at, s.at) : '';
+      html += `<div class="bar${i <= lastOn ? ' done' : ''}">${gap ? `<span class="gap">${escapeHtml(gap)}</span>` : ''}</div>`;
+    }
+    const cls = i < lastOn ? ' done' : (i === lastOn ? ' now' : '');
+    html += `<div class="step${cls}"><span class="dot"></span><span class="lb">${escapeHtml(s.label)}</span>${s.on && s.at ? `<span class="tm tnum">${escapeHtml(hhmm(s.at))}</span>` : ''}</div>`;
+  });
+  return `<div class="jwrap"><div class="jhead">Patient journey${anyTracking ? '' : ' · <span>arrival &amp; exam times not recorded yet</span>'}</div>
+    <div class="journey">${html}</div></div>`;
 }
 
 // Read-only drill: expand a detail row that matches the finished DePACS report(s) to
