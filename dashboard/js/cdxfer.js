@@ -8,10 +8,11 @@ let cdxfer = { data: null, ttl: 48, loading: false };
 async function renderCdxferPage() {
   setTopbar('Radiology CD transfers', 'Receive imaging CDs from branches');
   const c = document.getElementById('content');
-  c.innerHTML = `
+  c.innerHTML = `<div class="cc">
     ${pageHero('CD transfer', 'Radiology CD transfers', 'A branch uploads a CD image; you download it here to import into PACS')}
     <div id="cdx-link"></div>
-    <div id="cdx-body">${LOADING_HTML}</div>`;
+    <div id="cdx-body">${LOADING_HTML}</div>
+  </div>`;
   cdxRenderLink();
   cdxLoad();
 }
@@ -27,8 +28,8 @@ async function cdxRenderLink() {
     <div style="font-size:12px;color:var(--muted);margin:2px 0 10px">Share privately with the branch. They open it, fill the patient's file number, and upload the CD as one ISO or ZIP (up to ${d.max_gb || 4} GB). Anyone with the link can upload, so keep it private and regenerate if it leaks. Uploaded files auto-delete after ${d.ttl_hours || 48} hours.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <input id="cdx-url" class="input" readonly value="${escapeHtml(d.url || '')}" style="flex:1;min-width:220px;font-size:12px">
-      <button class="btn btn-sm btn-primary" onclick="cdxCopy()">Copy</button>
-      <button class="btn btn-sm btn-ghost" onclick="cdxRegen()">Regenerate</button>
+      <button class="open pri" style="width:auto" onclick="cdxCopy()">Copy</button>
+      <button class="ghost" onclick="cdxRegen()">Regenerate</button>
     </div></div>`;
 }
 
@@ -51,7 +52,7 @@ async function cdxLoad() {
     if (d.ttl_hours) cdxfer.ttl = d.ttl_hours;
   } catch (e) {
     const b = document.getElementById('cdx-body');
-    if (b) b.innerHTML = `<div class="card"><div class="empty" style="padding:24px 16px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Could not load transfers')}</p><button class="btn btn-sm" style="margin-top:10px" onclick="cdxLoad()">Retry</button></div></div>`;
+    if (b) b.innerHTML = `<div class="card"><div class="empty" style="padding:24px 16px"><div class="empty-icon">⚠️</div><p>${escapeHtml(e.message || 'Could not load transfers')}</p><button class="ghost" style="margin-top:10px" onclick="cdxLoad()">Retry</button></div></div>`;
     return;
   } finally { cdxfer.loading = false; }
   cdxRenderBody();
@@ -71,10 +72,11 @@ function cdxWhen(iso) {
   try { return t.toLocaleString('en-GB', { timeZone: 'Asia/Riyadh', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); }
   catch (e) { return escapeHtml(iso); }
 }
+// Transfer status → Clinical Calm .ris pill (uploading blinks like an in-progress exam).
 const CDX_STATUS = {
-  uploading: ['badge-orange', '⏳ uploading'], ready: ['badge-green', '✅ ready'],
-  downloaded: ['badge-purple', '⬇️ downloaded'], deleted: ['badge-red', '🗑️ deleted'],
-  expired: ['badge-red', '⌛ expired'], failed: ['badge-red', '⚠️ failed'],
+  uploading: ['progress', 'Uploading'], ready: ['completed', 'Ready'],
+  downloaded: ['final', 'Downloaded'], deleted: ['scheduled', 'Deleted'],
+  expired: ['scheduled', 'Expired'], failed: ['sc-no', 'Failed'],
 };
 
 function cdxRenderBody() {
@@ -87,15 +89,18 @@ function cdxRenderBody() {
     return;
   }
   b.innerHTML = rows.map(r => {
-    const [cls, label] = CDX_STATUS[r.status] || ['badge', escapeHtml(r.status || '')];
+    const [cls, label] = CDX_STATUS[r.status] || ['scheduled', escapeHtml(r.status || '')];
+    const pill = cls === 'sc-no'
+      ? `<span class="sc no" style="margin-left:6px">⚠ ${label}</span>`
+      : `<span class="ris ${cls}" style="margin-left:6px"><span class="rd"></span>${label}</span>`;
     const canGet = r.status === 'ready' || r.status === 'downloaded';
     const canDel = !['deleted', 'expired'].includes(r.status);
     return `<div class="card" style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
         <div style="min-width:0">
           <div style="font-weight:800;font-size:15px">File ${escapeHtml(r.file_no || '—')}
-            <span class="badge ${cls}" style="margin-left:6px">${label}</span>
-            <span class="badge" style="margin-left:4px">${escapeHtml((r.kind || '').toUpperCase())}</span></div>
+            ${pill}
+            ${r.kind ? `<span class="sc ok" style="margin-left:4px;background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml((r.kind || '').toUpperCase())}</span>` : ''}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:3px">
             ${escapeHtml(r.ref || '')} · ${escapeHtml(r.branch || '—')}${r.exam_type ? ' · ' + escapeHtml(r.exam_type) : ''}${r.exam_date ? ' · ' + escapeHtml(r.exam_date) : ''}${r.patient_initials ? ' · ' + escapeHtml(r.patient_initials) : ''}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px">
@@ -104,13 +109,13 @@ function cdxRenderBody() {
           ${r.note ? `<div style="font-size:12px;margin-top:3px">📝 ${escapeHtml(r.note)}</div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${canGet ? `<button class="btn btn-sm btn-primary" onclick="cdxDownload('${escapeHtml(r.ref)}')">⬇️ Download</button>` : ''}
-          ${canDel ? `<button class="btn btn-sm btn-ghost" onclick="cdxDelete('${escapeHtml(r.ref)}')">Delete</button>` : ''}
+          ${canGet ? `<button class="open pri" style="width:auto" onclick="cdxDownload('${escapeHtml(r.ref)}')">⬇️ Download</button>` : ''}
+          ${canDel ? `<button class="ghost" onclick="cdxDelete('${escapeHtml(r.ref)}')">Delete</button>` : ''}
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-top:6px">expires ${cdxWhen(r.expires_at)}${r.upload_ip ? ' · from ' + escapeHtml(r.upload_ip) : ''}</div>
     </div>`;
-  }).join('') + `<div style="text-align:center;margin-top:6px"><button class="btn btn-sm btn-ghost" onclick="cdxLoad()">↻ Refresh</button></div>`;
+  }).join('') + `<div style="text-align:center;margin-top:6px"><button class="ghost" onclick="cdxLoad()">↻ Refresh</button></div>`;
 }
 
 function cdxDownload(ref) {

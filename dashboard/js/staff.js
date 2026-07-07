@@ -33,13 +33,15 @@ function renderStaffPage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Radiology team directory', 'Staff', `<b>${allStaff.length}</b> member${allStaff.length !== 1 ? 's' : ''}`)}
     ${canEdit ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
-      <button class="btn btn-sm" onclick="printStaffDirectory()">🖨️ PDF</button>
-      <button class="btn btn-sm" onclick="exportStaffCsv()">⬇️ Export CSV</button></div>` : ''}
+      <button class="ghost" onclick="printStaffDirectory()">🖨️ PDF</button>
+      <button class="ghost" onclick="exportStaffCsv()">⬇️ Export CSV</button></div>` : ''}
     <div id="staff-eotm"></div>
     <div id="staff-pending"></div>
-    <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>`;
+    <div style="display:flex;flex-direction:column;gap:20px" id="staff-branch-sections"></div>
+    </div>`;
 
   if (typeof renderHomeEotm === 'function') renderHomeEotm('staff-eotm');   // Employee of the Month moved here from Home
   if (canEdit) renderPendingRegs();
@@ -51,40 +53,38 @@ function renderStaffPage() {
 
   Object.entries(byBranch).forEach(([branch, staff]) => {
     const section = document.createElement('div');
-    section.className = 'card';
+    section.className = 'board';
     section.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div>
-          <div style="font-size:14px;font-weight:700;color:var(--primary)">${escapeHtml(branch)}</div>
-          <div style="font-size:11px;color:var(--muted)">${staff.length} staff member${staff.length!==1?'s':''}</div>
+      <div class="bhead">
+        <div class="bhrow">
+          <div class="btitle">${escapeHtml(branch)} <span>${staff.length} staff member${staff.length!==1?'s':''}</span></div>
         </div>
       </div>
-      <div class="table-wrap" style="border-radius:10px">
-        <table>
-          <thead><tr>
-            <th>#</th><th>Name</th><th>ID / Email</th><th>Section</th>
-            ${canEdit ? '<th>Actions</th>' : ''}
-          </tr></thead>
-          <tbody>${staff.map((s, i) => `
-            <tr>
-              <td>${i+1}</td>
-              <td><strong>${escapeHtml(s.name)}</strong>${!s.active ? ' <span class="badge badge-gray" style="font-size:9px">Inactive</span>' : ''}${s.self_registered ? ' <span class="badge badge-green" style="font-size:9px">New</span>' : ''}</td>
-              <td style="font-size:12px;color:var(--muted)">
-                ${s.employee_id ? escapeHtml(s.employee_id) : '<span style="color:#c9880a">no ID</span>'}
-                ${s.email ? '<br>' + escapeHtml(s.email) : ''}
-              </td>
-              <td>${(() => {
-                const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
-                const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
-                return `<span class="spec-tag ${sec.toLowerCase()}">${sec}</span>`;
-              })()}</td>
-              ${canEdit ? `<td>
-                <button class="action-btn" onclick="openStaffModal(${s.id})">Edit</button>
-                <button class="action-btn danger" onclick="deleteStaffConfirm(${s.id},'${jsAttr(s.name)}')">Delete</button>
-              </td>` : ''}
-            </tr>`).join('')}
-          </tbody>
-        </table>
+      <div class="rows">${staff.map((s, i) => {
+        const specs = (s.speciality || []).map(x => String(x || '').toUpperCase());
+        const sec = (specs.includes('US') || specs.includes('ULTRASOUND')) ? 'US' : 'General';
+        return `
+        <div class="lrow">
+          <div style="width:26px;text-align:center;color:var(--muted);font-size:12px;flex:none">${i+1}</div>
+          <div style="flex:2;min-width:160px">
+            <div style="font-weight:700">${escapeHtml(s.name)}</div>
+            <div style="font-size:11.5px;color:var(--muted)">
+              ${s.employee_id ? escapeHtml(s.employee_id) : '<span style="color:#c9880a">no ID</span>'}${s.email ? ' · ' + escapeHtml(s.email) : ''}
+            </div>
+          </div>
+          <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <span class="sc ${sec === 'US' ? 'ok' : 'warn'}">${sec}</span>
+            ${s.active
+              ? '<span class="ris completed"><span class="rd"></span>Active</span>'
+              : '<span class="sc no">Inactive</span>'}
+            ${s.self_registered ? '<span class="sc ok">New</span>' : ''}
+          </div>
+          ${canEdit ? `<div style="display:flex;gap:6px;white-space:nowrap;flex:none">
+            <button class="ghost" onclick="openStaffModal(${s.id})">Edit</button>
+            <button class="ghost" onclick="deleteStaffConfirm(${s.id},'${jsAttr(s.name)}')" style="color:var(--danger,#E63946)">Delete</button>
+          </div>` : ''}
+        </div>`;
+      }).join('')}
       </div>`;
     container.appendChild(section);
   });
@@ -95,27 +95,33 @@ function renderPendingRegs() {
   if (!box) return;
   if (!pendingRegs.length) { box.innerHTML = ''; return; }
   box.innerHTML = `
-    <div class="card" style="margin-bottom:20px;border-color:rgba(255,159,67,.5)">
-      <div style="font-size:14px;font-weight:700;color:var(--primary);margin-bottom:4px">⏳ Pending registrations (${pendingRegs.length})</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Staff who registered themselves — approve to add them, or reject.</div>
-      <div class="table-wrap" style="border-radius:10px">
-        <table>
-          <thead><tr><th>Name</th><th>Branch</th><th>Section</th><th>ID</th><th>National ID</th><th>Email / Mobile</th><th>Actions</th></tr></thead>
-          <tbody>${pendingRegs.map(r => `
-            <tr>
-              <td><strong>${escapeHtml(r.name)}</strong>${r.name_ar ? `<br><span style="font-size:11px;color:var(--muted)">${escapeHtml(r.name_ar)}</span>` : ''}</td>
-              <td style="font-size:12px;color:var(--muted)">${escapeHtml(r.branch_name || '—')}</td>
-              <td><span class="spec-tag ${(r.section||'General').toLowerCase()}">${escapeHtml(r.section || 'General')}</span></td>
-              <td style="font-size:12px">${escapeHtml(r.employee_id || '—')}</td>
-              <td style="font-size:12px">${r.national_id ? `${escapeHtml(r.national_id)} <span title="Verified with Nafath" style="color:#1a9d6a">✓</span>` : '<span style="color:var(--muted)">—</span>'}</td>
-              <td style="font-size:12px;color:var(--muted)">${escapeHtml(r.email || '—')}${r.phone ? '<br>' + escapeHtml(r.phone) : ''}</td>
-              <td style="white-space:nowrap">
-                <button class="action-btn" onclick="approveReg(${r.id})">Approve</button>
-                <button class="action-btn danger" onclick="rejectReg(${r.id})">Reject</button>
-              </td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
+    <div class="board" style="margin-bottom:20px">
+      <div class="bhead">
+        <div class="bhrow">
+          <div class="btitle">⏳ Pending registrations (${pendingRegs.length}) <span>Staff who registered themselves — approve to add them, or reject.</span></div>
+        </div>
+      </div>
+      <div class="rows">${pendingRegs.map(r => `
+        <div class="lrow">
+          <div style="flex:2;min-width:150px">
+            <div style="font-weight:700">${escapeHtml(r.name)}</div>
+            ${r.name_ar ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(r.name_ar)}</div>` : ''}
+            <div style="font-size:11.5px;color:var(--muted)">${escapeHtml(r.branch_name || '—')}</div>
+          </div>
+          <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <span class="sc ${String(r.section || 'General').toUpperCase() === 'US' ? 'ok' : 'warn'}">${escapeHtml(r.section || 'General')}</span>
+            <span class="ris progress"><span class="rd"></span>Pending</span>
+          </div>
+          <div style="flex:2;min-width:150px;font-size:12px;color:var(--muted)">
+            <div>ID: ${escapeHtml(r.employee_id || '—')}</div>
+            <div>National ID: ${r.national_id ? `${escapeHtml(r.national_id)} <span title="Verified with Nafath" style="color:#1a9d6a">✓</span>` : '—'}</div>
+            <div>${escapeHtml(r.email || '—')}${r.phone ? ' · ' + escapeHtml(r.phone) : ''}</div>
+          </div>
+          <div style="display:flex;gap:6px;white-space:nowrap;flex:none">
+            <button class="open" onclick="approveReg(${r.id})">Approve</button>
+            <button class="ghost" onclick="rejectReg(${r.id})" style="color:var(--danger,#E63946)">Reject</button>
+          </div>
+        </div>`).join('')}
       </div>
     </div>`;
 }

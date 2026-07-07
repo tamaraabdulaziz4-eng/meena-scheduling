@@ -18,7 +18,10 @@ const API = {
     // many bill/study reads on an uncached branch/date selection. The backend
     // itself allows up to ~240s, so the client must not abort at 45s and show a
     // false "took too long" while the server is still computing successfully.
-    if (/\/radiology\/(stats|lookup|results\/(match|file))/.test(path)) return 240000;  // 4 min
+    // worklist included: its server-side ceiling is 130s (survives the ~90-100s
+    // HIS token refresh) — a 45s client abort would kill a load the server was
+    // about to finish and show a false retry card.
+    if (/\/radiology\/(stats|lookup|worklist|throughput|results\/(match|file))/.test(path)) return 240000;  // 4 min
     return 45000;                                                        // 45 s
   },
   async request(method, path, body) {

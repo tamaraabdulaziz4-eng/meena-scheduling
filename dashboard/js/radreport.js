@@ -296,7 +296,7 @@ function _rsrEnsurePicker() {
   if (document.getElementById('rsr-pick-ov')) return;
   const div = document.createElement('div');
   div.innerHTML = `
-    <div class="modal-overlay" id="rsr-pick-ov">
+    <div class="modal-overlay cc" id="rsr-pick-ov">
       <div class="modal" style="max-width:420px">
         <div class="modal-header"><h3>📊 Monthly report</h3>
           <button class="modal-close" onclick="document.getElementById('rsr-pick-ov').classList.remove('open')">✕</button></div>
@@ -312,8 +312,8 @@ function _rsrEnsurePicker() {
           <div id="rsr-pick-note" class="rsr-pick-note"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('rsr-pick-ov').classList.remove('open')">Cancel</button>
-          <button class="btn btn-primary btn-sm" onclick="_rsrGenerate()">Generate report</button>
+          <button class="ghost" onclick="document.getElementById('rsr-pick-ov').classList.remove('open')">Cancel</button>
+          <button class="open pri" style="width:auto" onclick="_rsrGenerate()">Generate report</button>
         </div>
       </div>
     </div>`;
@@ -411,13 +411,13 @@ function _rsrEnsureViewer() {
   if (document.getElementById('rsr-ov')) return;
   const div = document.createElement('div');
   div.innerHTML = `
-    <div id="rsr-ov">
+    <div id="rsr-ov" class="cc">
       <div class="rsr-bar">
         <div class="rsr-bar-l" id="rsr-bar-title">Monthly report</div>
         <div class="rsr-bar-r">
           <span class="rsr-count" id="rsr-count"></span>
-          <button class="btn btn-primary btn-sm" onclick="_rsrDownload()">⬇ Download PDF</button>
-          <button class="btn btn-ghost btn-sm" onclick="_rsrClose()">✕ Close</button>
+          <button class="open pri" style="width:auto" onclick="_rsrDownload()">⬇ Download PDF</button>
+          <button class="ghost" onclick="_rsrClose()">✕ Close</button>
         </div>
       </div>
       <div class="rsr-stage" id="rsr-stage"></div>

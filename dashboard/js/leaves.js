@@ -26,6 +26,7 @@ async function renderLeavesPage() {
   setTopbar(title, 'Annual leave, sick leave, time-back', actions);
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Annual leave · sick leave · time-back', title)}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <select id="leave-filter-year" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"></select>
@@ -34,16 +35,16 @@ async function renderLeavesPage() {
         ${MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('')}
       </select>
       ${currentUser?.role==='superadmin' ? `<select id="leave-filter-branch" onchange="filterLeaves()" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px;background:var(--card-alt);color:var(--text);outline:none"><option value="">All Branches</option>${allBranches.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select>` : ''}
-      ${canEdit ? `<button class="btn btn-ghost btn-sm" id="leave-approve-all" onclick="approveAllPendingLeaves()" style="margin-left:auto" title="Approve every request currently awaiting you">✅ Approve all pending</button>` : ''}
+      ${canEdit ? `<button class="ghost" id="leave-approve-all" onclick="approveAllPendingLeaves()" style="margin-left:auto" title="Approve every request currently awaiting you">✅ Approve all pending</button>` : ''}
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>#</th><th>Staff</th><th>Branch</th><th>From</th><th>To</th><th>Days</th><th>Type</th><th>Status</th><th>Note</th>
-          ${(canEdit || isStaff) ? '<th>Actions</th>' : ''}
-        </tr></thead>
-        <tbody id="leaves-tbody"></tbody>
-      </table>
+    <div class="board">
+      <div class="bhead">
+        <div class="bhrow">
+          <div class="btitle">Leave requests <span>annual · sick · time-back</span></div>
+        </div>
+      </div>
+      <div class="rows" id="leaves-tbody"></div>
+    </div>
     </div>`;
 
   // Populate year filter
@@ -63,16 +64,13 @@ async function filterLeaves() {
   const month = document.getElementById('leave-filter-month')?.value || '';
   const bid   = document.getElementById('leave-filter-branch')?.value || '';
   const tb = document.getElementById('leaves-tbody');
-  const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
-  const isStaff = currentUser?.role === 'staff';
-  const cols = (canEdit || isStaff) ? 10 : 9;
-  if (tb) tb.innerHTML = `<tr><td colspan="${cols}">${LOADING_HTML}</td></tr>`;
+  if (tb) tb.innerHTML = `<div style="padding:16px">${LOADING_HTML}</div>`;
   try {
     await loadLeaves(bid || (currentUser?.branch_id || ''), year, month);
     renderLeavesList();
     animateIn('leaves-tbody');
   } catch (e) {
-    if (tb) tb.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;color:var(--muted);padding:20px">${escapeHtml(e.message || 'Failed to load')}</td></tr>`;
+    if (tb) tb.innerHTML = `<div style="text-align:center;color:var(--muted);padding:20px">${escapeHtml(e.message || 'Failed to load')}</div>`;
   }
 }
 
@@ -83,7 +81,7 @@ function renderLeavesList() {
   const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
   const isStaff = currentUser?.role === 'staff';
   if (!allLeaves.length) {
-    tb.innerHTML = `<tr><td colspan="${(canEdit||isStaff)?10:9}" style="text-align:center;padding:24px;color:var(--muted)">No leave records found</td></tr>`;
+    tb.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted)">No leave records found</div>`;
     return;
   }
 
@@ -91,14 +89,15 @@ function renderLeavesList() {
   const groups = groupLeaveRanges(allLeaves);
 
   // Two-stage chain so everyone (incl. the staff member) sees where it stands.
+  // Rendered as Clinical Calm dotted pills (rejected → red chip).
   const LEAVE_STATUS = {
-    pending:       ['Awaiting team lead', 'badge-orange'],
-    lead_approved: ['Awaiting manager',   'badge-yellow'],
-    approved:      ['Approved',           'badge-green'],
-    rejected:      ['Rejected',           'badge-gray'],
+    pending:       '<span class="ris progress"><span class="rd"></span>Awaiting team lead</span>',
+    lead_approved: '<span class="ris prelim"><span class="rd"></span>Awaiting manager</span>',
+    approved:      '<span class="ris final"><span class="rd"></span>Approved</span>',
+    rejected:      '<span class="sc no">✕ Rejected</span>',
   };
+  const TYPE_CHIP = { AL:'ok', SL:'no', TB:'warn', OT:'ok' };
   tb.innerHTML = groups.map((g, i) => {
-    const badge = { AL:'badge-purple', SL:'badge-orange', TB:'badge-yellow', OT:'badge-green' }[g.leave_type] || 'badge-gray';
     const fromStr = fmtDateDisplay(g.date_from);
     const toStr   = g.date_from === g.date_to ? '—' : fmtDateDisplay(g.date_to);
     const days    = g.day_count;
@@ -106,38 +105,43 @@ function renderLeavesList() {
     const idsArg  = JSON.stringify(g.ids).replace(/"/g, '&quot;');
     // Sick leave → a "find cover" button for reviewers, the branch lead and the owner.
     const coverBtn = g.leave_type === 'SL'
-      ? `<button class="action-btn" onclick="openCoverModal(${g.ids[0]})">🔁 Cover</button> ` : '';
+      ? `<button class="ghost" onclick="openCoverModal(${g.ids[0]})">🔁 Cover</button> ` : '';
     let actions = '';
     if (canEdit) {
-      actions = '<td style="white-space:nowrap">' + coverBtn;
+      actions = '<div style="white-space:nowrap;display:flex;gap:6px;flex:none">' + coverBtn;
       // Stage 1 ('pending') → team lead OR manager can act; stage 2
       // ('lead_approved') → manager/superadmin only.
       const canAct = (st === 'pending' && canEdit) || (st === 'lead_approved' && isReviewer);
       if (canAct) {
-        actions += `<button class="action-btn" onclick="setLeaveRangeStatus(${idsArg},'approved')">${(st === 'pending' && !isReviewer) ? 'Approve → manager' : 'Approve'}</button>
-                    <button class="action-btn danger" onclick="setLeaveRangeStatus(${idsArg},'rejected')">Reject</button> `;
+        actions += `<button class="open" onclick="setLeaveRangeStatus(${idsArg},'approved')">${(st === 'pending' && !isReviewer) ? 'Approve → manager' : 'Approve'}</button>
+                    <button class="ghost" onclick="setLeaveRangeStatus(${idsArg},'rejected')" style="color:var(--danger,#E63946)">Reject</button> `;
       }
-      actions += `<button class="action-btn danger" onclick="deleteLeaveRange(${idsArg})">Delete</button></td>`;
+      actions += `<button class="ghost" onclick="deleteLeaveRange(${idsArg})" style="color:var(--danger,#E63946)">Delete</button></div>`;
     } else if (isStaff) {
       // A staff member can withdraw their own pending request, and find cover for their own sick leave.
-      actions = '<td style="white-space:nowrap">' + coverBtn;
+      actions = '<div style="white-space:nowrap;display:flex;gap:6px;flex:none">' + coverBtn;
       actions += st === 'pending'
-        ? `<button class="action-btn danger" onclick="withdrawLeaveRange(${idsArg})">Withdraw</button>`
+        ? `<button class="ghost" onclick="withdrawLeaveRange(${idsArg})" style="color:var(--danger,#E63946)">Withdraw</button>`
         : (coverBtn ? '' : '<span style="font-size:11px;color:var(--muted)">—</span>');
-      actions += '</td>';
+      actions += '</div>';
     }
-    return `<tr>
-      <td style="color:var(--muted);font-size:12px;text-align:center">${i+1}</td>
-      <td style="font-weight:600">${escapeHtml(g.staff_name)}</td>
-      <td style="font-size:12px;color:var(--muted)">${escapeHtml(g.branch_name || '—')}</td>
-      <td>${fromStr}</td>
-      <td>${toStr}</td>
-      <td style="text-align:center;font-weight:600">${days}</td>
-      <td><span class="badge ${badge}">${escapeHtml(g.leave_type)}</span> <span style="font-size:11px;color:var(--muted)">${escapeHtml(LEAVE_LABELS[g.leave_type]||'')}</span></td>
-      <td><span class="badge ${(LEAVE_STATUS[st]||['',''])[1]||'badge-gray'}">${escapeHtml((LEAVE_STATUS[st]||[st])[0])}</span></td>
-      <td style="font-size:12px;color:var(--muted)">${escapeHtml(g.note || '—')}</td>
+    return `<div class="lrow">
+      <div style="width:26px;text-align:center;color:var(--muted);font-size:12px;flex:none">${i+1}</div>
+      <div style="flex:2;min-width:140px">
+        <div style="font-weight:700">${escapeHtml(g.staff_name)}</div>
+        <div style="font-size:11.5px;color:var(--muted)">${escapeHtml(g.branch_name || '—')}</div>
+      </div>
+      <div style="flex:2;min-width:150px;font-size:12.5px">
+        ${fromStr}${toStr !== '—' ? ' → ' + toStr : ''}
+        <div style="font-size:11.5px;color:var(--muted)">${days} day${days !== 1 ? 's' : ''}</div>
+      </div>
+      <div style="flex:1.5;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="sc ${TYPE_CHIP[g.leave_type] || 'warn'}" title="${escapeHtml(LEAVE_LABELS[g.leave_type]||'')}">${escapeHtml(g.leave_type)}</span>
+        ${LEAVE_STATUS[st] || `<span class="sc warn">${escapeHtml(st)}</span>`}
+      </div>
+      <div style="flex:1.5;min-width:110px;font-size:12px;color:var(--muted)">${escapeHtml(g.note || '—')}</div>
       ${actions}
-    </tr>`;
+    </div>`;
   }).join('');
 }
 

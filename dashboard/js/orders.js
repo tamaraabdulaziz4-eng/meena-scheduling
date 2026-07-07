@@ -11,20 +11,21 @@ const OD_REFRESH_MS = 60000;
 
 async function renderOrdersPage() {
   setTopbar('Radiology orders', 'Every order and where it is — ordered · reported · filed');
+  odState._paintedOnce = false;          // entrance animation once per visit
   const c = document.getElementById('content');
-  c.innerHTML = `
+  c.innerHTML = `<div class="cc">
     ${pageHero('Orders', 'Radiology orders', 'The full lifecycle of every order — ordered, reported, filed, with turnaround times')}
-    <div class="card" style="margin-bottom:12px;padding:10px 12px;border-left:3px solid #3b7ddd;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div class="card" style="margin-bottom:12px;padding:10px 12px;border-left:3px solid var(--blue,#3b7ddd);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:18px">📋</span>
       <span style="font-size:13px;color:var(--muted)">
         This is the <strong>history &amp; turnaround</strong> view — where every report ended up.
-        To <strong>work</strong> pending patients, open the <a href="#" onclick="showPage('worklist');return false" style="color:#3b7ddd;font-weight:600">Worklist</a>.
+        To <strong>work</strong> pending patients, open the <a href="#" onclick="showPage('worklist');return false" style="color:var(--blue,#3b7ddd);font-weight:600">Worklist</a>.
       </span>
     </div>
     <div id="od-summary" style="margin-bottom:12px"></div>
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <div id="od-states" class="od-tabs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        <div id="od-states" style="min-width:0"></div>
         <select id="od-branch" class="input" style="min-width:170px" onchange="odOnBranch()">
           <option value="">All branches</option>
         </select>
@@ -33,11 +34,12 @@ async function renderOrdersPage() {
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)">
           <input type="checkbox" id="od-live" checked onchange="odToggleLive()"> Live
         </label>
-        <button class="btn btn-sm btn-primary" onclick="odLoad(true)">↻ Refresh</button>
+        <button class="open" style="width:auto" onclick="odLoad(true)">↻ Refresh</button>
         <span id="od-count" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
     </div>
-    <div id="od-body"></div>`;
+    <div id="od-body"></div>
+  </div>`;
   odRenderTabs();
   try {
     const b = await API.get('/radiology/branches');
@@ -64,17 +66,16 @@ const OD_STATES = [
 function odRenderTabs() {
   const host = document.getElementById('od-states');
   if (!host) return;
-  host.innerHTML = OD_STATES.map(s => {
+  host.innerHTML = '<div class="tabs">' + OD_STATES.map(s => {
     // The attention + orphan tabs carry a live count so a manager sees "3 stuck" /
     // "2 unconfirmed" from anywhere.
-    let badge = '';
-    if (s.key === 'attention' && odState.attnCount > 0)
-      badge = ` <span class="badge badge-red" style="padding:0 6px">${odState.attnCount}</span>`;
-    else if (s.key === 'orphan' && odState.orphanCount > 0)
-      badge = ` <span class="badge badge-orange" style="padding:0 6px">${odState.orphanCount}</span>`;
-    return `<button class="btn btn-sm ${odState.state === s.key ? 'btn-primary' : 'btn-ghost'}"
+    let n = 0;
+    if (s.key === 'attention') n = odState.attnCount;
+    else if (s.key === 'orphan') n = odState.orphanCount;
+    const badge = n > 0 ? `<span class="n">${n}</span>` : '';
+    return `<button class="tab${odState.state === s.key ? ' on' : ''}"
        onclick="odSetState('${s.key}')">${s.label}${badge}</button>`;
-  }).join('');
+  }).join('') + '</div>';
 }
 function odSetState(k) { odState.state = k; odRenderTabs(); odLoad(true); }
 function odOnBranch() { odState.site = document.getElementById('od-branch').value; odLoad(true); }
@@ -115,12 +116,17 @@ async function odLoad(force, silent) {
   } catch (e) {
     if (!silent) body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Failed to load orders')}</p>
-      <button class="btn btn-sm" onclick="odLoad(true)">Retry</button></div>`;
+      <button class="ghost" onclick="odLoad(true)">Retry</button></div>`;
   } finally { odState.loading = false; }
 }
 
 function odRender() {
   const d = odState.data || {}, orders = d.orders || [], by = d.byState || {};
+  // Entrance animation fires ONCE per visit — the 60s silent poll recreates the
+  // KPI tiles and order cards, which would replay the rise stagger as a visible
+  // flicker every refresh. Same .cc-still pin as the worklist.
+  const ccRoot = document.querySelector('#content > .cc');
+  if (ccRoot) { ccRoot.classList.toggle('cc-still', !!odState._paintedOnce); odState._paintedOnce = true; }
   // Summary: the pipeline counts + a couple of average turnaround figures. Only orders
   // filed THROUGH Meena carry a real turnaround — 'external' rows were reconciled off the
   // board (filed elsewhere) with an unknown file time, so they're kept out of the averages
@@ -131,12 +137,12 @@ function odRender() {
   const avgReport = rep.length ? (rep.reduce((s, o) => s + o.tatReportH, 0) / rep.length) : null;
   const sum = document.getElementById('od-summary');
   if (sum) sum.innerHTML = `
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      ${odStat('Ordered', by.ordered || 0, 'var(--muted,#888)', '🕒')}
-      ${odStat('Reported', by.reported || 0, '#e0a800', '📝')}
-      ${odStat('Filed', by.filed || 0, 'var(--success,#2e9e6b)', '✅')}
-      ${odStat('Avg order→report', avgReport == null ? '—' : odHrs(avgReport), '#3b7ddd', '⏱️')}
-      ${odStat('Avg order→filed', avgTotal == null ? '—' : odHrs(avgTotal), '#7c5cff', '🏁')}
+    <div class="kpis">
+      ${odStat('Ordered', by.ordered || 0, 'd', 'var(--accent,#6B4EFF)', 'awaiting report')}
+      ${odStat('Reported', by.reported || 0, 'a', 'var(--yellow,#FFBA49)', 'awaiting filing')}
+      ${odStat('Filed', by.filed || 0, 'c', 'var(--green,#00C896)', 'closed through Meena')}
+      ${odStat('Avg order→report', avgReport == null ? '—' : odHrs(avgReport), 'b', 'var(--blue,#3BA0FF)', 'turnaround')}
+      ${odStat('Avg order→filed', avgTotal == null ? '—' : odHrs(avgTotal), 'b', 'var(--blue,#3BA0FF)', 'turnaround')}
     </div>`;
   const cnt = document.getElementById('od-count');
   if (cnt) cnt.textContent = `${d.count || 0} order(s)`;
@@ -212,10 +218,13 @@ function odIsOrphan(o) {
   return o.state === 'filed' && o.filedSource === 'external' && !o.studyId && !!o.reportedAt;
 }
 
-function odStat(label, val, color, icon) {
-  return `<div class="card" style="flex:1;min-width:140px;padding:12px;border-top:3px solid ${color}">
-    <div style="font-size:12px;color:var(--muted)">${icon} ${label}</div>
-    <div style="font-size:24px;font-weight:800;margin-top:2px">${val}</div></div>`;
+// One Clinical Calm KPI card (accent variants: a=amber b=blue c=green d=violet).
+function odStat(label, val, accent, dot, caption) {
+  return `<div class="kpi ${accent}">
+    <div class="kl"><span class="kd" style="background:${dot}"></span>${label}</div>
+    <div class="kv">${val}</div>
+    ${caption ? `<div class="kt">${caption}</div>` : ''}
+  </div>`;
 }
 
 // hours → friendly "3h" / "2d 4h" / "45m"
@@ -235,15 +244,15 @@ function odWhen(iso) {
 }
 
 const OD_MOD = {
-  CT: { label: 'CT', bg: '#3b7ddd' }, MR: { label: 'MRI', bg: '#7c5cff' },
-  US: { label: 'US', bg: '#2e9e6b' }, XR: { label: 'X-Ray', bg: '#6b7280' },
-  MG: { label: 'Mammo', bg: '#d6568c' },
+  CT: { label: 'CT', cls: 'ct' }, MR: { label: 'MRI', cls: 'mri' }, MRI: { label: 'MRI', cls: 'mri' },
+  US: { label: 'US', cls: 'us' }, XR: { label: 'X-Ray', cls: 'xr' }, DX: { label: 'X-Ray', cls: 'xr' },
+  CR: { label: 'X-Ray', cls: 'xr' }, MG: { label: 'Mammo', cls: 'mm' },
 };
 function odModBadges(modality) {
   if (!modality) return '';
   return String(modality).split(',').map((m) => {
     const k = m.trim().toUpperCase(), info = OD_MOD[k];
-    return `<span class="badge" style="background:${info ? info.bg : '#8a8f98'};color:#fff">${escapeHtml(info ? info.label : k)}</span>`;
+    return `<span class="mod ${info ? info.cls : 'xr'}">${escapeHtml(info ? info.label : k)}</span>`;
   }).join(' ');
 }
 
@@ -276,37 +285,41 @@ function odRow(o) {
   const step = OD_STEP_ORDER[o.state] ?? 0;
   const emerg = o.emergency;
   const att = odAttention(o);
+  // State → Clinical Calm .ris pill: ordered→scheduled, imaged→completed,
+  // reported→prelim, filed→final ('Filed elsewhere' stays muted/scheduled).
+  const ris = (state, label, title) =>
+    `<span class="ris ${state}"${title ? ` title="${title}"` : ''}><span class="rd"></span>${label}</span>`;
   const stateBadge = o.state === 'filed'
     ? (o.filedSource === 'external'
-        ? '<span class="badge" style="background:#8a8f98;color:#fff" title="Left the board filed/resolved outside Meena — turnaround unknown">Filed elsewhere</span>'
-        : '<span class="badge badge-green">Filed</span>')
-    : o.state === 'reported' ? '<span class="badge badge-orange">Reported</span>'
-      : (o.imagedAt ? '<span class="badge badge-orange" title="Images are in DePACS — awaiting the report">📷 Imaged</span>'
-                    : '<span class="badge">Ordered</span>');
-  const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--warn,#e0a800)') : null;
+        ? ris('scheduled', 'Filed elsewhere', 'Left the board filed/resolved outside Meena — turnaround unknown')
+        : ris('final', 'Filed'))
+    : o.state === 'reported' ? ris('prelim', 'Reported')
+      : (o.imagedAt ? ris('completed', 'Imaged', 'Images are in DePACS — awaiting the report')
+                    : ris('scheduled', 'Ordered'));
+  const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--yellow,#e0a800)') : null;
   const border = attBorder || (emerg ? 'var(--danger,#E25555)' : null);
-  return `<div class="card" style="margin-bottom:8px;padding:12px${border ? ';border-left:3px solid ' + border : ''}">
-    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
-      <div style="flex:1;min-width:200px">
-        <div style="font-weight:700">${escapeHtml(o.patientName || '—')}
-          <span style="color:var(--muted);font-weight:500">· ${escapeHtml(o.mrno || '')}</span></div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">
-          ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}${o.accession ? ' · acc ' + escapeHtml(String(o.accession)) : ''}</div>
+  return `<div class="listcard" style="margin-bottom:10px${border ? ';box-shadow:inset 3px 0 0 ' + border : ''}">
+    <div class="lrow" style="align-items:flex-start;flex-wrap:wrap">
+      <div class="pt" style="flex:1;min-width:200px">
+        <div class="pname">${escapeHtml(o.patientName || '—')}
+          ${emerg ? '<span class="stat"><i></i>STAT</span>' : ''}
+          <span style="color:var(--muted);font-weight:500;font-size:12.5px">· ${escapeHtml(o.mrno || '')}</span></div>
+        <div class="pmeta"><span>
+          ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}</span></div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
         ${odModBadges(o.modality)}
-        ${o.accession ? `<span class="badge badge-green" title="Exact image↔order link — matched on DICOM accession ${escapeHtml(String(o.accession))}${o.accessionSource ? ' (' + escapeHtml(String(o.accessionSource)) + ')' : ''}">🔗 Linked</span>` : ''}
-        ${o.cpacsUrl ? `<a class="badge" style="background:#3b6fd4;color:#fff;text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 View images</a>` : ''}
-        ${emerg ? '<span class="badge badge-red">Emergency</span>' : ''}
-        ${att ? `<span class="badge ${att.cls}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
-        ${odIsOrphan(o) ? '<span class="badge badge-orange" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
+        ${o.accession ? `<span class="acc" title="Exact image↔order link — matched on DICOM accession ${escapeHtml(String(o.accession))}${o.accessionSource ? ' (' + escapeHtml(String(o.accessionSource)) + ')' : ''}">🔗 ${escapeHtml(String(o.accession))}</span>` : ''}
+        ${o.cpacsUrl ? `<a class="ghost" style="text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer">🖼 View images</a>` : ''}
+        ${att ? `<span class="sc ${att.cls === 'badge-red' ? 'no' : 'warn'}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
+        ${odIsOrphan(o) ? '<span class="sc warn" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
         ${stateBadge}
         ${(o.state !== 'filed' || odIsOrphan(o)) && o.mrno
-          ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" title="Open this patient on the worklist to confirm / file the report"
+          ? `<button class="ghost" title="Open this patient on the worklist to confirm / file the report"
                onclick="odJumpWorklist('${escapeHtml(String(o.mrno))}')">${odIsOrphan(o) ? 'Verify in Worklist →' : 'Open in Worklist →'}</button>` : ''}
       </div>
     </div>
-    ${odTimeline(o, step)}
+    <div style="padding:0 18px 14px">${odTimeline(o, step)}</div>
   </div>`;
 }
 

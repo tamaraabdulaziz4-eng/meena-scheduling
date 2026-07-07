@@ -13,35 +13,39 @@ async function renderMessagesPage() {
   setTopbar('Messages', 'Send a custom message to staff');
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Messages', 'Send a message', 'Pick staff, choose WhatsApp / email / in-app, and send a custom message')}
     <div style="display:grid;grid-template-columns:1fr;gap:16px">
-      <div class="rep-card">
-        <div class="rep-card-head"><div class="rep-card-title">Message</div>
-          ${_msgIsManager() ? `<select id="msg-branch" class="rep-select" style="max-width:200px"></select>` : ''}
+      <div class="board">
+        <div class="bhead"><div class="bhrow">
+          <div class="btitle">Message</div>
+          ${_msgIsManager() ? `<div class="bh-actions"><select id="msg-branch" class="rep-select" style="max-width:200px"></select></div>` : ''}
+        </div></div>
+        <div style="padding:12px 18px 18px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+            <div style="font-size:12px;color:var(--muted)">Channels — tap to turn on/off (✓ = will be sent):</div>
+            <button type="button" class="ghost" onclick="checkWhatsApp(this)">Check WhatsApp connection</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px" id="msg-channels">
+            ${[['whatsapp', 'WhatsApp'], ['email', 'Email'], ['app', 'In-app + push 🔔']].map(([v, l]) =>
+              `<button type="button" class="seg-chip" data-ch="${v}" data-label="${l}" onclick="msgToggleChannel('${v}')">${l}</button>`).join('')}
+          </div>
+          <div id="msg-wa-status" style="font-size:12px;margin-bottom:10px"></div>
+          <div id="msg-subject-wrap" style="display:none;margin-bottom:10px">
+            <input id="msg-subject" class="input" maxlength="120" placeholder="Email subject" style="width:100%"></div>
+          <textarea id="msg-body" class="input" rows="5" style="width:100%;resize:vertical" placeholder="Type your message…  Use {name} to personalise (e.g. Hi {name}, …)"></textarea>
+          <div style="font-size:12px;color:var(--muted);margin-top:6px">Tip: <code>{name}</code> is replaced with each recipient's name.</div>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
-          <div style="font-size:12px;color:var(--muted)">Channels — tap to turn on/off (✓ = will be sent):</div>
-          <button type="button" class="btn btn-xs btn-ghost" onclick="checkWhatsApp(this)">Check WhatsApp connection</button>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px" id="msg-channels">
-          ${[['whatsapp', 'WhatsApp'], ['email', 'Email'], ['app', 'In-app + push 🔔']].map(([v, l]) =>
-            `<button type="button" class="seg-chip" data-ch="${v}" data-label="${l}" onclick="msgToggleChannel('${v}')">${l}</button>`).join('')}
-        </div>
-        <div id="msg-wa-status" style="font-size:12px;margin-bottom:10px"></div>
-        <div id="msg-subject-wrap" style="display:none;margin-bottom:10px">
-          <input id="msg-subject" class="input" maxlength="120" placeholder="Email subject" style="width:100%"></div>
-        <textarea id="msg-body" class="input" rows="5" style="width:100%;resize:vertical" placeholder="Type your message…  Use {name} to personalise (e.g. Hi {name}, …)"></textarea>
-        <div style="font-size:12px;color:var(--muted);margin-top:6px">Tip: <code>{name}</code> is replaced with each recipient's name.</div>
       </div>
 
-      <div class="rep-card" style="padding:0;overflow:hidden">
-        <div class="rep-card-head" style="padding:16px 18px 0">
-          <div class="rep-card-title">Recipients (<span id="msg-count">0</span>)</div>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-xs btn-ghost" onclick="msgSelectAll(true)">Select all</button>
-            <button class="btn btn-xs btn-ghost" onclick="msgSelectAll(false)">None</button>
+      <div class="board">
+        <div class="bhead"><div class="bhrow">
+          <div class="btitle">Recipients <span>(<span id="msg-count">0</span>)</span></div>
+          <div class="bh-actions">
+            <button class="ghost" onclick="msgSelectAll(true)">Select all</button>
+            <button class="ghost" onclick="msgSelectAll(false)">None</button>
           </div>
-        </div>
+        </div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;padding:10px 18px 0">
           <input id="msg-q" class="input" placeholder="Search staff…" style="flex:1;min-width:160px" oninput="msgSearch(this.value)">
           <div class="seg" id="msg-secfilter">
@@ -55,8 +59,9 @@ async function renderMessagesPage() {
 
       <div style="display:flex;justify-content:flex-end;gap:10px;align-items:center">
         <span id="msg-status" style="font-size:13px;color:var(--muted)"></span>
-        <button class="btn btn-primary" id="msg-send" onclick="sendMessage()">Send</button>
+        <button class="open pri" style="width:auto;padding:10px 24px" id="msg-send" onclick="sendMessage()">Send</button>
       </div>
+    </div>
     </div>`;
   document.querySelectorAll('#msg-channels .seg-chip').forEach(_msgPaintChip);
   _msgSubjectVisibility();

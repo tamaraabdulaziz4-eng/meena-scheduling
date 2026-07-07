@@ -4,35 +4,45 @@ let reviewMonth = new Date().getMonth() + 1;
 let reviewFilter = 'all';
 let reviewData   = { branches: [], summary: {} };
 
+// Clinical Calm pill per schedule state (rejected-like states → red chip).
 const STATUS_META = {
-  submitted:     { label: 'Pending review', cls: 'pending'  },
-  reviewed:      { label: 'Pending review', cls: 'pending'  },
-  approved:      { label: 'Approved',       cls: 'approved' },
-  not_submitted: { label: 'Not submitted',  cls: 'notsub'   },
-  draft:         { label: 'Draft',          cls: 'draft'    },
-  returned:      { label: 'Returned',       cls: 'returned' },
+  submitted:     { html: '<span class="ris progress"><span class="rd"></span>Pending review</span>' },
+  reviewed:      { html: '<span class="ris progress"><span class="rd"></span>Pending review</span>' },
+  approved:      { html: '<span class="ris final"><span class="rd"></span>Approved</span>' },
+  not_submitted: { html: '<span class="sc no">✕ Not submitted</span>' },
+  draft:         { html: '<span class="ris scheduled"><span class="rd"></span>Draft</span>' },
+  returned:      { html: '<span class="sc warn">↩ Returned</span>' },
 };
 
 async function renderReviewPage() {
   setTopbar('Review', '', '');
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Approve or return schedules across all branches', 'Schedule Review')}
-    <div class="rep-kpis screen-kpis" id="review-kpis"></div>
+    <div class="kpis" id="review-kpis"></div>
     <div class="review-filters">
       <div class="month-nav" style="margin:0">
         <button onclick="changeReviewMonth(-1)">&#8249;</button>
         <span class="month-label" id="review-month-label"></span>
         <button onclick="changeReviewMonth(1)">&#8250;</button>
       </div>
-      <div class="seg" id="review-seg">
-        <button data-f="all" class="on">All</button>
-        <button data-f="pending">Pending</button>
-        <button data-f="not_submitted">Not submitted</button>
-        <button data-f="approved">Approved</button>
+      <div class="tabs" id="review-seg">
+        <button data-f="all" class="tab on">All</button>
+        <button data-f="pending" class="tab">Pending</button>
+        <button data-f="not_submitted" class="tab">Not submitted</button>
+        <button data-f="approved" class="tab">Approved</button>
       </div>
     </div>
-    <div class="review-list" id="review-list"></div>`;
+    <div class="board">
+      <div class="bhead">
+        <div class="bhrow">
+          <div class="btitle">Branch schedules <span id="review-board-sub"></span></div>
+        </div>
+      </div>
+      <div class="rows" id="review-list"></div>
+    </div>
+    </div>`;
 
   document.getElementById('review-month-label').textContent = monthLabel(reviewYear, reviewMonth);
   document.querySelectorAll('#review-seg button').forEach(b => {
@@ -71,16 +81,16 @@ async function loadReviewData() {
 function renderReviewKpis() {
   const s = reviewData.summary || {};
   const kpis = [
-    { v: s.pending || 0,       l: 'Pending review', sub: 'Awaiting your action', c: (s.pending ? 'r' : 'v') },
-    { v: s.not_submitted || 0, l: 'Not submitted',  sub: 'No rota yet',          c: (s.not_submitted ? 'r' : 'v') },
-    { v: s.approved || 0,      l: 'Approved',        sub: 'Signed off',           c: 'v' },
-    { v: s.total || 0,         l: 'Total branches',  sub: monthLabel(reviewYear, reviewMonth), c: 'v' },
+    { v: s.pending || 0,       l: 'Pending review', sub: 'Awaiting your action', a: 'a', dot: 'var(--amber,#F59E0B)' },
+    { v: s.not_submitted || 0, l: 'Not submitted',  sub: 'No rota yet',          a: 'b', dot: 'var(--blue,#3BA0FF)' },
+    { v: s.approved || 0,      l: 'Approved',       sub: 'Signed off',           a: 'c', dot: 'var(--green,#00C896)' },
+    { v: s.total || 0,         l: 'Total branches', sub: monthLabel(reviewYear, reviewMonth), a: 'd', dot: 'var(--violet,#6B4EFF)' },
   ];
   document.getElementById('review-kpis').innerHTML = kpis.map(k => `
-    <div class="rep-kpi">
-      <div class="rep-kpi-top"><span class="rep-dot ${k.c}"></span><span class="rep-kpi-label">${k.l}</span></div>
-      <div class="rep-kpi-num">${k.v}</div>
-      <div class="rep-kpi-sub">${escapeHtml(k.sub)}</div>
+    <div class="kpi ${k.a}">
+      <div class="kl"><span class="kd" style="background:${k.dot}"></span>${k.l}</div>
+      <div class="kv">${k.v}</div>
+      <div class="kt">${escapeHtml(k.sub)}</div>
     </div>`).join('');
 }
 
@@ -90,6 +100,9 @@ function renderReviewList() {
   if (reviewFilter === 'pending')       items = items.filter(b => ['submitted','reviewed'].includes(b.status));
   else if (reviewFilter === 'not_submitted') items = items.filter(b => b.status === 'not_submitted');
   else if (reviewFilter === 'approved') items = items.filter(b => b.status === 'approved');
+
+  const sub = document.getElementById('review-board-sub');
+  if (sub) sub.textContent = `${monthLabel(reviewYear, reviewMonth)} · ${items.length} branch${items.length !== 1 ? 'es' : ''}`;
 
   if (!items.length) {
     list.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><p>No schedules in this view</p></div>`;
@@ -104,30 +117,29 @@ function renderReviewList() {
     let actions = '';
     if (b.status === 'submitted' || b.status === 'reviewed') {
       actions = `
-        <button class="btn review" onclick="openReviewSchedule(${b.branch_id})">Review</button>
-        <button class="btn approve" onclick="reviewAction(${b.schedule_id}, 'approved')">Approve</button>
-        <button class="btn return" onclick="reviewAction(${b.schedule_id}, 'returned')">Return</button>`;
+        <button class="ghost" onclick="openReviewSchedule(${b.branch_id})">Review</button>
+        <button class="open" onclick="reviewAction(${b.schedule_id}, 'approved')">Approve</button>
+        <button class="ghost" onclick="reviewAction(${b.schedule_id}, 'returned')" style="color:var(--danger,#E63946)">Return</button>`;
     } else if (b.status === 'approved') {
       // Already approved but the team wants to change something — reopen it
       // (unlocks it and sends it back to the team lead for edits).
       actions = `
-        <button class="btn review" onclick="openReviewSchedule(${b.branch_id})">View</button>
-        <button class="btn return" onclick="reviewAction(${b.schedule_id}, 'returned')">↩ Reopen</button>`;
+        <button class="ghost" onclick="openReviewSchedule(${b.branch_id})">View</button>
+        <button class="ghost" onclick="reviewAction(${b.schedule_id}, 'returned')">↩ Reopen</button>`;
     } else if (b.status === 'not_submitted') {
-      actions = `<button class="btn review" onclick="openReviewSchedule(${b.branch_id})">Open</button>`;
+      actions = `<button class="ghost" onclick="openReviewSchedule(${b.branch_id})">Open</button>`;
     } else {
-      actions = `<button class="btn review" onclick="openReviewSchedule(${b.branch_id})">View</button>`;
+      actions = `<button class="ghost" onclick="openReviewSchedule(${b.branch_id})">View</button>`;
     }
     return `
-      <div class="review-row">
-        <div>
-          <div class="branch">${escapeHtml(b.branch_name)}</div>
-          <div class="meta">${b.staff_count || 0} staff${submitted ? ` · ${b.shift_count || 0} shifts` : ''}</div>
+      <div class="lrow">
+        <div style="flex:2;min-width:150px">
+          <div style="font-weight:700">${escapeHtml(b.branch_name)}</div>
+          <div style="font-size:11.5px;color:var(--muted)">${b.staff_count || 0} staff${submitted ? ` · ${b.shift_count || 0} shifts` : ''}</div>
         </div>
-        <div class="grow"></div>
-        <div class="who">${who}${when ? `<br>${when}` : ''}</div>
-        <span class="rbadge ${meta.cls}">${meta.label}</span>
-        <div class="ractions">${actions}</div>
+        <div style="flex:1.5;min-width:120px;font-size:12px;color:var(--muted)">${who}${when ? `<br>${when}` : ''}</div>
+        <div style="flex:none">${meta.html}</div>
+        <div style="display:flex;gap:6px;white-space:nowrap;flex:none">${actions}</div>
       </div>`;
   }).join('');
 }

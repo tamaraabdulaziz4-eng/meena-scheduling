@@ -57,6 +57,7 @@ async function renderRadStatsPage(opts) {
   const scopeName = radstats.leadLocked ? (radstats.leadBranchName || 'your branch') : '';
   if (!embed) setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
   rsStopAuto();
+  radstats._paintedOnce = false;         // entrance animation once per visit/mount
   if (radstats.preset && radstats.preset !== 'custom') {
     const r = rsPresetRange(radstats.preset);
     radstats.from = r.from; radstats.to = r.to;
@@ -65,11 +66,12 @@ async function renderRadStatsPage(opts) {
   const heroSub = scopeName
     ? `Live request volume for ${escapeHtml(scopeName)} — by modality, doctor and department, straight from Siratech HIS`
     : 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS';
-  c.innerHTML = `
+  c.innerHTML = `<div class="cc">
     ${embed ? '' : pageHero('Radiology', 'Radiology statistics', heroSub)}
     <div id="rs-controls"></div>
     <div id="rs-billing-banner"></div>
-    <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>`;
+    <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>
+  </div>`;
   rsRenderControls();
   rsStartClock();
   rsBindTips();                        // live cursor-following tooltips
@@ -281,8 +283,8 @@ function rsRenderControls() {
         <div class="rs-ctl-actions">
           <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
           <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
-          <button class="btn btn-sm" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">📊 Monthly report</button>
-          <button class="btn btn-primary btn-sm" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
+          <button class="ghost" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">📊 Monthly report</button>
+          <button class="open pri" style="width:auto" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
         </div>
       </div>
       ${rsBranchPicker()}
@@ -340,6 +342,7 @@ function rsStartAuto() {
   radstats.timer = setInterval(() => {
     if (typeof currentPage !== 'undefined' && currentPage !== 'radstats') { rsStopAuto(); return; }
     if (!document.getElementById('rs-body')) { rsStopAuto(); return; }
+    if (document.hidden) return;               // don't poll a backgrounded tab
     rsLoad(true);
   }, 60000);
 }
@@ -548,20 +551,12 @@ function rsPanel(title, inner, sub, cls) {
   </div>`;
 }
 
-const RS_ICON = {
-  patients: '<circle cx="9" cy="7" r="4"/><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><path d="M19 8v6M22 11h-6"/>',
-  total: '<path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/>',
-  exams: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
-  covered: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
-  emg: '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/>',
-  rtn: '<path d="M20 6 9 17l-5-5"/>',
-  aged: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
-  branch: '<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/>',
-};
-function rsKpi(icon, val, label, cls, sub) {
-  return `<div class="rs-kpi${cls ? ' ' + cls : ''}">
-    <span class="rs-kpi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${RS_ICON[icon] || ''}</svg></span>
-    <div><div class="rs-kpi-n">${val}</div><div class="rs-kpi-l">${label}${sub ? ` <span class="rs-kpi-sub">${sub}</span>` : ''}</div></div>
+// One Clinical Calm KPI card (accent bar: a=amber b=blue c=green d=violet).
+function rsKpi(accent, dot, val, label, sub) {
+  return `<div class="kpi ${accent}">
+    <div class="kl"><span class="kd" style="background:${dot}"></span>${label}</div>
+    <div class="kv">${val}</div>
+    ${sub ? `<div class="kt">${sub}</div>` : ''}
   </div>`;
 }
 
@@ -570,6 +565,12 @@ function rsRenderBody() {
   const banner = document.getElementById('rs-billing-banner');
   if (!body) return;
   body.classList.remove('rs-refreshing');
+  // Entrance animation fires ONCE per visit — the 60s Auto refresh (and every
+  // silent repaint) recreates the KPI/list nodes, which would replay the rise
+  // stagger as a visible flicker. Same .cc-still pin as the worklist; closest()
+  // finds the right root whether we're the page or embedded in Home.
+  const ccRoot = body.closest('.cc');
+  if (ccRoot) { ccRoot.classList.toggle('cc-still', !!radstats._paintedOnce); radstats._paintedOnce = true; }
 
   if (banner) {
     banner.innerHTML = `<div class="rs-note">
@@ -584,7 +585,7 @@ function rsRenderBody() {
       <div class="empty-icon">⚠️</div>
       <div class="empty-title">Couldn't load statistics</div>
       <div class="empty-sub">${escapeHtml(radstats.lastError)}</div>
-      <button class="btn btn-sm" style="margin-top:12px" onclick="rsLoad()">Retry</button></div></div>`;
+      <button class="ghost" style="margin-top:12px" onclick="rsLoad()">Retry</button></div></div>`;
     return;
   }
   const d = radstats.data;
@@ -622,13 +623,13 @@ function rsRenderBody() {
   }
 
   const kpis = `
-    <div class="rs-kpis">
-      ${rsKpi('patients', patients != null ? rsNum(patients) : '—', 'Patients')}
-      ${rsKpi('total', rsNum(total), 'Requests')}
-      ${rsKpi('exams', examsVal, 'Exams')}
-      ${rsKpi('covered', coveredVal, 'Insurance-covered', '', coveredSub)}
-      ${rsKpi('emg', rsNum(emg), 'Emergency', 'rs-kpi-red', total ? rsPct(emg, total) + '%' : '')}
-      ${rsKpi('aged', rsNum(aged), 'Pending &gt; 7 days', aged ? 'rs-kpi-warn' : '')}
+    <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+      ${rsKpi('d', 'var(--accent,#6B4EFF)', patients != null ? rsNum(patients) : '—', 'Patients')}
+      ${rsKpi('b', 'var(--blue,#3BA0FF)', rsNum(total), 'Requests')}
+      ${rsKpi('c', 'var(--green,#00C896)', examsVal, 'Exams')}
+      ${rsKpi('b', 'var(--blue,#3BA0FF)', coveredVal, 'Insurance-covered', coveredSub)}
+      ${rsKpi('a', 'var(--danger,#E25555)', rsNum(emg), 'Emergency', total ? rsPct(emg, total) + '% of requests' : '')}
+      ${rsKpi('a', 'var(--yellow,#FFBA49)', rsNum(aged), 'Pending &gt; 7 days')}
     </div>`;
 
   const branchItems = (d.byBranch || []).map((b) => ({ label: b.name || ('Branch ' + b.site), count: b.count, site: b.site }));
@@ -659,6 +660,7 @@ function rsRenderBody() {
     ${focusNote}
     ${rsSection('Overview')}
     ${kpis}
+    <div id="rs-throughput"></div>
     <div class="rs-grid2">
       ${rsPanel('Priority split', prioDonut)}
       ${rsPanel('Daily trend', rsArea(d.daily || []), `${(d.daily || []).length} days`)}
@@ -682,6 +684,12 @@ function rsRenderBody() {
     · updated ${escapeHtml(rsAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
   body.innerHTML = layout + foot;
+  rsTpRender();                       // re-attach the daily-throughput section
+  const tp = rsTpState();
+  // Follow the page's branch focus: a re-scope invalidates the cached month.
+  const scopeNow = rsSitesParam();
+  if (tp.scope !== undefined && tp.scope !== scopeNow) { tp.data = null; tp.error = ''; tp.open = null; }
+  if (!tp.data && !tp.loading && !tp.error) rsTpLoad();
 }
 
 function rsSection(title) { return `<div class="rs-section">${title}</div>`; }
@@ -697,16 +705,16 @@ function rsModalitySub() {
 
 function rsModalityInner() {
   if (radstats.modLoading) return `<div class="rs-empty"><span class="mini-spin"></span> Reading exam details…</div>`;
-  if (radstats.modError) return `<div class="rs-empty">${escapeHtml(radstats.modError)} <button class="btn btn-sm" onclick="rsLoadModality()">Retry</button></div>`;
+  if (radstats.modError) return `<div class="rs-empty">${escapeHtml(radstats.modError)} <button class="ghost" onclick="rsLoadModality()">Retry</button></div>`;
   const m = radstats.modData;
   if (!m) {
     return `<div class="rs-modcta">
       <span class="rs-modcta-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg></span>
       <p>Modality is read per order, so it loads on demand.</p>
-      <button class="btn btn-primary btn-sm" onclick="rsLoadModality()">Load modality mix</button>
+      <button class="open pri" style="width:auto" onclick="rsLoadModality()">Load modality mix</button>
     </div>`;
   }
-  if (m.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — the modality mix can't be computed right now. <button class="btn btn-sm" onclick="rsLoad(false, true)">Refresh</button></div>`;
+  if (m.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — the modality mix can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
   const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: RS_MOD_COLOR[x.modality] || '#94a3b8' }));
   return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
@@ -720,17 +728,17 @@ function rsFinancialSub() {
 }
 function rsFinancialInner() {
   if (radstats.finLoading) return `<div class="rs-empty"><span class="mini-spin"></span> Reading bills…</div>`;
-  if (radstats.finError) return `<div class="rs-empty">${escapeHtml(radstats.finError)} <button class="btn btn-sm" onclick="rsLoadFinancial()">Retry</button></div>`;
+  if (radstats.finError) return `<div class="rs-empty">${escapeHtml(radstats.finError)} <button class="ghost" onclick="rsLoadFinancial()">Retry</button></div>`;
   const f = radstats.finData;
   if (!f) {
     return `<div class="rs-modcta">
       <span class="rs-modcta-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
       <p>Radiology revenue &amp; insurance-vs-cash split — read per order, so it loads on demand.<br>
       <span style="opacity:.75">Note: your radiology is almost all insurance; this is billed revenue, not collected/settled.</span></p>
-      <button class="btn btn-primary btn-sm" onclick="rsLoadFinancial()">Load revenue</button>
+      <button class="open pri" style="width:auto" onclick="rsLoadFinancial()">Load revenue</button>
     </div>`;
   }
-  if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — revenue &amp; payer split can't be computed right now. <button class="btn btn-sm" onclick="rsLoad(false, true)">Refresh</button></div>`;
+  if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — revenue &amp; payer split can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
   const PAYER_COLOR = { 'Insurance': '#6B4EFF', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
   const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: PAYER_COLOR[p.type] || '#94a3b8' }));
   const payerDonut = rsDonut(payerSegs, { centerVal: f.requests || 0, centerLabel: 'requests' });
@@ -757,4 +765,157 @@ function rsAgo(iso) {
   if (s < 60) return 'just now';
   if (s < 3600) return Math.floor(s / 60) + 'm ago';
   return Math.floor(s / 3600) + 'h ago';
+}
+
+// ── Daily throughput · الإنجاز اليومي ─────────────────────────────────────────
+// منجز (imaged) vs ما جا (ordered but never imaged), bucketed by the IMAGING date
+// (KSA day) — not the order date. Backed by GET /api/radiology/throughput, which
+// aggregates the local order ledger (scheduling.radiology_orders). Month-scoped
+// with a per-day drill-down listing every imaged patient (order date → imaging date).
+function rsTpState() {
+  if (!radstats.tp) radstats.tp = { month: rsKsaToday().slice(0, 7), data: null, loading: false, error: '', open: null, seq: 0 };
+  return radstats.tp;
+}
+function rsTpMonthRange(month) {
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();   // day 0 of next month = last day
+  return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+}
+function rsTpSetMonth(v) {
+  const tp = rsTpState();
+  if (!/^\d{4}-\d{2}$/.test(v || '') || v === tp.month) return;
+  tp.month = v; tp.data = null; tp.error = ''; tp.open = null;
+  rsTpLoad();
+}
+async function rsTpLoad() {
+  const tp = rsTpState();
+  const seq = ++tp.seq;                       // stale-response guard (fast month flips)
+  tp.loading = true; tp.error = '';
+  tp.scope = rsSitesParam();                  // remember the branch scope this data belongs to
+  rsTpRender();
+  const r = rsTpMonthRange(tp.month);
+  try {
+    const d = await API.get(`/radiology/throughput?from=${r.from}&to=${r.to}${tp.scope ? `&sites=${tp.scope}` : ''}`);
+    if (seq !== tp.seq) return;
+    tp.data = d;
+  } catch (e) {
+    if (seq !== tp.seq) return;
+    tp.error = (e && e.message) || 'Could not load the daily throughput';
+  } finally {
+    if (seq === tp.seq) { tp.loading = false; rsTpRender(); }
+  }
+}
+function rsTpToggleDay(date) {
+  const tp = rsTpState();
+  tp.open = tp.open === date ? null : date;
+  rsTpRender();
+}
+// Ledger modality token → Clinical Calm .mod class.
+const RS_TP_MOD = { CT: 'ct', MR: 'mri', MRI: 'mri', US: 'us', XR: 'xr', DX: 'xr', CR: 'xr', DR: 'xr', MG: 'mm' };
+function rsTpModChips(byMod) {
+  const entries = Object.entries(byMod || {}).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '';
+  return entries.map(([m, n]) =>
+    `<span class="mod ${RS_TP_MOD[String(m).toUpperCase()] || 'xr'}">${escapeHtml(m === '?' ? '؟' : m)} · ${n}</span>`).join(' ');
+}
+function rsTpModChip(m) {
+  const k = String(m || '').split(',')[0].trim().toUpperCase();
+  if (!k) return '';
+  return `<span class="mod ${RS_TP_MOD[k] || 'xr'}">${escapeHtml(k)}</span>`;
+}
+function rsTpDay(iso) { return iso ? String(iso).slice(0, 10) : '—'; }
+function rsTpWeekday(date) {
+  try { return new Date(date + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short' }); }
+  catch (e) { return ''; }
+}
+// One imaged patient inside a day's drill-down: name/MRN · modality · exam · order date → imaging date.
+function rsTpItemRow(it) {
+  const exam = it.exam || it.department || '';
+  return `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap">
+    <div class="pt" style="flex:1;min-width:180px">
+      <div class="pname" style="font-size:13px">${escapeHtml(it.patientName || '—')}
+        <span style="color:var(--muted);font-weight:500;font-size:12px">· ${escapeHtml(it.mrno || '')}</span></div>
+      <div class="pmeta">${exam ? `<span>${escapeHtml(exam)}</span><i></i>` : ''}<span>طلب ${rsTpDay(it.orderedAt)} ← تصوير ${rsTpDay(it.imagedAt)}</span></div>
+    </div>
+    ${rsTpModChip(it.modality)}
+  </div>`;
+}
+function rsTpRender() {
+  const host = document.getElementById('rs-throughput');
+  if (!host) return;
+  const tp = rsTpState();
+  const monthPick = `<input type="month" class="input" style="width:auto;font-size:13px" value="${escapeHtml(tp.month)}"
+      max="${rsKsaToday().slice(0, 7)}" onchange="rsTpSetMonth(this.value)" aria-label="Month">`;
+  const head = `
+    ${rsSection('الإنجاز اليومي · Daily throughput')}
+    <div class="card rs-panel rs-wide" style="margin-bottom:14px">
+      <div class="rs-panel-head" style="flex-wrap:wrap;gap:8px">
+        <h3>منجز مقابل ما جا — by imaging date</h3>
+        <span style="display:inline-flex;align-items:center;gap:8px">
+          <span class="rs-panel-sub">counted on the day the patient was actually imaged</span>${monthPick}
+        </span>
+      </div>`;
+  if (tp.loading) {
+    const sh = (w) => `<div class="lrow"><span class="wl-shimmer" style="width:${w}%"></span></div>`;
+    host.innerHTML = head + `<div class="listcard" style="border:none;box-shadow:none">${sh(45)}${sh(65)}${sh(55)}${sh(40)}</div></div>`;
+    return;
+  }
+  if (tp.error) {
+    host.innerHTML = head + `<div class="empty" style="padding:20px 14px"><div class="empty-icon">⚠️</div>
+      <p>${escapeHtml(tp.error)}</p>
+      <button class="ghost" style="margin-top:8px" onclick="rsTpLoad()">↻ Retry · إعادة المحاولة</button></div></div>`;
+    return;
+  }
+  const d = tp.data;
+  if (!d || !d.ok) { host.innerHTML = head + `<div class="rs-empty">No data yet</div></div>`; return; }
+
+  const totals = d.totals || {};
+  const imaged = totals.imaged || 0, noShow = totals.noShow || 0;
+  const summary = `
+    <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:4px 0 14px">
+      ${rsKpi('c', 'var(--green,#00C896)', rsNum(imaged), 'منجز · Imaged')}
+      ${rsKpi('a', 'var(--yellow,#FFBA49)', rsNum(noShow), 'ما جا · No-show')}
+      ${rsKpi('d', 'var(--accent,#6B4EFF)', rsNum(imaged + noShow), 'الإجمالي · Total')}
+    </div>
+    ${Object.keys(totals.byModality || {}).length ? `<div class="exline" style="flex-wrap:wrap;margin:0 0 12px">${rsTpModChips(totals.byModality)}</div>` : ''}`;
+
+  // Merge imaged days with no-show-only days so a day where nobody showed still appears.
+  const dayMap = new Map((d.days || []).map((x) => [x.date, x]));
+  const nsMap = new Map((d.noShow || []).map((x) => [x.date, x]));
+  const allDates = [...new Set([...dayMap.keys(), ...nsMap.keys()])].sort().reverse();   // newest first
+  const items = d.items || [];
+  let rows;
+  if (!allDates.length) {
+    rows = `<div class="rs-empty">لا يوجد بيانات لهذا الشهر — no imaging recorded this month yet.<br>
+      <span style="font-size:12px;opacity:.8">The ledger fills as the worklist is viewed and orders are imaged.</span></div>`;
+  } else {
+    rows = `<div class="listcard">` + allDates.map((date) => {
+      const day = dayMap.get(date), ns = nsMap.get(date);
+      const n = (day && day.imaged) || 0;
+      const open = tp.open === date;
+      const drillItems = open ? items.filter((it) => it.date === date) : [];
+      const drill = open ? `
+        <div style="padding:8px 18px 12px;background:var(--card-alt);border-bottom:1px solid var(--border)">
+          ${drillItems.length ? drillItems.map(rsTpItemRow).join('')
+            : `<div style="font-size:12.5px;color:var(--muted);padding:6px 0">${n ? 'Patient rows for this day are beyond the item cap — narrow the range.' : 'ما جا أحد هذا اليوم — ordered patients did not reach imaging.'}</div>`}
+        </div>` : '';
+      return `<div class="lrow" role="button" tabindex="0" aria-expanded="${open}"
+          onclick="rsTpToggleDay('${date}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rsTpToggleDay('${date}')}"
+          style="cursor:pointer;flex-wrap:wrap${open ? ';background:var(--violet-wash,#F0EDFF)' : ''}">
+        <div style="min-width:112px">
+          <div style="font-weight:700;font-variant-numeric:tabular-nums">${escapeHtml(date)}</div>
+          <div style="font-size:11px;color:var(--muted)">${rsTpWeekday(date)}</div>
+        </div>
+        <div class="exline" style="flex:1;flex-wrap:wrap;min-width:120px">${day ? rsTpModChips(day.byModality) : ''}</div>
+        ${ns && ns.count ? `<span class="sc warn" title="ordered this day, never imaged">ما جا ${ns.count}</span>` : ''}
+        ${n ? `<span class="ris completed"><span class="rd"></span>${rsNum(n)} منجز</span>`
+            : `<span class="ris scheduled"><span class="rd"></span>0 منجز</span>`}
+        <span style="color:var(--muted);font-size:12px">${open ? '▾' : '▸'}</span>
+      </div>${drill}`;
+    }).join('') + `</div>`;
+  }
+  const basisNote = d.fallbackReported
+    ? `<div class="rs-foot" style="margin-top:8px">ℹ️ ${escapeHtml(String(d.basis || ''))}</div>`
+    : '';
+  host.innerHTML = head + summary + rows + basisNote + `</div>`;
 }

@@ -54,7 +54,7 @@ async function renderSchedulePage() {
   if (!currentBranchId) {
     setTopbar('Schedule', '', '');
     document.getElementById('content').innerHTML =
-      `<div class="empty"><div class="empty-icon">🏥</div><p>No branches available yet.</p></div>`;
+      `<div class="cc"><div class="empty"><div class="empty-icon">🏥</div><p>No branches available yet.</p></div></div>`;
     return;
   }
 
@@ -62,6 +62,7 @@ async function renderSchedulePage() {
 
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Monthly staff rota', 'Schedule')}
     <div class="schedule-toolbar">
       ${['superadmin','manager'].includes(currentUser.role) ? `
@@ -77,19 +78,19 @@ async function renderSchedulePage() {
 
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${['admin','superadmin'].includes(currentUser.role) ? `
-          <button class="btn btn-ghost btn-sm btn-glow" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
-          <button class="btn btn-ghost btn-sm" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
+          <button class="open" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
+          <button class="ghost" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
         ` : ''}
         ${['superadmin','manager'].includes(currentUser.role) ? `
-          <button class="btn btn-ghost btn-sm" onclick="openCrossCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
-          <button class="btn btn-ghost btn-sm" onclick="openAutofillModal()" id="btn-autofill" title="Auto-fill this branch from surplus staff at same-city sharing branches">🏗 Fill from other branches</button>
+          <button class="ghost" onclick="openCrossCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
+          <button class="ghost" onclick="openAutofillModal()" id="btn-autofill" title="Auto-fill this branch from surplus staff at same-city sharing branches">🏗 Fill from other branches</button>
         ` : ''}
         ${['admin','superadmin','manager'].includes(currentUser.role) ? `
-          <button class="btn btn-ghost btn-sm" onclick="exportXLSX()">📥 Export XLSX</button>
-          <button class="btn btn-ghost btn-sm" onclick="exportPDF()">📄 Export PDF</button>
+          <button class="ghost" onclick="exportXLSX()">📥 Export XLSX</button>
+          <button class="ghost" onclick="exportPDF()">📄 Export PDF</button>
         ` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="toggleRotaFullscreen()" title="Full-screen rota">⛶ Full screen</button>
-        <button class="btn btn-ghost btn-sm" onclick="printSchedule()">🖨 Print</button>
+        <button class="ghost" onclick="toggleRotaFullscreen()" title="Full-screen rota">⛶ Full screen</button>
+        <button class="ghost" onclick="printSchedule()">🖨 Print</button>
       </div>
     </div>
 
@@ -97,13 +98,14 @@ async function renderSchedulePage() {
 
     <div id="tl-status-banner-wrap"></div>
 
-    <div class="stats-row" id="schedule-stats"></div>
+    <div class="kpis" id="schedule-stats"></div>
 
     <div id="sched-onduty" style="margin-bottom:14px"></div>
 
     <div class="rota-wrap" id="rota-wrap">${LOADING_HTML}</div>
 
-    <div class="legend" id="shift-legend" style="margin-top:20px"></div>`;
+    <div class="legend" id="shift-legend" style="margin-top:20px"></div>
+    </div>`;
 
   document.getElementById('month-label').textContent = monthLabel(scheduleYear, scheduleMonth);
   if (typeof renderHomeOnDuty === 'function') renderHomeOnDuty('sched-onduty');   // "On duty today" moved here from Home
@@ -327,8 +329,8 @@ function renderNoScheduleState() {
           : 'The team lead hasn’t prepared this month’s schedule yet. You’ll be able to review it once it’s submitted.'}
       </p>
       ${canBuild ? `<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="createBlankSchedule()">➕ Create blank schedule</button>
-        ${canGenerate ? `<button class="btn btn-ghost btn-sm" onclick="openGenerateModal()">⚡ Generate</button>` : ''}
+        <button class="open" onclick="createBlankSchedule()">➕ Create blank schedule</button>
+        ${canGenerate ? `<button class="ghost" onclick="openGenerateModal()">⚡ Generate</button>` : ''}
       </div>` : ''}
     </div>`;
 }
@@ -380,64 +382,56 @@ function renderTeamLeadBanner() {
     b.style.pointerEvents = editingLocked ? 'none' : '';
   });
 
+  // Clinical Calm banner: a .listcard row with an icon, title/sub text, a status
+  // chip and the available action buttons.
+  const banner = (icon, iconBg, title, sub, chip, buttons) => `
+    <div class="listcard" style="margin-bottom:12px">
+      <div class="lrow">
+        <div style="width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;background:${iconBg};flex:none">${icon}</div>
+        <div style="flex:1;min-width:180px">
+          <div style="font-weight:700">${title} ${chip || ''}</div>
+          <div style="font-size:12px;color:var(--muted)">${sub}</div>
+        </div>
+        ${buttons ? `<div style="display:flex;gap:6px;white-space:nowrap;flex:none">${buttons}</div>` : ''}
+      </div>
+    </div>`;
+
   let html = '';
   if (manuallyLocked) {
     // Draft/returned but manually locked: Generate is blocked but there's no
     // review step to withdraw from — surface an Unlock action instead.
-    html = `
-      <div class="tl-status-banner warn">
-        <div class="ico" style="background:rgba(243,156,18,.15)">🔒</div>
-        <div style="flex:1">
-          <div class="ttl">Schedule locked</div>
-          <div class="sub">This schedule is manually locked, so it can't be generated or edited. Unlock it to make changes.</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="toggleScheduleLock()">🔓 Unlock</button>
-      </div>`;
+    html = banner('🔒', 'rgba(243,156,18,.15)',
+      'Schedule locked',
+      "This schedule is manually locked, so it can't be generated or edited. Unlock it to make changes.",
+      '<span class="sc warn">Locked</span>',
+      `<button class="ghost" onclick="toggleScheduleLock()">🔓 Unlock</button>`);
   } else if (status === 'draft' || status === 'returned') {
     const returned = status === 'returned';
-    html = `
-      <div class="tl-status-banner ${returned ? 'err' : ''}">
-        <div class="ico" style="background:${returned ? 'rgba(255,107,107,.15)' : 'rgba(133,133,168,.15)'}">${returned ? '↩' : '📝'}</div>
-        <div style="flex:1">
-          <div class="ttl">${returned ? 'Returned for edits' : 'Draft — not submitted yet'}</div>
-          <div class="sub">${returned && note ? 'Manager note: ' + escapeHtml(note) : 'Finish the rota, then send it to your manager for review.'}</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="checkScheduleNow()" title="Check for coverage gaps, overwork, and blanks">🔍 Check</button>
-        <button class="btn btn-ghost btn-sm" onclick="submitScheduleForReview(${sid})"
-          style="background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-weight:700">
-          📤 Submit for review
-        </button>
-      </div>`;
+    html = banner(returned ? '↩' : '📝',
+      returned ? 'rgba(255,107,107,.15)' : 'rgba(133,133,168,.15)',
+      returned ? 'Returned for edits' : 'Draft — not submitted yet',
+      returned && note ? 'Manager note: ' + escapeHtml(note) : 'Finish the rota, then send it to your manager for review.',
+      returned ? '<span class="sc warn">↩ Returned</span>' : '<span class="ris scheduled"><span class="rd"></span>Draft</span>',
+      `<button class="ghost" onclick="checkScheduleNow()" title="Check for coverage gaps, overwork, and blanks">🔍 Check</button>
+       <button class="open" onclick="submitScheduleForReview(${sid})">📤 Submit for review</button>`);
   } else if (status === 'submitted') {
     // Manager hasn't acted yet — the team lead can still pull it back.
-    html = `
-      <div class="tl-status-banner warn">
-        <div class="ico" style="background:rgba(255,159,67,.15)">⏳</div>
-        <div style="flex:1">
-          <div class="ttl">Pending manager review</div>
-          <div class="sub">The schedule is locked until the manager reviews it.</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="withdrawSchedule(${sid})">↩ Withdraw</button>
-      </div>`;
+    html = banner('⏳', 'rgba(255,159,67,.15)',
+      'Pending manager review',
+      'The schedule is locked until the manager reviews it.',
+      '<span class="ris progress"><span class="rd"></span>Submitted</span>',
+      `<button class="ghost" onclick="withdrawSchedule(${sid})">↩ Withdraw</button>`);
   } else if (status === 'reviewed') {
     // Manager has already reviewed it — only the manager can reopen it now.
-    html = `
-      <div class="tl-status-banner warn">
-        <div class="ico" style="background:rgba(255,159,67,.15)">👀</div>
-        <div style="flex:1">
-          <div class="ttl">Reviewed by manager — locked</div>
-          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'To make changes, ask your manager to return the schedule.'}</div>
-        </div>
-      </div>`;
+    html = banner('👀', 'rgba(255,159,67,.15)',
+      'Reviewed by manager — locked',
+      note ? 'Manager note: ' + escapeHtml(note) : 'To make changes, ask your manager to return the schedule.',
+      '<span class="ris prelim"><span class="rd"></span>Reviewed</span>', '');
   } else if (status === 'approved') {
-    html = `
-      <div class="tl-status-banner ok">
-        <div class="ico" style="background:rgba(0,200,150,.15)">✓</div>
-        <div style="flex:1">
-          <div class="ttl" style="color:#009B74">Approved — locked</div>
-          <div class="sub">${note ? 'Manager note: ' + escapeHtml(note) : 'This schedule is approved. To make changes, ask your manager to return it.'}</div>
-        </div>
-      </div>`;
+    html = banner('✓', 'rgba(0,200,150,.15)',
+      'Approved — locked',
+      note ? 'Manager note: ' + escapeHtml(note) : 'This schedule is approved. To make changes, ask your manager to return it.',
+      '<span class="ris final"><span class="rd"></span>Approved</span>', '');
   }
   wrap.innerHTML = html;
 }
@@ -548,16 +542,12 @@ function renderScheduleStatusBar() {
 
   bar.innerHTML = `
     ${isAdmin ? `
-      <button onclick="toggleScheduleLock()"
-        style="font-size:11px;padding:3px 12px;border-radius:20px;border:none;cursor:pointer;font-weight:600;
-               background:${s.is_locked ? '#f39c12' : '#dfe6e9'};color:${s.is_locked ? '#fff' : '#636e72'}"
+      <button class="ghost" onclick="toggleScheduleLock()"
         title="${s.is_locked ? 'Click to unlock' : 'Click to lock'}">
         ${s.is_locked ? '🔒 Locked' : '🔓 Unlocked'}
       </button>` : `
-      <span style="font-size:11px;font-weight:600;color:${s.is_locked ? '#e17055' : ''}">
-        ${s.is_locked ? '🔒 Locked' : ''}
-      </span>`}
-    ${(isReviewer && s.is_locked) ? `<span style="font-size:11px;font-weight:600;color:var(--accent)">✎ You can edit this as a manager</span>` : ''}
+      ${s.is_locked ? '<span class="sc warn">🔒 Locked</span>' : ''}`}
+    ${(isReviewer && s.is_locked) ? `<span class="sc ok">✎ You can edit this as a manager</span>` : ''}
     ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${escapeHtml(s.created_by_name)}</strong></span>` : ''}
   `;
 }
@@ -575,40 +565,22 @@ function renderShiftLegend() {
     return t ? `${st.code}: ${t}` : st.label;
   }
 
-  function colorStyle(st) {
-    // Subtle tinted background using the shift color
-    return `style="color:${st.color};background:${st.color}18"`;
-  }
+  // Colour-coded chips (inline colours from each shift, so the printed report —
+  // which embeds this element's outerHTML — keeps the colours too).
+  const chipStyle = st =>
+    `display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;` +
+    `color:${st.color};background:${st.color}18;border:1px solid ${st.color}40`;
 
-  // Build rows: pair work shifts into left/right columns (fill left first then right)
-  const half = Math.ceil(workShifts.length / 2);
-  const leftCol  = workShifts.slice(0, half);
-  const rightCol = workShifts.slice(half);
-
-  // Pad right col to same length
-  while (rightCol.length < leftCol.length) rightCol.push(null);
-
-  const workRows = leftCol.map((l, i) => {
-    const r = rightCol[i];
-    return `<tr>
-      <td class="leg-cell" ${colorStyle(l)}>${cellText(l)}</td>
-      <td class="leg-cell" ${r ? colorStyle(r) : ''}>${r ? cellText(r) : ''}</td>
-    </tr>`;
-  }).join('');
-
-  const statusRows = statusShifts.map(st => {
-    return `<tr>
-      <td class="leg-cell leg-status" colspan="2" style="color:${st.color};background:${st.color}18;text-align:center;font-weight:700">${st.code} (${st.label})</td>
-    </tr>`;
-  }).join('');
+  const workChips = workShifts.map(st =>
+    `<span class="sc" style="${chipStyle(st)}">${cellText(st)}</span>`).join('');
+  const statusChips = statusShifts.map(st =>
+    `<span class="sc" style="${chipStyle(st)}">${st.code} (${st.label})</span>`).join('');
 
   leg.innerHTML = `
-    <table class="legend-table">
-      <tbody>
-        ${workRows}
-        ${statusRows}
-      </tbody>
-    </table>`;
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      ${workChips}
+      ${statusChips}
+    </div>`;
 }
 
 function renderScheduleStats() {
@@ -620,29 +592,21 @@ function renderScheduleStats() {
   const onCall   = Object.values(entryMap).filter(e => e.is_oncall || e.shift_code === 'OC').length;
   const leaves   = Object.values(entryMap).filter(e => ['AL','SL','TB'].includes(e.shift_code)).length;
 
-  const icoStaff = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
-  const icoDays  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>';
-  const icoShift = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
-  const icoCall  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
-  const icoLeaf  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
-
   // Hijri month span for this Gregorian month (e.g. "Dhuʻl-Q. – Dhuʻl-H. 1447").
-  let hijriPill = '';
+  let hijriCaption = monthLabel(scheduleYear, scheduleMonth);
   if (typeof _hijriFullFmt !== 'undefined' && _hijriFullFmt) {
     const part = (d) => new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{month:'short'}).format(new Date(scheduleYear, scheduleMonth-1, d));
     const yr   = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{year:'numeric'}).format(new Date(scheduleYear, scheduleMonth-1, 15));
     const m1 = part(1), m2 = part(nDays);
     const span = (m1 === m2) ? m1 : `${m1}–${m2}`;
-    hijriPill = `<div class="stat-pill" title="Hijri (Umm al-Qura)">🌙 <strong>${span} ${yr}</strong></div>`;
+    hijriCaption = `🌙 ${span} ${yr}`;
   }
 
   bar.innerHTML = `
-    <div class="stat-pill">${icoStaff} <strong data-count="${total}">0</strong> staff</div>
-    <div class="stat-pill">${icoDays} <strong data-count="${nDays}">0</strong> days</div>
-    <div class="stat-pill">${icoShift} <strong data-count="${working}">0</strong> shifts assigned</div>
-    <div class="stat-pill">${icoCall} <strong data-count="${onCall}">0</strong> on-call</div>
-    <div class="stat-pill">${icoLeaf} <strong data-count="${leaves}">0</strong> leaves</div>
-    ${hijriPill}`;
+    <div class="kpi a"><div class="kl"><span class="kd" style="background:var(--amber,#F59E0B)"></span>Staff</div><div class="kv"><strong data-count="${total}">0</strong></div><div class="kt">on this rota</div></div>
+    <div class="kpi b"><div class="kl"><span class="kd" style="background:var(--blue,#3BA0FF)"></span>Days</div><div class="kv"><strong data-count="${nDays}">0</strong></div><div class="kt">${hijriCaption}</div></div>
+    <div class="kpi c"><div class="kl"><span class="kd" style="background:var(--green,#00C896)"></span>Shifts assigned</div><div class="kv"><strong data-count="${working}">0</strong></div><div class="kt">this month</div></div>
+    <div class="kpi d"><div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>On-call</div><div class="kv"><strong data-count="${onCall}">0</strong></div><div class="kt">${leaves} leave day${leaves !== 1 ? 's' : ''}</div></div>`;
 
   // Animate each number counting up
   bar.querySelectorAll('strong[data-count]').forEach(el => countUp(el, parseInt(el.dataset.count) || 0));

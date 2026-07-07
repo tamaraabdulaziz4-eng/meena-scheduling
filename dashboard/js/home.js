@@ -40,6 +40,7 @@ async function renderHomePage() {
   const c0 = _hmClockParts();
 
   document.getElementById('content').innerHTML = `
+    <div class="cc">
     <div class="phero phero-lg">
       <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
       <div class="phero-orb p3"></div>
@@ -75,6 +76,7 @@ async function renderHomePage() {
       </div>
       <div id="hm-recent" class="hm-recent"></div>
       <div id="hm-staff-results" class="hm-results"></div>
+    </div>
     </div>
     `;
 
@@ -141,17 +143,18 @@ async function renderHomeApprovals() {
   const swapPending = (swaps || []).filter(s => ['pending', 'pending_lead', 'pending_manager'].includes(s.status));
 
   if (!groups.length && !tbPending.length && !swapPending.length) {
-    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Needs your approval</div></div>
-      <div class="hm-muted" style="padding:6px 2px">You're all caught up 🎉</div></div>`;
+    box.innerHTML = `<div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">Needs your approval</div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px;color:var(--muted);font-size:13px">You're all caught up 🎉</div></div></div>`;
     return;
   }
-  const row = (left, right) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
-      <div style="font-size:13px">${left}</div><div style="font-size:12px">${right}</div></div>`;
+  const row = (left, right) => `<div class="lrow" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 18px">
+      <div style="font-size:13px;min-width:0">${left}</div><div style="font-size:12px;flex-shrink:0">${right}</div></div>`;
   const section = (title, count, link, rows) => !count ? '' : `
-    <div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-        <div style="font-weight:700;font-size:13px">${title} <span class="badge badge-orange">${count}</span></div>
-        <button class="action-btn" onclick="showPage('${link}')">View all →</button>
+    <div style="margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 18px 2px">
+        <div style="font-weight:700;font-size:13px">${title} <span class="sc warn">${count}</span></div>
+        <button class="ghost" onclick="showPage('${link}')">View all →</button>
       </div>
       ${rows}
     </div>`;
@@ -159,18 +162,18 @@ async function renderHomeApprovals() {
   const leaveRows = groups.slice(0, 5).map(g => {
     const span = g.date_to && g.date_to !== g.date_from ? `${fmtDateDisplay(g.date_from)}–${fmtDateDisplay(g.date_to)}` : fmtDateDisplay(g.date_from);
     return row(`<b>${escapeHtml(g.staff_name || '')}</b> · ${escapeHtml(g.leave_type)} · ${span} <span class="hm-muted">(${g.day_count}d)</span>`,
-      `<button class="action-btn" onclick='homeApproveLeave(${JSON.stringify(g.ids)})'>✓ Approve</button>`);
+      `<button class="open" onclick='homeApproveLeave(${JSON.stringify(g.ids)})'>✓ Approve</button>`);
   }).join('');
   const tbRows = tbPending.slice(0, 5).map(t => row(
     `<b>${escapeHtml(t.staff_name || '')}</b> · ${t.days}d · ${fmtDateDisplay(t.date)}`,
-    `<button class="action-btn" onclick="homeApproveTimeback(${t.id})">✓ Approve</button>`)).join('');
+    `<button class="open" onclick="homeApproveTimeback(${t.id})">✓ Approve</button>`)).join('');
   const swapRows = swapPending.slice(0, 5).map(s => row(
     `<b>${escapeHtml(s.staff_a_name || '')}</b> ↔ ${escapeHtml(s.staff_b_name || '?')} · ${fmtDateDisplay(s.date_a)}`,
-    `<span class="badge badge-yellow">${escapeHtml(s.status.replace('pending_', 'awaiting '))}</span>`)).join('');
+    `<span class="ris progress"><span class="rd"></span>${escapeHtml(s.status.replace('pending_', 'awaiting '))}</span>`)).join('');
 
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head"><div class="hm-card-title">Needs your approval</div></div>
-    <div style="margin-top:6px">
+  box.innerHTML = `<div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">Needs your approval <span>${groups.length + tbPending.length + swapPending.length} pending</span></div></div></div>
+    <div class="rows">
       ${section('Leave requests', groups.length, 'leaves', leaveRows)}
       ${section('Time-back', tbPending.length, 'leaves', tbRows)}
       ${section('Shift swaps', swapPending.length, 'swaps', swapRows)}
@@ -199,12 +202,12 @@ async function renderHomeCredentials() {
       <div style="font-size:13px"><b>${escapeHtml(r.staff_name || '')}</b> · ${escapeHtml(kindLabel(r.kind))}${r.label ? ' · ' + escapeHtml(r.label) : ''} <span class="hm-muted">(${escapeHtml(r.expiry_date || '')})</span></div>
       <div style="font-size:12px;font-weight:700;color:${col}">${txt}</div></div>`;
   }).join('');
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head">
-      <div class="hm-card-title">Expiring credentials <span class="badge badge-orange">${items.length}</span></div>
-      <button class="action-btn" onclick="showPage('reports')">Manage →</button>
-    </div>
-    <div style="margin-top:6px">${rows}</div></div>`;
+  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow">
+      <div class="btitle">Expiring credentials <span class="sc warn">${items.length}</span></div>
+      <div class="bh-actions"><button class="ghost" onclick="showPage('reports')">Manage →</button></div>
+    </div></div>
+    <div style="padding:6px 18px 14px">${rows}</div></div></div>`;
 }
 
 // TODAY's radiology across all branches — the live centrepiece of the manager
@@ -234,15 +237,17 @@ async function renderHomeRadstats() {
     else {
       // FAIL CLOSED — a team lead whose branch we can't resolve must NOT get an
       // unscoped (all-branch) query.
-      box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">Radiology</div></div>
-        <div class="rs-loadnote" style="margin:8px 0 0;color:var(--muted)">Your branch isn't linked to the hospital system yet — ask an admin to link it.</div></div>`;
+      box.innerHTML = `<div class="board" style="margin-bottom:14px">
+        <div class="bhead"><div class="bhrow"><div class="btitle">Radiology</div></div></div>
+        <div class="rows"><div class="lrow" style="padding:12px 18px;color:var(--muted);font-size:13px">Your branch isn't linked to the hospital system yet — ask an admin to link it.</div></div></div>`;
       return;
     }
   }
   if (!box.dataset.loaded) {
-    const t = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
-    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">${t}</div></div>
-      <div class="rs-loadnote" style="margin:8px 0 0"><span class="mini-spin"></span> Loading live data…</div></div>`;
+    const t = scopeName ? escapeHtml(scopeName) : 'all branches';
+    box.innerHTML = `<div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">Radiology today <span>${t}</span></div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px"><span class="mini-spin"></span> Loading live data…</div></div></div>`;
   }
   await _hmRadFetch(site, scopeName);
   // Live auto-refresh; self-stops when the user leaves Home.
@@ -251,6 +256,7 @@ async function renderHomeRadstats() {
     if (!document.getElementById('hm-radstats') || (typeof currentPage !== 'undefined' && currentPage !== 'home')) {
       clearInterval(_hmRadTimer); _hmRadTimer = null; return;
     }
+    if (document.hidden) return;               // don't poll a backgrounded tab
     _hmRadFetch(site, scopeName);
   }, 90000);
 }
@@ -262,28 +268,51 @@ async function _hmRadFetch(site, scopeName) {
   let d;
   try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { return; }   // keep last-good on a blip
   if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; return; }
+  // Entrance animation fires ONCE per visit — the 90s auto-refresh recreates the
+  // board/KPI nodes, which would replay the rise stagger as a visible flicker.
+  // Mirror the worklist's .cc-still pin; dataset.loaded lives on the DOM node, so
+  // a fresh Home render naturally animates again.
+  const ccRoot = box.closest('.cc');
+  if (ccRoot) ccRoot.classList.toggle('cc-still', !!box.dataset.loaded);
   box.dataset.loaded = '1';
   _hmRadData = d;
   const total = d.total || 0, emg = (d.priority && d.priority.emergency) || 0;
   const rtn = (d.priority && d.priority.routine) || 0;
   const top = (d.byBranch || []).filter(b => b.count > 0)[0];
   const upd = _hmClockParts();
-  const title = scopeName ? `Radiology today · ${escapeHtml(scopeName)}` : 'Radiology today · all branches';
+  const scope = scopeName ? escapeHtml(scopeName) : 'all branches';
   // Tiles are buttons — tapping one lists the actual requests behind it (patient +
   // exam), filtered to that tile. The active tile is highlighted.
-  const kpi = (n, l, cls, filter) => `<button type="button" class="hm-rad-kpi${cls ? ' ' + cls : ''}${filter && _hmRadDrill === filter ? ' active' : ''}"${filter ? ` onclick="hmRadDrillToggle('${filter}')"` : ''}><b>${Number(n).toLocaleString()}</b><span>${l}</span></button>`;
-  const tiles = [kpi(total, 'requests', '', 'all'), kpi(emg, 'emergency', emg ? 'warn' : '', 'emergency'), kpi(rtn, 'routine', '', 'routine')];
-  if (!site && top) tiles.push(`<button type="button" class="hm-rad-kpi${_hmRadDrill === 'branch:' + top.site ? ' active' : ''}" onclick="hmRadDrillToggle('branch:${top.site}')"><b style="font-size:15px">${escapeHtml(top.name || ('Branch ' + top.site))}</b><span>busiest branch</span></button>`);
-  else if (!site) tiles.push(`<div class="hm-rad-kpi"><b style="font-size:15px">—</b><span>busiest branch</span></div>`);
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head">
-      <div class="hm-card-title">${title}
-        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2BAE66;box-shadow:0 0 0 3px rgba(43,174,102,.18);margin-left:6px;vertical-align:middle"></span></div>
-      <button class="action-btn" onclick="showPage('radstats')">Open →</button>
+  const kpi = (n, l, cls, dot, cap, filter) => `<button type="button"
+    class="kpi ${cls}${filter && _hmRadDrill === filter ? ' active' : ''}"
+    style="text-align:start;font:inherit;cursor:pointer"${filter ? ` onclick="hmRadDrillToggle('${filter}')"` : ''}>
+    <div class="kl"><span class="kd" style="background:${dot}"></span>${l}</div>
+    <div class="kv">${Number(n).toLocaleString()}</div>
+    <div class="kt">${cap}</div></button>`;
+  const tiles = [
+    kpi(total, 'Requests', 'b', 'var(--blue,#3BA0FF)', 'today · tap for the list', 'all'),
+    kpi(emg, 'Emergency', 'a', emg ? 'var(--danger,#E25555)' : 'var(--amber,#F4B740)', emg ? '<span class="dn">needs attention</span>' : 'none so far', 'emergency'),
+    kpi(rtn, 'Routine', 'c', 'var(--green,#00C896)', 'scheduled flow', 'routine'),
+  ];
+  if (!site && top) tiles.push(`<button type="button" class="kpi d${_hmRadDrill === 'branch:' + top.site ? ' active' : ''}"
+      style="text-align:start;font:inherit;cursor:pointer" onclick="hmRadDrillToggle('branch:${top.site}')">
+      <div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>Busiest branch</div>
+      <div class="kv" style="font-size:17px;line-height:1.3">${escapeHtml(top.name || ('Branch ' + top.site))}</div>
+      <div class="kt">${Number(top.count).toLocaleString()} requests</div></button>`);
+  else if (!site) tiles.push(`<div class="kpi d"><div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>Busiest branch</div>
+      <div class="kv">—</div><div class="kt">no activity yet</div></div>`);
+  box.innerHTML = `<div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow">
+      <div class="btitle">Radiology today <span>${scope}</span></div>
+      <div class="bh-actions">
+        <span class="liveTag"><i></i>Live · updated ${upd.hm}:${upd.ss} Riyadh</span>
+        <button class="ghost" onclick="showPage('radstats')">Open →</button>
+      </div>
+    </div></div>
+    <div style="padding:14px 18px 16px">
+      <div class="kpis">${tiles.join('')}</div>
+      <div id="hm-rad-drill"></div>
     </div>
-    <div class="hm-rad-kpis">${tiles.join('')}</div>
-    <div id="hm-rad-drill"></div>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px">🟢 Live · updated ${upd.hm}:${upd.ss} Riyadh · tap a number for the list</div>
   </div>`;
   if (_hmRadDrill) hmRadDrillRender();
 }
@@ -292,7 +321,7 @@ async function _hmRadFetch(site, scopeName) {
 function hmRadDrillToggle(filter) {
   _hmRadDrill = (_hmRadDrill === filter) ? '' : filter;
   // Re-highlight the tiles + (re)render the list without a full refetch.
-  document.querySelectorAll('#hm-radstats .hm-rad-kpi').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#hm-radstats .kpi').forEach(el => el.classList.remove('active'));
   hmRadDrillRender();
 }
 function hmRadDrillRender() {
@@ -314,25 +343,26 @@ function hmRadDrillRender() {
     label = (rows[0] && rows[0].branch) || 'Branch';
   }
   // Mark the active tile.
-  document.querySelectorAll('#hm-radstats .hm-rad-kpi').forEach(el => {
+  document.querySelectorAll('#hm-radstats .kpi').forEach(el => {
     if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`'${_hmRadDrill}'`)) el.classList.add('active');
   });
   const trunc = d.requestsTruncated ? ` · showing first ${all.length} of ${d.requestsTruncated}` : '';
   const list = rows.length ? rows.map(r => `
-    <button type="button" class="hm-rad-req" onclick="openPatientLookup('${escapeHtml(r.mrno || '')}')">
-      <div class="hm-rad-req-main">
-        <div class="hm-rad-req-name">${escapeHtml(r.name || '(no name)')}</div>
-        <div class="hm-rad-req-sub">${escapeHtml(r.exam || '—')}${r.branch ? ' · ' + escapeHtml(r.branch) : ''}${r.doctor ? ' · ' + escapeHtml(r.doctor) : ''}</div>
+    <button type="button" class="lrow" style="display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;text-align:start;font:inherit;cursor:pointer;background:none;border:none;border-bottom:1px solid var(--border);padding:9px 12px" onclick="openPatientLookup('${escapeHtml(r.mrno || '')}')">
+      <div style="min-width:0">
+        <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name || '(no name)')}</div>
+        <div style="font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.exam || '—')}${r.branch ? ' · ' + escapeHtml(r.branch) : ''}${r.doctor ? ' · ' + escapeHtml(r.doctor) : ''}</div>
       </div>
-      <div class="hm-rad-req-side">
-        ${r.priority === 'emergency' ? '<span class="badge badge-red">ER</span>' : ''}
-        <span class="hm-rad-req-mrn">${escapeHtml(r.mrno || '')}</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${r.priority === 'emergency' ? '<span class="sc no">ER</span>' : ''}
+        <span style="font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums">${escapeHtml(r.mrno || '')}</span>
       </div>
     </button>`).join('') : `<div style="padding:10px;color:var(--muted);font-size:12.5px">No requests in this group.</div>`;
-  panel.innerHTML = `<div class="hm-rad-drillbox">
-    <div class="hm-rad-drill-head">${escapeHtml(label)} · ${rows.length}${trunc}
-      <button class="btn btn-xs btn-ghost" style="float:inline-end" onclick="hmRadDrillToggle('${_hmRadDrill}')">✕ close</button></div>
-    <div class="hm-rad-reqlist">${list}</div>
+  panel.innerHTML = `<div class="listcard" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;font-size:12.5px;font-weight:700">
+      <span>${escapeHtml(label)} · ${rows.length}${trunc}</span>
+      <button class="ghost" onclick="hmRadDrillToggle('${_hmRadDrill}')">✕ close</button></div>
+    <div style="max-height:320px;overflow:auto">${list}</div>
   </div>`;
 }
 
@@ -504,19 +534,19 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
   let d = null;
   try { d = await API.get('/employee-of-month'); } catch (e) { box.innerHTML = ''; return; }
   if (!d || !d.staff) {
-    box.innerHTML = isReviewer ? `
-      <div class="hm-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+    box.innerHTML = isReviewer ? `<div class="cc">
+      <div class="listcard" style="margin-bottom:14px"><div class="lrow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px">
         <div><b>Employee of the Month</b>
           <span class="hm-muted" style="margin-left:6px">not set</span></div>
-        <button class="btn btn-sm" onclick="openEotmModal()">Choose</button>
-      </div>` : '';
+        <button class="open" onclick="openEotmModal()">Choose</button>
+      </div></div></div>` : '';
     return;
   }
   const s = d.staff;
-  box.innerHTML = `
-    <div class="hm-card hm-eotm-card hm-eotm-filled">
+  box.innerHTML = `<div class="cc">
+    <div class="listcard hm-eotm-card hm-eotm-filled" style="margin-bottom:14px">
       <div class="hm-eotm-shine"></div>
-      <div class="hm-eotm-row">
+      <div class="hm-eotm-row lrow" style="padding:14px 16px">
         <div class="hm-eotm-medal">🏆</div>
         <div class="hm-eotm-main">
           <div class="hm-eotm-kicker">Employee of the Month${d.period ? ' · ' + escapeHtml(d.period) : ''}</div>
@@ -525,11 +555,11 @@ async function renderHomeEotm(containerId = 'hm-eotm') {
           ${d.note ? `<div class="hm-eotm-note">“${escapeHtml(d.note)}”</div>` : ''}
         </div>
         ${isReviewer ? `<div class="hm-eotm-actions">
-          <button class="btn btn-sm btn-ghost" onclick="openEotmModal()">Change</button>
-          <button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="clearEotm()">Clear</button>
+          <button class="ghost" onclick="openEotmModal()">Change</button>
+          <button class="ghost" style="color:var(--danger,#E25555)" onclick="clearEotm()">Clear</button>
         </div>` : ''}
       </div>
-    </div>`;
+    </div></div>`;
 }
 
 async function clearEotm() {
@@ -621,20 +651,18 @@ async function renderHomeShiftChecks(containerId = 'hm-shiftcheck') {
   if (!branches.length) { box.innerHTML = ''; return; }
   const pill = (c) => {
     const done = c.done;
-    const color = done ? '#2BAE66' : '#E8A33D';
     const who = done && c.confirmed_by_name ? ` title="By ${escapeHtml(c.confirmed_by_name)}"` : '';
-    return `<span${who} style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
-      font-weight:700;padding:2px 9px;border-radius:10px;margin-left:6px">${done ? '✓' : '○'} ${c.label}</span>`;
+    return `<span class="sc ${done ? 'ok' : 'warn'}"${who} style="margin-left:6px">${done ? '✓' : '○'} ${c.label}</span>`;
   };
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head"><div class="hm-card-title">Equipment checks today</div></div>
-    <div style="margin-top:6px">
+  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">Equipment checks today</div></div></div>
+    <div class="rows">
       ${branches.map(b => `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <div class="lrow" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 18px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:600">${escapeHtml(b.branch_name)}</div>
           <div>${b.checks.map(pill).join('')}</div>
         </div>`).join('')}
-    </div></div>`;
+    </div></div></div>`;
 }
 
 // ── On duty today: who's on shift right now, per branch, with contact ─────────
@@ -646,26 +674,28 @@ async function renderHomeOnDuty(containerId = 'hm-onduty') {
   try { d = await API.get('/on-duty'); } catch (e) { box.innerHTML = ''; return; }
   const branches = (d && d.branches) || [];
   if (!branches.length) {
-    box.innerHTML = `<div class="hm-card"><div class="hm-card-head"><div class="hm-card-title">On duty today</div></div>
-      <div class="hm-muted" style="padding:6px 2px">No one is scheduled on duty today.</div></div>`;
+    box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">On duty today</div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px;color:var(--muted);font-size:13px">No one is scheduled on duty today.</div></div></div></div>`;
     return;
   }
   const total = branches.reduce((a, b) => a + b.staff.length, 0);
-  box.innerHTML = `<div class="hm-card">
-    <div class="hm-card-head"><div class="hm-card-title">On duty today</div>
-      <div class="hm-card-meta">${total} on shift</div></div>
+  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
+    <div class="bhead"><div class="bhrow"><div class="btitle">On duty today <span>${total} on shift</span></div></div></div>
+    <div class="rows">
     ${branches.map(b => `
-      <div style="margin-top:8px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:4px">${escapeHtml(b.branch_name)}</div>
+      <div style="padding:4px 0">
+        <div style="font-weight:700;font-size:13px;padding:8px 18px 2px">${escapeHtml(b.branch_name)}</div>
         ${b.staff.map(onDutyRow).join('')}
       </div>`).join('')}
-  </div>`;
+    </div>
+  </div></div>`;
 }
 
 function onDutyRow(s) {
   const st = (typeof allShiftTypes !== 'undefined' && allShiftTypes)
     ? allShiftTypes.find(x => x.code === s.shift_code) : null;
-  const color = st?.color || '#5B8DEF';
+  const color = st?.color || '#5B8DEF';   // functional: shift-type colour comes from data
   const badge = `<span style="display:inline-block;background:${color}1a;color:${color};font-size:11px;
     font-weight:700;padding:2px 8px;border-radius:9px">${escapeHtml(s.shift_code)}</span>`;
   const sec = s.section === 'US' ? 'US' : 'General';
@@ -673,7 +703,7 @@ function onDutyRow(s) {
     ? `<a href="tel:${encodeURIComponent(s.phone)}" style="color:var(--accent);text-decoration:none">${escapeHtml(s.phone)}</a>` : '';
   const tags = [sec, s.is_oncall ? 'On-call' : '', s.covering_at ? 'covering ' + escapeHtml(s.covering_at) : '']
     .filter(Boolean).join(' · ');
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">
+  return `<div class="lrow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 18px">
       <div style="min-width:0">
         <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(s.name)}</div>
         <div style="font-size:12px;color:var(--muted)">${tags}${phone ? ' · ' + phone : ''}</div>

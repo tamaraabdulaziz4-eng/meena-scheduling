@@ -28,6 +28,7 @@ function renderAnnouncementsPage() {
     annCanPost() ? `<button class="btn btn-sm" onclick="openAnnModal()">+ New Circular</button>` : '');
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     <div class="phero no-print">
       <div class="phero-orb p1"></div><div class="phero-orb p2"></div>
       <div class="phero-inner">
@@ -39,7 +40,8 @@ function renderAnnouncementsPage() {
         </div>
       </div>
     </div>
-    <div id="ann-list">${LOADING_HTML}</div>`;
+    <div id="ann-list">${LOADING_HTML}</div>
+    </div>`;
   loadAnnouncements();
 }
 
@@ -56,30 +58,37 @@ async function loadAnnouncements() {
 function renderAnnouncementsList() {
   const list = document.getElementById('ann-list');
   if (!list) return;
+  const canManage = annCanPost();
+  const head = `
+    <div class="bhead"><div class="bhrow">
+      <div class="btitle">Circulars <span>${announcementsData.length} post${announcementsData.length !== 1 ? 's' : ''}</span></div>
+      ${canManage ? `<div class="bh-actions"><button class="open pri" style="width:auto" onclick="openAnnModal()">+ New Circular</button></div>` : ''}
+    </div></div>`;
   if (!announcementsData.length) {
-    list.innerHTML = `<div class="empty"><p>No announcements yet.</p></div>`;
+    list.innerHTML = `
+      <div class="listcard">${head}
+        <div class="lrow" style="justify-content:center;padding:24px;color:var(--muted)">No announcements yet.</div>
+      </div>`;
     return;
   }
-  const canManage = annCanPost();
-  list.innerHTML = announcementsData.map(a => {
+  list.innerHTML = `<div class="listcard">${head}${announcementsData.map(a => {
     const required = a.kind === 'action_required';
-    const kindBadge = required
-      ? `<span style="background:#E255551a;color:#E25555;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px">Action required</span>`
-      : `<span style="background:#5B8DEF1a;color:#5B8DEF;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px">Announcement</span>`;
+    const kindChip = required
+      ? '<span class="sc no">Action required</span>'
+      : '<span class="sc">Announcement</span>';
     const ackBtn = (required && !a.acked)
-      ? `<button class="btn btn-sm" onclick="ackAnnouncement(${a.id})">Acknowledge</button>`
-      : (required && a.acked ? `<span style="color:#2BAE66;font-size:12px;font-weight:600">Acknowledged</span>` : '');
+      ? `<button class="open pri" style="width:auto" onclick="ackAnnouncement(${a.id})">Acknowledge</button>`
+      : (required && a.acked ? '<span class="sc ok">✓ Acknowledged</span>' : '');
     const mgrTools = canManage ? `
-      ${required ? `<button class="btn btn-sm btn-ghost" onclick="viewAnnAcks(${a.id})">${a.ack_count || 0} acknowledged</button>` : ''}
-      <button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="deleteAnnouncement(${a.id})">Delete</button>` : '';
+      ${required ? `<button class="ghost" onclick="viewAnnAcks(${a.id})">${a.ack_count || 0} acknowledged</button>` : ''}
+      <button class="ghost" style="color:var(--danger,#E25555)" onclick="deleteAnnouncement(${a.id})">Delete</button>` : '';
     return `
-      <div style="border:1px solid var(--border);border-left:4px solid ${required ? '#E25555' : '#5B8DEF'};
-                  border-radius:14px;padding:16px;margin-bottom:12px;background:var(--card)">
+      <div class="lrow" style="display:block;padding:14px 18px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          ${a.pinned ? '<span style="background:var(--border);color:var(--muted);font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px">PINNED</span>' : ''}${kindBadge}
-          <span style="font-weight:700;font-size:15px">${escapeHtml(a.title)}</span>
+          ${a.pinned ? '<span class="sc warn">📌 Pinned</span>' : ''}${kindChip}
+          <strong style="font-size:15px">${escapeHtml(a.title)}</strong>
         </div>
-        <div style="white-space:pre-wrap;margin:6px 0 10px">${escapeHtml(personalizeAnnouncement(a.body))}</div>
+        <div style="white-space:pre-wrap;margin:6px 0 10px;font-size:13.5px">${escapeHtml(personalizeAnnouncement(a.body))}</div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div style="font-size:12px;color:var(--muted)">
             ${escapeHtml(a.created_by_name || 'Management')}
@@ -89,7 +98,7 @@ function renderAnnouncementsList() {
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${ackBtn}${mgrTools}</div>
         </div>
       </div>`;
-  }).join('');
+  }).join('')}</div>`;
 }
 
 async function ackAnnouncement(id) {

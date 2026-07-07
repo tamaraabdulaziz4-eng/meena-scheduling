@@ -12,12 +12,14 @@ function renderUsersPage() {
   );
   const c = document.getElementById('content');
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Accounts, roles & access', 'Users')}
-    <div class="table-wrap" id="users-wrap">
-      <table>
-        <thead><tr><th>#</th><th>Username</th><th>Role</th><th>Branch</th><th>Created</th><th>Actions</th></tr></thead>
-        <tbody id="users-tbody"></tbody>
-      </table>
+    <div class="board" id="users-wrap">
+      <div class="bhead"><div class="bhrow">
+        <div class="btitle">Users <span>${allUsers.length} account${allUsers.length !== 1 ? 's' : ''}</span></div>
+        <div class="bh-actions"><button class="open pri" onclick="openUserModal()">+ Add User</button></div>
+      </div></div>
+      <div class="rows" id="users-rows"></div>
     </div>
     ${currentUser?.role === 'superadmin' ? `
     <div class="danger-zone">
@@ -27,39 +29,43 @@ function renderUsersPage() {
         login. It <b>keeps</b> branches, shift types, nest sections, holidays, settings and your
         admin account. This cannot be undone.</p>
       <button class="btn btn-sm btn-danger" onclick="clearTestData()">Clear all test data</button>
-    </div>` : ''}`;
+    </div>` : ''}
+    </div>`;
   renderUsersList();
 }
 
+// Role → Clinical Calm dotted pill (.ris palette: final=violet, completed=green,
+// progress=blue, scheduled=slate).
 const ROLE_BADGE = {
-  superadmin: '<span class="badge badge-purple">Superadmin</span>',
-  manager:    '<span class="badge badge-purple">Manager</span>',
-  admin:      '<span class="badge badge-yellow">Admin</span>',
-  staff:      '<span class="badge badge-green">Staff</span>',
-  viewer:     '<span class="badge badge-gray">Viewer</span>',
+  superadmin: '<span class="ris final"><span class="rd"></span>Superadmin</span>',
+  manager:    '<span class="ris final"><span class="rd"></span>Manager</span>',
+  admin:      '<span class="ris progress"><span class="rd"></span>Admin</span>',
+  staff:      '<span class="ris completed"><span class="rd"></span>Staff</span>',
+  viewer:     '<span class="ris scheduled"><span class="rd"></span>Viewer</span>',
 };
 
 function renderUsersList() {
-  const tb = document.getElementById('users-tbody');
+  const tb = document.getElementById('users-rows');
   if (!tb) return;
   if (!allUsers.length) {
-    tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No users</td></tr>`;
+    tb.innerHTML = `<div class="lrow" style="text-align:center;padding:24px;color:var(--muted)">No users</div>`;
     return;
   }
   tb.innerHTML = allUsers.map((u, i) => `
-    <tr>
-      <td>${i+1}</td>
-      <td><strong>${escapeHtml(u.username)}</strong></td>
-      <td>${ROLE_BADGE[u.role] || escapeHtml(u.role)}</td>
-      <td>${escapeHtml(u.branch_name || '—')}</td>
-      <td>${u.created_at ? new Date(u.created_at).toLocaleDateString('en-GB') : '—'}</td>
-      <td>
-        <button class="action-btn" onclick="openUserModal(${u.id})">Edit</button>
+    <div class="lrow" style="display:flex;align-items:center;gap:12px;padding:10px 18px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--muted);width:20px">${i+1}</span>
+      <div style="flex:1;min-width:140px">
+        <strong>${escapeHtml(u.username)}</strong>
+        <div style="font-size:11.5px;color:var(--muted)">${escapeHtml(u.branch_name || 'All branches')} · created ${u.created_at ? new Date(u.created_at).toLocaleDateString('en-GB') : '—'}</div>
+      </div>
+      ${ROLE_BADGE[u.role] || escapeHtml(u.role)}
+      <div style="display:flex;gap:6px">
+        <button class="ghost" onclick="openUserModal(${u.id})">Edit</button>
         ${u.id !== currentUser?.id
-          ? `<button class="action-btn danger" onclick="deleteUserConfirm(${u.id},'${jsAttr(u.username)}')">Delete</button>`
+          ? `<button class="ghost" style="color:var(--danger,#E25555)" onclick="deleteUserConfirm(${u.id},'${jsAttr(u.username)}')">Delete</button>`
           : '<span style="font-size:11px;color:var(--muted)">(you)</span>'}
-      </td>
-    </tr>`).join('');
+      </div>
+    </div>`).join('');
 }
 
 // Wipe test/operational data for a clean production start (superadmin only).
