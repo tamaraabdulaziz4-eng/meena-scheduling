@@ -174,7 +174,7 @@ async function renderWorklistPage() {
     <div class="cc wl2">
       <div class="top">
         <div class="brand">
-          <div class="logo">م</div>
+          <img class="wl-logo" src="/meena_logo.png" alt="Meena">
           <div>
             <h1>Meena RIS · Worklist</h1>
             <div class="sub">${branch ? escapeHtml(String(branch)) + ' · ' : ''}${escapeHtml(dateStr)}</div>
@@ -587,16 +587,6 @@ function wlRender() {
   }
   if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
 
-  // ── Phase strip (highlights + counts, never hides) ──────────────────────────
-  const phases = `<div class="phases">${_WL_PHASES.map((p) => {
-    const on = wlState.phaseHi === p.key;
-    const warn = p.key === 'inprogress';
-    const extra = p.key === 'final' ? ' <small>today</small>' : '';
-    return `<button class="phase${on ? ' on' : ''}${warn ? ' warn' : ''}" onclick="wlPhaseJump('${p.key}')">
-      <span class="pl"><i style="background:${p.dot}"></i>${p.label}</span>
-      <span class="pv tnum">${counts[p.key] || 0}${extra}</span></button>`;
-  }).join('')}</div>`;
-
   // ── Modality filter chips (only modalities actually present) ────────────────
   const modCounts = {};
   for (const it of items) { const m = wlRowMod(it); if (m) modCounts[m] = (modCounts[m] || 0) + 1; }
@@ -613,17 +603,59 @@ function wlRender() {
         `<button class="chip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')"><span class="dot" style="background:${MOD_DOT[k]}"></span>${lbl}<span class="c">${modCounts[k] || 0}</span></button>`).join('')}
     </div>` : '';
 
-  // BUG #1: the board shows EVERY row (STAT→phase→newest). Modality is the only filter;
-  // imaged/reported rows get `.done` (dimmed) but STAY on the board.
+  // Modality is the only filter (a real, logical narrowing). Nobody is hidden by status.
   let rows = items;
   if (wlState.modFilter) rows = rows.filter((it) => wlRowMod(it) === wlState.modFilter);
 
-  body.innerHTML = phases + modChips + (rows.length
-    ? wlTable(rows, 'a')
-    : `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`);
+  // ── Split into three clear sections by where the study is, so nothing is a flat
+  //    mess and nothing vanishes: قيد الانتظار (waiting) · تم التصوير (imaged) ·
+  //    التقارير (reported). Every patient sits under exactly one section; counts live
+  //    in the headers. Waiting is open; the done sections start collapsed (click to open).
+  wlState.collapsedSections = wlState.collapsedSections || new Set(['imaged', 'reported']);
+  const grp = { waiting: [], imaged: [], reported: [] };
+  for (const it of rows) {
+    const b = it.__bucket;
+    if (b === 'imaged') grp.imaged.push(it);
+    else if (b === 'reporting' || b === 'reported') grp.reported.push(it);
+    else grp.waiting.push(it);
+  }
+  if (!rows.length) {
+    body.innerHTML = modChips + `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`;
+  } else {
+    body.innerHTML = modChips
+      + wlSection('waiting', 'قيد الانتظار', 'Waiting to scan', grp.waiting, 'w')
+      + wlSection('imaged', 'تم التصوير', 'Imaged', grp.imaged, 'i')
+      + wlSection('reported', 'التقارير', 'Reported', grp.reported, 'r');
+  }
   wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
   wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
+}
+
+// One collapsible board section. Rows sort STAT→newest within the section. The done
+// sections (imaged/reported) dim their rows via `.done`. Collapse state persists in
+// wlState.collapsedSections across every repaint (poll, enrich, modality switch).
+function wlSection(key, titleAr, titleEn, secRows, prefix) {
+  const n = secRows.length;
+  const collapsed = wlState.collapsedSections.has(key);
+  const sorted = secRows.slice().sort((a, b) =>
+    (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
+  const doneSec = (key === 'imaged' || key === 'reported') ? ' donesec' : '';
+  const inner = collapsed ? ''
+    : (n ? `<div class="board"><div class="rows">${sorted.map((it, i) => wlRow(it, prefix + i)).join('')}</div></div>`
+         : `<div class="wl-sec-empty">لا يوجد · none right now</div>`);
+  return `<div class="wl-sec${doneSec}${collapsed ? ' collapsed' : ''}" data-sec="${key}">
+    <button class="wl-sec-h" onclick="wlToggleSection('${key}')">
+      <span class="wl-sec-chev">${collapsed ? '▸' : '▾'}</span>
+      <span class="wl-sec-t">${titleAr}<span class="en"> · ${titleEn}</span></span>
+      <span class="wl-sec-n">${n}</span>
+    </button>${inner}</div>`;
+}
+function wlToggleSection(key) {
+  wlState.collapsedSections = wlState.collapsedSections || new Set();
+  if (wlState.collapsedSections.has(key)) wlState.collapsedSections.delete(key);
+  else wlState.collapsedSections.add(key);
+  wlRender();
 }
 
 // Which strips + Check drills the operator has open — preserved across every repaint

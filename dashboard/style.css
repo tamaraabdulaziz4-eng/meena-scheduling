@@ -2900,8 +2900,24 @@ body.dark .wl2 { --amber-wash: #2C2312; --red-wash: #2E1618; }
   box-shadow: 0 6px 16px rgba(107,78,255,.34); position: relative; flex: 0 0 auto; }
 .wl2 .logo::after { content: ""; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px;
   border-radius: 50%; background: var(--green); border: 2px solid var(--panel); }
+.wl2 .wl-logo { height: 32px; width: auto; max-width: 130px; flex: 0 0 auto; display: block; }
 .wl2 .brand h1 { font-size: 16.5px; font-weight: 700; letter-spacing: -.01em; line-height: 1.1; }
 .wl2 .brand .sub { font-size: 11.5px; color: var(--ink-3); font-weight: 500; }
+
+/* ── Board sections: Waiting · Imaged · Reported (bilingual, collapsible) ── */
+.wl2 .wl-sec { margin-bottom: 14px; }
+.wl2 .wl-sec-h { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 4px; cursor: pointer;
+  border: none; background: none; text-align: start; }
+.wl2 .wl-sec-chev { color: var(--ink-3); font-size: 12px; width: 14px; flex: 0 0 auto; }
+.wl2 .wl-sec-t { font-size: 15px; font-weight: 700; color: var(--ink); }
+.wl2 .wl-sec-t .en { font-size: 12.5px; font-weight: 600; color: var(--ink-3); }
+.wl2 .wl-sec-n { margin-inline-start: auto; font-size: 12px; font-weight: 700; color: var(--ink-2);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 2px 11px; min-width: 30px; text-align: center; }
+.wl2 .wl-sec.donesec .wl-sec-t { color: var(--ink-2); }
+.wl2 .wl-sec.donesec .board .row { opacity: .82; }
+.wl2 .wl-sec.donesec .board .row:hover { opacity: 1; }
+.wl2 .wl-sec-empty { padding: 14px 18px; font-size: 12.5px; color: var(--ink-3); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 14px; text-align: center; }
 .wl2 .live { margin-left: 2px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
   font-weight: 600; color: var(--green-ink); background: rgba(0,200,150,.13);
   padding: 6px 11px; border-radius: 999px; white-space: nowrap; }
