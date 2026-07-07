@@ -7496,19 +7496,32 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
     # land on her Siratech file in one filing (the connector attaches it as a second
     # genFileAttachments entry, named on its own). Only on a real write (confirm).
     consent_id = None
-    if b.get("confirm") and not b.get("consentPdf"):
+    if b.get("confirm"):
         try:
-            crow = q("""SELECT id, pdf, patient_name, created_at FROM scheduling.consents
-                        WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
-                        ORDER BY created_at DESC LIMIT 1""",
-                     (str(b.get("file")).strip(),), one=True)
-            if crow and crow.get("pdf"):
-                import base64 as _b64
-                b["consentPdf"] = _b64.b64encode(bytes(crow["pdf"])).decode("ascii")
-                _cdt = crow["created_at"].strftime("%Y-%m-%d") if crow.get("created_at") else ""
-                _parts = [p for p in ["Consent Non Pregnancy", (crow.get("patient_name") or "").strip(), _cdt] if p]
-                b["consentName"] = " - ".join(_parts) + ".pdf"
-                consent_id = crow["id"]
+            _fno = str(b.get("file")).strip()
+            # Is a signed consent ALREADY on the patient's Siratech file on its own
+            # (filed at signing)? Tell the connector so its idempotency guard lets the
+            # report append alongside the consent instead of reading it as "already filed".
+            _cf = q("""SELECT 1 FROM scheduling.consents
+                        WHERE file_no=%s AND status='signed' AND filed_siratech=true LIMIT 1""",
+                    (_fno,), one=True)
+            if _cf:
+                b["consentAlreadyFiled"] = True
+            # Otherwise ride the newest signed-but-UNfiled consent along with the report,
+            # so it still reaches the file even if standalone filing was unavailable.
+            if not b.get("consentPdf"):
+                crow = q("""SELECT id, pdf, patient_name, created_at FROM scheduling.consents
+                            WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
+                              AND filed_siratech=false
+                            ORDER BY created_at DESC LIMIT 1""",
+                         (_fno,), one=True)
+                if crow and crow.get("pdf"):
+                    import base64 as _b64
+                    b["consentPdf"] = _b64.b64encode(bytes(crow["pdf"])).decode("ascii")
+                    _cdt = crow["created_at"].strftime("%Y-%m-%d") if crow.get("created_at") else ""
+                    _parts = [p for p in ["Consent Non Pregnancy", (crow.get("patient_name") or "").strip(), _cdt] if p]
+                    b["consentName"] = " - ".join(_parts) + ".pdf"
+                    consent_id = crow["id"]
         except Exception:
             consent_id = None
     out = _bridge_request("/his/results/file", method="POST", body=b, timeout=180)
@@ -7862,7 +7875,86 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
              psycopg2.Binary(pdf), user["id"], tech), one=True)
     insert_audit(user, "CONSENT_CREATE", file_no,
                  json.dumps({"id": row["id"], "kind": "non_pregnancy", "procedure": data["procedure"]}))
-    return {"ok": True, "id": row["id"], "created_at": str(row["created_at"])}
+    # File the consent to the patient's Siratech record NOW (at signing) — independent
+    # of any report — so it's on the file before imaging. Best-effort: a failure never
+    # breaks signing, and an un-filed consent still rides the report later as a fallback.
+    filed = False
+    try:
+        filed = _file_consent_to_siratech(row["id"])
+    except Exception:
+        filed = False
+    return {"ok": True, "id": row["id"], "created_at": str(row["created_at"]), "filed": bool(filed)}
+
+def _consent_file_name(rec):
+    """Descriptive attachment name — 'Consent Non Pregnancy - Name - date.pdf'."""
+    cdt = ""
+    try:
+        cdt = rec["created_at"].strftime("%Y-%m-%d") if rec.get("created_at") else ""
+    except Exception:
+        cdt = ""
+    parts = [p for p in ["Consent Non Pregnancy", (rec.get("patient_name") or "").strip(), cdt] if p]
+    return " - ".join(parts) + ".pdf"
+
+def _file_consent_to_siratech(consent_id):
+    """Attach a signed consent to the patient's Siratech file on its own, via the
+    connector's /his/consent/file (same attachment mechanism as the report, consent-only,
+    never authorized). Returns True only on a confirmed write. Marks filed_siratech=true
+    so the report path won't re-attach it. Safe to call repeatedly (idempotent by flag)."""
+    rec = q("""SELECT id, file_no, mrn, patient_name, bill_no, site, pdf, filed_siratech
+               FROM scheduling.consents WHERE id=%s""", (consent_id,), one=True)
+    if not rec or not rec.get("pdf") or rec.get("filed_siratech"):
+        return bool(rec and rec.get("filed_siratech"))
+    import base64 as _b64
+    body = {
+        "file": str(rec["file_no"]).strip(),
+        "billNo": (str(rec["bill_no"]).strip() if rec.get("bill_no") else None),
+        "site": (rec.get("site") if isinstance(rec.get("site"), int) else None),
+        "consentPdf": _b64.b64encode(bytes(rec["pdf"])).decode("ascii"),
+        "consentName": _consent_file_name(rec),
+        "expectName": (rec.get("patient_name") or "").strip() or None,
+        "confirm": True,
+    }
+    # Bounded so signing stays responsive — a slow/unreachable HIS just falls back to
+    # riding the report later (filed_siratech stays false).
+    out = _bridge_request("/his/consent/file", method="POST", body=body, timeout=60)
+    wrote = isinstance(out, dict) and out.get("wrote")
+    if wrote:
+        try:
+            q("UPDATE scheduling.consents SET filed_siratech=true WHERE id=%s",
+              (consent_id,), exec_only=True)
+        except Exception:
+            pass
+    return bool(wrote)
+
+@app.post("/api/consent/{consent_id}/file")
+def file_consent(consent_id: int, request: Request, user=Depends(require_radiology)):
+    """Manually push a signed consent onto the patient's Siratech file (used when the
+    automatic filing at signing wasn't possible yet — e.g. the order hadn't reached
+    Result Entry). Bound to the patient file so an id alone can't reach another patient."""
+    rec = q("SELECT id, file_no, pdf, filed_siratech FROM scheduling.consents WHERE id=%s",
+            (consent_id,), one=True)
+    if not rec:
+        raise HTTPException(404, "Consent not found")
+    file_no = (request.query_params.get("file") or "").strip()
+    if file_no and file_no != str(rec.get("file_no")):
+        raise HTTPException(403, "Provide the matching patient file number to file this consent")
+    if not rec.get("pdf"):
+        raise HTTPException(409, "This consent has not been signed yet")
+    if rec.get("filed_siratech"):
+        return {"ok": True, "wrote": True, "already": True,
+                "note": "Consent is already on the patient's file."}
+    filed = False
+    try:
+        filed = _file_consent_to_siratech(consent_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Could not file the consent: {e}")
+    if filed:
+        insert_audit(user, "CONSENT_FILE", str(rec["file_no"]), json.dumps({"id": consent_id}))
+    return {"ok": True, "wrote": bool(filed),
+            "note": ("Consent filed to the patient's record." if filed
+                     else "Could not attach yet — no reachable radiology order for this patient. It will ride the report when filed.")}
 
 @app.get("/api/consent")
 def list_consents(request: Request, user=Depends(require_radiology)):
@@ -7872,7 +7964,8 @@ def list_consents(request: Request, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     # Only SIGNED consents (a pending QR link that was never signed has no PDF and
     # isn't a real consent — it must not appear in the patient's list).
-    rows = q("""SELECT id, kind, procedure, patient_type, reason, created_by_name, created_at
+    rows = q("""SELECT id, kind, procedure, patient_type, reason, created_by_name, created_at,
+                       filed_siratech
                 FROM scheduling.consents
                 WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
                 ORDER BY created_at DESC""", (file_no,))
@@ -8073,6 +8166,12 @@ async def public_consent_sign(token: str, request: Request):
              one=True)
     if not done:
         raise HTTPException(409, "This consent has already been signed.")
+    # File it to the patient's Siratech record now (best-effort; rides the report as a
+    # fallback if unavailable). The signer is the patient's phone, so run it here.
+    try:
+        _file_consent_to_siratech(done["id"])
+    except Exception:
+        pass
     return {"ok": True}
 
 _PREF_KINDS = ("off", "unavailable")

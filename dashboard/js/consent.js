@@ -236,7 +236,10 @@ async function consentSave(btn) {
   try {
     const r = await API.post('/consent', payload);
     if (r && r.ok) {
-      if (msg) msg.innerHTML = `<span class="cn-ok">✅ Consent saved · تم الحفظ</span>
+      const filedNote = r.filed
+        ? `<span class="cn-ok" style="margin-inline-start:8px">📎 On the patient file · رُفعت لملف المريض</span>`
+        : `<span class="pill" style="margin-inline-start:8px">Will attach to the report · تُرفق مع التقرير</span>`;
+      if (msg) msg.innerHTML = `<span class="cn-ok">✅ Consent saved · تم الحفظ</span>${filedNote}
         <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${r.id}/pdf?file=${encodeURIComponent(payload.file_no || '')}" target="_blank" rel="noopener">View PDF</a>`;
       const done = _consent.onDone;
       setTimeout(() => { closeConsent(); if (typeof done === 'function') done(r.id); }, 900);
