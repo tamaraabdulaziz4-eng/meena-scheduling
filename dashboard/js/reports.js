@@ -17,6 +17,7 @@ async function renderReportsPage() {
   const c = document.getElementById('content');
   const tabs = [['lookup', 'Patient report'], ['fairness', 'Fairness'], ['qc', 'Equipment QC log'], ['credentials', 'Licenses & expiry']];
   c.innerHTML = `
+    <div class="cc">
     ${pageHero('Reports', 'Reports', 'Balance the load and keep an audit-ready check log')}
     <div class="rep-toolbar">
       <div class="seg" id="rep-tabs">${tabs.map(([v, l]) =>
@@ -24,7 +25,8 @@ async function renderReportsPage() {
       ${_repIsReviewer() ? `<select id="rep-branch" class="rep-select" style="max-width:220px"></select>` : ''}
     </div>
     <div id="rep-controls" style="margin-bottom:14px"></div>
-    <div id="rep-body">${LOADING_HTML}</div>`;
+    <div id="rep-body">${LOADING_HTML}</div>
+    </div>`;
   c.querySelectorAll('#rep-tabs button').forEach(b =>
     b.onclick = () => { reportsTab = b.getAttribute('data-t'); renderReportsPage(); });
   if (_repIsReviewer()) {
@@ -90,18 +92,30 @@ async function loadFairnessReport(body) {
   const loadBar = (val, max, hot) => `<div class="rep-load">
       <span class="rep-num">${val}</span>
       <div class="rep-load-track"><div class="rep-load-fill${hot ? ' hot' : ''}" style="width:${Math.round((val / max) * 100)}%"></div></div></div>`;
-  body.innerHTML = `<div class="rep-card" style="padding:0;overflow:hidden">
-    <div class="table-wrap" style="box-shadow:none;border:none;border-radius:0;background:transparent"><table>
-    <thead><tr><th>Name</th><th>Section</th><th style="min-width:130px">Shifts</th><th style="min-width:130px">Nights</th><th>Mornings</th><th>Weekends</th><th>On-call</th><th>Leave</th></tr></thead>
-    <tbody>${rows.map(r => {
+  const _th = `<div class="lrow" style="background:var(--card-alt);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600">
+      <span style="flex:1;min-width:130px">Name</span>
+      <span style="width:96px">Section</span>
+      <span style="width:120px">Shifts</span>
+      <span style="width:120px">Nights</span>
+      <span style="width:66px;text-align:right">Mornings</span>
+      <span style="width:66px;text-align:right">Weekends</span>
+      <span style="width:58px;text-align:right">On-call</span>
+      <span style="width:48px;text-align:right">Leave</span>
+    </div>`;
+  body.innerHTML = `<div class="listcard">
+    ${_th}
+    ${rows.map(r => {
       const hottest = r.nights >= maxN && maxN > 0;
-      return `<tr>
-      <td style="font-weight:600">${escapeHtml(r.name)}</td>
-      <td><span class="rep-pill rep-pill-muted">${r.section === 'US' ? 'Ultrasound' : 'General'}</span></td>
-      <td>${loadBar(r.shifts, maxShifts, false)}</td>
-      <td>${loadBar(r.nights, maxN, hottest)}</td>
-      <td>${r.mornings}</td><td>${r.weekends}</td><td>${r.oncall}</td><td>${r.leave_days}</td>
-    </tr>`; }).join('')}</tbody></table></div></div>
+      return `<div class="lrow" style="flex-wrap:wrap">
+      <span style="flex:1;min-width:130px;font-weight:600">${escapeHtml(r.name)}</span>
+      <span style="width:96px"><span class="rep-pill rep-pill-muted">${r.section === 'US' ? 'Ultrasound' : 'General'}</span></span>
+      <span style="width:120px">${loadBar(r.shifts, maxShifts, false)}</span>
+      <span style="width:120px">${loadBar(r.nights, maxN, hottest)}</span>
+      <span style="width:66px;text-align:right">${r.mornings}</span>
+      <span style="width:66px;text-align:right">${r.weekends}</span>
+      <span style="width:58px;text-align:right">${r.oncall}</span>
+      <span style="width:48px;text-align:right">${r.leave_days}</span>
+    </div>`; }).join('')}</div>
     <div style="font-size:12px;color:var(--muted);margin-top:12px">The red bar marks whoever carries the most nights this month — use it to rebalance next month.</div>`;
 }
 
@@ -140,7 +154,6 @@ async function loadCredentialsReport(body) {
   const rows = await API.get(`/credentials${qs}`);
   _credRows = rows;
   const showBranch = _repIsReviewer() && !reportsBranch;
-  const cols = showBranch ? 8 : 7;
   body.innerHTML = `
     <div class="rep-card">
       <div class="rep-card-head">
@@ -158,25 +171,34 @@ async function loadCredentialsReport(body) {
         return chips ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:10px;border:1px dashed var(--border);border-radius:10px">
           <span style="font-size:12px;color:var(--muted);align-self:center;margin-inline-end:4px">Print employee file:</span>${chips}</div>` : '';
       })()}
-      <div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
-        <thead><tr><th>Staff</th>${showBranch ? '<th>Branch</th>' : ''}<th>Type</th><th>Label</th><th>Number</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
-        <tbody>${rows.length ? rows.map(r => {
+      <div class="listcard" style="margin-top:10px">
+        <div class="lrow" style="background:var(--card-alt);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600">
+          <span style="flex:1;min-width:120px">Staff</span>
+          ${showBranch ? `<span style="width:120px">Branch</span>` : ''}
+          <span style="width:130px">Type</span>
+          <span style="flex:1;min-width:100px">Label</span>
+          <span style="width:120px">Number</span>
+          <span style="width:110px">Expiry</span>
+          <span style="width:110px">Status</span>
+          <span style="width:130px;text-align:right"></span>
+        </div>
+        ${rows.length ? rows.map(r => {
           const [txt, cls] = _credStatus(r.days_left);
-          return `<tr>
-            <td style="font-weight:600">${escapeHtml(r.staff_name || '')}</td>
-            ${showBranch ? `<td><span style="font-size:11px;color:var(--muted)">${escapeHtml(r.branch_name || '')}</span></td>` : ''}
-            <td>${escapeHtml(_credKindLabel(r.kind))}</td>
-            <td>${escapeHtml(r.label || '—')}</td>
-            <td>${escapeHtml(r.number || '—')}</td>
-            <td>${escapeHtml(r.expiry_date || '—')}</td>
-            <td><span class="rep-pill ${cls}">${txt}</span></td>
-            <td style="white-space:nowrap;text-align:right">
+          return `<div class="lrow" style="flex-wrap:wrap">
+            <span style="flex:1;min-width:120px;font-weight:600">${escapeHtml(r.staff_name || '')}</span>
+            ${showBranch ? `<span style="width:120px;font-size:11px;color:var(--muted)">${escapeHtml(r.branch_name || '')}</span>` : ''}
+            <span style="width:130px">${escapeHtml(_credKindLabel(r.kind))}</span>
+            <span style="flex:1;min-width:100px">${escapeHtml(r.label || '—')}</span>
+            <span style="width:120px">${escapeHtml(r.number || '—')}</span>
+            <span style="width:110px">${escapeHtml(r.expiry_date || '—')}</span>
+            <span style="width:110px"><span class="rep-pill ${cls}">${txt}</span></span>
+            <span style="width:130px;white-space:nowrap;text-align:right">
               <button class="btn btn-xs btn-ghost" onclick="openCredentialModal(${r.id})">Edit</button>
               <button class="btn btn-xs btn-ghost" style="color:#E25555;margin-left:4px" onclick="deleteCredential(${r.id})">Delete</button>
-            </td>
-          </tr>`;
-        }).join('') : `<tr><td colspan="${cols}"><div class="rep-empty">No credentials yet. Add one to start tracking expiry.</div></td></tr>`}</tbody>
-      </table></div>
+            </span>
+          </div>`;
+        }).join('') : `<div class="lrow" style="justify-content:center;padding:22px;color:var(--muted)">No credentials yet. Add one to start tracking expiry.</div>`}
+      </div>
     </div>`;
 }
 
@@ -266,15 +288,22 @@ async function loadQcReport(body) {
         <div class="rep-card-title">Equipment check log — ${monthLabel(reportsYear, reportsMonth)}</div>
         <button class="btn btn-sm btn-ghost" onclick="window.print()">Print / PDF</button>
       </div>
-      <div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
-        <thead><tr><th>Date</th><th>Shift</th><th>Branch</th><th>Confirmed by</th><th>Time</th></tr></thead>
-        <tbody>${log.length ? log.map(r => `<tr>
-          <td style="font-weight:600">${escapeHtml(r.date)}</td><td><span class="rep-pill rep-pill-muted">${escapeHtml(r.shift_label)}</span></td>
-          <td>${escapeHtml(r.branch_name)}</td>
-          <td>${r.confirmed_by ? escapeHtml(r.confirmed_by) : '<span class="rep-pill rep-pill-amber">not confirmed</span>'}</td>
-          <td>${r.confirmed_at ? new Date(r.confirmed_at).toLocaleString('en-GB') : '—'}</td>
-        </tr>`).join('') : `<tr><td colspan="5"><div class="rep-empty">No checks logged for this month.</div></td></tr>`}</tbody>
-      </table></div>
+      <div class="listcard" style="margin-top:10px">
+        <div class="lrow" style="background:var(--card-alt);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600">
+          <span style="width:120px">Date</span>
+          <span style="width:120px">Shift</span>
+          <span style="flex:1;min-width:120px">Branch</span>
+          <span style="flex:1;min-width:130px">Confirmed by</span>
+          <span style="width:170px">Time</span>
+        </div>
+        ${log.length ? log.map(r => `<div class="lrow" style="flex-wrap:wrap">
+          <span style="width:120px;font-weight:600">${escapeHtml(r.date)}</span>
+          <span style="width:120px"><span class="rep-pill rep-pill-muted">${escapeHtml(r.shift_label)}</span></span>
+          <span style="flex:1;min-width:120px">${escapeHtml(r.branch_name)}</span>
+          <span style="flex:1;min-width:130px">${r.confirmed_by ? escapeHtml(r.confirmed_by) : '<span class="rep-pill rep-pill-amber">not confirmed</span>'}</span>
+          <span style="width:170px">${r.confirmed_at ? new Date(r.confirmed_at).toLocaleString('en-GB') : '—'}</span>
+        </div>`).join('') : `<div class="lrow" style="justify-content:center;padding:22px;color:var(--muted)">No checks logged for this month.</div>`}
+      </div>
     </div>`;
 }
 

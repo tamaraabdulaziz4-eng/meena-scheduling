@@ -64,7 +64,7 @@ async function renderHomePage() {
     <div id="hm-approvals"></div>
     <div class="hm-search">
       <div class="hm-searchbar">
-        <span class="hm-search-ic">🔎</span>
+        <span class="hm-search-ic">${icon('search')}</span>
         <input id="hm-staff-q" type="search" placeholder="Search any staff by name or employee ID…" autocomplete="off"
           oninput="homeStaffSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';homeStaffSearch('')}">
         <span class="hm-kbd" id="hm-search-kbd">/</span>
@@ -389,11 +389,18 @@ function renderHomeActions(d) {
     items.push(['Registrations', d.pending_registrations || 0, 'staff']);
   }
   items.push(['Swaps', d.pending_swaps, 'swaps']);
-  box.innerHTML = items.map(([label, n, link]) => `
-    <button class="hm-chip${n > 0 ? ' on' : ''}" onclick="showPage('${link}')">
-      <span class="hm-chip-n">${n}</span>
-      <span class="hm-chip-l">${label}</span>
-    </button>`).join('');
+  // Counters read as one system with the rest of the app: the mockup .cc .kpi
+  // accent cards (same shape as Radiology-today / Staff), still clickable.
+  const accents = ['a', 'b', 'c', 'd'];
+  const dots = { a: 'var(--amber,#F4B740)', b: 'var(--blue,#3BA0FF)', c: 'var(--green,#00C896)', d: 'var(--violet,#6B4EFF)' };
+  box.innerHTML = `<div class="kpis">${items.map(([label, n, link], i) => {
+    const ac = accents[i % accents.length];
+    return `<button type="button" class="kpi ${ac}${n > 0 ? ' active' : ''}"
+      style="text-align:start;font:inherit;cursor:pointer" onclick="showPage('${link}')">
+      <div class="kl"><span class="kd" style="background:${dots[ac]}"></span>${label}</div>
+      <div class="kv">${n}</div>
+      <div class="kt">pending</div></button>`;
+  }).join('')}</div>`;
 }
 
 // ── Manager home: live staff lookup by name / employee ID ─────────────────────
@@ -472,16 +479,16 @@ function renderHomeStaffResults() {
           ${s.national_id ? `<span class="hm-tg on" title="Verified with Nafath">✓ Nafath</span>` : ''}
         </div>
         <div class="hm-sct">
-          ${s.national_id ? `🪪 ${escapeHtml(s.national_id)} · ` : ''}${s.name_ar ? `${escapeHtml(s.name_ar)} · ` : ''}
-          ${s.employee_id ? `🆔 ${escapeHtml(s.employee_id)}` : ''}
-          ${s.phone ? ` · 📱 ${escapeHtml(s.phone)}` : ''}
-          ${s.email ? ` · ✉️ ${escapeHtml(s.email)}` : ''}
+          ${s.national_id ? `${icon('id-card')} ${escapeHtml(s.national_id)} · ` : ''}${s.name_ar ? `${escapeHtml(s.name_ar)} · ` : ''}
+          ${s.employee_id ? `${icon('badge')} ${escapeHtml(s.employee_id)}` : ''}
+          ${s.phone ? ` · ${icon('phone')} ${escapeHtml(s.phone)}` : ''}
+          ${s.email ? ` · ${icon('mail')} ${escapeHtml(s.email)}` : ''}
           ${s.join_date ? ` · joined ${escapeHtml(s.join_date)}` : ''}
         </div>
         <div class="hm-chips">
-          <span class="hm-chip2"><b>${s.shifts_month}</b> shifts this month</span>
-          <span class="hm-chip2"><b>${s.leave_days_month}</b> leave days</span>
-          <span class="hm-chip2"><b>${bal}</b> days balance</span>
+          <span class="hm-chip2"><span class="kd" style="background:var(--blue,#3BA0FF)"></span><b>${s.shifts_month}</b> shifts this month</span>
+          <span class="hm-chip2"><span class="kd" style="background:var(--amber,#F4B740)"></span><b>${s.leave_days_month}</b> leave days</span>
+          <span class="hm-chip2"><span class="kd" style="background:var(--violet,#6B4EFF)"></span><b>${bal}</b> days balance</span>
         </div>
       </div>
       <div class="hm-ring" style="--p:${pct}" title="${bal} of 22 annual leave days"><i>${bal}</i></div>

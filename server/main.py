@@ -10062,15 +10062,43 @@ def _radiology_autostamp_sweep():
             #     sweep (belt-and-suspenders if the list endpoint under-reports history).
             # The empty-history gate is checked BEFORE the expensive /patient enrichment,
             # so a steady board (studies already stamped) costs no extra HIS calls.
+            # ADDITIVE resolution: prefer the exact accession key when it resolves to one
+            # order, but ALWAYS fall back to the unambiguous modality 1:1 guard otherwise —
+            # never SKIP a stamp just because the study carries an accession the (accession-
+            # less) worklist feed can't echo. Two-exam safety is still held by fresh_mod_count.
             chosen = None
-            if _elite_is_real_accession(s_acc):
-                if len(acc_cand) == 1:
-                    chosen = acc_cand[0]                          # exact per-exam key
+            if len(acc_cand) == 1:
+                chosen = acc_cand[0]                              # exact per-exam key (best)
             elif smod and fresh_mod_count.get(smod, 0) == 1 and len(cand) == 1:
-                chosen = cand[0]                                  # unambiguous modality 1:1
+                # Modality 1:1 fallback. Guard against the SAME conflict the manual
+                # write-history gate blocks (line ~7666): if the STUDY carries a real
+                # accession AND the single candidate order carries a real accession that
+                # DIFFERS, they are DIFFERENT exams — the study's own accession key names
+                # another order, so this order's indication must NOT be stamped onto it.
+                # (An accession MATCH would already have fired the acc_cand branch above,
+                #  so reaching here with both real means they differ.) An accession-less
+                # order — the common case for this feed — has no real accession to
+                # conflict, so the clean 1:1 still stamps. Fail closed + audit.
+                _cand_acc = str(cand[0].get("accessionNumber") or "").strip()
+                if (_elite_is_real_accession(s_acc) and _elite_is_real_accession(_cand_acc)
+                        and _elite_bare_id(s_acc) != _elite_bare_id(_cand_acc)):
+                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                 json.dumps({"studyId": sid, "reason": "accession_mismatch",
+                                             "study_accession": s_acc, "order_accession": _cand_acc}))
+                else:
+                    chosen = cand[0]                              # unambiguous modality 1:1 (fallback)
             if (chosen is not None
                     and not cur_hist and sid not in _autostamp_hist_done):
                 o = chosen
+                # HARD PATIENT GATE (defence in depth): never write onto a study whose
+                # patient doesn't match the file we're processing — even though the study
+                # came from _elite_studies_for_file(mrno). pat_id is already on the study
+                # object (from get_studies), so this costs no extra call. Fail closed.
+                if not _elite_same_patient(s.get("pat_id"), mrno):
+                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                 json.dumps({"studyId": sid, "study_pat_id": s.get("pat_id"),
+                                             "reason": "patient_mismatch"}))
+                    continue
                 emergency = bool(o.get("emergency"))
                 # Enrich with the REAL clinical indication + the ordering doctor's name
                 # AND id (number) — from /patient, cached once per patient this sweep.

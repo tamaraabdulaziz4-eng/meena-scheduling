@@ -259,7 +259,7 @@ function rsRenderUnmatched() {
   const b = document.getElementById('rs-body');
   if (!b) return;
   b.innerHTML = `<div class="card" style="text-align:center;padding:34px 20px">
-    <div style="font-size:34px">🔒</div>
+    <div style="color:var(--muted)">${icon('lock').replace('class="mi-ico"', 'class="mi-ico" style="width:38px;height:38px"')}</div>
     <div style="font-weight:800;margin-top:8px">Your branch isn't linked yet</div>
     <div style="color:var(--muted);font-size:13px;margin-top:6px;max-width:440px;margin-inline:auto;line-height:1.6">
       We couldn't match <b>${escapeHtml(radstats.leadBranchName || 'your branch')}</b> to a branch in the hospital
@@ -283,7 +283,7 @@ function rsRenderControls() {
         <div class="rs-ctl-actions">
           <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
           <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
-          <button class="ghost" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">📊 Monthly report</button>
+          <button class="ghost" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">${icon('bar-chart')} Monthly report</button>
           <button class="open pri" style="width:auto" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
         </div>
       </div>
@@ -582,7 +582,7 @@ function rsRenderBody() {
 
   if (radstats.lastError) {
     body.innerHTML = `<div class="card"><div class="empty" style="padding:26px 16px">
-      <div class="empty-icon">⚠️</div>
+      <div class="empty-icon" style="color:var(--muted)">${icon('alert').replace('class="mi-ico"', 'class="mi-ico" style="width:38px;height:38px"')}</div>
       <div class="empty-title">Couldn't load statistics</div>
       <div class="empty-sub">${escapeHtml(radstats.lastError)}</div>
       <button class="ghost" style="margin-top:12px" onclick="rsLoad()">Retry</button></div></div>`;
@@ -861,7 +861,7 @@ function rsTpRender() {
     return;
   }
   if (tp.error) {
-    host.innerHTML = head + `<div class="empty" style="padding:20px 14px"><div class="empty-icon">⚠️</div>
+    host.innerHTML = head + `<div class="empty" style="padding:20px 14px"><div class="empty-icon" style="color:var(--muted)">${icon('alert').replace('class="mi-ico"', 'class="mi-ico" style="width:38px;height:38px"')}</div>
       <p>${escapeHtml(tp.error)}</p>
       <button class="ghost" style="margin-top:8px" onclick="rsTpLoad()">↻ Retry · إعادة المحاولة</button></div></div>`;
     return;
@@ -910,12 +910,12 @@ function rsTpRender() {
         ${ns && ns.count ? `<span class="sc warn" title="ordered this day, never imaged">ما جا ${ns.count}</span>` : ''}
         ${n ? `<span class="ris completed"><span class="rd"></span>${rsNum(n)} منجز</span>`
             : `<span class="ris scheduled"><span class="rd"></span>0 منجز</span>`}
-        <span style="color:var(--muted);font-size:12px">${open ? '▾' : '▸'}</span>
+        <span style="color:var(--muted);font-size:12px">${open ? icon('chevron-down') : icon('chevron-right')}</span>
       </div>${drill}`;
     }).join('') + `</div>`;
   }
   const basisNote = d.fallbackReported
-    ? `<div class="rs-foot" style="margin-top:8px">ℹ️ ${escapeHtml(String(d.basis || ''))}</div>`
+    ? `<div class="rs-foot" style="margin-top:8px">${icon('info')} ${escapeHtml(String(d.basis || ''))}</div>`
     : '';
   host.innerHTML = head + summary + rows + basisNote + `</div>`;
 }

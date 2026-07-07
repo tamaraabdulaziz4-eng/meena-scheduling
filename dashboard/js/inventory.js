@@ -171,11 +171,18 @@ async function openInvHistory(id) {
   let d;
   try { d = await API.get(`/inventory/${id}/movements`); } catch (e) { document.getElementById('inv-hist-body').innerHTML = `<div class="rep-empty">${escapeHtml(e.message)}</div>`; return; }
   const rows = d.movements || [];
-  document.getElementById('inv-hist-body').innerHTML = rows.length ? `<div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
-    <thead><tr><th>Change</th><th>Note</th><th>By</th><th>When</th></tr></thead>
-    <tbody>${rows.map(m => `<tr>
-      <td style="font-weight:700;color:${m.delta < 0 ? '#E25555' : '#00A87D'}">${m.delta > 0 ? '+' : ''}${m.delta}</td>
-      <td>${escapeHtml(m.reason || '—')}</td><td>${escapeHtml(m.by_name || '')}</td>
-      <td>${m.created_at ? new Date(m.created_at).toLocaleString('en-GB') : ''}</td></tr>`).join('')}</tbody></table></div>`
+  document.getElementById('inv-hist-body').innerHTML = rows.length ? `<div class="cc"><div class="listcard">
+    <div class="lrow" style="background:var(--card-alt);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600">
+      <span style="width:70px">Change</span>
+      <span style="flex:1;min-width:120px">Note</span>
+      <span style="width:120px">By</span>
+      <span style="width:150px">When</span>
+    </div>
+    ${rows.map(m => `<div class="lrow" style="flex-wrap:wrap">
+      <span style="width:70px;font-weight:700;color:${m.delta < 0 ? '#E25555' : '#00A87D'}">${m.delta > 0 ? '+' : ''}${m.delta}</span>
+      <span style="flex:1;min-width:120px">${escapeHtml(m.reason || '—')}</span>
+      <span style="width:120px">${escapeHtml(m.by_name || '')}</span>
+      <span style="width:150px">${m.created_at ? new Date(m.created_at).toLocaleString('en-GB') : ''}</span>
+    </div>`).join('')}</div></div>`
     : `<div class="rep-empty">No movements yet.</div>`;
 }

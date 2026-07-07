@@ -164,11 +164,22 @@ async function openEqHistory(id) {
   let d;
   try { d = await API.get(`/equipment/${id}/maintenance`); } catch (er) { document.getElementById('eq-hist-body').innerHTML = `<div class="rep-empty">${escapeHtml(er.message)}</div>`; return; }
   const rows = d.records || [];
-  document.getElementById('eq-hist-body').innerHTML = rows.length ? `<div class="table-wrap" style="box-shadow:none;border:1px solid var(--border)"><table>
-    <thead><tr><th>Date</th><th>Type</th><th>Next due</th><th>Vendor</th><th>Cost</th><th>Note</th></tr></thead>
-    <tbody>${rows.map(m => `<tr>
-      <td style="font-weight:600">${escapeHtml(m.service_date)}</td><td>${escapeHtml(m.kind)}</td>
-      <td>${escapeHtml(m.next_due || '—')}</td><td>${escapeHtml(m.vendor || '—')}</td>
-      <td>${m.cost != null ? escapeHtml(String(m.cost)) : '—'}</td><td>${escapeHtml(m.note || '—')}</td></tr>`).join('')}</tbody></table></div>`
+  document.getElementById('eq-hist-body').innerHTML = rows.length ? `<div class="cc"><div class="listcard">
+    <div class="lrow" style="background:var(--card-alt);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600">
+      <span style="width:110px">Date</span>
+      <span style="width:100px">Type</span>
+      <span style="width:110px">Next due</span>
+      <span style="width:120px">Vendor</span>
+      <span style="width:70px;text-align:right">Cost</span>
+      <span style="flex:1;min-width:120px">Note</span>
+    </div>
+    ${rows.map(m => `<div class="lrow" style="flex-wrap:wrap">
+      <span style="width:110px;font-weight:600">${escapeHtml(m.service_date)}</span>
+      <span style="width:100px">${escapeHtml(m.kind)}</span>
+      <span style="width:110px">${escapeHtml(m.next_due || '—')}</span>
+      <span style="width:120px">${escapeHtml(m.vendor || '—')}</span>
+      <span style="width:70px;text-align:right">${m.cost != null ? escapeHtml(String(m.cost)) : '—'}</span>
+      <span style="flex:1;min-width:120px">${escapeHtml(m.note || '—')}</span>
+    </div>`).join('')}</div></div>`
     : `<div class="rep-empty">No maintenance logged yet.</div>`;
 }
