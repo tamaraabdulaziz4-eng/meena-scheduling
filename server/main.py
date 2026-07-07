@@ -3053,7 +3053,7 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
         q("UPDATE scheduling.users SET password=%s, token_epoch=COALESCE(token_epoch,0)+1 WHERE id=%s",
           (hashed, uid), exec_only=True)
     sets, params = [], []
-    if body.get("username") is not None: sets.append("username=%s"); params.append(body["username"])
+    if body.get("username") is not None: sets.append("username=%s"); params.append((body["username"] or "").strip().lower())
     if body.get("role")     is not None: sets.append("role=%s");     params.append(body["role"])
     if "email" in body: sets.append("email=%s"); params.append((body.get("email") or "").strip() or None)
     if "email_notifications" in body: sets.append("email_notifications=%s"); params.append(bool(body["email_notifications"]))
