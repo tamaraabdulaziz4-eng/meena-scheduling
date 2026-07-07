@@ -304,11 +304,12 @@ async function wlLoad(force, silent) {
     const data = await API.get('/radiology/worklist?' + qs.toString());
     if (wlState._loadGen !== gen) return;         // superseded — the watchdog gave up, a newer load owns the board
     wlState.data = data;
-    // The fast pass carries only a PRELIMINARY stage (from the HIS RIS status text),
-    // which can be wrong ("Not Verified" etc). Demote it: it may hint the badge, but it
-    // must NOT move a row into the imaged/reported strips — only the authoritative
-    // DePACS stage (ready=1 pass) does that. This stops an imaged row from being
-    // hidden then reappearing when a later pass overwrites the accurate stage.
+    // The fast pass carries a PRELIMINARY stage (from the HIS RIS status text). Move it
+    // to stagePrelim and clear it.stage so it.stage stays STRICTLY DePACS-authoritative
+    // (set only by the ready pass). The preliminary value still drives the FIRST-PAINT
+    // bucketing via wlPrelimStage — but CAPPED at Imaged, so it can never assert a draft
+    // or a verified report. That's what lets rows land in the right strip instantly
+    // without waiting on the slow DePACS pass, while Final stays PACS-grounded.
     for (const it of (wlState.data.items || [])) {
       if (it.stage) { it.stagePrelim = it.stage; delete it.stage; }
     }
@@ -344,6 +345,11 @@ wlState.scannedSeen = wlState.scannedSeen || new Set();
 function wlHydrate() {
   const items = (wlState.data && wlState.data.items) || [];
   for (const it of items) {
+    // DePACS-confirmed Final from the server's lifecycle store (fast pass only): show it
+    // as reported on a brand-new browser open, before any ready pass runs. The server
+    // sets stageConfirmed strictly from state='reported' (DePACS-grounded), so trusting
+    // it for Final is safe. Doesn't need a row key.
+    if (!it.stage && it.stageConfirmed) it.stage = it.stageConfirmed;
     const k = wlRowKey(it);
     if (!k) continue;                              // keyless row → never restore from cache (collision-safe)
     if (!it.modality && !it.exam) { const c = wlState.modCache.get(k); if (c) { it.modality = c.modality; it.exam = c.exam; } }
@@ -422,10 +428,21 @@ const _WL_STAGE_RANK = { ordered: 0, imaged: 1, draft: 2, reported: 3 };
 function wlStageRank(stage) {
   return stage in _WL_STAGE_RANK ? _WL_STAGE_RANK[stage] : -1;
 }
+// A row's PRELIMINARY stage (from the HIS RIS status text, carried on the fast pass as
+// stagePrelim) is CAPPED at 'imaged': it may place a row in the Imaged strip on the first
+// paint, but can never assert a draft/verified report — only the DePACS ready pass
+// (it.stage) does that. So even a HIS "signed" status shows Imaged until PACS confirms.
+function wlPrelimStage(it) {
+  return (it.stagePrelim === 'imaged' || it.stagePrelim === 'draft' || it.stagePrelim === 'reported')
+    ? 'imaged' : 'ordered';
+}
 // The highest stage we currently believe for a row, honouring the hard scan signal
-// (scanned → at least imaged) so a ready pass can't hide a scanned row as "ordered".
+// (scanned → at least imaged) and the capped preliminary stage, so a ready pass can't
+// hide a scanned or HIS-imaged row back as "ordered".
 function wlCurRank(it) {
-  return Math.max(wlStageRank(it.stage), it.scanned ? _WL_STAGE_RANK.imaged : -1);
+  return Math.max(wlStageRank(it.stage),
+                  it.scanned ? _WL_STAGE_RANK.imaged : -1,
+                  wlPrelimStage(it) === 'imaged' ? _WL_STAGE_RANK.imaged : -1);
 }
 
 // Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
@@ -458,7 +475,10 @@ function wlMergeEnrich(d, isReady) {
       if (e.pacsId && !it.pacsId) it.pacsId = e.pacsId;
       if (e.cpacsUrl && !it.cpacsUrl) it.cpacsUrl = e.cpacsUrl;
       // Stage is authoritative ONLY from the ready pass — and only ever moves forward.
-      if (isReady && e.stage && wlStageRank(e.stage) > wlCurRank(it)) it.stage = e.stage;
+      // '>=' (not '>') so an equal-rank DePACS reading writes through and REPLACES a
+      // provisional placement (scanned / preliminary), clearing the "confirming" dot;
+      // ranks are unique per code, so this still never demotes a row.
+      if (isReady && e.stage && wlStageRank(e.stage) >= wlCurRank(it)) it.stage = e.stage;
     }
   }
   if (document.getElementById('wl-body')) wlRender();
@@ -488,8 +508,12 @@ function wlRisStatus(it) {
     return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '', state: 'final' };
   if (it.stage === 'draft')
     return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '', state: 'prelim' };
-  if (it.stage === 'imaged' || it.scanned)
-    return { bucket: 'imaged', label: 'Imaged', cls: 'wl-st-done', icon: '', state: 'completed' };
+  if (it.stage === 'imaged' || it.scanned || wlPrelimStage(it) === 'imaged')
+    // `pending` = placed in Imaged from the preliminary HIS stage alone (no hard scan
+    // signal, DePACS not yet confirmed) → the badge shows a "confirming with PACS" dot
+    // that clears in place once the ready pass sets it.stage. Never blocks the paint.
+    return { bucket: 'imaged', label: 'Imaged', cls: 'wl-st-done', icon: '', state: 'completed',
+             pending: !it.stage && !it.scanned };
   if (it.examStartAt)
     return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '', state: 'progress' };
   if (it.arrivedAt)
@@ -831,7 +855,11 @@ function wlRisStatusBadge(it) {
   // While the stage is still being checked and we have no signal at all, shimmer.
   if (p && !it.stage && !it.scanned && !it.arrivedAt && !it.stagePrelim) return `<span class="wl-shimmer" style="width:70px"></span>`;
   const s = wlRisStatus(it);
-  return `<span class="ris ${s.state}"><span class="rd"></span>${escapeHtml(s.label)}</span>`;
+  // Imaged-from-preliminary-only rows show a subtle pulsing dot ("confirming with PACS")
+  // that clears in place the moment the DePACS ready pass sets it.stage — no row moves.
+  const confirming = s.pending ? ' confirming' : '';
+  const title = s.pending ? ' title="Imaged per HIS — confirming with PACS…"' : '';
+  return `<span class="ris ${s.state}${confirming}"${title}><span class="rd"></span>${escapeHtml(s.label)}</span>`;
 }
 // Inline Feather SVGs for the few glyphs not in util.js's icon() map (link chain,
 // send/handoff). Sized by the .wl2 scope like the shared .mi-ico icons.

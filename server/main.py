@@ -6789,7 +6789,11 @@ def _rad_upsert_orders(items):
         except Exception:
             continue
         ready = it.get("readyToFile") is True
-        imaged = ready or it.get("stage") in ("imaged", "draft", "reported")
+        # Only stamp imaged_at from an AUTHORITATIVE signal: a ready/verified report or the
+        # hard `scanned` exam-timestamp. The fast pass's `stage` is the PRELIMINARY HIS
+        # status text, which must never be treated as PACS-confirmed imaging — otherwise a
+        # later read-back of imaged_at would be untrustworthy.
+        imaged = ready or bool(it.get("scanned"))
         acc = str(it.get("accession") or "").strip() or None
         dedup[gpb] = (it.get("site"), str(it.get("mrno") or ""), it.get("billNo"), gpb,
                       it.get("patientName"), it.get("department"), it.get("doctorName"),
@@ -7277,6 +7281,41 @@ async def radiology_autostamp_set(request: Request, user=Depends(require_superad
 # drill-down to a single day, not the default view.
 _RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
 
+def _rad_seed_confirmed_stages(items):
+    """Fast-pass cold-open seed: flag rows that already have a DePACS-CONFIRMED verified
+    report in our lifecycle store, so a brand-new browser open shows them as Final
+    immediately instead of parking them in Waiting until the slow ready pass runs. Only
+    state='reported' is trusted — it's written exclusively on the DePACS ready pass, so
+    it's authoritative; we never seed 'imaged' (that column isn't DePACS-grounded). One
+    query for the whole board. Best-effort — never breaks the worklist."""
+    if not isinstance(items, list) or not items:
+        return
+    ids = []
+    for it in items:
+        try:
+            g = it.get("genPatBillingId")
+            if g:
+                ids.append(int(g))
+        except Exception:
+            pass
+    if not ids:
+        return
+    try:
+        rows = q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
+                    WHERE gen_pat_billing_id = ANY(%s) AND state='reported'""", (ids,)) or []
+        reported = {r["gen_pat_billing_id"] for r in rows}
+        if not reported:
+            return
+        for it in items:
+            try:
+                g = int(it.get("genPatBillingId")) if it.get("genPatBillingId") else None
+            except Exception:
+                g = None
+            if g in reported:
+                it["stageConfirmed"] = "reported"
+    except Exception:
+        pass
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_radiology)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -7315,6 +7354,11 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # so orders promote ordered → reported here.
     try:
         if isinstance(data, dict):
+            # Fast pass only: seed DePACS-confirmed Final from the store so cold opens paint
+            # reported rows correctly without waiting on the ready pass. The heavy ready pass
+            # already carries authoritative stage, so it doesn't need (or want) the seed.
+            if not heavy:
+                _rad_seed_confirmed_stages(data.get("items"))
             _rad_upsert_orders(data.get("items"))
             _rad_reconcile_resolved(data.get("items"))
             _annotate_worklist_consent(data.get("items"))
