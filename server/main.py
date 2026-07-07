@@ -9402,7 +9402,18 @@ def whatsapp_diagnose(user=Depends(require_admin)):
            "dns": None, "tcp_connect": None, "http_status": None,
            "latency_ms": None, "error": None}
     # Private/loopback host the hosted server can never reach from the cloud.
-    if host in ("localhost", "127.0.0.1", "::1") or host.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.")):
+    def _is_private_host(h: str) -> bool:
+        if h in ("localhost", "127.0.0.1", "::1") or h.startswith(("10.", "192.168.")):
+            return True
+        # 172.16.0.0/12 spans 172.16.x.x through 172.31.x.x
+        parts = h.split(".")
+        if len(parts) == 4 and parts[0] == "172":
+            try:
+                return 16 <= int(parts[1]) <= 31
+            except ValueError:
+                return False
+        return False
+    if _is_private_host(host):
         out["error"] = (f"The bridge URL points to a private/local address ({host}). "
                         "A hosted server can't reach that — the bridge must be on a public URL.")
     try:
@@ -9837,7 +9848,11 @@ def _cases_reminder_loop():
             if 0 <= hour <= 23:
                 ksa = datetime.now(timezone.utc) + timedelta(hours=3)
                 mins_since_start = (ksa.hour - hour) * 60 + ksa.minute
-                if 0 <= mins_since_start < _CASES_REMIND_WINDOW_HOURS * 60:
+                # Stop at the 08:00 operational-date rollover so we don't start
+                # nagging about the next, freshly-started (empty) day. A window
+                # that begins before 08:00 must not run past it.
+                crossed_rollover = hour < 8 <= ksa.hour
+                if 0 <= mins_since_start < _CASES_REMIND_WINDOW_HOURS * 60 and not crossed_rollover:
                     date = _operational_date_server()
                     slot = mins_since_start // _CASES_REMIND_EVERY_MIN
                     claimed = q("""INSERT INTO scheduling.app_settings (key,value)
