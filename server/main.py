@@ -10138,10 +10138,17 @@ def _release_sweep_lock(name):
     except Exception:
         pass
 
-def _autostamp_enrich(mrno, bill_no, cache):
-    """The order's real clinical indication + ordering doctor (name + id), for the
-    auto-stamp history. Reuses /patient (FetchRISPanel + GetEmrOrderDetails), cached
-    once per patient per sweep. Best-effort — returns {} on any hiccup."""
+def _autostamp_enrich(mrno, chosen, cache, study_acc=None):
+    """The clinical indication + ER flag for THIS SPECIFIC exam, for the auto-stamp
+    history. Reuses /patient (FetchRISPanel + GetEmrOrderDetails), cached once per
+    patient per sweep. Best-effort — returns {} on any hiccup.
+
+    Resolve the patient's order PER EXAM, not per bill: a bill often covers several
+    exams, so matching by billNo alone returns the first order and every exam inherits
+    the same indication (the owner's "same indication on more than one exam"). Prefer
+    the exact accession key; else billNo + service; when a multi-exam bill can't be
+    disambiguated, return {} (the caller falls back to the exam name — never a wrong
+    indication)."""
     key = str(mrno)
     if key not in cache:
         try:
@@ -10152,13 +10159,23 @@ def _autostamp_enrich(mrno, bill_no, cache):
     d = cache.get(key) or {}
     orders = d.get("orders") if isinstance(d, dict) else None
     orders = orders or []
-    # Match the order STRICTLY by bill number. No "lone order" fallback — adopting
-    # orders[0] on a billNo mismatch would import a wrong order's indication + ER flag
-    # (the exact anti-pattern enrichOrder was fixed to remove). No match → no indication
-    # (the caller falls back to the exam name), never a wrong one.
+    bill_no = chosen.get("billNo") if isinstance(chosen, dict) else None
+    exam = str((chosen.get("exam") or chosen.get("service") or "") if isinstance(chosen, dict) else "").strip().lower()
+    acc = str(study_acc or "").strip()
     o = None
-    if bill_no is not None:
-        o = next((x for x in orders if str(x.get("billNo")) == str(bill_no)), None)
+    # 1) exact per-exam accession key — the study's own accession names its order.
+    if _elite_is_real_accession(acc):
+        o = next((x for x in orders
+                  if _elite_bare_id(x.get("accessionNumber")) == _elite_bare_id(acc)), None)
+    # 2) billNo + service. One order on the bill → use it; several → match this exam's
+    #    service; no service match → leave None (no wrong indication).
+    if o is None and bill_no is not None:
+        bill_orders = [x for x in orders if str(x.get("billNo")) == str(bill_no)]
+        if len(bill_orders) == 1:
+            o = bill_orders[0]
+        elif exam:
+            o = next((x for x in bill_orders
+                      if str(x.get("service") or x.get("serviceName") or "").strip().lower() == exam), None)
     o = o or {}
     return {"indication": o.get("clinicalIndication") or o.get("reasonForOrder"),
             "provider": o.get("provider"), "providerId": o.get("providerId"),
@@ -10285,20 +10302,17 @@ def _radiology_autostamp_sweep():
                                              "reason": "patient_mismatch"}))
                     continue
                 emergency = bool(o.get("emergency"))
-                # Enrich with the REAL clinical indication + the ordering doctor's name
-                # AND id (number) — from /patient, cached once per patient this sweep.
-                enr = _autostamp_enrich(mrno, o.get("billNo"), pat_cache)
+                # Enrich with THIS exam's real clinical indication — resolved per exam
+                # (accession, else billNo+service), so two exams on one bill don't share
+                # one indication. Pass the study's own accession + the chosen order.
+                enr = _autostamp_enrich(mrno, o, pat_cache, s.get("accession_number"))
                 if enr.get("isER"):
                     emergency = True
                 indication = str(enr.get("indication") or "").strip()
-                doctor = str(enr.get("provider") or o.get("doctorName") or "").strip()
-                doc_id = str(enr.get("providerId") or "").strip()
-                # Build: "<indication> — Dr <name> (#<id>) — EMERGENCY|ROUTINE"
-                parts = [indication or str(o.get("exam") or "").strip()]
-                if doctor:
-                    parts.append("Dr " + doctor + (" (#" + doc_id + ")" if doc_id else ""))
-                parts.append("EMERGENCY" if emergency else "ROUTINE")
-                text = " — ".join([p for p in parts if p])
+                # Clinical history text is the INDICATION ONLY (owner: "الاندكيشن بس") —
+                # no doctor name/number, no EMERGENCY/ROUTINE word. Emergency is still
+                # written as a real flag on the study via set_emergency below.
+                text = indication or str(o.get("exam") or "").strip()
                 if text:
                     try:
                         _elite_write_history(sid, text, set_emergency=emergency)

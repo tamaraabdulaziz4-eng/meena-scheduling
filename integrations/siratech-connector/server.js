@@ -211,7 +211,19 @@ async function enrichOrder(mrno, o) {
     // billNo is numeric in one HIS subsystem and a string in another — compare as
     // String() so a type mismatch never silently drops the whole enrichment (the
     // same bug the match path already fixed; the indication was empty for everyone).
-    const row = rows.find((r) => String(r.billNo) === String(o.billNo));
+    // Match the RIS row for THIS order. A single bill often covers SEVERAL exams, so
+    // billNo alone matches the first row and every exam would inherit its indication +
+    // doctor + ER flag (the owner's "طالع كله SOB" — same indication on every exam).
+    // Disambiguate a multi-service bill by service name; never fall back to another
+    // exam's row (no wrong indication — empty is correct-or-nothing).
+    const billRows = rows.filter((r) => String(r.billNo) === String(o.billNo));
+    let row;
+    if (billRows.length <= 1) {
+      row = billRows[0];
+    } else {
+      const svc = String(o.serviceName || '').trim().toLowerCase();
+      row = billRows.find((r) => String(r.serviceName || '').trim().toLowerCase() === svc) || null;
+    }
     if (!row) return {};
     // One-time: dump the RIS-panel row's key names so the real HIS field spellings
     // (order-id, indication) can be pinned from a live response without guessing.
