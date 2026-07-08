@@ -10159,6 +10159,7 @@ _autostamp_acc_done = set()   # study ids whose accession stamp already ran this
 _autostamp_hist_done = set()  # study ids whose clinical-history stamp already ran this process
 _autostamp_branch_blocked = set()  # study ids skipped as not-the-scoped-branch (audit once)
 _autostamp_keys_logged = False     # one-time dump of a DePACS study's field names
+_autostamp_cursor = 0              # rotating start offset so every patient on the board is swept
 
 def _autostamp_study_station(s):
     """A DePACS study's originating station / institution / source-AE — whatever the
@@ -10262,7 +10263,7 @@ def _radiology_autostamp_sweep():
     Replaces waiting for a human handoff; a later handoff simply overwrites with the
     staff's richer text. Idempotent: a study already carrying history+category is
     skipped, and the accession stamp has its own no-clobber guards."""
-    global _autostamp_keys_logged
+    global _autostamp_keys_logged, _autostamp_cursor
     data = _bridge_request("/his/worklist", timeout=90)
     if not isinstance(data, dict):
         return 0
@@ -10287,7 +10288,21 @@ def _radiology_autostamp_sweep():
     ksa_now = datetime.now(timezone.utc) + timedelta(hours=3)
     fresh_days = {ksa_now.strftime("%Y%m%d"), (ksa_now - timedelta(days=1)).strftime("%Y%m%d")}
     stamped = 0
-    for mrno, orders in list(by_mrn.items())[:25]:      # bounded per pass
+    # Rotate the per-pass window so EVERY patient on the board is eventually swept —
+    # not just the first 25. The board sorts emergency-first then oldest-first, so a
+    # brand-new routine order (or a manually-added patient) lands at the BOTTOM; a
+    # fixed [:25] would never reach it and its images would never get auto-stamped.
+    # The cursor advances by the window each pass and wraps, covering the whole board
+    # in ceil(N/25) passes (~90s each). Studies already stamped are cheap no-ops.
+    mrns = list(by_mrn.items())
+    _PASS = 25
+    if mrns:
+        start = _autostamp_cursor % len(mrns)
+        window = (mrns + mrns)[start:start + _PASS]          # wrap-around slice
+        _autostamp_cursor = (start + _PASS) % len(mrns)
+    else:
+        window = []
+    for mrno, orders in window:                          # bounded per pass, rotating
         try:
             studies = _elite_studies_for_file(mrno)
         except Exception:
