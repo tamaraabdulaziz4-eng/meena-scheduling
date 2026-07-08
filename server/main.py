@@ -7521,19 +7521,36 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
     # land on her Siratech file in one filing (the connector attaches it as a second
     # genFileAttachments entry, named on its own). Only on a real write (confirm).
     consent_id = None
-    if b.get("confirm") and not b.get("consentPdf"):
+    if b.get("confirm"):
         try:
-            crow = q("""SELECT id, pdf, patient_name, created_at FROM scheduling.consents
-                        WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
-                        ORDER BY created_at DESC LIMIT 1""",
-                     (str(b.get("file")).strip(),), one=True)
-            if crow and crow.get("pdf"):
-                import base64 as _b64
-                b["consentPdf"] = _b64.b64encode(bytes(crow["pdf"])).decode("ascii")
-                _cdt = crow["created_at"].strftime("%Y-%m-%d") if crow.get("created_at") else ""
-                _parts = [p for p in ["Consent Non Pregnancy", (crow.get("patient_name") or "").strip(), _cdt] if p]
-                b["consentName"] = " - ".join(_parts) + ".pdf"
-                consent_id = crow["id"]
+            _fno = str(b.get("file")).strip()
+            # Is a signed consent ALREADY on the patient's Siratech file on its own
+            # (filed at signing)? Tell the connector so its idempotency guard lets the
+            # report append alongside the consent instead of reading it as "already filed".
+            _cf = q("""SELECT COUNT(*) AS n FROM scheduling.consents
+                        WHERE file_no=%s AND status='signed' AND filed_siratech=true""",
+                    (_fno,), one=True)
+            _cf_n = int((_cf or {}).get("n") or 0)
+            if _cf_n:
+                b["consentAlreadyFiled"] = True
+                # Count so the connector can tell "only the consent(s)" from "a report was
+                # added" even when the HIS echoes attachments without names.
+                b["consentFiledCount"] = _cf_n
+            # Otherwise ride the newest signed-but-UNfiled consent along with the report,
+            # so it still reaches the file even if standalone filing was unavailable.
+            if not b.get("consentPdf"):
+                crow = q("""SELECT id, pdf, patient_name, created_at FROM scheduling.consents
+                            WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
+                              AND filed_siratech=false
+                            ORDER BY created_at DESC LIMIT 1""",
+                         (_fno,), one=True)
+                if crow and crow.get("pdf"):
+                    import base64 as _b64
+                    b["consentPdf"] = _b64.b64encode(bytes(crow["pdf"])).decode("ascii")
+                    _cdt = crow["created_at"].strftime("%Y-%m-%d") if crow.get("created_at") else ""
+                    _parts = [p for p in ["Consent Non Pregnancy", (crow.get("patient_name") or "").strip(), _cdt] if p]
+                    b["consentName"] = " - ".join(_parts) + ".pdf"
+                    consent_id = crow["id"]
         except Exception:
             consent_id = None
     out = _bridge_request("/his/results/file", method="POST", body=b, timeout=180)
@@ -7887,7 +7904,86 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
              psycopg2.Binary(pdf), user["id"], tech), one=True)
     insert_audit(user, "CONSENT_CREATE", file_no,
                  json.dumps({"id": row["id"], "kind": "non_pregnancy", "procedure": data["procedure"]}))
-    return {"ok": True, "id": row["id"], "created_at": str(row["created_at"])}
+    # File the consent to the patient's Siratech record NOW (at signing) — independent
+    # of any report — so it's on the file before imaging. Best-effort: a failure never
+    # breaks signing, and an un-filed consent still rides the report later as a fallback.
+    filed = False
+    try:
+        filed = _file_consent_to_siratech(row["id"])
+    except Exception:
+        filed = False
+    return {"ok": True, "id": row["id"], "created_at": str(row["created_at"]), "filed": bool(filed)}
+
+def _consent_file_name(rec):
+    """Descriptive attachment name — 'Consent Non Pregnancy - Name - date.pdf'."""
+    cdt = ""
+    try:
+        cdt = rec["created_at"].strftime("%Y-%m-%d") if rec.get("created_at") else ""
+    except Exception:
+        cdt = ""
+    parts = [p for p in ["Consent Non Pregnancy", (rec.get("patient_name") or "").strip(), cdt] if p]
+    return " - ".join(parts) + ".pdf"
+
+def _file_consent_to_siratech(consent_id):
+    """Attach a signed consent to the patient's Siratech file on its own, via the
+    connector's /his/consent/file (same attachment mechanism as the report, consent-only,
+    never authorized). Returns True only on a confirmed write. Marks filed_siratech=true
+    so the report path won't re-attach it. Safe to call repeatedly (idempotent by flag)."""
+    rec = q("""SELECT id, file_no, mrn, patient_name, bill_no, site, pdf, filed_siratech
+               FROM scheduling.consents WHERE id=%s""", (consent_id,), one=True)
+    if not rec or not rec.get("pdf") or rec.get("filed_siratech"):
+        return bool(rec and rec.get("filed_siratech"))
+    import base64 as _b64
+    body = {
+        "file": str(rec["file_no"]).strip(),
+        "billNo": (str(rec["bill_no"]).strip() if rec.get("bill_no") else None),
+        "site": (rec.get("site") if isinstance(rec.get("site"), int) else None),
+        "consentPdf": _b64.b64encode(bytes(rec["pdf"])).decode("ascii"),
+        "consentName": _consent_file_name(rec),
+        "expectName": (rec.get("patient_name") or "").strip() or None,
+        "confirm": True,
+    }
+    # Bounded so signing stays responsive — a slow/unreachable HIS just falls back to
+    # riding the report later (filed_siratech stays false).
+    out = _bridge_request("/his/consent/file", method="POST", body=body, timeout=60)
+    wrote = isinstance(out, dict) and out.get("wrote")
+    if wrote:
+        try:
+            q("UPDATE scheduling.consents SET filed_siratech=true WHERE id=%s",
+              (consent_id,), exec_only=True)
+        except Exception:
+            pass
+    return bool(wrote)
+
+@app.post("/api/consent/{consent_id}/file")
+def file_consent(consent_id: int, request: Request, user=Depends(require_radiology)):
+    """Manually push a signed consent onto the patient's Siratech file (used when the
+    automatic filing at signing wasn't possible yet — e.g. the order hadn't reached
+    Result Entry). Bound to the patient file so an id alone can't reach another patient."""
+    rec = q("SELECT id, file_no, pdf, filed_siratech FROM scheduling.consents WHERE id=%s",
+            (consent_id,), one=True)
+    if not rec:
+        raise HTTPException(404, "Consent not found")
+    file_no = (request.query_params.get("file") or "").strip()
+    if file_no and file_no != str(rec.get("file_no")):
+        raise HTTPException(403, "Provide the matching patient file number to file this consent")
+    if not rec.get("pdf"):
+        raise HTTPException(409, "This consent has not been signed yet")
+    if rec.get("filed_siratech"):
+        return {"ok": True, "wrote": True, "already": True,
+                "note": "Consent is already on the patient's file."}
+    filed = False
+    try:
+        filed = _file_consent_to_siratech(consent_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Could not file the consent: {e}")
+    if filed:
+        insert_audit(user, "CONSENT_FILE", str(rec["file_no"]), json.dumps({"id": consent_id}))
+    return {"ok": True, "wrote": bool(filed),
+            "note": ("Consent filed to the patient's record." if filed
+                     else "Could not attach yet — no reachable radiology order for this patient. It will ride the report when filed.")}
 
 @app.get("/api/consent")
 def list_consents(request: Request, user=Depends(require_radiology)):
@@ -7897,7 +7993,8 @@ def list_consents(request: Request, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     # Only SIGNED consents (a pending QR link that was never signed has no PDF and
     # isn't a real consent — it must not appear in the patient's list).
-    rows = q("""SELECT id, kind, procedure, patient_type, reason, created_by_name, created_at
+    rows = q("""SELECT id, kind, procedure, patient_type, reason, created_by_name, created_at,
+                       filed_siratech
                 FROM scheduling.consents
                 WHERE file_no=%s AND status='signed' AND pdf IS NOT NULL
                 ORDER BY created_at DESC""", (file_no,))
@@ -8098,6 +8195,12 @@ async def public_consent_sign(token: str, request: Request):
              one=True)
     if not done:
         raise HTTPException(409, "This consent has already been signed.")
+    # File it to the patient's Siratech record now (best-effort; rides the report as a
+    # fallback if unavailable). The signer is the patient's phone, so run it here.
+    try:
+        _file_consent_to_siratech(done["id"])
+    except Exception:
+        pass
     return {"ok": True}
 
 _PREF_KINDS = ("off", "unavailable")
@@ -10038,6 +10141,23 @@ def _mod_bucket(m):
 
 _autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
 _autostamp_hist_done = set()  # study ids whose clinical-history stamp already ran this process
+_autostamp_branch_blocked = set()  # study ids skipped as not-the-scoped-branch (audit once)
+_autostamp_keys_logged = False     # one-time dump of a DePACS study's field names
+
+def _autostamp_study_station(s):
+    """A DePACS study's originating station / institution / source-AE — whatever the
+    PACS exposes. DePACS is shared across branches and a study carries no branch id, so
+    this (matched against rad_autostamp_n3_stations) is how a study is confirmed to
+    belong to the scoped branch before any write. Probes several likely field spellings;
+    None when the PACS surfaces none of them."""
+    for k in ("station_name", "station", "institution_name", "institution",
+              "source_ae", "source_ae_title", "source_aet", "calling_ae",
+              "calling_ae_title", "aet", "ae_title", "performed_station",
+              "performing_station", "scanner", "modality_station"):
+        v = s.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return None
 
 def _claim_sweep_lock(name, ttl_sec):
     """Cross-worker single-flight for a background sweep. Claims the lock only if it's
@@ -10064,10 +10184,17 @@ def _release_sweep_lock(name):
     except Exception:
         pass
 
-def _autostamp_enrich(mrno, bill_no, cache):
-    """The order's real clinical indication + ordering doctor (name + id), for the
-    auto-stamp history. Reuses /patient (FetchRISPanel + GetEmrOrderDetails), cached
-    once per patient per sweep. Best-effort — returns {} on any hiccup."""
+def _autostamp_enrich(mrno, chosen, cache, study_acc=None):
+    """The clinical indication + ER flag for THIS SPECIFIC exam, for the auto-stamp
+    history. Reuses /patient (FetchRISPanel + GetEmrOrderDetails), cached once per
+    patient per sweep. Best-effort — returns {} on any hiccup.
+
+    Resolve the patient's order PER EXAM, not per bill: a bill often covers several
+    exams, so matching by billNo alone returns the first order and every exam inherits
+    the same indication (the owner's "same indication on more than one exam"). Prefer
+    the exact accession key; else billNo + service; when a multi-exam bill can't be
+    disambiguated, return {} (the caller falls back to the exam name — never a wrong
+    indication)."""
     key = str(mrno)
     if key not in cache:
         try:
@@ -10078,13 +10205,23 @@ def _autostamp_enrich(mrno, bill_no, cache):
     d = cache.get(key) or {}
     orders = d.get("orders") if isinstance(d, dict) else None
     orders = orders or []
-    # Match the order STRICTLY by bill number. No "lone order" fallback — adopting
-    # orders[0] on a billNo mismatch would import a wrong order's indication + ER flag
-    # (the exact anti-pattern enrichOrder was fixed to remove). No match → no indication
-    # (the caller falls back to the exam name), never a wrong one.
+    bill_no = chosen.get("billNo") if isinstance(chosen, dict) else None
+    exam = str((chosen.get("exam") or chosen.get("service") or "") if isinstance(chosen, dict) else "").strip().lower()
+    acc = str(study_acc or "").strip()
     o = None
-    if bill_no is not None:
-        o = next((x for x in orders if str(x.get("billNo")) == str(bill_no)), None)
+    # 1) exact per-exam accession key — the study's own accession names its order.
+    if _elite_is_real_accession(acc):
+        o = next((x for x in orders
+                  if _elite_bare_id(x.get("accessionNumber")) == _elite_bare_id(acc)), None)
+    # 2) billNo + service. One order on the bill → use it; several → match this exam's
+    #    service; no service match → leave None (no wrong indication).
+    if o is None and bill_no is not None:
+        bill_orders = [x for x in orders if str(x.get("billNo")) == str(bill_no)]
+        if len(bill_orders) == 1:
+            o = bill_orders[0]
+        elif exam:
+            o = next((x for x in bill_orders
+                      if str(x.get("service") or x.get("serviceName") or "").strip().lower() == exam), None)
     o = o or {}
     return {"indication": o.get("clinicalIndication") or o.get("reasonForOrder"),
             "provider": o.get("provider"), "providerId": o.get("providerId"),
@@ -10098,6 +10235,7 @@ def _radiology_autostamp_sweep():
     Replaces waiting for a human handoff; a later handoff simply overwrites with the
     staff's richer text. Idempotent: a study already carrying history+category is
     skipped, and the accession stamp has its own no-clobber guards."""
+    global _autostamp_keys_logged
     data = _bridge_request("/his/worklist", timeout=90)
     if not isinstance(data, dict):
         return 0
@@ -10105,6 +10243,10 @@ def _radiology_autostamp_sweep():
     # siteId 3) — the pilot branch. Blank setting → every branch.
     sites_raw = (get_setting("rad_autostamp_sites", "3") or "").strip()
     site_set = set(s.strip() for s in sites_raw.split(",") if s.strip()) if sites_raw else None
+    # Shared-PACS branch guard (see the per-study check below): the DePACS station /
+    # institution values that identify the scoped branch. Comma-separated, case-insensitive.
+    n3_stations_raw = (get_setting("rad_autostamp_n3_stations", "") or "").strip()
+    n3_stations = set(x.strip().upper() for x in n3_stations_raw.split(",") if x.strip())
     by_mrn = {}
     for it in (data.get("items") or []):
         if site_set is not None and str(it.get("site") or "").strip() not in site_set:
@@ -10138,10 +10280,14 @@ def _radiology_autostamp_sweep():
                 fresh_mod_count[_fm] = fresh_mod_count.get(_fm, 0) + 1
         try:
             mwl = q("""SELECT accession, modality FROM scheduling.radiology_mwl
-                       WHERE mrno=%s AND sps_date=%s""",
-                    (mrno, ksa_now.strftime("%Y%m%d"))) or []
+                       WHERE mrno=%s AND sps_date = ANY(%s)""",
+                    (mrno, list(fresh_days))) or []
         except Exception:
             mwl = []
+        # Accessions the scoped branch's MWL agent pushed for this patient — a positive,
+        # branch-specific signal (the agent runs at N3, so any accession here is N3).
+        mwl_accs = set(_elite_bare_id(r.get("accession")) for r in mwl
+                       if _elite_is_real_accession(r.get("accession")))
         for s in fresh:
             sid = s.get("study_id")
             if not sid:
@@ -10162,6 +10308,30 @@ def _radiology_autostamp_sweep():
                          if _elite_bare_id(o.get("accessionNumber")) == _elite_bare_id(s_acc)]
                         if _elite_is_real_accession(s_acc) else [])
             cur_hist = str(s.get("clinical_history") or "").strip()
+            # One-time: dump a study's field names so the DePACS branch/station field can
+            # be pinned from a live response (to configure rad_autostamp_n3_stations).
+            if not _autostamp_keys_logged:
+                _autostamp_keys_logged = True
+                try:
+                    print("[rad-autostamp] study keys:", ",".join(sorted(str(k) for k in s.keys())))
+                    print("[rad-autostamp] station/accession sample:",
+                          repr(_autostamp_study_station(s)), repr(s_acc))
+                except Exception:
+                    pass
+            # SHARED-PACS BRANCH GUARD. DePACS holds EVERY branch's studies but the
+            # auto-stamp is scoped (rad_autostamp_sites, default N3). A study carries no
+            # branch id, so it must be POSITIVELY confirmed as the scoped branch before
+            # any write — otherwise a same-patient study scanned at another branch could
+            # inherit an N3 order's indication (a wrong cross-branch write). Positive
+            # signals: the study's accession is in the branch MWL feed, OR its DePACS
+            # station/institution matches rad_autostamp_n3_stations. Unscoped (blank
+            # sites) → write everywhere, as configured. Unconfirmed under a scope → skip.
+            _station = _autostamp_study_station(s)
+            n3_confirmed = (
+                (bool(n3_stations) and _station is not None and _station.strip().upper() in n3_stations)
+                or (_elite_is_real_accession(s_acc) and _elite_bare_id(s_acc) in mwl_accs)
+            )
+            branch_ok = (site_set is None) or n3_confirmed
             # Write the moment images arrive (empty history). Guards, in order:
             #   • a definitive accession key resolves to exactly one order → stamp THAT one.
             #     If the study declares an accession but it matches no order, DO NOT fall
@@ -10198,7 +10368,15 @@ def _radiology_autostamp_sweep():
                                              "study_accession": s_acc, "order_accession": _cand_acc}))
                 else:
                     chosen = cand[0]                              # unambiguous modality 1:1 (fallback)
-            if (chosen is not None
+            if (chosen is not None and not branch_ok
+                    and not cur_hist and sid not in _autostamp_hist_done):
+                # Would have stamped, but the study isn't confirmed as the scoped branch.
+                if sid not in _autostamp_branch_blocked:
+                    _autostamp_branch_blocked.add(sid)
+                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                 json.dumps({"studyId": sid, "reason": "branch_unconfirmed",
+                                             "station": _station, "study_accession": s_acc}))
+            elif (chosen is not None and branch_ok
                     and not cur_hist and sid not in _autostamp_hist_done):
                 o = chosen
                 # HARD PATIENT GATE (defence in depth): never write onto a study whose
@@ -10211,20 +10389,17 @@ def _radiology_autostamp_sweep():
                                              "reason": "patient_mismatch"}))
                     continue
                 emergency = bool(o.get("emergency"))
-                # Enrich with the REAL clinical indication + the ordering doctor's name
-                # AND id (number) — from /patient, cached once per patient this sweep.
-                enr = _autostamp_enrich(mrno, o.get("billNo"), pat_cache)
+                # Enrich with THIS exam's real clinical indication — resolved per exam
+                # (accession, else billNo+service), so two exams on one bill don't share
+                # one indication. Pass the study's own accession + the chosen order.
+                enr = _autostamp_enrich(mrno, o, pat_cache, s.get("accession_number"))
                 if enr.get("isER"):
                     emergency = True
                 indication = str(enr.get("indication") or "").strip()
-                doctor = str(enr.get("provider") or o.get("doctorName") or "").strip()
-                doc_id = str(enr.get("providerId") or "").strip()
-                # Build: "<indication> — Dr <name> (#<id>) — EMERGENCY|ROUTINE"
-                parts = [indication or str(o.get("exam") or "").strip()]
-                if doctor:
-                    parts.append("Dr " + doctor + (" (#" + doc_id + ")" if doc_id else ""))
-                parts.append("EMERGENCY" if emergency else "ROUTINE")
-                text = " — ".join([p for p in parts if p])
+                # Clinical history text is the INDICATION ONLY (owner: "الاندكيشن بس") —
+                # no doctor name/number, no EMERGENCY/ROUTINE word. Emergency is still
+                # written as a real flag on the study via set_emergency below.
+                text = indication or str(o.get("exam") or "").strip()
                 if text:
                     try:
                         _elite_write_history(sid, text, set_emergency=emergency)
@@ -10237,7 +10412,9 @@ def _radiology_autostamp_sweep():
                         print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
             # accession: deterministic key from the MWL feed — only when unambiguous
             # (single entry for the patient today, or exactly one of this modality).
-            if sid not in _autostamp_acc_done:
+            # Same branch guard: never stamp the scoped branch's accession onto a study
+            # that isn't confirmed to be that branch's.
+            if branch_ok and sid not in _autostamp_acc_done:
                 acc = None
                 if len(mwl) == 1:
                     acc = mwl[0].get("accession")

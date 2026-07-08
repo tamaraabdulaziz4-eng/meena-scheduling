@@ -41,6 +41,11 @@ const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
 // category, mark the row's range, save, authorize). 151472 = the "Report" category
 // id captured live at Alworood (site 2); override per-site with env if it differs.
 const FILE_ATTACHMENT_CATEGORY_ID = Number(process.env.FILE_ATTACHMENT_CATEGORY_ID || 151472);
+// HIS spells the service/exam name field several ways across builds — probe them all
+// (mirrors buildWorklist's risServiceOf) so per-service matching never silently misses.
+const _SVC_KEYS = ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
+  'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
+  'invServiceName', 'invmastServiceName', 'ServiceName'];
 // The result "range" classification the row is saved under. The Siratech dropdown
 // is Normal / Abnormal / Critical / Not Applicable → 0 / 1 / 2 / 3. For RADIOLOGY
 // the normal-vs-abnormal "range" is a lab concept that does not apply — the
@@ -211,7 +216,22 @@ async function enrichOrder(mrno, o) {
     // billNo is numeric in one HIS subsystem and a string in another — compare as
     // String() so a type mismatch never silently drops the whole enrichment (the
     // same bug the match path already fixed; the indication was empty for everyone).
-    const row = rows.find((r) => String(r.billNo) === String(o.billNo));
+    // Match the RIS row for THIS order. A single bill often covers SEVERAL exams, so
+    // billNo alone matches the first row and every exam would inherit its indication +
+    // doctor + ER flag (the owner's "طالع كله SOB" — same indication on every exam).
+    // Disambiguate a multi-service bill by service name; never fall back to another
+    // exam's row (no wrong indication — empty is correct-or-nothing).
+    const billRows = rows.filter((r) => String(r.billNo) === String(o.billNo));
+    let row;
+    if (billRows.length <= 1) {
+      row = billRows[0];
+    } else {
+      // Multi-service bill: match THIS order's service. HIS spells the service field
+      // several ways across builds, so probe every known spelling on BOTH sides (same
+      // list buildWorklist uses); no match → null → {} (never another exam's indication).
+      const svc = String(firstOf(o, _SVC_KEYS) || '').trim().toLowerCase();
+      row = svc ? (billRows.find((r) => String(firstOf(r, _SVC_KEYS) || '').trim().toLowerCase() === svc) || null) : null;
+    }
     if (!row) return {};
     // One-time: dump the RIS-panel row's key names so the real HIS field spellings
     // (order-id, indication) can be pinned from a live response without guessing.
@@ -1346,7 +1366,7 @@ app.get('/labs/pregnancy', requireAuth, async (req, res) => {
 // test resolves to exactly ONE study (file-number + modality + body-part + time).
 // Dry-run returns the raw result-entry template + report + the exact payloads that
 // WOULD be posted, so a human can verify before anything is committed.
-async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
+async function buildFilePlan({ file, site, billNo, serviceId, accession, consentOnly, consentAlreadyFiled, consentFiledCount }) {
   await getToken();
   const empId = currentEmpId();
   if (!empId) throw new Error('no empId (not logged in?)');
@@ -1386,15 +1406,52 @@ async function buildFilePlan({ file, site, billNo, serviceId, accession }) {
     target = details.find((t) => svcId(t) != null && String(svcId(t)) === String(serviceId));
   } else if (details.length === 1) {
     target = details[0];
+  } else if (consentOnly) {
+    // A patient's non-pregnancy consent is visit-level, not test-specific — attaching
+    // it to any one test row of the bill surfaces it on the patient's file. Pick the
+    // first row deterministically (report filing still requires an explicit serviceId).
+    target = details[0];
   }
   if (!target) {
     return { needsPick: true, file, site: useSite, billNo: row.billNo,
       tests: details.map((t) => ({ serviceName: t.serviceName, categoryName: t.categoryName, invMastServiceId: svcId(t), invPatTestResultId: t.invPatTestResultId })) };
   }
 
-  // Idempotency: if this test already carries a filed attachment, don't file again
-  // (a retry after a lost response would otherwise append a duplicate PDF).
-  if (Number(target.isfileAttachmentExists) === 1 || (Array.isArray(target.genFileAttachments) && target.genFileAttachments.length)) {
+  // A consent attaches as its OWN document and must not be gated by the report's
+  // idempotency guard (a consent may legitimately sit next to a report). Return the
+  // row now — the /consent/file handler builds a consent-only attachment payload.
+  if (consentOnly) {
+    return { file, site: useSite, empId, billNo: row.billNo, orderDate,
+      searchRow: row, details, target, consentOnly: true };
+  }
+
+  // Idempotency: if a REPORT (or any non-consent document) is already attached, don't
+  // file again — a retry after a lost response would otherwise append a duplicate PDF.
+  // BUT the patient's non-pregnancy CONSENT, filed on its own before imaging, must NOT
+  // block the later report; the report appends alongside it. Tell the two apart by the
+  // attachment's fileName; when the HIS returns only the flag (no names), fall back to
+  // Meena's ledger (consentAlreadyFiled) plus the row's authorization state.
+  const _atts = Array.isArray(target.genFileAttachments) ? target.genFileAttachments : [];
+  const _nm = (a) => String((a && (a.fileName || a.file_name || a.name)) || '').toLowerCase();
+  const _isConsentName = (a) => /consent|non.?pregnan/.test(_nm(a));
+  const _hasReportDoc = _atts.some((a) => _nm(a) && !_isConsentName(a));   // a real report/other doc
+  const _authorized = String(target.authorizationstatus || '') === '1'
+    || Number(target.tempAuthStatus) === 1 || String(target.resultEnteredAndAccepted || '') === '1';
+  const _flagSet = Number(target.isfileAttachmentExists) === 1 || _atts.length > 0;
+  // "Only the consent" requires attachments that POSITIVELY look like consents — an
+  // unnamed attachment is NOT assumed to be a consent (that would let a report retry
+  // append a duplicate). Unnamed/ambiguous falls through to the ledger check below.
+  const _onlyConsent = _atts.length > 0 && _atts.every((a) => _isConsentName(a));
+  let _alreadyFiled = false;
+  if (_hasReportDoc || _authorized) _alreadyFiled = true;         // a real report is present → block
+  else if (_onlyConsent) _alreadyFiled = false;                   // named, only the consent → append the report
+  else if (_atts.length > 0)                                      // enumerated but unnamed → go by COUNT:
+    // allow only if every attachment is accounted for by a pre-filed consent; a report
+    // would push the count past consentFiledCount and re-block (prevents a duplicate
+    // report when the HIS echoes attachments without fileNames).
+    _alreadyFiled = !(consentAlreadyFiled && _atts.length <= (consentFiledCount || 0));
+  else if (_flagSet) _alreadyFiled = !consentAlreadyFiled;        // flag only, unenumerated → trust ledger
+  if (_alreadyFiled) {
     return { file, site: useSite, billNo: row.billNo, target: { serviceName: target.serviceName },
       decision: 'already_filed', reason: 'a report is already attached to this test in Siratech', writable: false };
   }
@@ -1460,7 +1517,9 @@ app.post('/results/file', requireAuth, async (req, res) => {
   })();
   const doAuthorize = authorize !== false;   // default: also authorize after a good save
   try {
-    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId, accession });
+    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId, accession,
+      consentAlreadyFiled: req.body.consentAlreadyFiled === true,
+      consentFiledCount: Number(req.body.consentFiledCount) || 0 });
     if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
 
     // On CONFIRM, the study MUST be the same one the human reviewed in the dry-run.
@@ -1652,6 +1711,106 @@ app.post('/results/file', requireAuth, async (req, res) => {
       authorize: { status: authRes.status, isSuccess: aRow ? aRow.isSuccess : null, message: authMsg,
         raw: authOk ? undefined : (authRes.json || String(authRes.text || '').slice(0, 400)) },
       note: authOk ? 'Result FILED + AUTHORIZED.' : 'Result FILED, but authorization was not confirmed by HIS — verify/authorize in the UI.' });
+  } catch (e) {
+    return res.status(502).json({ ok: false, wrote: false, error: String(e.message || e) });
+  }
+});
+
+// ── Attach a SIGNED CONSENT to the patient's file, on its own (write) ─────────
+// Files the patient's non-pregnancy consent PDF into Siratech as a genFileAttachments
+// document on one of her radiology result rows — the SAME mechanism the report uses,
+// but consent-only: no result, no template, NEVER authorized. Independent of any
+// report, so the consent lands on the file at signing (before imaging), not only when
+// a report is later filed. Dry-run by default; {confirm:true} performs the write.
+// Guards: the row is found by the consent's OWN file number, and the consent's printed
+// patient name must match the HIS row's name (fail-closed against a mistyped file no).
+function _looseNameMatch(a, b) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z؀-ۿ]+/g, ' ').trim();
+  const na = norm(a); const nb = norm(b);
+  if (!na || !nb) return true;               // a name is missing → don't block on it
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const ta = na.split(' ').filter(Boolean); const tb = nb.split(' ').filter(Boolean);
+  return ta.length && tb.length && ta[0] === tb[0];   // share the first (given) name
+}
+app.post('/consent/file', requireAuth, async (req, res) => {
+  const { file, site, billNo, serviceId, consentPdf, consentName, expectName, confirm } = req.body || {};
+  if (!file) return res.status(400).json({ ok: false, error: 'file is required' });
+  if (typeof consentPdf !== 'string' || consentPdf.length < 100)
+    return res.status(400).json({ ok: false, error: 'consentPdf (base64) is required' });
+  try {
+    const plan = await buildFilePlan({ file: String(file).trim(), site, billNo: billNo || null, serviceId, consentOnly: true });
+    if (plan.needsPick || plan.writable === false) return res.json({ ok: true, wrote: false, ...plan });
+
+    // Patient-identity guard: the row came back from a search BY this file number, but
+    // if the consent carried a mistyped file number its printed name won't match — refuse.
+    const rowName = plan.searchRow && (plan.searchRow.patientName || plan.searchRow.patName);
+    if (!_looseNameMatch(expectName, rowName)) {
+      return res.json({ ok: true, wrote: false, decision: 'name_mismatch', writable: false,
+        reason: `consent name "${expectName || ''}" does not match the file's patient "${rowName || ''}" — refusing to attach` });
+    }
+
+    const CHILD_ARRAYS = ['invPatMastCultureResult', 'invPatDtlsCultResults', 'scanDtlsFiles',
+      'scanMastFiles', 'genFileAttachments', 'invPatTemplResults', 'invPatTemplResultHeads', 'invPatTemplResultTests'];
+    const details = plan.details.map((d) => {
+      const row = results.normalizeResultRow(d);
+      for (const k of CHILD_ARRAYS) if (!Array.isArray(row[k])) row[k] = [];
+      return row;
+    });
+    const tgt = details.find((d) => d.invPatTestResultId === plan.target.invPatTestResultId
+      && String(d.inv_mast_service_id) === String(plan.target.inv_mast_service_id));
+    if (!tgt) throw new Error('target test row not found after normalisation — refusing to attach the consent');
+    details.forEach((d) => { d.isSelected = d === tgt; });
+
+    const auditUser = String(HIS_USER).padStart(8, '0');
+    const branchName = await getSites().then((s) => (s.find((x) => x.siteId === plan.site) || {}).shortName || plan.searchRow.site || '').catch(() => plan.searchRow.site || '');
+    const nowIso = new Date().toISOString();
+    const attachment = {
+      fileName: (consentName || 'Consent Non Pregnancy.pdf'), site: branchName, filePath: '', file: '',
+      fileAttachmentCategoryId: FILE_ATTACHMENT_CATEGORY_ID, fileAttachmentSubCategoryId: null,
+      isLoading: true, resultType: 'pdf', objectState: 1,
+      attachedfile: consentPdf, auditDate: null, attachedFile: consentPdf,
+      genFileAttachmentsId: -1, mrno: String(tgt.mrno),
+      serviceId: String(tgt.inv_mast_service_id != null ? tgt.inv_mast_service_id : tgt.invMastserviceId),
+      invPatTestResultId: tgt.invPatTestResultId,
+      hospitalId: plan.site, genPatBillingId: tgt.genPatBillingId, entryDate: nowIso,
+    };
+    // Consent-only: leave the result itself untouched/pending — attach the PDF, nothing else.
+    tgt.result = null;
+    tgt.isTemplateResultEntered = 0;
+    tgt.stringRange = DEFAULT_STRING_RANGE;
+    tgt.isfileAttachmentExists = 1;
+    tgt.genFileAttachments = [attachment];
+    const td = {
+      resultEntryDetailsResponse: details,
+      resultEntrySearchResponses: [plan.searchRow],
+      auditUser, auditDate: nowIso, hospitalId: plan.site,
+      isResultCancellation: false, sampleCollResultEntrySelection: 1,
+      searchTypeResultAuthorizationValue: 0, blnBloodType: false,
+    };
+
+    if (!confirm) {
+      return res.json({ ok: true, wrote: false, dryRun: true,
+        target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId },
+        note: 'DRY-RUN — consent NOT attached. Re-send with confirm:true to file it to the patient record.' });
+    }
+
+    // confirm:true → attach only. NEVER authorize (a consent is not a result).
+    const saveRes = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/SaveRadiologyResultEntry', { body: td });
+    const sData = saveRes.json && saveRes.json.data;
+    const sRow = Array.isArray(sData) ? sData[0] : sData;
+    const saveMsg = sRow && (sRow.meassge || sRow.message);
+    const REJECT_MSG = /enter template|select .*range|duplicate|already|locked|invalid|object reference|not set|no record|denied|unauthor|error|cannot|failed|fail\b/i;
+    const saveOk = saveRes.status === 200 && sRow && sRow.isSuccess !== false && !(saveMsg && REJECT_MSG.test(saveMsg));
+    if (!saveOk) {
+      return res.json({ ok: true, wrote: false, step: 'save', saveStatus: saveRes.status,
+        saveResponse: saveRes.json || String(saveRes.text || '').slice(0, 600),
+        target: { serviceName: plan.target.serviceName },
+        note: 'Consent SAVE did not succeed — nothing was attached.' });
+    }
+    return res.json({ ok: true, wrote: true, authorized: false,
+      target: { serviceName: plan.target.serviceName, invPatTestResultId: plan.target.invPatTestResultId },
+      save: { status: saveRes.status, isSuccess: sRow.isSuccess, message: saveMsg || null },
+      note: 'Consent FILED — attached to the patient record (pending, not authorized).' });
   } catch (e) {
     return res.status(502).json({ ok: false, wrote: false, error: String(e.message || e) });
   }
