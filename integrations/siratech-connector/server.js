@@ -410,7 +410,11 @@ app.get('/health', (_req, res) => {
 // the BILLED government calls (ELMData / NPHIESPatientRegistry / Eligibility-Check /
 // Discovery-Check) are refused here too — those only ever run through the dedicated
 // consent-gated path. Everything reachable here is an internal HIS read.
-const _CONN_WRITE = /(Save|Authoriz|Delete|Update|Cancel|Create|Register|Insert|Remove|Send|Submit|Pay|Refund|Approve|Sign|File|Edit)/i;
+// Write verbs are matched at a WORD BOUNDARY so a verb that is merely the tail of a
+// read noun doesn't falsely refuse a read: "\bSign" catches "/Sign"/"SignOff" but NOT
+// "VitalSign", and "\bFile" catches "/File" but NOT "Profile". Path-segment verbs
+// (after "/") and camelCase-initial verbs still match.
+const _CONN_WRITE = /(\bSave|Authoriz|\bDelete|\bUpdate|\bCancel|\bCreate|\bRegister|\bInsert|\bRemove|\bSend|\bSubmit|\bPay|\bRefund|\bApprove|\bSign|\bFile|\bEdit)/i;
 const _CONN_BILLED = /(ELMData|NPHIESPatientRegistry|Eligibility\/Check|EligibilityCheck|Discovery\/Check)/i;
 const _CONN_READ = /(Fetch|Search|\/Get|Details|\/List|\/View|Report|Image|Pdf|Log|Panel|Preview|Print|Scheme|Demographics|IdentifyingDocs|Slots|Notification\/GetNotification|Diagnosis|Allerg|VitalSign|Template)/i;
 app.post('/admin/his', requireAuth, async (req, res) => {
