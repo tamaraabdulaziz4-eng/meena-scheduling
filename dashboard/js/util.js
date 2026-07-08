@@ -349,6 +349,22 @@ function closeSidebarMobile() {
   document.body.classList.remove('drawer-open');
 }
 
+// ── Icon-rail: collapse the sidebar to an icons-only rail (persisted) ─────────
+// A distinct desktop affordance from the full off-canvas collapse — frees space
+// on dense boards while keeping every nav destination one click away.
+function applyRailState() {
+  const sb = document.getElementById('sidebar');
+  if (!sb) return;
+  sb.classList.toggle('rail', localStorage.getItem('sidebar-rail') === '1');
+}
+function toggleRail() {
+  const sb = document.getElementById('sidebar');
+  if (!sb || _isMobile()) return;                 // rail is a desktop mode only
+  const on = sb.classList.toggle('rail');
+  try { localStorage.setItem('sidebar-rail', on ? '1' : '0'); } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', applyRailState);
+
 // ── Date helpers ──────────────────────────────────────────────────────────────
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December'];

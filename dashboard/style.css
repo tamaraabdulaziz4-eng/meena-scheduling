@@ -3403,3 +3403,34 @@ body.dark .wl2 .live { background: rgba(0,200,150,.16); }
 }
 .hm-qa-ic svg { width: 19px; height: 19px; }
 .hm-qa-lb { font-size: 13.5px; font-weight: 700; color: var(--primary); letter-spacing: -.01em; }
+
+/* ── Icon-rail toggle button (sidebar header) ─────────────────────────────── */
+.sidebar-header { position: relative; }
+.rail-toggle {
+  position: absolute; top: 12px; inset-inline-end: 10px; z-index: 3;
+  width: 26px; height: 26px; display: grid; place-items: center;
+  background: var(--sidebar-hover); border: 1px solid var(--sidebar-border);
+  border-radius: 8px; color: var(--sidebar-muted); cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.rail-toggle:hover { color: #fff; background: rgba(255,255,255,.12); }
+.rail-toggle svg { width: 15px; height: 15px; }
+
+/* ── Icon-rail state: narrow, icons only ──────────────────────────────────── */
+.sidebar.rail { width: 76px; }
+.sidebar.rail .sidebar-header { padding: 16px 8px 12px; }
+.sidebar.rail .sidebar-header h1,
+.sidebar.rail .sidebar-header p { display: none; }
+.sidebar.rail .rail-toggle { position: static; margin: 0 auto 8px; }
+.sidebar.rail .logo-box { padding: 7px; margin-bottom: 0; }
+.sidebar.rail .logo-box img { max-width: 46px !important; }
+.sidebar.rail .nav-section-label { display: none; }
+.sidebar.rail .sidebar-nav { padding: 12px 8px; }
+.sidebar.rail .nav-item {
+  justify-content: center; gap: 0; font-size: 0; padding: 11px 0;
+}
+.sidebar.rail .nav-item .nav-icon { font-size: 16px; width: auto; }
+.sidebar.rail .nav-item.active::before { display: none; }
+.sidebar.rail .nav-item [id$="-badge"] { display: none !important; }
+.sidebar.rail .sidebar-bottom { padding: 12px 8px; }
+.sidebar.rail .sidebar-bottom .nav-item { justify-content: center; }
