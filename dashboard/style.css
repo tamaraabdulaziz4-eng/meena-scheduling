@@ -1,11 +1,17 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  /* Meena brand palette (from the brand guide): vivid violet #8358FD,
-     deep purple #4D3C82 → #261E4F, light airy lavender. */
-  --primary:   #261E4F;
-  --accent:    #6B4EFF;
+  /* ── Meena brand — grounded in the logo: the flowing 3-D "ribbon" M.
+     Front stroke = vivid periwinkle-violet (--accent), back stroke = soft
+     lavender (--lavender), wordmark = deep violet-navy ink (--primary). ── */
+  --primary:   #2E2A48;   /* logo violet-navy ink */
+  --accent:    #6B4EFF;   /* ribbon front stroke */
   --accent2:   #8358FD;
+  --lavender:  #D9D4F5;   /* ribbon back stroke — fills, washes, side panels */
+  --lavender-strong: #C3BCEF;
+  /* The signature ribbon gradient — used for hero flourish, active nav,
+     primary-CTA sheen, login side panel, section dividers. */
+  --ribbon: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 55%, var(--lavender) 130%);
   --green:     #00C896;
   --orange:    #FF6B6B;
   --yellow:    #FFBA49;
@@ -26,7 +32,6 @@
   --slate:  #64748B;
   --shadow:       0 1px 2px rgba(38,30,79,.06), 0 10px 30px rgba(38,30,79,.06);
   --shadow-hover: 0 2px 4px rgba(38,30,79,.08), 0 16px 40px rgba(38,30,79,.12);
-  --sidebar-bg:    #211a45;
   --topbar-bg:     rgba(255,255,255,.72);
   --table-head-bg: #fbfaff;
   --table-row-hover: #f6f4ff;
@@ -35,13 +40,18 @@
   /* Premium surface scale — solid cards, hairline borders, restrained layered
      shadows (not the old heavy glass). Consistent radii. */
   --surface-2: #efedf7;   /* sunken tint — progress tracks, inset fills that were the old lavender --card */
+  /* Ribbon-soft radii — rounder than before for a calmer, dimensional feel. */
   --radius-sm: 10px;
-  --radius:    14px;
-  --radius-lg: 18px;
+  --radius:    16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
   --shadow-xs: 0 1px 2px rgba(31,25,64,.04), 0 1px 1px rgba(31,25,64,.03);
   --shadow-sm: 0 1px 3px rgba(31,25,64,.05), 0 2px 8px rgba(31,25,64,.04);
   --shadow-md: 0 4px 14px rgba(31,25,64,.07), 0 2px 6px rgba(31,25,64,.04);
   --shadow-lg: 0 12px 32px rgba(31,25,64,.10), 0 4px 12px rgba(31,25,64,.05);
+  /* Violet-tinted lift for hero flourishes and primary CTAs. */
+  --shadow-violet: 0 10px 30px rgba(107,78,255,.28), 0 3px 10px rgba(107,78,255,.18);
   --ring: 0 0 0 3px rgba(107,78,255,.14);
 
   /* Shift colour overrides — can be customised */
@@ -60,6 +70,42 @@
   --shift-TB:  #FDCB6E;
   --shift-OT:  #55EFC4;
   --shift-R:   #B8839F;
+
+  /* ── Semantic status layer ──────────────────────────────────────────────
+     One home for the status hues that were hardcoded across 34 JS render
+     files. Each has a base (fill/dot), an AA-tuned -ink (text on light wash,
+     lifted verbatim from the .ris pills) and a -wash (soft tinted background).
+     Tokenizing here is what lets the whole app flip cleanly in dark mode. */
+  --danger:       #FF6B6B;  --danger-ink:  #e25555;  --danger-wash:  #fdecec;
+  --warn:         #FFBA49;  --warn-ink:    #c9880a;  --warn-wash:    #fff6e6;
+  --success:      #00C896;  --success-ink: #0E9F6E;  --success-wash: #e7faf3;
+  --info:         #3BA0FF;  --info-ink:    #1a7fd4;  --info-wash:    #e8f3ff;
+  --violet-ink:   #6B4EFF;  /* --violet-wash defined above */
+
+  /* Modality dot colours (were inline in worklist/orders). */
+  --mod-CT: #6B4EFF;  --mod-MR: #3BA0FF;  --mod-XR: #00C896;
+  --mod-US: #FF9F43;  --mod-MG: #FD79A8;  --mod-NM: #A29BFE;
+  --mod-PET: #FFBA49; --mod-DX: #00B884;  --mod-default: #8B85A0;
+
+  /* ── Spacing scale (4 → 48px) — was missing; inline paddings drift. ── */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
+
+  /* ── Type scale ── */
+  --fs-xs: 11px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 17px;
+  --fs-xl: 22px; --fs-2xl: 28px; --fs-display: 38px;
+
+  /* ── Sidebar (chrome) — deep violet-navy ribbon ground, its own token set
+     so nav text/hover/active read correctly regardless of light/dark. ── */
+  --sidebar-bg:     linear-gradient(180deg, #2E2A48 0%, #241F3E 100%);
+  --sidebar-solid:  #2E2A48;
+  --sidebar-text:   #D7D2EC;
+  --sidebar-muted:  #9C97BE;
+  --sidebar-label:  #7E79A0;
+  --sidebar-hover:  rgba(255,255,255,.06);
+  --sidebar-active-bg: rgba(107,78,255,.22);
+  --sidebar-active-text: #ffffff;
+  --sidebar-border: rgba(255,255,255,.08);
 }
 
 body.dark {
@@ -73,7 +119,6 @@ body.dark {
   --muted:     #9b98c0;
   --border:    #262340;
   --border-strong: #322e52;
-  --sidebar-bg:    #100e22;
   --topbar-bg:     rgba(23,21,43,.72);
   --table-head-bg: #1b1834;
   --table-row-hover: #201d3c;
@@ -92,6 +137,32 @@ body.dark {
   --green-ink:   #2DD8A7;
   --shadow:       0 1px 2px rgba(0,0,0,.4), 0 12px 34px rgba(0,0,0,.4);
   --shadow-hover: 0 2px 6px rgba(0,0,0,.5), 0 18px 46px rgba(0,0,0,.55);
+
+  /* ── Brand + semantic tokens — dark ── */
+  --lavender:        #3A3466;
+  --lavender-strong: #4A4380;
+  --shadow-violet:   0 10px 30px rgba(0,0,0,.5), 0 3px 10px rgba(124,107,255,.22);
+
+  --danger-ink:  #ff8a8a;  --danger-wash:  #3a2233;
+  --warn-ink:    #ffcd6b;  --warn-wash:    #382e1c;
+  --success-ink: #34e0ae;  --success-wash: #123a30;
+  --info-ink:    #6bb8ff;  --info-wash:    #16304d;
+  --violet-ink:  #A89EF8;
+
+  --mod-CT: #7C6BFF;  --mod-MR: #5AB0FF;  --mod-XR: #2DD8A7;
+  --mod-US: #FFB06B;  --mod-MG: #FF95C0;  --mod-NM: #B6AEFF;
+  --mod-PET: #FFCD6B; --mod-DX: #2DD8A7;  --mod-default: #7d769c;
+
+  /* Sidebar (chrome) — dark: near-black violet ground. */
+  --sidebar-bg:     linear-gradient(180deg, #17152b 0%, #100e22 100%);
+  --sidebar-solid:  #17152b;
+  --sidebar-text:   #C9C4E4;
+  --sidebar-muted:  #8B87B0;
+  --sidebar-label:  #6E6994;
+  --sidebar-hover:  rgba(255,255,255,.05);
+  --sidebar-active-bg: rgba(124,107,255,.24);
+  --sidebar-active-text: #ffffff;
+  --sidebar-border: rgba(255,255,255,.06);
 }
 
 body {
@@ -137,25 +208,32 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   background: var(--bg);
 }
 
-/* ── Sidebar — clean white panel ── */
+/* ── Sidebar — deep violet-navy ribbon ground (the brand chrome) ── */
 .sidebar {
   width: 232px; flex-shrink: 0;
-  background: var(--card);
-  color: var(--text);
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
   display: flex; flex-direction: column;
   height: calc(100vh - 32px);
   border-radius: 20px;
   overflow: hidden;
   transition: width 0.25s, transform 0.25s;
   box-shadow: var(--shadow-md);
-  border: 1px solid var(--border);
+  border: 1px solid var(--sidebar-border);
   position: relative;
+}
+/* A soft ribbon flourish drifting behind the nav for dimensional depth. */
+.sidebar::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(131,88,253,.28), transparent 60%),
+    radial-gradient(90% 50% at 0% 100%, rgba(107,78,255,.20), transparent 55%);
 }
 .sidebar.collapsed { width: 0; overflow: hidden; padding: 0; border: none; }
 
 .sidebar-header {
   padding: 20px 18px 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--sidebar-border);
   position: relative; z-index: 2;
 }
 .logo-box {
@@ -163,35 +241,43 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   display: flex; align-items: center; justify-content: center;
 }
 .logo-box img { max-width: 100%; height: auto; display: block; }
-.sidebar-header h1 { font-size: 11px; font-weight: 700; color: var(--primary); letter-spacing: 0.3px; }
-.sidebar-header p  { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.sidebar-header h1 { font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
+.sidebar-header p  { font-size: 10px; color: var(--sidebar-muted); margin-top: 2px; }
 
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; position: relative; z-index: 2; }
 .nav-section-label {
   padding: 14px 10px 6px;
   font-size: 9px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 1px; color: #9b9bb5;
+  letter-spacing: 1px; color: var(--sidebar-label);
 }
 .nav-item {
   display: flex; align-items: center; gap: 11px;
   padding: 11px 14px; font-size: 13px; font-weight: 500;
-  color: #5b5b78; cursor: pointer; border: none;
+  color: var(--sidebar-text); cursor: pointer; border: none;
   background: none; width: 100%; text-align: left;
   border-radius: 12px;
   transition: color .2s, background .2s, transform .15s cubic-bezier(.34,1.5,.64,1);
   position: relative; font-family: inherit; margin-bottom: 2px;
 }
-.nav-item:hover { color: var(--accent); background: rgba(107,78,255,.07); }
+.nav-item:hover { color: #fff; background: var(--sidebar-hover); }
 .nav-item:hover .nav-icon svg { transform: scale(1.12) rotate(-4deg); }
 .nav-item:active { transform: scale(.98); }
-/* Clinical Calm active state (mockup .nav.on): soft violet wash, no side bar */
-.nav-item.active { color: var(--accent2); font-weight: 600; background: var(--violet-wash); }
+/* Active = lavender-wash pill with a ribbon accent bar on the leading edge. */
+.nav-item.active {
+  color: var(--sidebar-active-text); font-weight: 600;
+  background: var(--sidebar-active-bg);
+}
+.nav-item.active::before {
+  content: ''; position: absolute; inset-inline-start: 0; top: 50%;
+  transform: translateY(-50%); width: 3px; height: 20px; border-radius: 3px;
+  background: var(--ribbon);
+}
 .nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
 .nav-item .nav-icon svg { width: 19px; height: 19px; display: block; margin: 0 auto; transition: transform .25s cubic-bezier(.34,1.5,.64,1); }
 
 .sidebar-bottom {
   padding: 14px 18px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--sidebar-border);
   position: relative; z-index: 2;
 }
 .sidebar-bottom .nav-item { padding: 8px 0; }
@@ -759,21 +845,23 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 /* ── Buttons ── */
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
-  background: var(--accent); color: #fff; border: none;
-  border-radius: 12px; padding: 8px 16px; font-size: 12.5px;
+  background: var(--accent);
+  background-image: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+  color: #fff; border: none;
+  border-radius: var(--radius-pill); padding: 8px 16px; font-size: 12.5px;
   font-weight: 600; cursor: pointer; white-space: nowrap;
-  box-shadow: var(--shadow-xs);
-  transition: background 0.2s, transform 0.1s, box-shadow .2s; font-family: inherit;
+  box-shadow: 0 2px 8px rgba(107,78,255,.22);
+  transition: filter 0.2s, transform 0.1s, box-shadow .2s; font-family: inherit;
 }
-.btn:hover { background: var(--accent2); box-shadow: var(--shadow-sm); }
+.btn:hover { filter: brightness(1.06); box-shadow: var(--shadow-violet); }
 .btn:active { transform: scale(0.97); }
 .btn.btn-outline {
-  background: transparent; color: var(--accent);
-  border: 1.5px solid var(--accent);
+  background: transparent; background-image: none; color: var(--accent);
+  border: 1.5px solid var(--accent); box-shadow: none;
 }
-.btn.btn-outline:hover { background: rgba(107,78,255,0.08); }
-.btn.btn-danger { background: #FF6B6B; }
-.btn.btn-danger:hover { background: #e05555; }
+.btn.btn-outline:hover { background: rgba(107,78,255,0.08); filter: none; box-shadow: none; }
+.btn.btn-danger { background: var(--danger); background-image: linear-gradient(135deg, #FF6B6B, #e05555); box-shadow: 0 2px 8px rgba(255,107,107,.24); }
+.btn.btn-danger:hover { filter: brightness(1.05); }
 /* Danger zone (superadmin data reset) */
 .danger-zone {
   margin-top: 24px; padding: 20px 22px; border-radius: 18px;
@@ -801,10 +889,10 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .reg-link-input { flex: 1; min-width: 120px; font-size: 12px; color: var(--muted); }
 .btn.btn-sm { padding: 5px 12px; font-size: 11.5px; }
 .btn.btn-ghost {
-  background: var(--card); color: var(--text);
-  border: 1.5px solid var(--border);
+  background: var(--card); background-image: none; color: var(--text);
+  border: 1.5px solid var(--border); box-shadow: none;
 }
-.btn.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn.btn-ghost:hover { border-color: var(--accent); color: var(--accent); filter: none; box-shadow: var(--shadow-xs); }
 
 /* ── Theme toggle ── */
 .theme-toggle {
@@ -818,14 +906,20 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 /* ── Cards / KPI ── */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 14px; margin-bottom: 22px; }
 .kpi-card {
-  background: var(--card); border-radius: 14px; padding: 18px 20px;
+  background: var(--card); border-radius: var(--radius); padding: 18px 20px;
   position: relative; overflow: hidden;
+  border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+}
+/* Ribbon accent bar on the leading edge of each KPI tile. */
+.kpi-card::before {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: 0;
+  width: 4px; background: var(--ribbon);
 }
 .kpi-card::after {
   content: ''; position: absolute; bottom: -14px; right: -14px;
   width: 60px; height: 60px; border-radius: 50%; background: rgba(107,78,255,0.08);
 }
-.kpi-value { font-size: 26px; font-weight: 800; color: var(--primary); line-height: 1; }
+.kpi-value { font-size: var(--fs-2xl); font-weight: 800; color: var(--primary); line-height: 1; font-variant-numeric: tabular-nums; }
 .kpi-label { font-size: 11px; color: var(--muted); margin-top: 5px; font-weight: 500; }
 
 .card {
@@ -834,6 +928,8 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   border-radius: var(--radius); padding: 18px 20px;
   box-shadow: var(--shadow-sm);
 }
+/* Tabular-nums utility — align digits everywhere counts/values appear. */
+.tnum { font-variant-numeric: tabular-nums; }
 .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 14px; }
 
 /* ── Tables ── */
@@ -880,11 +976,11 @@ tr:hover td { background: var(--table-row-hover); }
 }
 .modal-overlay.open { opacity: 1; visibility: visible; }
 .modal {
-  background: var(--card-alt); border-radius: 18px;
+  background: var(--card); border-radius: var(--radius-lg);
   /* dvh so the footer (Save/Cancel) isn't pushed under the mobile toolbar/keyboard */
   width: 540px; max-width: 95vw; max-height: 88vh; max-height: 88dvh;
-  display: flex; flex-direction: column;
-  box-shadow: 0 24px 80px rgba(43,36,88,0.22);
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--shadow-lg);
   opacity: 0; transform: translateY(14px) scale(.97);
   transition: opacity .26s ease, transform .3s cubic-bezier(.16,1,.3,1);
 }
@@ -893,7 +989,14 @@ tr:hover td { background: var(--table-row-hover); }
 .modal.modal-xl  { width: 1100px; max-height: 92vh; max-height: 92dvh; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 20px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  padding: 18px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  /* Soft lavender-wash header band with a hairline ribbon underline. */
+  background: linear-gradient(180deg, var(--violet-wash), transparent);
+  position: relative;
+}
+.modal-header::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 2px; background: var(--ribbon); opacity: .5;
 }
 .modal-header h3 { font-size: 15px; font-weight: 700; color: var(--primary); }
 .modal-close {
@@ -914,10 +1017,10 @@ tr:hover td { background: var(--table-row-hover); }
   display: inline-block; padding: 3px 10px; border-radius: 20px;
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
 }
-.badge-purple { background: rgba(107,78,255,0.12); color: var(--accent); }
-.badge-green  { background: rgba(0,200,150,0.12); color: #00A87D; }
-.badge-orange { background: rgba(255,107,107,0.12); color: #cc4444; }
-.badge-yellow { background: rgba(255,186,73,0.12); color: #c9880a; }
+.badge-purple { background: var(--violet-wash); color: var(--violet-ink); }
+.badge-green  { background: var(--success-wash); color: var(--success-ink); }
+.badge-orange { background: var(--danger-wash); color: var(--danger-ink); }
+.badge-yellow { background: var(--warn-wash); color: var(--warn-ink); }
 .badge-gray   { background: var(--card); color: var(--muted); border: 1px solid var(--border); }
 
 /* Branch filter tab buttons (Shift Types page) */
@@ -934,14 +1037,14 @@ tr:hover td { background: var(--table-row-hover); }
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: 10px; font-weight: 600; margin-right: 3px;
 }
-.spec-tag.general   { background: rgba(43,159,255,0.12); color: #1a7fd4; }
-.spec-tag.ultrasound { background: rgba(107,78,255,0.12); color: var(--accent); }
+.spec-tag.general   { background: var(--info-wash); color: var(--info-ink); }
+.spec-tag.ultrasound { background: var(--violet-wash); color: var(--violet-ink); }
 
 /* Schedule status badges */
 .status-draft     { background: rgba(133,133,168,0.12); color: var(--muted); }
-.status-submitted { background: rgba(255,186,73,0.15); color: #c9880a; }
-.status-reviewed  { background: rgba(43,159,255,0.12); color: #1a7fd4; }
-.status-approved  { background: rgba(0,200,150,0.12); color: #00A87D; }
+.status-submitted { background: var(--warn-wash); color: var(--warn-ink); }
+.status-reviewed  { background: var(--info-wash); color: var(--info-ink); }
+.status-approved  { background: var(--success-wash); color: var(--success-ink); }
 
 /* ── Login ── */
 /* ── Login — floating 3D glass on light backdrop ── */
