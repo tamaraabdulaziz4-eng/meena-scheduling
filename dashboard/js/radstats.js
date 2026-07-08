@@ -428,7 +428,7 @@ async function rsLoadFinancial() {
 }
 
 // ── rendering ─────────────────────────────────────────────────────────────────
-const RS_MOD_COLOR = { CT: '#6B4EFF', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
+const RS_MOD_COLOR = { CT: 'var(--accent,#6b4eff)', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
 const rsNum = (n) => Number(n || 0).toLocaleString();
 const rsPct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
 
@@ -675,7 +675,7 @@ function rsRenderBody() {
     ${rsSection('Where the work is')}
     <div class="rs-grid2">
       ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
-      ${rsPanel('By ordering department', rsBarRows(deptItems, '#8358FD'), `${deptItems.length} departments`)}
+      ${rsPanel('By ordering department', rsBarRows(deptItems, 'var(--accent2,#8358fd)'), `${deptItems.length} departments`)}
     </div>
     ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15', 'rs-wide')}
 
@@ -741,11 +741,11 @@ function rsFinancialInner() {
     </div>`;
   }
   if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — revenue &amp; payer split can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
-  const PAYER_COLOR = { 'Insurance': '#6B4EFF', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
+  const PAYER_COLOR = { 'Insurance': 'var(--accent,#6b4eff)', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
   const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: PAYER_COLOR[p.type] || '#94a3b8' }));
   const payerDonut = rsDonut(payerSegs, { centerVal: f.requests || 0, centerLabel: 'requests' });
   const revDonut = rsDonut([
-    { label: 'Insurance', count: Math.round(f.sponsor || 0), color: '#6B4EFF' },
+    { label: 'Insurance', count: Math.round(f.sponsor || 0), color: 'var(--accent,#6b4eff)' },
     { label: 'Cash / copay', count: Math.round(f.patient || 0), color: '#22c55e' },
   ], { centerVal: Math.round(f.revenue || 0), centerLabel: 'SAR' });
   return `<div class="rs-fin">

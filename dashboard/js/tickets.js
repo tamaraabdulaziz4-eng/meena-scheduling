@@ -4,7 +4,7 @@
 
 const TICKET_STATUS_META = {
   open:        { label: 'Open',        color: '#FF9F43' },
-  escalated:   { label: 'Escalated',   color: '#E25555' },
+  escalated:   { label: 'Escalated',   color: 'var(--danger-ink,#e25555)' },
   in_progress: { label: 'In progress', color: '#5B8DEF' },
   resolved:    { label: 'Resolved',    color: '#2BAE66' },
   closed:      { label: 'Closed',      color: '#9a95ba' },
@@ -24,7 +24,7 @@ const TICKET_CATEGORY_META = {
 const TICKET_PRIORITY_META = {
   low:    { label: 'Low',    color: '#9a95ba' },
   normal: { label: 'Normal', color: '#5B8DEF' },
-  high:   { label: 'High',   color: '#E25555' },
+  high:   { label: 'High',   color: 'var(--danger-ink,#e25555)' },
 };
 
 let ticketsData = [];
@@ -253,7 +253,7 @@ function renderTicketDetail(t) {
       <textarea id="td-reply" rows="2" placeholder="Write a reply…" style="width:100%;margin-bottom:8px"></textarea>
       <div style="display:flex;justify-content:space-between;align-items:center">
         <button class="btn btn-sm" onclick="sendTicketReply()">Send reply</button>
-        ${canDelete ? `<button class="btn btn-sm btn-ghost" style="color:#E25555" onclick="deleteTicket(${t.id})">Delete</button>` : ''}
+        ${canDelete ? `<button class="btn btn-sm btn-ghost" style="color:var(--danger-ink,#e25555)" onclick="deleteTicket(${t.id})">Delete</button>` : ''}
       </div>
     </div>
     ${statusActions}

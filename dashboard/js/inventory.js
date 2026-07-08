@@ -179,7 +179,7 @@ async function openInvHistory(id) {
       <span style="width:150px">When</span>
     </div>
     ${rows.map(m => `<div class="lrow" style="flex-wrap:wrap">
-      <span style="width:70px;font-weight:700;color:${m.delta < 0 ? '#E25555' : '#00A87D'}">${m.delta > 0 ? '+' : ''}${m.delta}</span>
+      <span style="width:70px;font-weight:700;color:${m.delta < 0 ? 'var(--danger-ink,#e25555)' : '#00A87D'}">${m.delta > 0 ? '+' : ''}${m.delta}</span>
       <span style="flex:1;min-width:120px">${escapeHtml(m.reason || '—')}</span>
       <span style="width:120px">${escapeHtml(m.by_name || '')}</span>
       <span style="width:150px">${m.created_at ? new Date(m.created_at).toLocaleString('en-GB') : ''}</span>

@@ -509,14 +509,14 @@ const DOC_TYPES = [
 // → { code:'ok'|'soon'|'expired'|'missing'|'nodate', color, label }
 function docStatus(def, rec) {
   if (!rec || (!rec.expiry_date && !rec.issue_date && !rec.number)) {
-    return { code: 'missing', color: '#E25555', label: 'Missing' };
+    return { code: 'missing', color: 'var(--danger-ink,#e25555)', label: 'Missing' };
   }
   if (!def.exp) return { code: 'ok', color: '#2BAE66', label: 'On file' };
   if (!rec.expiry_date) return { code: 'nodate', color: '#E2933F', label: 'No expiry' };
   const days = (rec.days_left != null)
     ? rec.days_left
     : Math.round((new Date(rec.expiry_date) - new Date()) / 86400000);
-  if (days < 0)  return { code: 'expired', color: '#E25555', label: 'Expired' };
+  if (days < 0)  return { code: 'expired', color: 'var(--danger-ink,#e25555)', label: 'Expired' };
   if (days <= 60) return { code: 'soon', color: '#E2933F', label: `${days}d left` };
   return { code: 'ok', color: '#2BAE66', label: 'Valid' };
 }
@@ -545,7 +545,7 @@ function printEmployeeFile(staff, docs) {
     <title>Employee File — ${escapeHtml(staff.name || '')}</title>
     <style>
       *{box-sizing:border-box} body{font-family:'Poppins',system-ui,Arial,sans-serif;color:#2B2458;margin:0;padding:32px 34px}
-      .hd{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #6B4EFF;padding-bottom:14px;margin-bottom:18px}
+      .hd{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--accent,#6b4eff);padding-bottom:14px;margin-bottom:18px}
       .hd img{height:38px} .hd .t{text-align:right} .hd .t b{font-size:18px} .hd .t div{font-size:11px;color:#8585A8}
       h1{font-size:20px;margin:6px 0 2px} .sub{color:#8585A8;font-size:12px;margin-bottom:18px}
       .meta{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:18px}

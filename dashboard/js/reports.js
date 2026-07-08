@@ -194,7 +194,7 @@ async function loadCredentialsReport(body) {
             <span style="width:110px"><span class="rep-pill ${cls}">${txt}</span></span>
             <span style="width:130px;white-space:nowrap;text-align:right">
               <button class="btn btn-xs btn-ghost" onclick="openCredentialModal(${r.id})">Edit</button>
-              <button class="btn btn-xs btn-ghost" style="color:#E25555;margin-left:4px" onclick="deleteCredential(${r.id})">Delete</button>
+              <button class="btn btn-xs btn-ghost" style="color:var(--danger-ink,#e25555);margin-left:4px" onclick="deleteCredential(${r.id})">Delete</button>
             </span>
           </div>`;
         }).join('') : `<div class="lrow" style="justify-content:center;padding:22px;color:var(--muted)">No credentials yet. Add one to start tracking expiry.</div>`}

@@ -104,9 +104,9 @@ async function checkWhatsApp(btn) {
     if (!d.configured) html = '⚠️ ' + (d.message || 'WhatsApp bridge not configured on the server.');
     else if (d.error) html = `❌ ${escapeHtml(d.error)}`;
     else { ok = true; html = `✅ Server reached the bridge (${escapeHtml(d.url_host)}:${d.port}, ${d.http_status || 'open'}, ${d.latency_ms}ms). ${escapeHtml(d.message || '')}`; }
-    if (box) box.innerHTML = `<span style="color:${ok ? 'var(--green,#0a0)' : '#E25555'}">${html}</span>`;
+    if (box) box.innerHTML = `<span style="color:${ok ? 'var(--green,#0a0)' : 'var(--danger-ink,#e25555)'}">${html}</span>`;
   } catch (e) {
-    if (box) box.innerHTML = `<span style="color:#E25555">Couldn't run the check: ${escapeHtml(e.message || '')}</span>`;
+    if (box) box.innerHTML = `<span style="color:var(--danger-ink,#e25555)">Couldn't run the check: ${escapeHtml(e.message || '')}</span>`;
   } finally { if (btn) { btn.disabled = false; btn.textContent = 'Check WhatsApp connection'; } }
 }
 

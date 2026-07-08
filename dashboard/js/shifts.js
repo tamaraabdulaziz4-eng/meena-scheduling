@@ -102,7 +102,7 @@ function openShiftModal(id) {
   document.getElementById('shift-label').value       = st?.label || '';
   document.getElementById('shift-start').value       = st?.start_time || '';
   document.getElementById('shift-end').value         = st?.end_time || '';
-  document.getElementById('shift-color').value       = st?.color || '#6B4EFF';
+  document.getElementById('shift-color').value       = st?.color || 'var(--accent,#6b4eff)';
   document.getElementById('shift-is-off').checked    = st?.is_off || false;
   document.getElementById('shift-is-leave').checked  = st?.is_leave || false;
   document.getElementById('shift-is-oncall').checked = st?.is_oncall || false;

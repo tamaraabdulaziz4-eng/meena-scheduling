@@ -287,10 +287,10 @@ function printStaffDirectory() {
   if (!w) { toast('Allow pop-ups to export the PDF', 'err'); return; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Radiology Staff — ${today}</title>
     <style>*{box-sizing:border-box}body{font-family:'Poppins',system-ui,Arial,sans-serif;color:#2B2458;margin:0;padding:28px 30px}
-    .hd{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #6B4EFF;padding-bottom:12px;margin-bottom:16px}
+    .hd{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--accent,#6b4eff);padding-bottom:12px;margin-bottom:16px}
     .hd img{height:34px}.hd .t{text-align:right}.hd .t b{font-size:16px}.hd .t div{font-size:11px;color:#8585A8}
     h1{font-size:18px;margin:4px 0}.sub{color:#8585A8;font-size:12px;margin-bottom:16px}
-    h2{font-size:13px;margin:16px 0 6px;color:#6B4EFF}h2 .cnt{background:#efeafe;color:#6B4EFF;border-radius:10px;padding:1px 8px;font-size:10px;margin-inline-start:6px}
+    h2{font-size:13px;margin:16px 0 6px;color:var(--accent,#6b4eff)}h2 .cnt{background:#efeafe;color:var(--accent,#6b4eff);border-radius:10px;padding:1px 8px;font-size:10px;margin-inline-start:6px}
     table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px}
     th{background:#f4f1fb;color:#5b5b78;text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase}
     td{padding:6px 8px;border-bottom:1px solid #eee}tr:nth-child(even) td{background:#fafafe}

@@ -648,7 +648,7 @@ function renderRotaGrid() {
           const isToday = d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear();
           const title = [hij, holiday ? ('🎌 ' + holiday) : ''].filter(Boolean).join(' — ');
           const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5?'background:rgba(107,78,255,0.12);':'');
-          return `<th class="${isToday?'is-today':''}" title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid #FF6B6B;':''}">${d}${holiday?'<span style="color:#FF6B6B">•</span>':''}</th>`;
+          return `<th class="${isToday?'is-today':''}" title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid var(--danger,#ff6b6b);':''}">${d}${holiday?'<span style="color:var(--danger,#ff6b6b)">•</span>':''}</th>`;
         }).join('')}
         <th style="min-width:60px">Shifts</th>
       </tr>
@@ -826,7 +826,7 @@ function coverageRow(nDays, staffArr, sectionKey, req) {
     let marker, color, title;
     if (covered) {
       marker = '✓';
-      color  = '#00C896';
+      color  = 'var(--success,#00c896)';
       title  = `Day ${d}${secName ? ' · ' + secName : ''}: covered (M:${mCount}/${minM}${needsNight ? ` · N:${nCount}/${minN}` : ' · no night needed'})`;
     } else {
       marker = '✕';
@@ -878,7 +878,7 @@ function cellClick(cell) {
       ${st.code}
     </div>`).join('') +
     // On-call toggle
-    `<div class="shift-picker-item" style="background:#FF6B6B;color:white;font-size:9px" onclick="toggleOnCall()" title="Toggle On-Call">+OC</div>` +
+    `<div class="shift-picker-item" style="background:var(--danger,#ff6b6b);color:white;font-size:9px" onclick="toggleOnCall()" title="Toggle On-Call">+OC</div>` +
     // Blank/clear cell
     `<div class="shift-picker-item" style="background:#f0f0f0;color:#666;font-size:9px;border:1px dashed #aaa" onclick="clearCell()" title="Clear cell (leave blank)">✕ blank</div>`;
 
@@ -1372,7 +1372,7 @@ async function renderGenPrefsSummary() {
   });
   const rows = Object.values(byStaff).map(g => {
     const parts = [];
-    if (g.un.length) parts.push(`<span style="color:#E25555">can't work ${g.un.sort((a,b)=>a-b).join(', ')}</span>`);
+    if (g.un.length) parts.push(`<span style="color:var(--danger-ink,#e25555)">can't work ${g.un.sort((a,b)=>a-b).join(', ')}</span>`);
     if (g.off.length) parts.push(`<span style="color:#E2933F">prefer off ${g.off.sort((a,b)=>a-b).join(', ')}</span>`);
     return `<div style="padding:3px 0"><b>${escapeHtml(g.name)}</b> — ${parts.join(' · ')}</div>`;
   }).join('');

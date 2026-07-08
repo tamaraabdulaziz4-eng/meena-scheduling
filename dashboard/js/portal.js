@@ -107,7 +107,7 @@ async function renderMyPreferences() {
     const dow = dayOfWeek(portalYear, portalMonth, day);
     const k = _myPrefs[day];
     const bg = k === 'unavailable' ? '#E2555522' : k === 'off' ? '#E2933F22' : 'var(--card-alt)';
-    const bd = k === 'unavailable' ? '#E25555' : k === 'off' ? '#E2933F' : 'var(--border)';
+    const bd = k === 'unavailable' ? 'var(--danger-ink,#e25555)' : k === 'off' ? '#E2933F' : 'var(--border)';
     cells += `<button class="pref-day" onclick="cyclePreference(${day})" title="Tap to change"
         style="background:${bg};border:1px solid ${bd};border-radius:8px;padding:6px 0;cursor:pointer;text-align:center;min-width:0">
         <div style="font-size:13px;font-weight:700">${day}</div>
@@ -119,7 +119,7 @@ async function renderMyPreferences() {
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${cells}</div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px">
       <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E2933F22;border:1px solid #E2933F;vertical-align:middle"></span> Prefer off</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E2555522;border:1px solid #E25555;vertical-align:middle"></span> Can't work</span>
+      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E2555522;border:1px solid var(--danger-ink,#e25555);vertical-align:middle"></span> Can't work</span>
     </div></div>`;
 }
 

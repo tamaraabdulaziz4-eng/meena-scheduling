@@ -614,7 +614,7 @@ function wlRender() {
   // auto-clear it — otherwise the chip bar strands the board empty with no way to reset.
   if (wlState.modFilter && !present.has(wlState.modFilter)) wlState.modFilter = null;
   const MOD_ORDER = [['CT', 'CT'], ['MR', 'MRI'], ['US', 'US'], ['XR', 'X-Ray'], ['MG', 'Mammo']];
-  const MOD_DOT = { CT: '#6B4EFF', MR: '#3BA0FF', US: '#00C896', XR: '#8358FD', MG: '#E4739B' };
+  const MOD_DOT = { CT: 'var(--accent,#6b4eff)', MR: 'var(--info,#3ba0ff)', US: 'var(--success,#00c896)', XR: 'var(--accent2,#8358fd)', MG: '#E4739B' };
   const modChips = present.size > 1 ? `<div class="mods">
       <span class="lbl">Modality</span>
       <button class="chip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All</button>

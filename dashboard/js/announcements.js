@@ -127,7 +127,7 @@ async function viewAnnAcks(id) {
     const pending = (d.pending || []).length ? d.pending.map(r => `• ${escapeHtml(r.username)}`).join('<br>') : 'Everyone acknowledged.';
     const body = `<div style="text-align:left;max-height:300px;overflow:auto">
         <b>Acknowledged:</b><br>${acked}
-        <br><br><b style="color:#E25555">Still pending (${(d.pending || []).length}):</b><br>${pending}</div>`;
+        <br><br><b style="color:var(--danger-ink,#e25555)">Still pending (${(d.pending || []).length}):</b><br>${pending}</div>`;
     const title = `${d.ack_count || 0} of ${d.target_count || 0} acknowledged`;
     if ((d.pending || []).length) {
       const ok = await showConfirm(title, body, 'Remind pending', '');

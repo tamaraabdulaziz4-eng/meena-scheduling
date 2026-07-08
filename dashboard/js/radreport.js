@@ -171,8 +171,8 @@ function _rsrInsights(cur, prev, meta) {
   return notes;
 }
 
-const RSR_MOD_COLOR = { CT: '#6B4EFF', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
-const RSR_PAYER_COLOR = { 'Insurance': '#6B4EFF', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
+const RSR_MOD_COLOR = { CT: 'var(--accent,#6b4eff)', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
+const RSR_PAYER_COLOR = { 'Insurance': 'var(--accent,#6b4eff)', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
 
 function _rsrBuildDeck(ctx) {
   const { cur, prev, quarter, meta } = ctx;
@@ -230,7 +230,7 @@ function _rsrBuildDeck(ctx) {
     const f = cur.financial;
     const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: RSR_PAYER_COLOR[p.type] || '#94a3b8' }));
     const revDonut = rsDonut([
-      { label: 'Insurance', count: Math.round(f.sponsor || 0), color: '#6B4EFF' },
+      { label: 'Insurance', count: Math.round(f.sponsor || 0), color: 'var(--accent,#6b4eff)' },
       { label: 'Cash / copay', count: Math.round(f.patient || 0), color: '#22c55e' },
     ], { centerVal: Math.round(f.revenue || 0), centerLabel: 'SAR' });
     slides.push(_rsrSlide('Revenue', `Financial — billed revenue &amp; payer`, `
@@ -256,7 +256,7 @@ function _rsrBuildDeck(ctx) {
     slides.push(_rsrSlide('Who is ordering', `Top ordering doctors &amp; departments`, `
       <div class="rsr-two">
         <div><div class="rs-subhead">Top ordering doctors</div>${rsBarRows(docItems.slice(0, 10), '#0ea5e9')}</div>
-        <div><div class="rs-subhead">By ordering department</div>${rsBarRows(deptItems.slice(0, 10), '#8358FD')}</div>
+        <div><div class="rs-subhead">By ordering department</div>${rsBarRows(deptItems.slice(0, 10), 'var(--accent2,#8358fd)')}</div>
       </div>`));
   }
 

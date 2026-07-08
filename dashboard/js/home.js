@@ -191,8 +191,8 @@ async function renderHomeCredentials() {
   const kindLabel = (k) => (typeof _credKindLabel === 'function' ? _credKindLabel(k) : (k || 'Other'));
   const statusOf = (n) => {
     n = Number(n);
-    if (n < 0) return [`Expired ${Math.abs(n)}d ago`, '#E25555'];
-    if (n === 0) return ['Expires today', '#E25555'];
+    if (n < 0) return [`Expired ${Math.abs(n)}d ago`, 'var(--danger-ink,#e25555)'];
+    if (n === 0) return ['Expires today', 'var(--danger-ink,#e25555)'];
     if (n <= 30) return [`${n}d left`, '#E2933F'];
     return [`${n}d left`, '#C9A227'];
   };
