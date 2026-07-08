@@ -6685,6 +6685,16 @@ def radiology_patient_visits(file_no: str, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/visits", timeout=90)
 
+@app.get("/api/radiology/patient/{file_no}/labs")
+def radiology_patient_labs(file_no: str, user=Depends(require_radiology)):
+    """The patient's lab results — test · value · reference range · normal/abnormal,
+    live from Siratech (Clinicalreport/ClinicalServiceData). Read-only."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/labs", timeout=90)
+
 @app.get("/api/radiology/find")
 def radiology_find(request: Request, user=Depends(require_radiology)):
     """Unified patient lookup: search Siratech by file/MRN, national ID, or phone

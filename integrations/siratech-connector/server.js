@@ -18,6 +18,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const puppeteer = require('puppeteer');
 const results = require('./results');
 
@@ -758,6 +759,77 @@ app.get('/patient/:file/visits', requireAuth, async (req, res) => {
     });
     const visits = [...encMap.values()].sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
     return res.json({ ok: true, file, visits, fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// ── Patient LAB RESULTS (READ-ONLY) ───────────────────────────────────────────
+// Siratech serves the clinical lab report through Clinicalreport/ClinicalServiceData
+// (captured live): a gzip+base64 payload whose clinicalReportDTOList is a tree of
+// tests / profiles, each carrying its value, reference range, and normal/abnormal/
+// critical flag per result date. We decode it and flatten to a clean list — real lab
+// numbers for the radiologist. Never writes.
+function _labRound(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '') return '';
+  const n = Number(s);
+  if (!Number.isFinite(n) || !/^-?\d*\.?\d+$/.test(s)) return s;   // non-numeric → as-is
+  return (Math.round(n * 100) / 100).toString();                  // 7.1462 → 7.15, 18 → 18
+}
+function _flattenLabs(list) {
+  const out = [];
+  const walk = (items) => {
+    for (const it of (items || [])) {
+      const di = it.dataItems || {};
+      for (const dt of Object.keys(di)) {
+        for (const v of (di[dt] || [])) {
+          const val = _labRound(v && v.value);
+          if (val === '') continue;                               // profile parents carry an empty value → skip
+          out.push({
+            name: (it.test || '').trim() || 'Test',
+            value: val,
+            range: (it.normalRange || '').trim() || null,
+            abnormal: /abnormal/i.test((v && v.severityRange) || ''),
+            critical: !!(v && v.isCritical),
+            date: (v && v.entryDate) || dt || null,
+            by: ((v && v.employeeName) || '').trim() || null,
+            id: (v && v.invPatTestResultID) || null,
+          });
+        }
+      }
+      if (it.children && it.children.length) walk(it.children);
+    }
+  };
+  walk(list);
+  return out;
+}
+app.get('/patient/:file/labs', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  try {
+    await getToken();
+    const uid = currentProviderId() || String(HIS_USER).padStart(8, '0');
+    const daysBack = Math.max(1, Math.min(3650, Number(req.query.days) || 365));
+    const from = new Date(Date.now() - daysBack * 864e5).toISOString();
+    const to = new Date(Date.now() + 864e5).toISOString();
+    const r = await hisFetch('/emr-api/api/v1/Clinicalreport/ClinicalServiceData', { body: {
+      mrno: file, fromDate: from, toDate: to, invcategoryid: 0, hospitalId: 0,
+      providerId: '', LoggedInUserId: String(uid) } });
+    let payload = {};
+    const blob = r.json && r.json.data;
+    if (typeof blob === 'string' && blob) {
+      try { payload = JSON.parse(zlib.gunzipSync(Buffer.from(blob, 'base64')).toString('utf8')); }
+      catch (_e) { payload = {}; }
+    } else if (blob && typeof blob === 'object') {
+      payload = blob;
+    }
+    const results = _flattenLabs(payload.clinicalReportDTOList || []);
+    // Newest first; group key is the result date (day).
+    results.sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
+    const counts = { normal: payload.normalCnt || 0, abnormal: payload.abNormalCnt || 0, critical: payload.criticalCnt || 0 };
+    return res.json({ ok: true, file, results, counts,
+      dates: payload.distinctDates || [], fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }

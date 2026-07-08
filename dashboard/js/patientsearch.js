@@ -180,6 +180,7 @@ function renderPsDetail() {
         ${psField('Marital status', p.maritalStatus)}
       </div>
       <div id="ps-clinical"></div>
+      <div id="ps-labresults"></div>
       <div id="ps-visits"></div>
       ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
         ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
@@ -208,6 +209,7 @@ function renderPsDetail() {
   psLoadConsents();
   psLoadLabs();
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech)
+  psLoadRealLabs();                            // lab results — test · value · range (from Siratech)
   psLoadVisits();                              // recent clinic visits (encounter history)
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
 }
@@ -280,6 +282,44 @@ async function psLoadVisits() {
     </div>`;
   }).join('');
   box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div>${rows}</div>`;
+}
+
+// The patient's lab results — test · value · reference range · normal/abnormal,
+// straight from Siratech (Clinicalreport). Grouped by result date, newest first,
+// abnormal/critical highlighted. Loaded after paint, best-effort. Read-only.
+async function psLoadRealLabs() {
+  const box = document.getElementById('ps-labresults');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/labs`); }
+  catch (e) { box.innerHTML = ''; return; }
+  const results = (d && d.results) || [];
+  if (!results.length) { box.innerHTML = ''; return; }
+  // Group by result day (newest first).
+  const byDay = new Map();
+  for (const r of results) {
+    const day = String(r.date || '').slice(0, 11).trim() || 'Undated';
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(r);
+  }
+  const abn = results.filter((r) => r.abnormal || r.critical).length;
+  const head = `<div class="ps-sec-l" style="margin-top:14px">Lab results · ${results.length}${abn ? ` · <span style="color:#e2571f">${abn} abnormal</span>` : ''}</div>`;
+  const rowHtml = (r) => {
+    const col = r.critical ? '#c0261a' : (r.abnormal ? '#e2571f' : 'inherit');
+    const wt = (r.critical || r.abnormal) ? '700' : '600';
+    const flag = r.critical ? ' ⚠' : (r.abnormal ? ' ▲' : '');
+    return `<div style="display:flex;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--border)">
+      <span style="flex:1;min-width:150px;font-size:12.5px">${escapeHtml(r.name)}</span>
+      <span style="font-weight:${wt};color:${col};font-variant-numeric:tabular-nums;white-space:nowrap">${escapeHtml(r.value)}${flag}</span>
+      ${r.range ? `<span style="color:var(--muted);font-size:11px;min-width:96px;text-align:right">${escapeHtml(r.range)}</span>` : ''}
+    </div>`;
+  };
+  const body = [...byDay.entries()].map(([day, rows]) =>
+    `<div style="margin-top:8px"><div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:2px">${escapeHtml(day)}</div>${rows.map(rowHtml).join('')}</div>`
+  ).join('');
+  box.innerHTML = head + body;
 }
 
 // Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG
