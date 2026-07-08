@@ -64,10 +64,12 @@ async function login() {
   const browser = await puppeteer.launch({ headless: true,
     args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote'] });
   let auth = '', hospitalid = '';
+  const apiBases = {};   // module (e.g. "ins-approval-api") → full base "https://…/ins-approval-api/api/v1"
   try {
     const page = await browser.newPage();
-    page.on('request', (r) => { const h = r.headers();
-      if (/-api\/api\/v\d+\//i.test(r.url())) { if (h.authorization && !auth) auth = h.authorization; if (h.hospitalid && !hospitalid) hospitalid = h.hospitalid; } });
+    page.on('request', (r) => { const u = r.url(); const h = r.headers();
+      const m = u.match(/^(https?:\/\/[^/]+\/([\w-]+-api)\/api\/v\d+)\//i);
+      if (m) { apiBases[m[2].toLowerCase()] = m[1]; if (h.authorization && !auth) auth = h.authorization; if (h.hospitalid && !hospitalid) hospitalid = h.hospitalid; } });
     await page.goto(HIS_BASE, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
     await page.waitForSelector('#mat-input-0', { timeout: 25000 });
     await page.click('#mat-input-0'); await page.type('#mat-input-0', HIS_USER, { delay: 40 });
@@ -80,10 +82,20 @@ async function login() {
     await page.click('#passFocus'); await page.type('#passFocus', HIS_PASS, { delay: 40 }); await sleep(400);
     const btn = await page.evaluateHandle(() => [...document.querySelectorAll('button')].find((e) => /login/i.test(e.innerText)));
     if (btn) await btn.click().catch(() => {});
-    await sleep(9000);
+    await sleep(12000);
     if (!auth) throw new Error('login yielded no token');
-    return { auth, hospitalid: hospitalid || '' };
+    return { auth, hospitalid: hospitalid || '', apiBases };
   } finally { await browser.close().catch(() => {}); }
+}
+// call by ABSOLUTE url (base URLs differ per module)
+async function callAbs(tok, method, url, body) {
+  const res = await fetch(url, { method,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain, */*',
+      Authorization: tok.auth, hospitalid: tok.hospitalid,
+      clienttimezoneoffsetinminutes: '-180', localtimezoneoffsetinminutes: '-180', machinename: 'YARWEB_UI' },
+    body: body !== undefined ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(45000) });
+  const t = await res.text(); let j; try { j = JSON.parse(t); } catch (e) { j = null; }
+  return { status: res.status, json: j, text: t };
 }
 async function call(tok, method, ep, body) {
   const res = await fetch(HIS_BASE + ep, { method,
@@ -106,50 +118,76 @@ function hasPersonName(o) {
 }
 const looksLikePerson = (r) => r.status === 200 && hasPersonName(r.json);
 
+const elmMsg = (r) => (r && r.json && (r.json.errorMessage || (r.json.data && r.json.data.errorMessage))) || '';
+// pick the Gregorian DOB candidates (year >= 1900) and render the exact ISO shape
+// the app builds: new Date(Date.UTC(y,m,d)).toISOString()
+function gregIso(list) {
+  const out = [];
+  for (const s of list) { const m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(s); if (!m) continue;
+    const y = +m[1], mo = +m[2], d = +m[3]; if (y < 1900) continue;
+    out.push(new Date(Date.UTC(y, mo - 1, d)).toISOString()); }
+  return out;
+}
+
 (async () => {
   console.log(`── national-registry lookup — ID ${ID}${DOB ? ' · DOB ' + DOB : ''} (LIVE/billed) ──`);
   const tok = await login();
-  console.log('  login OK.\n');
-  const P = '/patient-api/api/v1';
+  console.log('  login OK. api bases seen: ' + Object.keys(tok.apiBases).join(', '));
+  const P = HIS_BASE + '/patient-api/api/v1';
 
-  // 1) علم / Yakeen — Patient/ELMData. The earlier run proved the endpoint responds
-  //    and the {idNumber,hospitalId} shape reaches it (all field-name variants gave
-  //    the SAME error), so the missing piece is the date of birth. Try each DOB
-  //    candidate (Hijri first, then Gregorian) with that shape; print the FULL
-  //    errorMessage; STOP on the first person returned (avoid extra billed calls).
-  const elmMsg = (r) => (r.json && (r.json.errorMessage || (r.json.data && r.json.data.errorMessage))) || '';
-  let elmHit = null;
-  // "The given ID type is not valid" → idType is required. Yakeen distinguishes
-  // National ID vs Iqama; the numeric code varies, so probe 1/2/3 with the (Hijri-
-  // first) DOB. Bounded to idType × first-DOB to keep billed calls low.
-  const IDTYPES = [1, 2, 3];
-  const dobForType = DOBS[0] || '';
-  const elmCandidates = IDTYPES.map((t) => ({ idNumber: ID, dateOfBirth: dobForType, idType: t, hospitalId: HOSPITAL_ID }));
-  for (const b of elmCandidates) {
-    let r; try { r = await call(tok, 'POST', `${P}/Patient/ELMData`, b); }
-    catch (e) { console.log(`  ELMData idType=${b.idType} dob=${b.dateOfBirth || '(none)'} → ERROR ${String(e.message || e).slice(0,80)}`); continue; }
-    const msg = elmMsg(r);
-    console.log(`  ELMData idType=${b.idType} dob=${b.dateOfBirth || '(none)'} → HTTP ${r.status}` + (msg ? `  msg="${msg}"` : `  body=${String(r.text).slice(0,160).replace(/\s+/g,' ')}`));
-    if (looksLikePerson(r)) { elmHit = r; break; }
+  // ── resolve the insurance-approval base + the SAUDIID / IQAMA idType (genLookUpId).
+  // idType in the ELMData payload is a site-specific genLookUpId read from
+  // Ins_Approval_API/InsuranceApprovalCommon/IdentifyingDocs (each item: {lookUpValue, genLookUpId}).
+  let insBase = tok.apiBases['ins-approval-api'] || tok.apiBases['insurance-approval-api'] || tok.apiBases['insuranceapproval-api'] || '';
+  const insCandidates = insBase ? [insBase]
+    : ['insurance-approval-api','ins-approval-api','insuranceapproval-api','insurance-api','claims-api'].map((m) => `${HIS_BASE}/${m}/api/v1`);
+  let saudiGenId = '', iqamaGenId = '', docsFrom = '';
+  for (const base of insCandidates) {
+    let r; try { r = await callAbs(tok, 'GET', `${base}/InsuranceApprovalCommon/IdentifyingDocs`); } catch (e) { continue; }
+    const rows = (r.json && (r.json.data || r.json.Data || r.json)) || [];
+    const arr = Array.isArray(rows) ? rows : [];
+    if (r.status === 200 && arr.length) {
+      const saudi = arr.find((x) => /saudi/i.test(x.lookUpValue || x.lookupValue || x.description || ''));
+      const iqama = arr.find((x) => /iqama/i.test(x.lookUpValue || x.lookupValue || x.description || ''));
+      saudiGenId = saudi && (saudi.genLookUpId || saudi.genLookupId || saudi.id) || '';
+      iqamaGenId = iqama && (iqama.genLookUpId || iqama.genLookupId || iqama.id) || '';
+      docsFrom = base;
+      console.log(`  IdentifyingDocs from ${base.replace(HIS_BASE,'')} → SAUDIID genLookUpId=${saudiGenId} · IQAMA=${iqamaGenId}`);
+      break;
+    }
   }
-  if (elmHit) { console.log('\n  ✅ ELMData returned a person:\n' + JSON.stringify(elmHit.json, null, 2).slice(0, 2000)); }
-  else console.log('\n  ELMData: no person returned (wrong body shape, no consent on file, or not found).');
+  if (!saudiGenId) console.log('  ⚠ could not resolve SAUDIID genLookUpId (ins-approval base not found or shape differs).');
 
-  // 2) Nphies patient registry — deterministic GET with known params. Try each DOB
-  //    candidate; stop on the first that returns a person.
+  // ── علم / Yakeen — Patient/ELMData with the EXACT payload the app builds:
+  //    {idType, dob(ISO), idNumber, ninOrIqamaNumber, requestType, hasDuplicateId, hospitalId}
+  const idType = /^2\d{9}$/.test(ID) ? iqamaGenId : saudiGenId;   // Iqama starts 2, else Saudi
+  const isoDobs = gregIso(DOBS);
+  let elmHit = null;
+  if (idType && isoDobs.length) {
+    for (const dob of isoDobs) {
+      const body = { idType, dob, idNumber: ID, ninOrIqamaNumber: ID, requestType: idType, hasDuplicateId: false, hospitalId: HOSPITAL_ID };
+      let r; try { r = await callAbs(tok, 'POST', `${P}/Patient/ELMData`, body); }
+      catch (e) { console.log(`  ELMData dob=${dob} → ERROR ${String(e.message||e).slice(0,80)}`); continue; }
+      const msg = elmMsg(r);
+      console.log(`  ELMData dob=${dob} → HTTP ${r.status}` + (msg ? `  msg="${msg}"` : `  body=${String(r.text).slice(0,160).replace(/\s+/g,' ')}`));
+      if (looksLikePerson(r)) { elmHit = r; break; }
+    }
+  } else {
+    console.log(`  (skip ELMData — need ${!idType ? 'the SAUDIID idType' : ''}${!idType && !isoDobs.length ? ' and ' : ''}${!isoDobs.length ? 'a Gregorian DOB' : ''})`);
+  }
+  if (elmHit) console.log('\n  ✅ ELMData returned a person:\n' + JSON.stringify(elmHit.json, null, 2).slice(0, 2500));
+  else console.log('\n  ELMData: no person yet.');
+
+  // ── Nphies patient registry — GET (needs ID + DOB). Currently gated by Siratech's
+  //    Nphies access token; included so we confirm the moment that token is refreshed.
   if (DOBS.length && !elmHit) {
-    let regHit = false;
     for (const dob of DOBS) {
       const ep = `${P}/Patient/NPHIESPatientRegistry?idNumber=${encodeURIComponent(ID)}&dateOfBirth=${encodeURIComponent(dob)}&hospitalId=${HOSPITAL_ID}&mrno=`;
-      let r; try { r = await call(tok, 'GET', ep); }
-      catch (e) { console.log(`  NPHIESPatientRegistry dob=${dob} → ERROR ${String(e.message || e).slice(0,80)}`); continue; }
+      let r; try { r = await callAbs(tok, 'GET', ep); } catch (e) { continue; }
       const msg = elmMsg(r);
-      console.log(`  NPHIESPatientRegistry dob=${dob} → HTTP ${r.status}` + (msg ? `  msg="${msg}"` : ''));
-      if (looksLikePerson(r)) { console.log('\n  ✅ Nphies registry returned a person:\n' + JSON.stringify(r.json, null, 2).slice(0, 2000)); regHit = true; break; }
+      console.log(`  NPHIESPatientRegistry dob=${dob} → HTTP ${r.status}` + (msg ? `  msg="${String(msg).slice(0,80).replace(/\s+/g,' ')}"` : ''));
+      if (looksLikePerson(r)) { console.log('\n  ✅ Nphies registry returned a person:\n' + JSON.stringify(r.json, null, 2).slice(0, 2500)); break; }
     }
-    if (!regHit) console.log('  NPHIESPatientRegistry: no person for any DOB candidate.');
-  } else if (!DOBS.length) {
-    console.log('\n  (skip Nphies registry — pass a DOB as the 2nd arg to try it: node elm-lookup.js ' + ID + ' 1368-07-01,1949-04-29 --yes)');
   }
   console.log('\n── done ──');
   process.exit(0);
