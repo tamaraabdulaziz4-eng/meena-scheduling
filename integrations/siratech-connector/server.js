@@ -953,6 +953,11 @@ const WORKLIST_MODALITY_CAP = Number(process.env.WORKLIST_MODALITY_CAP || 80);
 // hundreds of stale orders and is slow. 3 days is the right operational default;
 // widen per-request with ?from=/?to= or globally via WORKLIST_DAYS_BACK.
 const WORKLIST_DAYS_BACK = Number(process.env.WORKLIST_DAYS_BACK || 3);
+// Per-mrno native radiology status cache (cpoeStatusDescription etc.) — keeps the
+// board's per-exam status fresh without re-hitting FetchRadiologyDetails every load.
+const RAD_STATUS_TTL = Number(process.env.RAD_STATUS_TTL_MS || 90000);
+const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 140);   // cap new lookups per load
+const radStatusCache = new Map();   // mrno -> { ts, byKey: Map(key -> {status,cpoe,reported,imaged,invId,acc}) }
 
 // HIS timestamps come as NAIVE local KSA strings ("2026-07-05T09:06:00", no offset).
 // Date.parse would read that as UTC (the VPS's zone), skewing every age by 3h and
@@ -1168,6 +1173,50 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // Must match the documented invariant (oldest-first = highest TAT first) that the
   // board and the auto-file candidate sweep both rely on: descending ageHours.
   items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+
+  // ── Native per-exam status (cpoeStatusDescription: Pending / Scan In Progress /
+  // Scan Done + the report flag) — the ONLY source of Siratech's real status text.
+  // Fetched per DISTINCT mrno (cached ~90s, concurrency-bounded), stamped onto every
+  // row so the board's stage lanes are correct on the FIRST paint with NO DePACS wait
+  // (kills the "everything sits in Waiting, then jumps" glitch). Best-effort: an
+  // unresolved row keeps its coarse lane and fills on the next refresh.
+  try {
+    const keyOf = (bill, svc) => `${bill || ''}|${String(svc || '').trim().toLowerCase()}`;
+    const mrnos = [...new Set(items.map((it) => String(it.mrno)).filter(Boolean))];
+    const nowTs = Date.now();
+    const fresh = (m) => { const c = radStatusCache.get(m); return c && (nowTs - c.ts) <= RAD_STATUS_TTL; };
+    const need = mrnos.filter((m) => !fresh(m)).slice(0, RAD_STATUS_MAX_FETCH);
+    await pool(need, STATS_SITE_CONCURRENCY, async (m) => {
+      try {
+        const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: m } });
+        const rows = (r.json && r.json.data) || [];
+        const byKey = new Map();
+        for (const d of rows) {
+          const rec = {
+            status: d.cpoeStatusDescription || null, cpoe: d.cpoeStatus,
+            reported: !!(Number(d.radioReportStatus) > 0 || d.hasRadiologyRepot),
+            imaged: Number(d.radioImageStatus) > 0,
+            invId: d.invPatTestResultId || null, acc: d.accessionNumber || null,
+          };
+          if (!byKey.has(keyOf(d.billNo, d.serviceName))) byKey.set(keyOf(d.billNo, d.serviceName), rec);
+          if (d.accessionNumber) byKey.set('acc:' + d.accessionNumber, rec);
+        }
+        radStatusCache.set(m, { ts: Date.now(), byKey });
+      } catch (_e) { /* leave uncached — row keeps its coarse lane */ }
+    });
+    for (const it of items) {
+      const c = radStatusCache.get(String(it.mrno));
+      if (!c) continue;
+      const rec = (it.accession && c.byKey.get('acc:' + it.accession)) || c.byKey.get(keyOf(it.billNo, it.exam));
+      if (!rec) continue;
+      if (rec.status) it.hisStatus = rec.status;
+      it.hisReported = it.hisReported || rec.reported;
+      it.hisCpoe = rec.cpoe != null ? rec.cpoe : it.hisCpoe;
+      if (rec.imaged && !it.scanned) it.scanned = true;
+      if (rec.invId && !it.invPatTestResultId) it.invPatTestResultId = rec.invId;
+      if (rec.acc && !it.accession) it.accession = rec.acc;
+    }
+  } catch (_e) { /* status enrichment is best-effort */ }
 
   // Fallback: any rows the RIS panel didn't cover (or if the service field guess
   // missed) get the old per-order RadiologyDetails lookup — bounded and concurrent —
