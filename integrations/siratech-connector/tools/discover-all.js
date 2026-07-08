@@ -138,10 +138,26 @@ function record(name, ep, resp){ const rows=(resp.json&&(resp.json.data||resp.js
 (async () => {
   console.log(`── Siratech FULL discovery (read-only) — ${IDENT?`${IDENT_KIND}:${IDENT}`:'(no patient)'} ──`);
   const { tok, jsUrls } = await loginAndBundles();
-  console.log(`  login OK. Enumerating endpoints from ${jsUrls.length} JS bundle(s)…`);
+  // Follow lazy chunks: Angular loads feature modules (radiology/EMR/investigation
+  // AND any insurance/eligibility module) as separate .js chunks that only download
+  // when you open that screen. Waiting on the dashboard misses them. So BFS: from
+  // each bundle, harvest API paths AND any referenced *.js chunk filename, fetch
+  // those too, repeat — until no new chunk appears. READ-ONLY (GETs static JS).
   const eps=new Set(report.endpoints.liveCalls);
-  for (const u of jsUrls){ try{ const r=await fetch(u,{signal:AbortSignal.timeout(30000)}); if(!r.ok)continue; const txt=await r.text();
-    let m; const re=/([A-Za-z][\w-]*-api\/api\/v\d+\/[A-Za-z0-9_./-]+)/g; while((m=re.exec(txt))!==null){ const p=m[1].replace(/['"`,);]+$/,''); if(p.length>=8&&p.length<=160)eps.add(p);} }catch(e){} }
+  const apiRe=/([A-Za-z][\w-]*-api\/api\/v\d+\/[A-Za-z0-9_./-]+)/g;
+  const chunkRe=/["'`]([A-Za-z0-9_\-./]+\.js)["'`]/g;      // any quoted *.js reference
+  const seen=new Set(), queue=[...jsUrls]; const CAP=500;
+  const toUrl=(f)=>{ if(/^https?:\/\//.test(f)) return f.startsWith(HIS_BASE)?f:null;
+    return HIS_BASE + '/' + f.replace(/^\.?\//,''); };
+  while(queue.length && seen.size<CAP){
+    const u=queue.shift(); if(!u||seen.has(u))continue; seen.add(u);
+    try{ const r=await fetch(u,{signal:AbortSignal.timeout(30000)}); if(!r.ok)continue; const txt=await r.text();
+      let m; while((m=apiRe.exec(txt))!==null){ const p=m[1].replace(/['"`,);]+$/,''); if(p.length>=8&&p.length<=160)eps.add(p); }
+      let c; while((c=chunkRe.exec(txt))!==null){ const url=toUrl(c[1]); if(url && /\.js$/i.test(url) && !seen.has(url) && queue.length+seen.size<CAP) queue.push(url); }
+    }catch(e){}
+  }
+  report.endpoints.jsScanned=seen.size;
+  console.log(`  login OK. Scanned ${seen.size} JS file(s) (bundles + lazy chunks).`);
   report.endpoints.all=[...eps].sort();
   for(const p of report.endpoints.all){ const mod=(p.match(/([\w-]*-api)\/api\/v\d+/)||[,'other'])[1]; (report.endpoints.byModule[mod]=report.endpoints.byModule[mod]||[]).push(p); }
   console.log(`  ${report.endpoints.all.length} endpoints across ${Object.keys(report.endpoints.byModule).length} module(s).`);

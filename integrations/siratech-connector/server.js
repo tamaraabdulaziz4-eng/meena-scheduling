@@ -419,18 +419,26 @@ async function discoverEndpoints() {
     } catch (_e) { /* ignore */ }
   } finally { await browser.close().catch(() => {}); }
 
-  // download each bundle, grep API paths
+  // BFS the bundles AND their lazy chunks: Angular feature modules (radiology/EMR/
+  // investigation, and any insurance/eligibility module) load as separate .js chunks
+  // only when their screen opens, so a dashboard-only load misses them. From each
+  // file harvest API paths AND referenced *.js chunk names, fetch those too, repeat.
   const API_RE = /([A-Za-z][\w-]*-api\/api\/v\d+\/[A-Za-z0-9_./-]+)/g;
-  const fromCode = new Set(); let fetched = 0;
-  for (const u of jsUrls) {
+  const CHUNK_RE = /["'`]([A-Za-z0-9_\-./]+\.js)["'`]/g;
+  const toUrl = (f) => { if (/^https?:\/\//.test(f)) return f.startsWith(HIS_BASE) ? f : null;
+    return HIS_BASE + '/' + f.replace(/^\.?\//, ''); };
+  const fromCode = new Set(); const seen = new Set(); const queue = [...jsUrls]; const CAP = 500;
+  while (queue.length && seen.size < CAP) {
+    const u = queue.shift(); if (!u || seen.has(u)) continue; seen.add(u);
     try {
       const res = await fetch(u, { headers: { Accept: '*/*' }, signal: AbortSignal.timeout(30000) });
       if (!res.ok) continue;
       const txt = await res.text(); let m;
       while ((m = API_RE.exec(txt)) !== null) { const p = m[1].replace(/['"`,);]+$/, ''); if (p.length >= 8 && p.length <= 160) fromCode.add(p); }
-      fetched++;
+      let c; while ((c = CHUNK_RE.exec(txt)) !== null) { const url = toUrl(c[1]); if (url && /\.js$/i.test(url) && !seen.has(url) && queue.length + seen.size < CAP) queue.push(url); }
     } catch (_e) { /* skip a bundle that won't fetch */ }
   }
+  const fetched = seen.size;
   const all = [...new Set([...liveApi, ...fromCode])].sort();
   const byModule = {};
   for (const p of all) { const mod = (p.match(/([\w-]*-api)\/api\/v\d+/) || [, '(other)'])[1]; (byModule[mod] = byModule[mod] || []).push(p); }
