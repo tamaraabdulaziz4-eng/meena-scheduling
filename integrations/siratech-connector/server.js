@@ -1011,9 +1011,10 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     return '';
   };
   const risStatusOf = (row) => {
-    for (const k of ['risOrderStatus', 'resultStatus', 'risStatus', 'radiologyStatus', 'status']) {
+    for (const k of ['cpoeStatusDescription', 'cpoeStatus', 'risOrderStatus', 'resultStatus',
+                     'risStatus', 'radiologyStatus', 'orderStatus', 'statusDescription', 'status']) {
       const v = row && row[k];
-      if (v != null && String(v).trim() !== '') return String(v).trim();
+      if (v != null && String(v).trim() !== '' && !/^\d+$/.test(String(v).trim())) return String(v).trim();
     }
     return '';
   };
