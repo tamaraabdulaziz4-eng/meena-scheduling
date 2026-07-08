@@ -68,3 +68,35 @@ AE `DMWL_AE`, today's date) — pass a calling AE as the first argument (e.g.
 `RUN-MWL-PROBE.bat CTN3`) if the broker only answers machines it knows.
 Verified end-to-end against a local MWL SCP (dcmjs-dimse), including the
 association-rejected fallback path.
+
+---
+
+# discover-all — full read-only Siratech map (incl. insurance / Nphies)
+
+`discover-all.js` logs into Siratech once (read-only), enumerates **every** API
+endpoint baked into its Angular bundles, then probes a given patient across the
+radiology/lab/patient endpoints and scans the responses. It writes NOTHING to
+Siratech; output is a single `discover-all-report.json`.
+
+```bash
+cd integrations/siratech-connector/tools
+npm install                     # puppeteer (shared with the connector)
+node discover-all.js 25148940   # a real MRN
+```
+
+## Answering "can we read insurance / national record (Nphies)?"
+
+The run now also hunts for the **national health-record / insurance** surface:
+
+- **Endpoint map** → lists any path that looks insurance/eligibility/Nphies related
+  (`insuranceEndpoints` in the JSON, and the "Insurance/Nphies/eligibility ENDPOINTS"
+  summary line). Empty here = this HIS build exposes no eligibility module to the SPA.
+- **Patient probe** → `Patient/Search` is the "enter the ID → what comes back" path.
+  Its response is scanned for insurance-named fields (policy, member, coverage,
+  sponsor, TPA, payer, class…). Whatever shows under `INS:`/`insuranceFields` is
+  exactly the insurance data we can **read per patient today**, with no Nphies call.
+
+**Safety:** the tool only READS. It never calls an eligibility/claim endpoint —
+those can trigger a real, billable Nphies transaction. Discovered insurance paths
+are candidates to review together, not to blind-call. Send back the JSON and we
+decide what (if anything) is safe to wire.

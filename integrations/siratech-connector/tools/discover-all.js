@@ -43,6 +43,13 @@ if (!HIS_USER || !HIS_PASS) { console.error('✗ HIS_USER/HIS_PASS not set (conn
 const ACC_RE = (v) => { const s = String(v==null?'':v).trim(); return /^SIRA\d{3,}$/i.test(s) || /^[A-Z]{1,4}\d{5,}$/.test(s); };
 const KW_RE = /pacs|dicom|depacs|butterfly|accession|studyinstance|study_?uid|\bge\b|modalityworklist|imaging|wado|orthanc/i;
 const PREG_RE = /hcg|pregnan|beta[\s-]?hcg|β/i;
+// Insurance / national health-record (Nphies, CCHI) signal. Matches BOTH the
+// field names the HIS stores against a patient (policy, member, coverage,
+// sponsor, TPA, class, benefit) AND the endpoint paths of an eligibility module
+// if one exists. READ-ONLY: we only flag what already comes back on a patient
+// lookup — we never CALL an eligibility/claim endpoint (that can fire a real,
+// billable Nphies transaction). Discover names here; decide what's safe to call later.
+const INS_RE = /nphies|eligib|insur|coverage|\bpolicy\b|policyno|member(ship)?|beneficiar|sponsor|payer|\btpa\b|scheme|approval|preauth|pre-auth|deductib|copay|co-pay|benefit|claim|cchi/i;
 const keysOf = (r) => (r && typeof r === 'object' ? Object.keys(r) : []);
 function scanValues(obj, out, kp='') {   // collect accession-like + keyword-bearing fields
   if (obj == null) return out;
@@ -53,6 +60,9 @@ function scanValues(obj, out, kp='') {   // collect accession-like + keyword-bea
       if (/acc/i.test(k) || ACC_RE(v)) out.acc.push(`${kp}.${k}=${sv}`.replace(/^\./,''));
       if (KW_RE.test(k) || KW_RE.test(sv)) out.kw.push(`${kp}.${k}=${sv}`.replace(/^\./,''));
       if (PREG_RE.test(k) || PREG_RE.test(sv)) out.preg.push(`${kp}.${k}=${sv}`.replace(/^\./,''));
+      // Insurance flags on the FIELD NAME only (a value like "approved" on an
+      // unrelated field is a false positive; a key like `policyNo` is real signal).
+      if (out.ins && INS_RE.test(k)) out.ins.push(`${kp}.${k}=${sv}`.replace(/^\./,''));
     }
     if (typeof v==='object') scanValues(v,out,`${kp}.${k}`.replace(/^\./,'')); } }
   return out;
@@ -95,10 +105,10 @@ function invBody(cat, filterResult, extra){ const today=new Date().toISOString()
   return Object.assign({ mrno:MRN, billno:'', fromDate:`${y}T00:00:00.000Z`, toDate:`${today}T23:59:59.000Z`, baseCatgeory:0, hospitalId:RESULT_SITE, mode:6, cpoeStatus:0, isbilled:0, empId:String(HIS_USER).padStart(8,'0'), visitno:'', selectionType:2, filterResult, profileId:'', invCategoryId:null, baseInvCategoryId:cat, visitMode:'', invMastServiceId:0, sampleNo:'', isCreditWithoutBilling:0, cpoeSearchGroupMode:0, searchType:'B', visiType:'0', isFrequent:1 }, extra||{}); }
 
 function record(name, ep, resp){ const rows=(resp.json&&(resp.json.data||resp.json))||[]; const arr=Array.isArray(rows)?rows:[rows].filter(Boolean);
-  const scan={acc:[],kw:[],preg:[]}; scanValues(resp.json,scan);
-  const rec={name, ep, status:resp.status, rowCount:arr.length, firstRowKeys:keysOf(arr[0]), accession:[...new Set(scan.acc)].slice(0,10), imaging:[...new Set(scan.kw)].slice(0,10), pregnancy:[...new Set(scan.preg)].slice(0,10)};
+  const scan={acc:[],kw:[],preg:[],ins:[]}; scanValues(resp.json,scan);
+  const rec={name, ep, status:resp.status, rowCount:arr.length, firstRowKeys:keysOf(arr[0]), accession:[...new Set(scan.acc)].slice(0,10), imaging:[...new Set(scan.kw)].slice(0,10), pregnancy:[...new Set(scan.preg)].slice(0,10), insurance:[...new Set(scan.ins)].slice(0,20)};
   report.probes.push(rec);
-  console.log(`  ${name}: HTTP ${resp.status}, ${arr.length} row(s)` + (rec.accession.length?`  ACC:${rec.accession.slice(0,2).join(',')}`:'') + (rec.pregnancy.length?`  PREG:${rec.pregnancy.slice(0,1).join(',')}`:'') + (rec.imaging.length?`  IMG:${rec.imaging.slice(0,2).join(',')}`:''));
+  console.log(`  ${name}: HTTP ${resp.status}, ${arr.length} row(s)` + (rec.accession.length?`  ACC:${rec.accession.slice(0,2).join(',')}`:'') + (rec.pregnancy.length?`  PREG:${rec.pregnancy.slice(0,1).join(',')}`:'') + (rec.imaging.length?`  IMG:${rec.imaging.slice(0,2).join(',')}`:'') + (rec.insurance.length?`  INS:${rec.insurance.slice(0,3).join(',')}`:''));
   return arr; }
 
 (async () => {
@@ -121,15 +131,26 @@ function record(name, ep, resp){ const rows=(resp.json&&(resp.json.data||resp.js
     const today=new Date().toISOString().slice(0,10);
     record('FetchRISPanel', '/emr-api/api/v1/EMR/FetchRISPanel', await post(tok,'/emr-api/api/v1/EMR/FetchRISPanel',{mrno:MRN,fromDate:today+'T00:00:00',toDate:today+'T23:59:59',invMastServiceId:0,apptResourceCategoryId:0,apptResourceId:0,providerId:'',serviceCategoryId:0,emrPatRisPanelId:0,userId:String(HIS_USER).padStart(8,'0'),hospitalId:RESULT_SITE}));
     record('FetchRadiologyDetails', '/emr-api/api/v1/EMR/FetchRadiologyDetails', await post(tok,'/emr-api/api/v1/EMR/FetchRadiologyDetails',{mrno:MRN,hospitalId:RESULT_SITE,fromDate:today+'T00:00:00',toDate:today+'T23:59:59',userId:String(HIS_USER).padStart(8,'0')}));
+    // Patient master lookup — the "enter the ID → what comes back" path. This is
+    // where the HIS keeps the stored insurance/policy/sponsor on file (from
+    // registration), so the INS scan on this response tells us exactly what
+    // insurance data we can READ per patient today, without any Nphies call.
+    record('Patient/Search (master + stored insurance)', '/patient-api/api/v1/Patient/Search', await post(tok,'/patient-api/api/v1/Patient/Search',{mrNo:MRN}));
     const sample=(pend[0]||res2[0]);
     if (sample && sample.billNo){ record('RadiologyDetails (drill)', '/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', await post(tok,'/investigation-api/api/v1/ResultEntryRadiology/RadiologyDetails', Object.assign(invBody(2,'2'),{billNo:sample.billNo, genPatBillingId:sample.genPatBillingId}))); }
   }
 
   // flags
   const anyAcc = report.probes.some(p=>p.accession.length), anyPreg=report.probes.some(p=>p.pregnancy.length), anyImg=report.probes.some(p=>p.imaging.length);
+  const anyIns = report.probes.some(p=>p.insurance.length);
+  const insFields = [...new Set(report.probes.flatMap(p=>p.insurance))];
   const imagingEps = report.endpoints.all.filter(p=>KW_RE.test(p));
   const labEps = report.endpoints.all.filter(p=>/lab|hcg|pregn/i.test(p));
-  report.flags={accessionOnOrderSide:anyAcc, pregnancyReachable:anyPreg, imagingKeywordsInData:anyImg, imagingEndpoints:imagingEps, labEndpoints:labEps};
+  // Endpoints whose PATH looks insurance/Nphies/eligibility related. These are
+  // candidates ONLY — do not blind-call them; an eligibility/claim path may fire
+  // a real Nphies transaction. Read the names, then decide together what's safe.
+  const insEps = report.endpoints.all.filter(p=>INS_RE.test(p));
+  report.flags={accessionOnOrderSide:anyAcc, pregnancyReachable:anyPreg, imagingKeywordsInData:anyImg, imagingEndpoints:imagingEps, labEndpoints:labEps, storedInsuranceReadable:anyIns, insuranceFields:insFields, insuranceEndpoints:insEps};
 
   const out=path.join(__dirname,'discover-all-report.json'); fs.writeFileSync(out, JSON.stringify(report,null,2));
   console.log('\n════════ SUMMARY ════════');
@@ -138,6 +159,8 @@ function record(name, ep, resp){ const rows=(resp.json&&(resp.json.data||resp.js
   console.log(`  Pregnancy/hCG reachable? ${anyPreg?'✓ YES':'✗ not for this patient'}`);
   console.log(`  Imaging/PACS/DePACS/GE endpoints in the app: ${imagingEps.length?('\n     '+imagingEps.slice(0,20).join('\n     ')):'none obvious'}`);
   console.log(`  Lab endpoints: ${labEps.length?labEps.join(', '):'none named (labs likely share the investigation search)'}`);
+  console.log(`  Stored insurance/policy readable on this patient? ${anyIns?('✓ YES — '+insFields.slice(0,8).join(', ')):'✗ no insurance-named field in the probed responses'}`);
+  console.log(`  Insurance/Nphies/eligibility ENDPOINTS in the app: ${insEps.length?('\n     '+insEps.slice(0,30).join('\n     ')+'\n     ⚠ candidates only — do NOT blind-call; an eligibility/claim call may hit Nphies for real.'):'none found — this HIS build likely has no eligibility module exposed to the SPA.'}`);
   console.log(`\n  Full report: ${out}  — send me this one file.`);
   process.exit(0);
 })().catch((e)=>{ console.error('\n✗ '+(e&&e.message||e)); process.exit(2); });
