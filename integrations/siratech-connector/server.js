@@ -2317,38 +2317,53 @@ async function _patientSearch(q, debug) {
   const isSaudiId = /^1\d{9}$/.test(digits);             // Saudi national ID starts 1
   const isIqama = /^2\d{9}$/.test(digits);               // Iqama starts 2
 
-  // Typed EMR-list search (the HIS UI's own path) for phone / national ID / Iqama —
-  // server-side filtered by type, so the rows are the real match. Send the NORMALISED
-  // value, and for a mobile try both 05… and 5… forms in case the HIS stored it bare.
-  const plans = [];
+  // ── Proven path (verified live against this HIS) ────────────────────────────
+  // Patient/Search filters SERVER-SIDE by `contactNumber` (mobile) and `idNumber`
+  // (Saudi ID / Iqama / passport — one ID field for all) as long as the `mrNo` key
+  // is present but empty. This is the reliable route: the older EMRSearchPanel/List
+  // path returns 0 rows on this build (its list is scoped to the caller's own EMR
+  // panel), so it stays only as a last-ditch fallback below.
+  const psSearch = async (body) => { try { return await hisFetch('/patient-api/api/v1/Patient/Search', { body }); } catch (_e) { return null; } };
+  // Keep only rows that really carry the searched number — the server match can be
+  // loose, so compare on the 9-digit core (5XXXXXXXX).
+  const phoneCore = mobileLocal ? mobileLocal.slice(-9) : null;
+  const phoneOK = (p) => { const d = String((p && p.phone) || '').replace(/\D/g, ''); return !phoneCore || d.endsWith(phoneCore); };
+
+  const psPlans = [];   // [label, body, postFilter]
   if (mobileLocal) {
-    // The EMR "phone" category id varies by HIS build (documented 6, but THIS instance
-    // returns 0 rows for 6). A phone value can only ever match the phone/contact field
-    // — never an ID or name field — so it is safe to try the plausible categories and
-    // use the FIRST that returns rows (self-healing across builds). Both 05… and bare
-    // 5… forms, in case the number is stored without the leading 0.
-    for (const cat of [6, 7, 8, 4, 5, 9, 10, 11]) plans.push(['PHONE NUMBER', cat, mobileLocal]);
-    for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, mobileLocal.slice(1)]);
-    // Reception sometimes stores the number WITH the country code ("966581453234" /
-    // "+966581453234") — the EMR search is an exact match, so those records are
-    // invisible to the 05…/5… forms above. Try the country-code shapes too (only on
-    // the categories that have ever matched, to bound the fan-out).
-    for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, '966' + mobileLocal.slice(1)]);
-    for (const cat of [6, 7, 8]) plans.push(['PHONE NUMBER', cat, '+966' + mobileLocal.slice(1)]);
-  } else if (isSaudiId) {
-    // National ID category 2 is confirmed working on this HIS; keep it first, iqama as fallback.
-    plans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
-  } else if (isIqama) {
-    // Iqama (non-Saudi, starts 2): the category id may differ by build like phone did.
-    // An iqama value only matches an ID field, so try the plausible id categories and
-    // use the FIRST that returns rows (self-healing). Include 2 in case this HIS uses
-    // ONE id field for both Saudi ID and iqama.
-    for (const cat of [3, 2, 4, 7, 8, 9, 10, 11]) plans.push(['IQAMA ID', cat, digits]);
+    // Try local 05…, bare 5…, and country-code 966… shapes (reception stores it
+    // inconsistently); the post-filter drops any loose matches.
+    psPlans.push(['contactNumber', { mrNo: '', contactNumber: mobileLocal }, phoneOK]);
+    psPlans.push(['contactNumber:5', { mrNo: '', contactNumber: mobileLocal.slice(1) }, phoneOK]);
+    psPlans.push(['contactNumber:966', { mrNo: '', contactNumber: '966' + mobileLocal.slice(1) }, phoneOK]);
+  } else if (isSaudiId || isIqama) {
+    // idNumber matches a Saudi national ID (starts 1) and an Iqama (starts 2) alike.
+    psPlans.push(['idNumber', { mrNo: '', idNumber: digits }, null]);
   }
-  for (const [idType, category, value] of plans) {
+  for (const [label, body, post] of psPlans) {
+    const r = await psSearch(body);
+    dbg(label, r);
+    let rows = patientsFrom(r);
+    if (post) rows = rows.filter(post);
+    if (rows.length) return { patients: rows, matchedBy: label, tried };
+  }
+
+  // Fallback: the EMR patient-list search (self-healing across HIS builds — kept in
+  // case a future build scopes/exposes it differently). Bounded fan-out.
+  const emrPlans = [];
+  if (mobileLocal) {
+    for (const cat of [6, 7, 8]) emrPlans.push(['PHONE NUMBER', cat, mobileLocal]);
+    for (const cat of [6, 7, 8]) emrPlans.push(['PHONE NUMBER', cat, mobileLocal.slice(1)]);
+  } else if (isSaudiId) {
+    emrPlans.push(['SAUDI ID', 2, digits], ['IQAMA ID', 3, digits]);
+  } else if (isIqama) {
+    for (const cat of [3, 2]) emrPlans.push(['IQAMA ID', cat, digits]);
+  }
+  for (const [idType, category, value] of emrPlans) {
     const r = await _emrSearch(idType, category, value);
     dbg(`EMR:${idType}:${value}`, r);
-    const rows = patientsFrom(r);
+    let rows = patientsFrom(r);
+    if (mobileLocal) rows = rows.filter(phoneOK);
     if (rows.length) return { patients: rows, matchedBy: idType, tried };
   }
 
