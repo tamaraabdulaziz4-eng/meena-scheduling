@@ -365,6 +365,11 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   box-shadow: var(--shadow);
   animation: pheroIn .7s cubic-bezier(.16,1,.3,1) both;
 }
+/* Signature "Flow" ribbon flourish sweeping across the hero. */
+.phero::after {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: .5;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 200' preserveAspectRatio='none'%3E%3Cpath d='M0 150C160 90 240 190 360 130S540 70 600 110' stroke='%236B4EFF' stroke-opacity='0.10' stroke-width='26' fill='none' stroke-linecap='round'/%3E%3Cpath d='M0 170C150 120 250 200 380 150S560 100 600 135' stroke='%238358FD' stroke-opacity='0.08' stroke-width='18' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right bottom/70% auto;
+}
 @keyframes pheroIn { from { opacity: 0; transform: translateY(16px) scale(.99); } to { opacity: 1; transform: none; } }
 .phero-orb { position: absolute; border-radius: 50%; filter: blur(2px); pointer-events: none; z-index: 1; }
 .phero-orb.p1 {
@@ -385,13 +390,13 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 }
 .phero-logo img { height: 34px; display: block; }
 .phero-text { min-width: 0; }
-.phero-hi { font-size: 14px; color: #8585A8; font-weight: 600; letter-spacing: .2px; }
+.phero-hi { font-size: 14px; color: var(--muted,#8585A8); font-weight: 600; letter-spacing: .2px; }
 .phero-title {
   font-size: 30px; font-weight: 800; letter-spacing: -.6px; line-height: 1.08; text-transform: capitalize;
   background: linear-gradient(135deg, #8358FD, #6B4EFF);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
-.phero-sub { font-size: 13px; color: #6b5fa6; font-weight: 600; margin-top: 8px; }
+.phero-sub { font-size: 13px; color: var(--ink-2,#6b5fa6); font-weight: 600; margin-top: 8px; }
 
 /* Larger "wow" hero for the manager Home — more presence + a live clock. */
 .phero-lg { padding: 34px 38px; border-radius: 30px; }
