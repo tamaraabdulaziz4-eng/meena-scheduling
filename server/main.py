@@ -6696,6 +6696,22 @@ async def radiology_conn_passthrough(path: str, request: Request, user=Depends(r
             body = None
     return _bridge_request("/his/" + path, method=request.method, body=body, timeout=150)
 
+@app.get("/api/radiology/study")
+def radiology_study_native(request: Request, user=Depends(require_radiology)):
+    """Native Siratech report text + cloud image-viewer URL + status for one exam,
+    keyed by mrno (+ accession or invPatTestResultId). Everything from Siratech — no
+    DePACS. Read-only. Powers the board's Report / Images buttons."""
+    import urllib.parse
+    mrno = (request.query_params.get("mrno") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "A patient file number (mrno) is required")
+    qs = "?mrno=" + urllib.parse.quote(mrno)
+    for k in ("accession", "invPatTestResultId"):
+        v = (request.query_params.get(k) or "").strip()
+        if v:
+            qs += f"&{k}=" + urllib.parse.quote(v)
+    return _bridge_request("/his/radiology/study" + qs, timeout=90)
+
 @app.get("/api/radiology/discover")
 def radiology_discover(user=Depends(require_superadmin)):
     """READ-ONLY diagnostic: enumerate every Siratech API endpoint (from its Angular

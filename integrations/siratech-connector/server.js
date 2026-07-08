@@ -403,6 +403,53 @@ app.post('/admin/his', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
+// ── Native Siratech report + image + status for ONE exam ───────────────────────
+// Everything from Siratech (no DePACS): status = cpoeStatusDescription; report text
+// = FetchRadiologyReport(invPatTestResultId); image = FetchRadiologyImage → a cloud
+// (ZFP) viewer URL. Keyed by mrno + accession (or invPatTestResultId). Read-only.
+app.get('/radiology/study', requireAuth, async (req, res) => {
+  const mrno = String(req.query.mrno || '').trim();
+  const accession = String(req.query.accession || '').trim();
+  const invId = String(req.query.invPatTestResultId || '').trim();
+  if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
+  try {
+    const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
+    const rows = (dr.json && dr.json.data) || [];
+    let row = null;
+    if (invId) row = rows.find((x) => String(x.invPatTestResultId) === invId);
+    if (!row && accession) row = rows.find((x) => String(x.accessionNumber || '') === accession);
+    if (!row) return res.json({ ok: true, found: false });
+    const out = {
+      ok: true, found: true,
+      status: row.cpoeStatusDescription || null,
+      hasReport: !!row.hasRadiologyRepot,
+      reportDate: row.reportDate || null,
+      serviceName: row.serviceName || null,
+      accession: row.accessionNumber || null,
+      invPatTestResultId: row.invPatTestResultId || null,
+      modality: row.modality || null,
+    };
+    // report text (native — FetchRadiologyReport)
+    if (row.hasRadiologyRepot && row.invPatTestResultId) {
+      try {
+        const rep = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyReport', { body: { invPatTestResultId: row.invPatTestResultId } });
+        const rd = rep.json && rep.json.data;
+        out.verifiedBy = (rd && rd.verifiedBy) || null;
+        out.reportText = (rd && Array.isArray(rd.radiologyDtlsDTO)
+          && rd.radiologyDtlsDTO.map((x) => x && x.message).filter(Boolean).join('\n\n')) || null;
+      } catch (_e) { /* report best-effort */ }
+    }
+    // image viewer url (native — FetchRadiologyImage → cloud ZFP viewer)
+    if (row.accessionNumber) {
+      try {
+        const im = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyImage', { body: { mrno, accessionNo: row.accessionNumber, hospitalId: row.siteId, pacsId: row.pacsId || undefined } });
+        out.imageUrl = (im.json && im.json.data && im.json.data.urlPath) || null;
+      } catch (_e) { /* image best-effort */ }
+    }
+    return res.json(out);
+  } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
 // ── Endpoint discovery (READ-ONLY) — "does Siratech expose a Nphies/eligibility
 // API?" ───────────────────────────────────────────────────────────────────────
 // Siratech is an Angular SPA: every API path it can call is baked into its JS
