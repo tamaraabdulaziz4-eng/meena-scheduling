@@ -354,7 +354,10 @@ function psExamCard(o, open) {
         </div>
         <div class="ps-sec-l">Clinical</div>
         <div class="ps-grid">
-          ${psField('Indication', o.clinicalIndication, { accent: true })}
+          <div class="ps-field" id="${repId}-ind"${o.clinicalIndication ? '' : ' style="display:none"'}>
+            <div class="ps-field-l">Indication</div>
+            <div class="ps-field-v" style="color:var(--accent)">${escapeHtml(o.clinicalIndication || '—')}</div>
+          </div>
           ${psField('Reason for order', o.reasonForOrder)}
           ${psField('Remarks', o.remarks)}
         </div>
@@ -377,54 +380,75 @@ function psExamCard(o, open) {
 function psRepId(o) {
   return 'ps-rep-' + String((o && (o.billNo || o.accessionNumber)) || Math.abs(psParseDate(o && o.orderedDate) || 0)).replace(/[^A-Za-z0-9_-]/g, '');
 }
-// Auto-load the reports for a patient's exams on open — no clicking. Runs the match
-// ONCE per file (cached) and fills every exam that has a verified report. Read-only.
+// Auto-load each exam's report on open — no clicking. Every report is pulled STRAIGHT
+// FROM SIRATECH (FetchRadiologyReport, keyed by the exam's own invPatTestResultId), so
+// there's no DePACS match and no per-file matching pass. One direct call per exam,
+// all fired together. Read-only.
 async function psAutoReports(orders) {
   if (!orders || !orders.length) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) return;
-  // Only bother if at least one exam is imaged/has a report — else the match call is wasted.
-  if (!orders.some((o) => o.hasReport || o.imaged)) return;
-  // psLoadReport shares the per-file match cache, so calling it for each exam triggers
-  // exactly one network match; the rest read the cache. Fire them together.
-  for (const o of orders) psLoadReport(String(o.billNo || ''), psRepId(o), null);
+  for (const o of orders) psLoadReport(o, psRepId(o));
 }
-// Lazy-load the DePACS report matched to THIS order (by bill number) and show the
-// radiologist, date, and impression preview inline. Read-only; the heavy match runs
-// once per file and is cached on psState.
-async function psLoadReport(billNo, elId, btn) {
+// Load THIS exam's native Siratech report (radiologist · date · full text) and, when
+// the structured indication is missing, fill it from the report's own CLINICAL DATA
+// line. Keyed by invPatTestResultId (falls back to the DICOM accession). Read-only.
+async function psLoadReport(o, elId, btn) {
   const el = document.getElementById(elId);
   if (!el) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { el.innerHTML = '<span style="color:var(--muted)">No file number.</span>'; return; }
+  const inv = o && o.invPatTestResultId;
+  const acc = o && o.accessionNumber;
+  if (!o.hasReport && !o.imaged && (inv == null || inv === 0)) {
+    el.innerHTML = '<span style="color:var(--muted);font-size:12px">⏳ Awaiting imaging — no report yet.</span>';
+    return;
+  }
   if (btn) { btn.disabled = true; btn.textContent = 'loading…'; }
-  if (!el.dataset.loaded) el.innerHTML = '<span style="color:var(--muted);font-size:12px">Loading report…</span>';
+  if (!el.dataset.loaded) el.innerHTML = '<span style="color:var(--muted);font-size:12px">Loading report from Siratech…</span>';
+  const qs = new URLSearchParams({ mrno: p.mrno });
+  if (inv != null && String(inv) !== '' && String(inv) !== '0') qs.set('invPatTestResultId', String(inv));
+  else if (acc) qs.set('accession', String(acc));
   try {
-    if (!psState.match || psState.match.mrno !== p.mrno) {
-      // Dedupe: auto-load fires this for every exam at once — share ONE network match.
-      if (!psState.matchPromise || psState.matchPromise.mrno !== p.mrno) {
-        psState.matchPromise = { mrno: p.mrno, promise: API.get(`/radiology/results/match/${encodeURIComponent(p.mrno)}`) };
-      }
-      const d = await psState.matchPromise.promise;
-      psState.match = { mrno: p.mrno, data: d };
-    }
-    const orders = (psState.match.data && psState.match.data.orders) || [];
-    const ord = billNo ? orders.find((o) => String(o.billNo) === String(billNo)) : orders[0];
-    const tests = (ord && ord.tests) || [];
-    const withRep = tests.find((t) => t.report && t.report.preview);
-    if (!withRep) {
-      const anyStudy = tests.find((t) => t.study);
-      el.innerHTML = `<div style="color:var(--muted);font-size:12px">No verified report matched yet${anyStudy ? ' (images found, report pending)' : ''}.</div>`;
+    const d = await API.get('/radiology/study?' + qs.toString());
+    const txt = String((d && d.reportText) || '').trim();
+    if (!txt) {
+      el.innerHTML = `<div style="color:var(--muted);font-size:12px">${d && d.found ? 'Report not verified yet' : 'No report on file yet'}${d && d.status ? ' · ' + escapeHtml(String(d.status)) : ''}.</div>`;
     } else {
-      const r = withRep.report;
+      el.dataset.loaded = '1';
+      const who = d.verifiedBy || 'Radiologist';
+      const when = d.reportDate ? ' · ' + escapeHtml(String(d.reportDate).slice(0, 16).replace('T', ' ')) : '';
       el.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card-alt,#f7f7fa)">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${escapeHtml(withRep.report.reviewer || 'Radiologist')}${r.reportDate ? ' · ' + escapeHtml(String(r.reportDate).slice(0, 16).replace('T', ' ')) : ''}${withRep.study && withRep.study.studyId ? ' · study #' + escapeHtml(String(withRep.study.studyId)) : ''}</div>
-        <div style="white-space:pre-wrap;font-size:12.5px;line-height:1.5">${escapeHtml(r.preview)}${r.preview && r.preview.length >= 590 ? '…' : ''}</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${escapeHtml(String(who))}${when}</div>
+        <div style="white-space:pre-wrap;font-size:12.5px;line-height:1.5">${escapeHtml(txt)}</div>
       </div>`;
+      // Backfill a missing indication from the report's own CLINICAL DATA line.
+      if (!o.clinicalIndication) {
+        const ind = psIndicationFromReport(txt);
+        if (ind) psFillIndication(o, ind);
+      }
     }
   } catch (e) {
     el.innerHTML = `<div style="color:var(--danger,#E25555);font-size:12px">${escapeHtml(e.message || 'Could not load the report')}</div>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📄 Load report'; }
   }
+}
+// Pull the clinical indication a teleradiology report embeds, e.g.
+// "CLINICAL DATA: SOB." → "SOB". Accepts CLINICAL DATA/HISTORY/INDICATION variants;
+// ignores empty/"none" values.
+function psIndicationFromReport(txt) {
+  const m = String(txt || '').match(/\b(?:CLINICAL\s+(?:DATA|HISTORY|INDICATION)|INDICATION|CLINICAL\s+NOTES?)\s*:?\s*(.+?)(?:\n|TECHNIQUE|COMPARISON|FINDINGS|IMPRESSION|CONCLUSION|$)/i);
+  let v = m ? m[1].trim().replace(/[.;\s]+$/, '').trim() : '';
+  if (!v || /^(none|n\/?a|not (?:available|provided|given|specified))\.?$/i.test(v)) return '';
+  return v.slice(0, 200);
+}
+// Reveal + fill the exam's Indication field once we've recovered it from the report.
+function psFillIndication(o, ind) {
+  const box = document.getElementById(psRepId(o) + '-ind');
+  if (!box) return;
+  o.clinicalIndication = ind;   // so a re-render keeps it
+  box.style.display = '';
+  const v = box.querySelector('.ps-field-v');
+  if (v) v.textContent = ind;
 }

@@ -323,6 +323,9 @@ function normalizeOrder(o, ext) {
     providerId: ext.providerId || null,
     payer: ext.payer || null,
     orderId: ext.orderId || null,
+    // The native per-exam result key — lets the patient card load THIS exam's report
+    // straight from Siratech (FetchRadiologyReport) instead of the slow DePACS match.
+    invPatTestResultId: o.invPatTestResultId != null ? o.invPatTestResultId : null,
   };
 }
 
@@ -616,7 +619,11 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
     // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
     // o.siteId, so once the site is right it finds the order's row and its indication.
     try {
-      const billToSite = await discoverOrderSites(file);
+      // Only probe the branches this patient's orders actually touch (+ the result
+      // site) instead of all 14 — the orders already carry their site, so this keeps
+      // the branch correction while cutting the fan-out that made the card slow.
+      const candidateSites = [...new Set(rawOrders.map((o) => Number(o.siteId)).filter((n) => Number.isFinite(n) && n > 0).concat(RESULT_SITE))];
+      const billToSite = await discoverOrderSites(file, candidateSites);
       for (const o of rawOrders) {
         const t = billToSite.get(String(o.billNo));
         if (t && t.siteId && Number(t.siteId) !== Number(o.siteId)) {
@@ -707,15 +714,23 @@ async function discoverOrderSite(file, wantBillNo) {
 // Query every site for THIS patient (pending + resulted) and map billNo -> true site.
 // Best-effort: a site that fails is skipped, and orders we can't place keep their
 // original site, so this can never regress below today's behaviour.
-async function discoverOrderSites(file) {
+async function discoverOrderSites(file, candidateSites) {
   const out = new Map();   // String(billNo) -> { siteId, site }
   try {
     await getToken();
     const empId = currentEmpId();
     if (!empId) return out;
     const siteList = await getSites().catch(() => []);
-    const sites = siteList.length ? siteList.map((s) => s.siteId) : [RESULT_SITE];
     const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+    // Scan ONLY the branches worth checking. The patient's own orders already name
+    // their site (FetchRadiologyDetails), so the caller passes those + the result
+    // site — turning a ~14-branch fan-out (28 HIS calls) into ~2-4. This is the main
+    // reason the patient card was slow; restricting it also cuts the timeouts that
+    // left the clinical indication blank.
+    const wanted = Array.isArray(candidateSites) && candidateSites.length
+      ? [...new Set(candidateSites.map(Number).filter((n) => Number.isFinite(n) && n > 0))]
+      : (siteList.length ? siteList.map((s) => s.siteId) : [RESULT_SITE]);
+    const sites = wanted;
     await pool(sites, STATS_SITE_CONCURRENCY, async (site) => {
       // filterResult 0 = still pending; the resulted-list shape (2 / selectionType 2 /
       // isFrequent 1) covers already-reported orders — query both so done exams place too.
