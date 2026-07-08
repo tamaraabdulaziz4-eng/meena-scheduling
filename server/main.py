@@ -6681,6 +6681,16 @@ def radiology_find(request: Request, user=Depends(require_radiology)):
     dbg = "&debug=1" if (request.query_params.get("debug") or "").strip() == "1" else ""
     return _bridge_request("/his/search?q=" + urllib.parse.quote(q) + dbg, timeout=60)
 
+@app.get("/api/radiology/discover")
+def radiology_discover(user=Depends(require_superadmin)):
+    """READ-ONLY diagnostic: enumerate every Siratech API endpoint (from its Angular
+    bundles) and highlight any insurance / eligibility / Nphies path. Answers "does
+    Siratech expose a Nphies eligibility API we could use?" without shelling into the
+    VPS. Superadmin-only; the connector launches a headless browser, so this is slow
+    (~40-90s) — never calls an eligibility/claim endpoint. Returns insuranceEndpoints
+    (empty = no Nphies module exposed to the app)."""
+    return _bridge_request("/his/discover/endpoints", timeout=180)
+
 def _rad_scope_site(user):
     """Branch isolation for radiology ("كل فرع لفرعه"). Returns the HIS site id a
     branch-locked team lead is confined to, or None for organisation-wide access.

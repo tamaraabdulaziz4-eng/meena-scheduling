@@ -361,6 +361,98 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, loggedIn: !!cache.auth, tokenAgeMs: cache.auth ? Date.now() - cache.ts : null });
 });
 
+// ── Endpoint discovery (READ-ONLY) — "does Siratech expose a Nphies/eligibility
+// API?" ───────────────────────────────────────────────────────────────────────
+// Siratech is an Angular SPA: every API path it can call is baked into its JS
+// bundles. This route headless-loads the app (own throwaway browser, does NOT
+// touch the token cache), records the JS bundles + live API calls, downloads each
+// bundle and greps out every `<mod>-api/api/vN/…` path, then highlights any that
+// look insurance / eligibility / Nphies related. It only READS static JS + observes
+// traffic — it never CALLS an eligibility/claim endpoint (that can fire a real,
+// billable Nphies transaction). Lets us drive discovery from Meena (via the bridge)
+// instead of shelling into the VPS. Single-flight so a double-click can't launch
+// two browsers on the small VPS.
+const INS_RE = /nphies|eligib|insur|coverage|\bpolicy\b|policyno|member(ship)?|beneficiar|sponsor|payer|\btpa\b|scheme|approval|preauth|pre-auth|deductib|copay|co-pay|benefit|claim|cchi/i;
+let _discoverInFlight = null;
+async function discoverEndpoints() {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+           '--disable-gpu', '--no-zygote', '--disable-extensions',
+           '--disable-background-networking', '--disable-software-rasterizer',
+           '--js-flags=--max-old-space-size=256'],
+  });
+  const liveApi = new Set(), jsUrls = new Set();
+  const clean = (u) => u.replace(HIS_BASE, '').split('?')[0].replace(/\/+$/, '');
+  try {
+    const page = await browser.newPage();
+    page.on('request', (r) => {
+      const u = r.url();
+      if (/-api\/api\/v\d+\//i.test(u)) liveApi.add(clean(u));
+      if (/\.js(\?|$)/i.test(u) && u.startsWith(HIS_BASE)) jsUrls.add(u.split('?')[0]);
+    });
+    await page.goto(HIS_BASE, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
+    // Log in so lazy feature chunks (where a billing/insurance module would live)
+    // actually load — same flow as doHeadlessLogin, but on a throwaway browser.
+    try {
+      await page.waitForSelector('#mat-input-0', { timeout: 25000 });
+      await page.click('#mat-input-0'); await page.type('#mat-input-0', HIS_USER, { delay: 40 });
+      await page.keyboard.press('Tab'); await sleep(3500);
+      const site = (await page.$('#focusablesite')) || (await page.$('mat-select'));
+      if (site) { await site.click(); await sleep(1500); const opts = await page.$$('mat-option'); let picked = false;
+        if (HIS_SITE) for (const o of opts) { const t = (await o.evaluate((e) => e.innerText)).trim();
+          if (t.toLowerCase().includes(HIS_SITE.toLowerCase())) { await o.click(); picked = true; break; } }
+        if (!picked && opts[0]) await opts[0].click(); await sleep(1000); }
+      await page.click('#passFocus'); await page.type('#passFocus', HIS_PASS, { delay: 40 }); await sleep(400);
+      const btn = await page.evaluateHandle(() => [...document.querySelectorAll('button')].find((e) => /login/i.test(e.innerText)));
+      if (btn) await btn.click().catch(() => {});
+      await sleep(12000);   // dashboard + lazy chunks
+    } catch (_e) { /* still harvest whatever JS loaded */ }
+    try {
+      const more = await page.evaluate(() => {
+        const s = new Set();
+        document.querySelectorAll('script[src]').forEach((e) => s.add(e.src));
+        (performance.getEntriesByType('resource') || []).forEach((r) => { if (/\.js(\?|$)/.test(r.name)) s.add(r.name); });
+        return [...s];
+      });
+      for (const u of more) if (u.startsWith(HIS_BASE) && /\.js/i.test(u)) jsUrls.add(u.split('?')[0]);
+    } catch (_e) { /* ignore */ }
+  } finally { await browser.close().catch(() => {}); }
+
+  // download each bundle, grep API paths
+  const API_RE = /([A-Za-z][\w-]*-api\/api\/v\d+\/[A-Za-z0-9_./-]+)/g;
+  const fromCode = new Set(); let fetched = 0;
+  for (const u of jsUrls) {
+    try {
+      const res = await fetch(u, { headers: { Accept: '*/*' }, signal: AbortSignal.timeout(30000) });
+      if (!res.ok) continue;
+      const txt = await res.text(); let m;
+      while ((m = API_RE.exec(txt)) !== null) { const p = m[1].replace(/['"`,);]+$/, ''); if (p.length >= 8 && p.length <= 160) fromCode.add(p); }
+      fetched++;
+    } catch (_e) { /* skip a bundle that won't fetch */ }
+  }
+  const all = [...new Set([...liveApi, ...fromCode])].sort();
+  const byModule = {};
+  for (const p of all) { const mod = (p.match(/([\w-]*-api)\/api\/v\d+/) || [, '(other)'])[1]; (byModule[mod] = byModule[mod] || []).push(p); }
+  const insuranceEndpoints = all.filter((p) => INS_RE.test(p));
+  return {
+    base: HIS_BASE, jsBundles: jsUrls.size, jsFetched: fetched, liveCalls: [...liveApi].sort(),
+    totalEndpoints: all.length, modules: Object.keys(byModule).sort(),
+    insuranceEndpoints,                       // ← the answer: empty = no Nphies module exposed to the SPA
+    byModuleCounts: Object.fromEntries(Object.entries(byModule).map(([m, a]) => [m, a.length])),
+    allEndpoints: all,
+  };
+}
+app.get('/discover/endpoints', requireAuth, async (_req, res) => {
+  try {
+    if (!_discoverInFlight) _discoverInFlight = discoverEndpoints().finally(() => { _discoverInFlight = null; });
+    const out = await _discoverInFlight;
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: String((e && e.message) || e) });
+  }
+});
+
 // Look up a patient's radiology orders by file (MRN) number.
 app.get('/patient/:file', requireAuth, async (req, res) => {
   let file = String(req.params.file || '').trim();
