@@ -272,13 +272,17 @@ async function psLoadVisits() {
   catch (e) { box.innerHTML = ''; return; }
   const visits = (d && d.visits) || [];
   if (!visits.length) { box.innerHTML = ''; return; }
-  const rows = visits.slice(0, 10).map((v) => {
+  const rows = visits.slice(0, 12).map((v) => {
     const er = String(v.visitType || '').toUpperCase() === 'ER';
     const badge = v.visitType ? `<span class="sc ${er ? 'no' : 'ok'}" style="${er ? '' : 'background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)'}">${escapeHtml(v.visitType)}</span>` : '';
-    return `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap">
-      <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:92px">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
-      ${badge}
-      <span style="flex:1;min-width:120px;color:var(--muted);font-size:12.5px">${escapeHtml(v.provider || '')}${v.site ? ` · ${escapeHtml(v.site)}` : ''}</span>
+    const sub = [v.provider, v.department, v.site].filter(Boolean).map(escapeHtml).join(' · ');
+    return `<div style="padding:7px 0;border-bottom:1px dashed var(--border)">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:92px">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
+        ${badge}
+        ${v.chiefComplaint ? `<span style="flex:1;min-width:120px;font-size:12.5px">${escapeHtml(v.chiefComplaint)}</span>` : '<span style="flex:1"></span>'}
+      </div>
+      ${sub ? `<div style="color:var(--muted);font-size:11.5px;margin-top:2px">${sub}</div>` : ''}
     </div>`;
   }).join('');
   box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div>${rows}</div>`;

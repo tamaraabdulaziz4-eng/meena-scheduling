@@ -727,37 +727,33 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
 });
 
 // ── Patient recent VISITS (READ-ONLY) ─────────────────────────────────────────
-// The patient's recent clinic encounters (date · OP/ER · ordering provider · branch)
-// from EncounterWise/Result — a real "browse the patient's history" view for the
-// radiologist. NOTE on labs: this imaging centre does not expose per-test lab VALUES
-// through any reachable API (the generic result search returns nothing even with
-// full credentials, and the "print" route is a UI page, not data), so only the
-// visit history is surfaced here, not lab numbers. Never writes.
+// The patient's clinic visits from Visits/ByFilter (captured live): each carries the
+// date, OP/ER type, in-charge provider + department, branch, and the CHIEF COMPLAINT
+// — a real "browse the patient's history" view for the radiologist, in one call
+// (hospitalId null = all branches). Never writes.
 app.get('/patient/:file/visits', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   try {
     await getToken();
-    const empId = currentEmpId() || '';
-    const siteList = await getSites().catch(() => []);
-    const sites = siteList.length ? siteList.map((s) => s.siteId) : [RESULT_SITE];
-    const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
-    const from = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
-    const to = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    const encMap = new Map();
-    await pool(sites, STATS_SITE_CONCURRENCY, async (site) => {
-      try {
-        const r = await hisFetch('/investigation-api/api/v1/ResultEntry/EncounterWise/Result', { body: {
-          mrno: file, fromDate: `${from}T00:00:00.000Z`, toDate: `${to}T23:59:59.000Z`,
-          baseInvCategoryId: 1, hospitalId: site, empId: String(empId) } });
-        for (const e of ((r.json && r.json.data) || [])) {
-          const k = String(e.patFinEncounterId);
-          if (!encMap.has(k)) encMap.set(k, { encounterId: e.patFinEncounterId, date: e.startDate,
-            visitType: e.visitType, provider: (e.providerName || '').trim(), site: e.site || nameOf.get(site) || null });
-        }
-      } catch (_e) { /* skip site */ }
-    });
-    const visits = [...encMap.values()].sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
+    const daysBack = Math.max(1, Math.min(3650, Number(req.query.days) || 365));
+    const from = new Date(Date.now() - daysBack * 864e5).toISOString();
+    const to = new Date(Date.now() + 864e5).toISOString();
+    const r = await hisFetch('/emr-api/api/v1/Visits/ByFilter', { body: {
+      mrno: file, fromDate: from, toDate: to, hospitalId: null, group: 0,
+      empcat: '1,2,3', searchText: '', searchType: 0 } });
+    const rows = (r.json && r.json.data) || [];
+    const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const visits = rows.map((v) => ({
+      encounterId: v.patFinEncounterID || null,
+      date: v.startDate || v.admitDate || null,
+      visitType: clean(v.episodeStatusText) || null,          // OP | ER | IP
+      provider: clean(v.inchargeProviderName) || null,
+      department: clean(v.inchargeProviderDept || v.deptName) || null,
+      site: clean(v.siteName) || null,
+      chiefComplaint: clean((v.chiefComplaints || '').replace(/;/g, ' · ')) || null,
+      problems: clean(v.problems) || null,
+    })).sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
     return res.json({ ok: true, file, visits, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
