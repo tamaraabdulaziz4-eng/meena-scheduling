@@ -443,7 +443,7 @@ function wlCurRank(it) {
 // Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
 // sibling pass may still be running, but whatever this one filled shows now.
 function wlMergeEnrich(d, isReady) {
-  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); }
+  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); if (wlState.laneCache) wlState.laneCache.clear(); }
   const enr = new Map();
   for (const it of ((d && d.items) || [])) {
     const k = wlRowKey(it);
@@ -675,12 +675,31 @@ function wlSection(key, title, secRows, prefix, color) {
 // native report flag (hisReported), with safe fallbacks to the exam timestamps and
 // the DePACS-grounded stage for rows the RIS panel hasn't stamped yet. One of:
 //   waiting · imaging · imaged · reported
-function wlLane(it) {
+const _WL_LANE_RANK = { waiting: 0, imaging: 1, imaged: 2, reported: 3 };
+const _WL_LANE_BY_RANK = ['waiting', 'imaging', 'imaged', 'reported'];
+wlState.laneCache = wlState.laneCache || new Map();   // rowKey -> highest lane rank ever shown
+function wlLaneRaw(it) {
   const s = String(it.hisStatus || '').toLowerCase();
   if (it.hisReported || it.stage === 'reported' || it.readyToFile) return 'reported';
   if (/scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt) return 'imaged';
   if (/in\s*progress|scanning|ongoing|started|arrived/.test(s) || it.examStartAt) return 'imaging';
   return 'waiting';   // Pending / Ordered / Scheduled
+}
+// RATCHET the lane forward (bug: "row jumps back to Waiting"). The radiology pipeline
+// is monotonic — images don't un-scan, a signed report doesn't un-sign, and a truly
+// finished row leaves the board entirely. So a row must never move BACKWARD. If a
+// refresh lands a row with a blank/weaker status (e.g. the connector's per-load status
+// cap didn't cover it this pass, or a transient HIS blip), we hold it at the highest
+// lane it has already shown instead of dropping it into Waiting. Keyless rows can't be
+// tracked safely (collision risk), so they use the raw lane.
+function wlLane(it) {
+  const raw = wlLaneRaw(it);
+  const k = wlRowKey(it);
+  if (!k) return raw;
+  const rawRank = _WL_LANE_RANK[raw];
+  const prev = wlState.laneCache.get(k);
+  if (prev == null || rawRank >= prev) { wlState.laneCache.set(k, rawRank); return raw; }
+  return _WL_LANE_BY_RANK[prev];   // hold the furthest-along lane already seen
 }
 
 // The native Siratech status pill (the HIS's OWN cpoeStatusDescription text, e.g.

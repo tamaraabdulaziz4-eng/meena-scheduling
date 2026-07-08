@@ -944,7 +944,13 @@ const WORKLIST_DAYS_BACK = Number(process.env.WORKLIST_DAYS_BACK || 3);
 // Per-mrno native radiology status cache (cpoeStatusDescription etc.) — keeps the
 // board's per-exam status fresh without re-hitting FetchRadiologyDetails every load.
 const RAD_STATUS_TTL = Number(process.env.RAD_STATUS_TTL_MS || 90000);
-const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 220);   // cap new lookups per load
+// Cap on new per-mrno status lookups per load. It MUST exceed the distinct-patient
+// count of the whole board, or the rows past the cap get no hisStatus and fall into
+// "Waiting" until a later refresh covers them — the "everyone starts in Waiting then
+// jumps to their lane" glitch. Adding N3 pushed the board over the old 220, so it
+// resurfaced; 400 gives headroom (lookups are 90s-cached + concurrency-bounded, so a
+// full cold sweep is paid once per window, then instant).
+const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 400);   // cap new lookups per load
 const radStatusCache = new Map();   // mrno -> { ts, byKey: Map(key -> {status,cpoe,reported,imaged,invId,acc}) }
 
 // HIS timestamps come as NAIVE local KSA strings ("2026-07-05T09:06:00", no offset).
