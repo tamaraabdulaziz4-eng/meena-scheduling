@@ -407,6 +407,23 @@ app.post('/admin/his', requireAuth, async (req, res) => {
 // Everything from Siratech (no DePACS): status = cpoeStatusDescription; report text
 // = FetchRadiologyReport(invPatTestResultId); image = FetchRadiologyImage → a cloud
 // (ZFP) viewer URL. Keyed by mrno + accession (or invPatTestResultId). Read-only.
+// TEMP diagnostic: reveal FetchRISPanel's real field names + status/report values so
+// we can map the native status correctly (uses the connector's own userId). Read-only.
+app.get('/admin/rispanel-debug', requireAuth, async (req, res) => {
+  const site = Number(req.query.site || 1);
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+      mrno: '', fromDate: today + 'T00:00:00', toDate: today + 'T23:59:59',
+      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+      serviceCategoryId: 0, emrPatRisPanelId: 0, userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+    } });
+    const rows = (rp.json && rp.json.data) || [];
+    const pick = rows.slice(0, 4).map((r) => { const o = {}; for (const k of Object.keys(r)) if (/status|report|verif|scan|arriv|exam|cpoe|done|progress|pend/i.test(k)) o[k] = r[k]; return o; });
+    res.json({ ok: true, count: rows.length, keys: rows[0] ? Object.keys(rows[0]) : [], statusish: pick });
+  } catch (e) { res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
 app.get('/radiology/study', requireAuth, async (req, res) => {
   const mrno = String(req.query.mrno || '').trim();
   const accession = String(req.query.accession || '').trim();

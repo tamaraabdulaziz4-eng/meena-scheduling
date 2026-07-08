@@ -646,10 +646,10 @@ function wlRender() {
     body.innerHTML = modChips + `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`;
   } else {
     body.innerHTML = modChips
-      + wlSection('waiting', 'في الانتظار · Waiting', grp.waiting, 'w', 'var(--muted,#98a2b3)')
-      + wlSection('imaging', 'قيد التصوير · In imaging', grp.imaging, 'g', 'var(--blue,#3BA0FF)')
-      + wlSection('imaged', 'تم التصوير · Imaged', grp.imaged, 'i', 'var(--yellow,#FFBA49)')
-      + wlSection('reported', 'تم التقرير · Reported', grp.reported, 'r', 'var(--green,#00C896)');
+      + wlSection('waiting', 'Waiting', grp.waiting, 'w', 'var(--muted,#98a2b3)')
+      + wlSection('imaging', 'In imaging', grp.imaging, 'g', 'var(--blue,#3BA0FF)')
+      + wlSection('imaged', 'Imaged', grp.imaged, 'i', 'var(--yellow,#FFBA49)')
+      + wlSection('reported', 'Reported', grp.reported, 'r', 'var(--green,#00C896)');
   }
   wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
