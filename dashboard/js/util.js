@@ -296,13 +296,13 @@ function applyDark() {
   document.body.classList.add('dark');
   const i = document.getElementById('theme-icon'); if (i) i.textContent = '☀️';
   const l = document.getElementById('theme-label'); if (l) l.textContent = 'Light Mode';
-  _setThemeColor('#0f0d1e');
+  _setThemeColor('#0d0b1a');
 }
 function applyLight() {
   document.body.classList.remove('dark');
   const i = document.getElementById('theme-icon'); if (i) i.textContent = '🌙';
   const l = document.getElementById('theme-label'); if (l) l.textContent = 'Dark Mode';
-  _setThemeColor('#f4f2fc');
+  _setThemeColor('#f6f5fb');
 }
 function toggleTheme() {
   if (document.body.classList.contains('dark')) {
