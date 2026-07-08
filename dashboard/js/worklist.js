@@ -634,25 +634,22 @@ function wlRender() {
   let rows = items;
   if (wlState.modFilter) rows = rows.filter((it) => wlRowMod(it) === wlState.modFilter);
 
-  // ── Split into three clear sections by where the study is, so nothing is a flat
-  //    mess and nothing vanishes: قيد الانتظار (waiting) · تم التصوير (imaged) ·
-  //    التقارير (reported). Every patient sits under exactly one section; counts live
-  //    in the headers. Waiting is open; the done sections start collapsed (click to open).
-  wlState.collapsedSections = wlState.collapsedSections || new Set();   // all sections open by default
-  const grp = { waiting: [], imaged: [], reported: [] };
-  for (const it of rows) {
-    const b = it.__bucket;
-    if (b === 'imaged') grp.imaged.push(it);
-    else if (b === 'reporting' || b === 'reported') grp.reported.push(it);
-    else grp.waiting.push(it);
-  }
+  // ── Split into FOUR clear stage lanes driven by Siratech's OWN status
+  //    (cpoeStatusDescription: Pending / Scan In Progress / Scan Done) + the native
+  //    report flag — every patient sits under exactly one lane and moves to the next
+  //    the moment its HIS status updates (live 45s refresh). Counts live in the headers.
+  //      في الانتظار (waiting) · قيد التصوير (imaging) · تم التصوير (imaged) · تم التقرير (reported)
+  wlState.collapsedSections = wlState.collapsedSections || new Set();   // all lanes open by default
+  const grp = { waiting: [], imaging: [], imaged: [], reported: [] };
+  for (const it of rows) grp[wlLane(it)].push(it);
   if (!rows.length) {
     body.innerHTML = modChips + `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`;
   } else {
     body.innerHTML = modChips
-      + wlSection('waiting', 'Waiting to scan', grp.waiting, 'w')
-      + wlSection('imaged', 'Imaged', grp.imaged, 'i')
-      + wlSection('reported', 'Reported', grp.reported, 'r');
+      + wlSection('waiting', 'في الانتظار · Waiting', grp.waiting, 'w', 'var(--muted,#98a2b3)')
+      + wlSection('imaging', 'قيد التصوير · In imaging', grp.imaging, 'g', 'var(--blue,#3BA0FF)')
+      + wlSection('imaged', 'تم التصوير · Imaged', grp.imaged, 'i', 'var(--yellow,#FFBA49)')
+      + wlSection('reported', 'تم التقرير · Reported', grp.reported, 'r', 'var(--green,#00C896)');
   }
   wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
@@ -662,7 +659,7 @@ function wlRender() {
 // One collapsible board section. Rows sort STAT→newest within the section. The done
 // sections (imaged/reported) dim their rows via `.done`. Collapse state persists in
 // wlState.collapsedSections across every repaint (poll, enrich, modality switch).
-function wlSection(key, title, secRows, prefix) {
+function wlSection(key, title, secRows, prefix, color) {
   const n = secRows.length;
   const collapsed = wlState.collapsedSections.has(key);
   const sorted = secRows.slice().sort((a, b) =>
@@ -670,13 +667,42 @@ function wlSection(key, title, secRows, prefix) {
   const inner = collapsed ? ''
     : (n ? `<div class="board"><div class="rows">${sorted.map((it, i) => wlRow(it, prefix + i)).join('')}</div></div>`
          : `<div class="wl-sec-empty">No studies in this stage right now.</div>`);
-  return `<div class="wl-sec sec-${key}${collapsed ? ' collapsed' : ''}" data-sec="${key}">
+  const dot = color ? ` style="background:${color}"` : '';
+  const bar = color ? `box-shadow:inset 3px 0 0 ${color};` : '';
+  return `<div class="wl-sec sec-${key}${collapsed ? ' collapsed' : ''}" data-sec="${key}" style="${bar}">
     <button class="wl-sec-h" onclick="wlToggleSection('${key}')">
-      <span class="wl-sec-dot"></span>
+      <span class="wl-sec-dot"${dot}></span>
       <span class="wl-sec-t">${title}</span>
       <span class="wl-sec-n">${n}</span>
       <span class="wl-sec-chev">${collapsed ? '›' : '⌄'}</span>
     </button>${inner}</div>`;
+}
+
+// Native Siratech workflow lane for the board. Driven by the HIS's own status text
+// (hisStatus = cpoeStatusDescription: Pending / Scan In Progress / Scan Done) and its
+// native report flag (hisReported), with safe fallbacks to the exam timestamps and
+// the DePACS-grounded stage for rows the RIS panel hasn't stamped yet. One of:
+//   waiting · imaging · imaged · reported
+function wlLane(it) {
+  const s = String(it.hisStatus || '').toLowerCase();
+  if (it.hisReported || it.stage === 'reported' || it.readyToFile) return 'reported';
+  if (/scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt) return 'imaged';
+  if (/in\s*progress|scanning|ongoing|started|arrived/.test(s) || it.examStartAt) return 'imaging';
+  return 'waiting';   // Pending / Ordered / Scheduled
+}
+
+// The native Siratech status pill (the HIS's OWN cpoeStatusDescription text, e.g.
+// "Scan Done" / "Scan In Progress" / "Pending"), coloured by its lane. Empty until
+// the RIS-panel enrichment stamps the row — the derived badge shows meanwhile.
+function wlHisBadge(it) {
+  if (!it.hisStatus) return '';
+  const lane = wlLane(it);
+  const color = lane === 'reported' ? 'var(--green,#00C896)'
+    : lane === 'imaged' ? 'var(--yellow,#FFBA49)'
+      : lane === 'imaging' ? 'var(--blue,#3BA0FF)' : 'var(--muted,#98a2b3)';
+  return `<span class="ris" title="Live status from Siratech"
+     style="background:transparent;border:1px solid ${color};color:${color}">
+     <span class="rd" style="background:${color}"></span>${escapeHtml(String(it.hisStatus))}</span>`;
 }
 function wlToggleSection(key) {
   wlState.collapsedSections = wlState.collapsedSections || new Set();
@@ -973,9 +999,10 @@ function wlRow(it, key) {
   const mv = rk && wlState.movedTags.get(rk);
   const moved = (mv && (Date.now() - mv.at < 8000))
     ? `<div class="movedtag">${icon('check')}moved from “${escapeHtml(mv.from)}” just now</div>` : '';
-  // Second action: Report PDF for imaged-or-later rows, otherwise Handoff.
-  const secondBtn = (done || bucket === 'reporting')
-    ? `<button class="btn ghost" onclick="wlRowPdf('${dkey}')">${icon('file-text')}Report PDF</button>`
+  // Second action: native Siratech report + images (report text + cloud viewer) for
+  // imaged-or-later rows; otherwise Handoff. Everything from Siratech, no DePACS.
+  const secondBtn = (done || bucket === 'reporting' || wlLane(it) === 'imaged' || wlLane(it) === 'reported')
+    ? `<button class="btn ghost" onclick="odOpenStudy(this,'${jsAttr(it.mrno)}','${jsAttr(acc || '')}')">${icon('file-text')}Report / Images</button>`
     : `<button class="btn ghost" onclick="wlOpenHandoff('${jsAttr(it.mrno)}')">${WL_SVG.send}Handoff</button>`;
   // Row-level one-click indication write — only where it matters: images are in PACS but
   // the report isn't filed yet. Hidden for waiting (no study) and reported/done (moot).
@@ -996,7 +1023,7 @@ function wlRow(it, key) {
         ${acc ? `<span class="acc" title="DICOM accession">${WL_SVG.link}${escapeHtml(String(acc))}</span>` : ''}
       </div>
       <div class="when"><div class="big tnum">${wlTimeOnly(it.orderedDate)}</div>${(age && !done && bucket !== 'reported') ? '<div class="sm wait tnum">waiting ' + age + '</div>' : '<div class="sm tnum">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
-      <div>${wlRisStatusBadge(it)}${moved}</div>
+      <div>${wlHisBadge(it) || wlRisStatusBadge(it)}${moved}</div>
       <div class="acts">
         <button class="btn ${it.emergency ? 'solid' : 'primary'}" id="wl-open-${dkey}" onclick="wlToggle('${dkey}','${jsAttr(it.mrno)}',${Number(it.site) || 0},this)">${openLbl}</button>
         ${secondBtn}

@@ -1069,6 +1069,10 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
           examStart: row.examStartDate || null,
           examEnd: row.examEndDate || null,
           arrival: row.arrivalDate || null,
+          // Native report-ready signal straight from Siratech's RIS panel (no DePACS):
+          // a report/verified status text, or an explicit report flag on the row.
+          reported: /(verif|report|sign|approv|final|released|authenticat)/i.test(st)
+            || Number(row.radioReportStatus) > 0 || !!row.hasRadiologyRepot || Number(row.reportStatus) > 0,
         });
         risByBill.set(String(row.billNo), list);
       }
@@ -1098,6 +1102,10 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
       row.examStartAt = e.examStart || null;
       row.examEndAt = e.examEnd || null;
       row.arrivedAt = e.arrival || null;
+      // Native Siratech workflow status text (Pending / Scan In Progress / Scan Done…)
+      // + native report-ready flag — these drive the board's stage lanes directly.
+      row.hisStatus = e.status || null;
+      row.hisReported = !!e.reported;
       if (e.billDate) {
         row.orderedDate = e.billDate;
         const bt = parseHisDate(e.billDate);
