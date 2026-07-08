@@ -424,8 +424,10 @@ app.post('/admin/his', requireAuth, async (req, res) => {
     return res.status(403).json({ ok: false, error: 'refused: only internal read-only HIS paths are allowed here' });
   }
   try {
-    const r = await hisFetch(path, { method: String(method || 'POST').toUpperCase() === 'GET' ? 'GET' : 'POST', body: body || {} });
-    return res.json({ ok: true, status: r.status, data: r.json });
+    // GET endpoints (many result/print views) reject a request body — send none on GET.
+    const M = String(method || 'POST').toUpperCase() === 'GET' ? 'GET' : 'POST';
+    const r = await hisFetch(path, { method: M, body: M === 'GET' ? undefined : (body || {}) });
+    return res.json({ ok: true, status: r.status, data: r.json, text: r.json == null ? String(r.text || '').slice(0, 4000) : undefined });
   } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
