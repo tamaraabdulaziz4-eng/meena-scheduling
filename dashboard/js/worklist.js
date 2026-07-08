@@ -788,8 +788,17 @@ function wlIsFemale(g) {
   const s = String(g || '').trim().toLowerCase();
   return s.startsWith('f') || /أنث|انث/.test(s);
 }
+// Non-pregnancy consent + β-hCG check are RADIATION-safety measures: they apply
+// only to a female patient having an IONISING-radiation exam. Ultrasound (US)
+// and MRI (MR) use no ionising radiation, so they never need either. An unknown
+// modality is treated as radiation until enrichment resolves it — we never hide
+// a safety prompt when unsure.
+const WL_NONRAD_MODS = new Set(['US', 'MR']);
+function wlNeedsRadSafety(it) {
+  return wlIsFemale(it.gender) && !WL_NONRAD_MODS.has(wlRowMod(it));
+}
 function wlConsentEl(it) {
-  if (!wlIsFemale(it.gender)) return '';
+  if (!wlNeedsRadSafety(it)) return '';
   if (it.consentOnFile) return '<span class="sc ok" title="Non-pregnancy consent signed">✓ Consent</span>';
   return `<button class="sc no" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">⚠ Consent needed</button>`;
 }
@@ -799,7 +808,7 @@ function wlConsentEl(it) {
 // verdict is cached so a live refresh keeps it. This never blocks imaging — it just
 // surfaces what Siratech's lab module already knows.
 function wlPregEl(it) {
-  if (!wlIsFemale(it.gender)) return '';
+  if (!wlNeedsRadSafety(it)) return '';
   const mr = String(it.mrno || '');
   const cached = wlState.pregCache.get(mr);
   // A patient can occupy several rows (one per exam on a bundled bill), so key the cell
@@ -828,7 +837,7 @@ function wlAutoPreg() {
   const items = (wlState.data && wlState.data.items) || [];
   const seen = new Set(_wlPregQueue.map((x) => x.mr));
   for (const it of items) {
-    if (!wlIsFemale(it.gender)) continue;
+    if (!wlNeedsRadSafety(it)) continue;         // radiation exams only (skip US / MRI)
     const mr = String(it.mrno || '');
     if (!mr || wlState.pregCache.has(mr) || seen.has(mr) || _wlPregInflight.has(mr)) continue;
     seen.add(mr);
