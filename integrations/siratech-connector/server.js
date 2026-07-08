@@ -420,7 +420,18 @@ app.get('/admin/rispanel-debug', requireAuth, async (req, res) => {
     } });
     const rows = (rp.json && rp.json.data) || [];
     const pick = rows.slice(0, 4).map((r) => { const o = {}; for (const k of Object.keys(r)) if (/status|report|verif|scan|arriv|exam|cpoe|done|progress|pend/i.test(k)) o[k] = r[k]; return o; });
-    res.json({ ok: true, count: rows.length, keys: rows[0] ? Object.keys(rows[0]) : [], statusish: pick });
+    // Also probe RadiologySearch (the free site-wide source) — does IT carry the text status?
+    let rs = { keys: [], statusish: [] };
+    try {
+      const today2 = today;
+      const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+        body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId: currentEmpId(), filterResult: '0', fromDate: today2 + 'T00:00:00.000Z', toDate: today2 + 'T23:59:59.000Z' }),
+      });
+      const srows = (sr.json && sr.json.data) || [];
+      rs.keys = srows[0] ? Object.keys(srows[0]) : [];
+      rs.statusish = srows.slice(0, 4).map((r) => { const o = {}; for (const k of Object.keys(r)) if (/status|report|verif|scan|cpoe|done|progress|pend/i.test(k)) o[k] = r[k]; return o; });
+    } catch (e) { rs.err = String((e && e.message) || e); }
+    res.json({ ok: true, ris: { count: rows.length, keys: rows[0] ? Object.keys(rows[0]) : [], statusish: pick }, radiologySearch: rs });
   } catch (e) { res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
