@@ -702,11 +702,28 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   try {
     await getToken();
     const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
-    const [dx, allergyD, vitalList] = await Promise.all([
+    const G = (path) => hisFetch(path, { method: 'GET' }).then((r) => (r.json && r.json.data)).catch(() => null);
+    const [dx, allergyD, vitalList, patData] = await Promise.all([
       H('/emr-api/api/v1/Diagnosis/PatientProblemlist', { mrno: file }),
       H('/emr-api/api/v1/EMR/Allergies/ClinicalWarnings', { mrno: file }),
       H('/emr-api/api/v1/VitalSign/List', { mrno: file }),
+      G('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0'),
     ]);
+    // Radiology-relevant patient flags: infection status (isolation / contrast &
+    // scanner precautions), blood group, VIP, and any clinical warning text.
+    const pd = (Array.isArray(patData) ? patData[0] : patData) || {};
+    const infections = [];
+    if (Number(pd.isHepatitisB) > 0) infections.push('Hep B');
+    if (Number(pd.isHepatitisC) > 0) infections.push('Hep C');
+    if (Number(pd.isHiv) > 0) infections.push('HIV');
+    const flags = {
+      bloodGroup: (pd.bloodGroup || '').toString().trim() || null,
+      infections,
+      vip: Number(pd.isVip) > 0,
+      clinicalWarning: (pd.clinicalWarning || '').toString().trim() || null,
+      lastVisitDate: pd.lastVistDate ? String(pd.lastVistDate).slice(0, 10) : null,
+      lastVisitSite: (pd.lastVistSite || '').toString().trim() || null,
+    };
     const seen = new Set();
     const diagnoses = (Array.isArray(dx) ? dx : [])
       .map((d) => ({ icdCode: d.icdCode || null, name: (d.icdName || '').trim(),
@@ -719,7 +736,7 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       warnings: _clinAllergyList(A.clinicalWarning),
     };
     allergies.any = allergies.drug.length + allergies.other.length + allergies.warnings.length;
-    return res.json({ ok: true, file, diagnoses, allergies, vitals: _clinVitals(vitalList),
+    return res.json({ ok: true, file, diagnoses, allergies, vitals: _clinVitals(vitalList), flags,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });

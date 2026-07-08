@@ -228,8 +228,20 @@ async function psLoadClinical() {
   const dx = (d && d.diagnoses) || [];
   const al = (d && d.allergies) || {};
   const vi = d && d.vitals;
+  const fl = (d && d.flags) || {};
   const secL = (t) => `<div class="ps-sec-l" style="margin-top:14px">${t}</div>`;
   let html = '';
+  // Infection status — isolation / scanner & contrast precautions. Must be loud.
+  if (fl.infections && fl.infections.length) {
+    html += `<div class="ps-alert" style="margin-top:12px;background:rgba(192,38,26,0.12);border-color:#c0261a">🧬 <b>Infection status:</b> ${fl.infections.map(escapeHtml).join(' · ')} — observe precautions.</div>`;
+  }
+  // Blood group + VIP + any clinical warning as compact chips.
+  const infoChips = [
+    fl.bloodGroup ? `<span style="display:inline-flex;gap:5px;align-items:baseline;background:var(--card-alt,#f4f4f8);border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:12.5px"><b>${escapeHtml(fl.bloodGroup)}</b><span style="color:var(--muted)">Blood</span></span>` : '',
+    fl.vip ? `<span style="background:#7c5cff;color:#fff;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700">VIP</span>` : '',
+  ].filter(Boolean).join('');
+  if (infoChips) html += secL('Patient flags') + `<div style="display:flex;gap:7px;flex-wrap:wrap">${infoChips}</div>`;
+  if (fl.clinicalWarning) html += `<div class="ps-alert" style="margin-top:10px">⚠️ <b>Clinical warning:</b> ${escapeHtml(fl.clinicalWarning)}</div>`;
   // Allergies / warnings FIRST — contrast safety must be impossible to miss.
   const allergies = [...(al.drug || []).map((x) => ({ ...x, k: 'Drug' })),
     ...(al.other || []).map((x) => ({ ...x, k: '' })), ...(al.warnings || []).map((x) => ({ ...x, k: 'Warning' }))];
