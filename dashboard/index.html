@@ -337,10 +337,15 @@
     </div>
 
     <div class="sidebar-search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-      <input id="sb-patient-search" type="search" inputmode="search" enterkeyhint="search" autocomplete="off"
-             placeholder="Search patient — MRN, ID, phone"
-             onkeydown="if(event.key==='Enter'){openPatientLookup(this.value);this.blur();}">
+      <div class="sidebar-search-lbl">
+        <img src="/nafath_logo.png" alt="Nafath"> نفاذ · Nafath ID search
+      </div>
+      <div class="sidebar-search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+        <input id="sb-patient-search" type="search" inputmode="search" enterkeyhint="search" autocomplete="off"
+               placeholder="National ID · Iqama · MRN · phone"
+               onkeydown="if(event.key==='Enter'){openPatientLookup(this.value);this.blur();}">
+      </div>
     </div>
 
     <nav class="sidebar-nav">

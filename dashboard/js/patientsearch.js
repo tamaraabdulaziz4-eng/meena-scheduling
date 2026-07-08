@@ -192,13 +192,11 @@ function renderPsDetail() {
       <div id="ps-labresults"></div>
       <div id="ps-visits"></div>
       <div id="ps-appts"></div>
-      ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
-        ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
-        : ''}
       <div class="ps-consent">
-        <button class="btn btn-primary ps-consent-btn${psIsFemale(p) ? ' female' : ''}" onclick="psStartConsent()">
-          🖊️ ${psIsFemale(p) ? 'Non-pregnancy consent · إقرار عدم الحمل' : 'New consent · كونسينت'}</button>
-        <button class="btn btn-ghost ps-consent-btn" style="margin-inline-start:8px" onclick="psUploadDocument()">📎 Upload document</button>
+        ${psIsFemale(p)
+          ? `<button class="btn btn-primary ps-consent-btn female" onclick="psStartConsent()">🖊️ Non-pregnancy consent · إقرار عدم الحمل</button>`
+          : ''}
+        <button class="btn btn-ghost ps-consent-btn"${psIsFemale(p) ? ' style="margin-inline-start:8px"' : ''} onclick="psUploadDocument()">📎 Upload document</button>
         <div id="ps-consent-list" class="ps-consent-list"></div>
         <div id="ps-doc-list" class="ps-consent-list"></div>
       </div>
