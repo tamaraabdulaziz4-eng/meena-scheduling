@@ -61,6 +61,14 @@ async function psSearch() {
   } finally { psState.loading = false; }
 }
 
+// ELM / Nafath identity-verification chip. The HIS marks a patient whose national
+// identity was verified through Nafath (ELM · Absher/Yakeen) with `elmVerified`.
+function psElmChip(p) {
+  if (!p || !p.elmVerified) return '';
+  return '<span class="nafath-chip" title="Identity verified via Nafath (ELM · Absher)">'
+    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 3v6c0 5-3.5 8-7 9-3.5-1-7-4-7-9V5z"/><path d="M9 12l2 2 4-4"/></svg>'
+    + 'Nafath</span>';
+}
 function renderPsResults() {
   const box = document.getElementById('ps-results');
   if (!box) return;
@@ -78,7 +86,7 @@ function renderPsResults() {
            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psOpen(${i})}"
            style="cursor:pointer${i === psState.sel ? ';background:var(--violet-wash,#F0EDFF)' : ''}">
         <div class="pt" style="flex:1;min-width:0">
-          <div class="pname">${escapeHtml(p.name || '—')}${p.nameArabic ? ' <span style="font-weight:500;color:var(--muted)">· ' + escapeHtml(p.nameArabic) + '</span>' : ''}</div>
+          <div class="pname">${escapeHtml(p.name || '—')}${p.nameArabic ? ' <span style="font-weight:500;color:var(--muted)">· ' + escapeHtml(p.nameArabic) + '</span>' : ''} ${psElmChip(p)}</div>
           <div class="pmeta"><span>🆔 ${escapeHtml(p.mrno || '—')}</span>${p.nationalId ? '<i></i><span>' + escapeHtml(p.nationalId) + '</span>' : ''}${p.phone ? '<i></i><span>📞 ' + escapeHtml(p.phone) + '</span>' : ''}${p.age ? '<i></i><span>' + escapeHtml(p.age) + '</span>' : ''}</div>
         </div>
         ${i === psState.sel
@@ -163,6 +171,7 @@ function renderPsDetail() {
             ${p.gender ? `<span class="ps-chip ps-chip-strong">${escapeHtml(p.gender)}</span>` : ''}
             ${p.age ? `<span class="ps-chip">${escapeHtml(p.age)}</span>` : ''}
             ${p.nationality ? `<span class="ps-chip">${escapeHtml(p.nationality)}</span>` : ''}
+            ${psElmChip(p)}
           </div>
         </div>
         <div class="ps-id-mrn">

@@ -359,6 +359,8 @@ function normalizePatient(p) {
     dob: p.dob ? String(p.dob).slice(0, 10) : '',
     nationalId: p.saudiid || p.iqamaId || p.passportId || null,
     nationality: p.countryName || '',
+    // ELM / Nafath (Absher/Yakeen) national-identity verification status.
+    elmVerified: !!(p.iselmVerified || p.iselmverified || p.isElmVerified),
     // ── clinically-relevant extras (best-effort; present only if the HIS row has them) ──
     height: height != null ? String(height) : null,
     weight: weight != null ? String(weight) : null,
