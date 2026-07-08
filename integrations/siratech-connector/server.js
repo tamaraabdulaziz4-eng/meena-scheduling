@@ -790,32 +790,53 @@ function _labRound(v) {
   if (!Number.isFinite(n) || !/^-?\d*\.?\d+$/.test(s)) return s;   // non-numeric → as-is
   return (Math.round(n * 100) / 100).toString();                  // 7.1462 → 7.15, 18 → 18
 }
-function _flattenLabs(list) {
-  const out = [];
-  const walk = (items) => {
-    for (const it of (items || [])) {
-      const di = it.dataItems || {};
-      for (const dt of Object.keys(di)) {
-        for (const v of (di[dt] || [])) {
-          const val = _labRound(v && v.value);
-          if (val === '') continue;                               // profile parents carry an empty value → skip
-          out.push({
-            name: (it.test || '').trim() || 'Test',
-            value: val,
-            range: (it.normalRange || '').trim() || null,
-            abnormal: /abnormal/i.test((v && v.severityRange) || ''),
-            critical: !!(v && v.isCritical),
-            date: (v && v.entryDate) || dt || null,
-            by: ((v && v.employeeName) || '').trim() || null,
-            id: (v && v.invPatTestResultID) || null,
-          });
-        }
-      }
-      if (it.children && it.children.length) walk(it.children);
+// The newest non-empty value on a leaf test → a clean result object (or null).
+function _labLeafVal(it) {
+  const di = it.dataItems || {};
+  for (const dt of Object.keys(di)) {
+    for (const v of (di[dt] || [])) {
+      const val = _labRound(v && v.value);
+      if (val === '') continue;
+      return {
+        name: (it.test || '').trim() || 'Test', value: val,
+        range: (it.normalRange || '').trim() || null,
+        abnormal: /abnormal/i.test((v && v.severityRange) || ''),
+        critical: !!(v && v.isCritical),
+        date: (v && v.entryDate) || dt || null,
+        by: ((v && v.employeeName) || '').trim() || null,
+        id: (v && v.invPatTestResultID) || null,
+      };
     }
-  };
-  walk(list);
-  return out;
+  }
+  return null;
+}
+// A profile's display name: "Lipid Profile [Total Cholesterol, …]" → "Lipid Profile".
+function _panelName(s) {
+  const n = String(s || '').split('[')[0].replace(/\s+/g, ' ').trim();
+  return n || 'Panel';
+}
+// Group the report tree into PANELS (Lipid Profile, Liver Function, Renal profile, …);
+// stand-alone tests fall under "Other tests". Each panel keeps its tests with value/range/
+// flag. Also returns a flat list for callers that want it.
+function _groupLabs(list) {
+  const panels = [];
+  const flat = [];
+  const other = { name: 'Other tests', tests: [] };
+  for (const it of (list || [])) {
+    if (it.children && it.children.length) {
+      const tests = [];
+      for (const c of it.children) { const t = _labLeafVal(c); if (t) { tests.push(t); flat.push(t); } }
+      if (tests.length) panels.push({ name: _panelName(it.test), tests });
+    } else {
+      const t = _labLeafVal(it);
+      if (t) { other.tests.push(t); flat.push(t); }
+    }
+  }
+  if (other.tests.length) panels.push(other);
+  // Panels with an abnormal value first, then by size (richer panels first).
+  panels.sort((a, b) => (b.tests.some((t) => t.abnormal || t.critical) - a.tests.some((t) => t.abnormal || t.critical))
+    || (b.tests.length - a.tests.length));
+  return { panels, flat };
 }
 app.get('/patient/:file/labs', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
@@ -837,11 +858,12 @@ app.get('/patient/:file/labs', requireAuth, async (req, res) => {
     } else if (blob && typeof blob === 'object') {
       payload = blob;
     }
-    const results = _flattenLabs(payload.clinicalReportDTOList || []);
-    // Newest first; group key is the result date (day).
-    results.sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
+    const { panels, flat } = _groupLabs(payload.clinicalReportDTOList || []);
     const counts = { normal: payload.normalCnt || 0, abnormal: payload.abNormalCnt || 0, critical: payload.criticalCnt || 0 };
-    return res.json({ ok: true, file, results, counts,
+    // Most recent result date across the report (for the header).
+    const latest = flat.map((t) => t.date).filter(Boolean)
+      .sort((a, b) => (parseHisDate(b) || 0) - (parseHisDate(a) || 0))[0] || null;
+    return res.json({ ok: true, file, panels, results: flat, counts, latest,
       dates: payload.distinctDates || [], fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });

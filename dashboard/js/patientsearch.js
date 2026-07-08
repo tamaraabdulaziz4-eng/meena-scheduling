@@ -365,31 +365,39 @@ async function psLoadRealLabs() {
   let d;
   try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/labs`); }
   catch (e) { box.innerHTML = ''; return; }
+  const panels = (d && d.panels) || [];
   const results = (d && d.results) || [];
-  if (!results.length) { box.innerHTML = ''; return; }
-  // Group by result day (newest first).
-  const byDay = new Map();
-  for (const r of results) {
-    const day = String(r.date || '').slice(0, 11).trim() || 'Undated';
-    if (!byDay.has(day)) byDay.set(day, []);
-    byDay.get(day).push(r);
-  }
+  if (!panels.length) { box.innerHTML = ''; return; }
   const abn = results.filter((r) => r.abnormal || r.critical).length;
-  const head = `<div class="ps-sec-l" style="margin-top:14px">Lab results · ${results.length}${abn ? ` · <span style="color:#e2571f">${abn} abnormal</span>` : ''}</div>`;
+  const when = (d && d.latest) ? String(d.latest).slice(0, 11).trim() : '';
+  const head = `<div class="ps-sec-l" style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span>Lab results · ${results.length}</span>
+    ${abn ? `<span style="font-size:10px;font-weight:800;letter-spacing:.03em;color:#fff;background:#e2571f;border-radius:5px;padding:1px 6px">${abn} ABNORMAL</span>`
+          : `<span style="font-size:10px;font-weight:800;letter-spacing:.03em;color:#fff;background:#0a8f5b;border-radius:5px;padding:1px 6px">ALL NORMAL</span>`}
+    ${when ? `<span style="font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0">· ${escapeHtml(when)}</span>` : ''}
+  </div>`;
   const rowHtml = (r) => {
-    const col = r.critical ? '#c0261a' : (r.abnormal ? '#e2571f' : 'inherit');
-    const wt = (r.critical || r.abnormal) ? '700' : '600';
-    const flag = r.critical ? ' ⚠' : (r.abnormal ? ' ▲' : '');
-    return `<div style="display:flex;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--border)">
-      <span style="flex:1;min-width:150px;font-size:12.5px">${escapeHtml(r.name)}</span>
-      <span style="font-weight:${wt};color:${col};font-variant-numeric:tabular-nums;white-space:nowrap">${escapeHtml(r.value)}${flag}</span>
-      ${r.range ? `<span style="color:var(--muted);font-size:11px;min-width:96px;text-align:right">${escapeHtml(r.range)}</span>` : ''}
+    const crit = r.critical, ab = r.abnormal || crit;
+    const col = crit ? '#c0261a' : (ab ? '#e2571f' : 'var(--ink)');
+    const flag = crit ? ' ⚠' : (ab ? ' ▲' : '');
+    return `<div style="display:flex;gap:10px;align-items:baseline;padding:6px 12px;${ab ? 'background:rgba(226,87,31,.07);' : ''}border-top:1px solid var(--border)">
+      <span style="flex:1;min-width:130px;font-size:12.5px">${escapeHtml(r.name)}</span>
+      <span style="font-weight:${ab ? '750' : '600'};color:${col};font-variant-numeric:tabular-nums;white-space:nowrap">${escapeHtml(r.value)}${flag}</span>
+      ${r.range ? `<span style="color:var(--muted);font-size:11px;min-width:90px;text-align:right">${escapeHtml(r.range)}</span>` : ''}
     </div>`;
   };
-  const body = [...byDay.entries()].map(([day, rows]) =>
-    `<div style="margin-top:8px"><div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:2px">${escapeHtml(day)}</div>${rows.map(rowHtml).join('')}</div>`
-  ).join('');
-  box.innerHTML = head + body;
+  const panelHtml = (pan) => {
+    const nAbn = pan.tests.filter((t) => t.abnormal || t.critical).length;
+    return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:10px;background:var(--card,#fff)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:var(--card-alt,#f4f4f8);border-bottom:1px solid var(--border)">
+        <span style="font-weight:700;font-size:12.5px">${escapeHtml(pan.name)}</span>
+        ${nAbn ? `<span style="font-size:10px;font-weight:800;color:#fff;background:#e2571f;border-radius:5px;padding:1px 6px">${nAbn} ▲</span>`
+               : `<span style="font-size:11px;color:var(--muted)">${pan.tests.length} tests</span>`}
+      </div>
+      ${pan.tests.map(rowHtml).join('')}
+    </div>`;
+  };
+  box.innerHTML = head + panels.map(panelHtml).join('');
 }
 
 // Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG

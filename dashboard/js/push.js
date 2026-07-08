@@ -3,6 +3,31 @@
 let _pushReg = null;          // active ServiceWorkerRegistration
 let _pushVapid = null;        // cached server VAPID public key
 
+// ── Auto-apply new deploys ────────────────────────────────────────────────────
+// The service worker serves cached assets, so a new deploy used to need TWO reloads
+// (first reload updates the worker in the background; the page kept running old JS).
+// Register the worker unconditionally on EVERY page (not just when push is enabled),
+// proactively check for a new version, and reload ONCE the moment a new worker takes
+// control — so a deploy shows up on the next normal reload, no hard-refresh needed.
+(function autoUpdateSW() {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;   // returning visitor?
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Reload only on an UPDATE (a worker was already in control) — not on the very
+    // first install, where the page is already running the latest assets.
+    if (reloading || !hadController) return;
+    reloading = true;
+    location.reload();
+  });
+  const check = (reg) => { try { reg && reg.update(); } catch (e) {} };
+  navigator.serviceWorker.register('/sw.js').then((reg) => {
+    check(reg);
+    setInterval(() => check(reg), 60000);        // catch a deploy while the tab stays open
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) check(reg); });
+  }).catch(() => {});
+})();
+
 function pushSupported() {
   return ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
 }
