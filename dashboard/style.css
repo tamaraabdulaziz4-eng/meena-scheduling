@@ -249,6 +249,24 @@ html { overscroll-behavior-y: none; background: var(--bg); }
 .sidebar-header h1 { font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
 .sidebar-header p  { font-size: 10px; color: var(--sidebar-muted); margin-top: 2px; }
 
+/* Sidebar patient quick-search — searches MRN / national ID / Iqama / phone /
+   name and opens the patient (reuses openPatientLookup → the fixed search). */
+.sidebar-search { position: relative; z-index: 2; padding: 12px 14px 4px; }
+.sidebar-search svg {
+  position: absolute; left: 26px; top: calc(50% + 4px); transform: translateY(-50%);
+  width: 15px; height: 15px; color: var(--sidebar-muted); pointer-events: none;
+}
+.sidebar-search input {
+  width: 100%; border: 1px solid var(--sidebar-border);
+  background: rgba(255,255,255,.08); color: var(--sidebar-text);
+  border-radius: var(--radius-pill); padding: 9px 12px 9px 34px;
+  font-family: inherit; font-size: 12.5px; outline: none;
+  transition: border-color .15s, background .15s;
+}
+.sidebar-search input::placeholder { color: var(--sidebar-muted); }
+.sidebar-search input:focus { border-color: var(--accent); background: rgba(255,255,255,.13); }
+.sidebar-search input::-webkit-search-cancel-button { filter: invert(.6); }
+
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; position: relative; z-index: 2; }
 .nav-section-label {
   padding: 14px 10px 6px;

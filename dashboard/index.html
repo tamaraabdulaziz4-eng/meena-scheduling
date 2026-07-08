@@ -336,6 +336,13 @@
       <p id="sidebar-user"></p>
     </div>
 
+    <div class="sidebar-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+      <input id="sb-patient-search" type="search" inputmode="search" enterkeyhint="search" autocomplete="off"
+             placeholder="Search patient — MRN, ID, phone"
+             onkeydown="if(event.key==='Enter'){openPatientLookup(this.value);this.blur();}">
+    </div>
+
     <nav class="sidebar-nav">
       <div class="nav-section-label" id="nav-section-workplace">Scheduling &amp; Ops</div>
       <button class="nav-item" id="nav-home" onclick="showPage('home')" style="display:none">
