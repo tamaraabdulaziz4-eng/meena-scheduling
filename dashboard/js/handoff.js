@@ -228,17 +228,33 @@ function renderHandoffPatient() {
         // off the accession alone showed "waiting" for already-imaged orders (accession
         // is usually null on this HIS), so accept pacsId/hasReport too.
         const imaged = o.imaged || !!o.pacsId || !!o.hasReport || (o.accessionNumber != null && String(o.accessionNumber).trim() !== '');
+        // Payment status — the key signal for "the patient HAS an order but it isn't paid
+        // yet" (why it never reached the worklist). Show the HIS billing text as-is,
+        // coloured green when it reads as paid/billed and red otherwise; muted when HIS
+        // returned no billing for the order (unknown, not asserted as unpaid).
+        const bs = String(o.billingStatus || '').trim();
+        const paidLike = /\b(billed|paid|posted)\b/i.test(bs) && !/\b(not|un|no|pending|hold|partial)\b/i.test(bs);
+        const payChip = bs
+          ? `<span class="sc ${paidLike ? 'ok' : 'no'}" title="حالة الفوترة من HIS">${escapeHtml(bs)}</span>`
+          : `<span class="sc warn" title="ما رجعت حالة فوترة لهذا الطلب من HIS">الفوترة غير معروفة</span>`;
         const chips = [
           o.isER ? `<span class="sc no" title="Emergency encounter">🚨 ER</span>` : '',
-          o.billingStatus ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml(o.billingStatus)}</span>` : '',
+          payChip,
           imaged ? `<span class="ris completed"><span class="rd"></span>تم التصوير</span>` : `<span class="ris scheduled"><span class="rd"></span>بانتظار التصوير</span>`,
         ].filter(Boolean).join('');
         const ci = [o.clinicalIndication, o.reasonForOrder].filter(Boolean).join(' · ');
+        // Ordering doctor + live HIS order (CPOE) status — so a patient who isn't on the
+        // worklist can still be traced: who ordered it, at which branch, and its CPOE state.
+        const meta2 = [
+          o.provider ? '👨‍⚕️ ' + escapeHtml(o.provider) : '',
+          o.status ? 'CPOE: ' + escapeHtml(o.status) : '',
+        ].filter(Boolean).join(' · ');
         return `<label class="ho-row ${i === handoff.order ? 'sel' : ''}">
           <input type="radio" name="ho-order" ${i === handoff.order ? 'checked' : ''} onchange="handoffPickOrder(${i})">
           <div class="ho-row-main">
             <div class="ho-row-title">${escapeHtml(o.service || '—')} <span style="color:var(--muted);font-weight:500">(${escapeHtml(o.modality || '')})</span></div>
             <div class="ho-row-sub">🏥 ${escapeHtml(o.branch || '—')}${o.orderedDate ? ' · ' + escapeHtml(o.orderedDate) : ''}</div>
+            ${meta2 ? `<div class="ho-row-sub">${meta2}</div>` : ''}
             ${ci ? `<div class="ho-row-sub" style="color:var(--accent)">📋 ${escapeHtml(ci.slice(0, 90))}${ci.length > 90 ? '…' : ''}</div>` : ''}
           </div>
           <div class="ho-badges">${chips}</div>
