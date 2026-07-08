@@ -94,8 +94,17 @@ async function call(tok, method, ep, body) {
   const t = await res.text(); let j; try { j = JSON.parse(t); } catch (e) { j = null; }
   return { status: res.status, json: j, text: t };
 }
-const looksLikePerson = (r) => { const s = JSON.stringify(r.json || r.text || '').toLowerCase();
-  return r.status === 200 && /name|firstname|dob|dateofbirth|arabic|englishname|fullname/.test(s) && !/^null$/.test(String(r.text).trim()); };
+// A real hit = a NAME field with a non-empty string value (not just the schema
+// keys present with null values, as an error/empty response returns).
+function hasPersonName(o) {
+  if (o == null || typeof o !== 'object') return false;
+  for (const k of Object.keys(o)) { const v = o[k];
+    if (typeof v === 'string' && v.trim() && /name/i.test(k) && !/username|hospitalname|filename|providername|nationalityname/i.test(k)) return true;
+    if (v && typeof v === 'object' && hasPersonName(v)) return true;
+  }
+  return false;
+}
+const looksLikePerson = (r) => r.status === 200 && hasPersonName(r.json);
 
 (async () => {
   console.log(`── national-registry lookup — ID ${ID}${DOB ? ' · DOB ' + DOB : ''} (LIVE/billed) ──`);
@@ -110,13 +119,17 @@ const looksLikePerson = (r) => { const s = JSON.stringify(r.json || r.text || ''
   //    errorMessage; STOP on the first person returned (avoid extra billed calls).
   const elmMsg = (r) => (r.json && (r.json.errorMessage || (r.json.data && r.json.data.errorMessage))) || '';
   let elmHit = null;
-  const elmCandidates = DOBS.length ? DOBS.map((d) => ({ idNumber: ID, dateOfBirth: d, hospitalId: HOSPITAL_ID }))
-    : [ { idNumber: ID, hospitalId: HOSPITAL_ID } ];
+  // "The given ID type is not valid" → idType is required. Yakeen distinguishes
+  // National ID vs Iqama; the numeric code varies, so probe 1/2/3 with the (Hijri-
+  // first) DOB. Bounded to idType × first-DOB to keep billed calls low.
+  const IDTYPES = [1, 2, 3];
+  const dobForType = DOBS[0] || '';
+  const elmCandidates = IDTYPES.map((t) => ({ idNumber: ID, dateOfBirth: dobForType, idType: t, hospitalId: HOSPITAL_ID }));
   for (const b of elmCandidates) {
     let r; try { r = await call(tok, 'POST', `${P}/Patient/ELMData`, b); }
-    catch (e) { console.log(`  ELMData dob=${b.dateOfBirth || '(none)'} → ERROR ${String(e.message || e).slice(0,80)}`); continue; }
+    catch (e) { console.log(`  ELMData idType=${b.idType} dob=${b.dateOfBirth || '(none)'} → ERROR ${String(e.message || e).slice(0,80)}`); continue; }
     const msg = elmMsg(r);
-    console.log(`  ELMData dob=${b.dateOfBirth || '(none)'} → HTTP ${r.status}` + (msg ? `  msg="${msg}"` : `  body=${String(r.text).slice(0,160).replace(/\s+/g,' ')}`));
+    console.log(`  ELMData idType=${b.idType} dob=${b.dateOfBirth || '(none)'} → HTTP ${r.status}` + (msg ? `  msg="${msg}"` : `  body=${String(r.text).slice(0,160).replace(/\s+/g,' ')}`));
     if (looksLikePerson(r)) { elmHit = r; break; }
   }
   if (elmHit) { console.log('\n  ✅ ELMData returned a person:\n' + JSON.stringify(elmHit.json, null, 2).slice(0, 2000)); }
