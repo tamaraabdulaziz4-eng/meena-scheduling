@@ -189,7 +189,9 @@ function renderPsDetail() {
       <div class="ps-consent">
         <button class="btn btn-primary ps-consent-btn${psIsFemale(p) ? ' female' : ''}" onclick="psStartConsent()">
           🖊️ ${psIsFemale(p) ? 'Non-pregnancy consent · إقرار عدم الحمل' : 'New consent · كونسينت'}</button>
+        <button class="btn btn-ghost ps-consent-btn" style="margin-inline-start:8px" onclick="psUploadDocument()">📎 Upload document</button>
         <div id="ps-consent-list" class="ps-consent-list"></div>
+        <div id="ps-doc-list" class="ps-consent-list"></div>
       </div>
     </div>`;
 
@@ -208,6 +210,7 @@ function renderPsDetail() {
   }
   det.innerHTML = patCard + examBlock;
   psLoadConsents();
+  psLoadDocuments();
   psLoadLabs();
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech)
   psLoadRealLabs();                            // lab results — test · value · range (from Siratech)
@@ -473,6 +476,87 @@ async function psFileConsent(id, btn) {
   }
 }
 window.psFileConsent = psFileConsent;
+
+// One-click document upload: create a QR the tech scans on a phone to snap/pick a
+// document (outside report, referral, external lab); it's filed to the patient's
+// Siratech record via the proven attachment path. Reuses the consent overlay chrome.
+let _psDocPoll = null;
+async function psUploadDocument() {
+  const d = psState.lookup || {};
+  const p = d.patient || {};
+  if (!p.mrno) return;
+  const top = (d.orders || []).slice().sort((a, b) => psOrderTime(b) - psOrderTime(a))[0] || {};
+  let ov = document.getElementById('consent-overlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'consent-overlay'; document.body.appendChild(ov); }
+  ov.innerHTML = `<div class="cn-sheet"><div class="cn-head"><div><div class="cn-title">📎 Upload document</div>
+    <div class="cn-sub">${escapeHtml(p.name || p.mrno)}</div></div><button class="cn-x" onclick="psCloseDoc()">✕</button></div>
+    <div class="cn-body" style="text-align:center"><div class="mini-spin"></div><p style="margin-top:10px;color:var(--muted)">Preparing link…</p></div></div>`;
+  try {
+    const r = await API.post('/docupload/link', {
+      file_no: p.mrno, mrno: p.mrno, name: p.name || '',
+      bill_no: top.billNo || null, site: top.siteId || null,
+    });
+    if (!r || !r.ok) throw new Error('Could not create the upload link');
+    ov.querySelector('.cn-sheet').innerHTML = `
+      <div class="cn-head"><div><div class="cn-title">📎 Upload document</div><div class="cn-sub">${escapeHtml(p.name || '')}</div></div>
+        <button class="cn-x" onclick="psCloseDoc()">✕</button></div>
+      <div class="cn-body" style="text-align:center">
+        <p style="font-size:14px;font-weight:700;margin-bottom:4px">Scan with a phone to upload</p>
+        <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Snap or pick an outside report · referral · lab result</p>
+        ${r.qr ? `<img src="${escapeHtml(r.qr)}" alt="QR" style="width:230px;max-width:70vw;height:auto;border:1px solid var(--border);border-radius:14px;padding:8px;background:#fff">` : ''}
+        <div style="margin-top:14px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
+          <input class="input" readonly value="${escapeHtml(r.url || '')}" style="flex:1;font-size:12px" onclick="this.select()">
+          <button class="btn btn-sm" onclick="consentCopyLink(this,'${escapeHtml(r.url || '')}')">Copy</button>
+        </div>
+        <div id="ps-doc-poll" class="cn-poll">⏳ waiting for the document…</div>
+      </div>`;
+    psDocStartPoll(r.id, p.mrno);
+  } catch (e) {
+    const b = ov.querySelector('.cn-body');
+    if (b) b.innerHTML = `<div class="cn-err">${escapeHtml(e.message || 'Failed to prepare the link')}</div>`;
+  }
+}
+function psCloseDoc() {
+  if (_psDocPoll) { clearInterval(_psDocPoll); _psDocPoll = null; }
+  const ov = document.getElementById('consent-overlay');
+  if (ov) ov.remove();
+}
+function psDocStartPoll(id, mrno) {
+  if (_psDocPoll) clearInterval(_psDocPoll);
+  let handled = false;
+  _psDocPoll = setInterval(async () => {
+    if (!document.getElementById('consent-overlay')) { clearInterval(_psDocPoll); _psDocPoll = null; return; }
+    try {
+      const s = await API.get(`/docupload/status/${id}`);
+      if (s && (s.status === 'uploaded' || s.status === 'filed') && !handled) {
+        handled = true; clearInterval(_psDocPoll); _psDocPoll = null;
+        const box = document.getElementById('ps-doc-poll');
+        if (box) box.innerHTML = `<span class="cn-ok">✅ ${s.filed ? 'Uploaded &amp; filed to the record' : 'Uploaded — filing to the record…'}</span>`;
+        psLoadDocuments();
+        setTimeout(psCloseDoc, 2600);
+      }
+    } catch (e) {}
+  }, 2500);
+}
+// The documents already uploaded for this patient, shown under the buttons.
+async function psLoadDocuments() {
+  const box = document.getElementById('ps-doc-list');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await API.get(`/docupload/list?file=${encodeURIComponent(p.mrno)}`); }
+  catch (e) { box.innerHTML = ''; return; }
+  const docs = (d && d.documents) || [];
+  if (!docs.length) { box.innerHTML = ''; return; }
+  box.innerHTML = docs.map((c) => `
+    <div class="ps-consent-row">
+      <span>📎 ${escapeHtml(c.doc_name || 'Document')}
+        <span style="color:var(--muted)">· ${escapeHtml(String(c.created_at || '').slice(0, 16).replace('T', ' '))}${c.created_by_name ? ' · ' + escapeHtml(c.created_by_name) : ''}</span>
+        ${c.filed_siratech ? '<span class="pill ok" title="On the patient\'s Siratech file">📎 On file</span>' : '<span class="pill" style="opacity:.7">saved</span>'}</span>
+    </div>`).join('');
+}
+window.psUploadDocument = psUploadDocument;
 
 // Best-effort timestamp for sorting: prefer the order date, fall back to the report
 // date. Handles ISO, dd/mm/yyyy, dd-mm-yyyy and dd-Mon-yyyy; unparseable → 0.

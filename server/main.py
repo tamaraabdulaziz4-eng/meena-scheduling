@@ -503,6 +503,32 @@ def init_schema():
                              ("expires_at", "TIMESTAMPTZ")):
                 cur.execute(f"ALTER TABLE scheduling.consents ADD COLUMN IF NOT EXISTS {col} {typ};")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_consents_token ON scheduling.consents(token) WHERE token IS NOT NULL;")
+            # QR document upload: a one-time token the tech/patient opens on a phone to
+            # snap or pick a document (outside report, referral, external lab); the file
+            # is stored here, then filed to the patient's Siratech record. status flows
+            # pending → uploaded → filed (or failed).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.doc_uploads (
+                    id SERIAL PRIMARY KEY,
+                    file_no TEXT NOT NULL,
+                    mrn TEXT,
+                    patient_name TEXT,
+                    bill_no TEXT,
+                    site INT,
+                    doc_name TEXT,
+                    pdf BYTEA,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    note TEXT,
+                    token TEXT,
+                    filed_siratech BOOLEAN NOT NULL DEFAULT false,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_by_name TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    uploaded_at TIMESTAMPTZ,
+                    expires_at TIMESTAMPTZ
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_docup_file ON scheduling.doc_uploads(file_no);")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_docup_token ON scheduling.doc_uploads(token) WHERE token IS NOT NULL;")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
@@ -8230,6 +8256,171 @@ def _consent_by_token(token):
     if exp is not None and exp < datetime.now(timezone.utc):
         raise HTTPException(410, "This link has expired. Ask the specialist for a new one.")
     return r
+
+# ── QR document upload ────────────────────────────────────────────────────────
+# One-click flow: the tech clicks "Upload document" on the patient card, a QR
+# appears, they scan it with a phone, snap/pick a document (outside report,
+# referral, external lab), and it's filed onto the patient's Siratech record via
+# the SAME proven attachment path used for consents/reports (option B: attached to
+# a radiology order). Read-only until the explicit, patient-scoped write.
+def _docupload_by_token(token):
+    token = (token or "").strip()
+    if not token:
+        raise HTTPException(400, "Invalid link")
+    r = q("SELECT * FROM scheduling.doc_uploads WHERE token=%s", (token,), one=True)
+    if not r:
+        raise HTTPException(404, "This link is not valid.")
+    exp = r.get("expires_at")
+    if exp is not None and exp < datetime.now(timezone.utc):
+        raise HTTPException(410, "This link has expired. Ask the technologist for a new one.")
+    return r
+
+def _doc_to_pdf(raw: bytes, mime: str) -> bytes:
+    """Normalise an upload to a PDF: pass a real PDF through, wrap an image (phone
+    photo) into a single A4 page with PyMuPDF. Siratech stores the attachment as a PDF."""
+    m = (mime or "").lower()
+    if "pdf" in m and raw[:5] == b"%PDF-":
+        return raw
+    import fitz
+    ftype = m.split("/")[-1] if "/" in m else "jpeg"
+    if ftype in ("jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp"):
+        doc = fitz.open(stream=raw, filetype=ftype)
+        return doc.convert_to_pdf()
+    # Unknown → try as image, else reject.
+    try:
+        doc = fitz.open(stream=raw, filetype="jpeg")
+        return doc.convert_to_pdf()
+    except Exception:
+        raise HTTPException(400, "Only a PDF or a photo (JPG/PNG) can be uploaded")
+
+def _file_document_to_siratech(doc_id):
+    """File an uploaded document onto the patient's Siratech record via the connector's
+    /his/consent/file (the proven genFileAttachments attachment mechanism — attached to
+    a radiology order, never authorized). Idempotent by filed_siratech."""
+    rec = q("""SELECT id, file_no, mrn, patient_name, bill_no, site, pdf, doc_name, filed_siratech
+               FROM scheduling.doc_uploads WHERE id=%s""", (doc_id,), one=True)
+    if not rec or not rec.get("pdf") or rec.get("filed_siratech"):
+        return bool(rec and rec.get("filed_siratech"))
+    import base64 as _b64
+    body = {
+        "file": str(rec["file_no"]).strip(),
+        "billNo": (str(rec["bill_no"]).strip() if rec.get("bill_no") else None),
+        "site": (rec.get("site") if isinstance(rec.get("site"), int) else None),
+        "consentPdf": _b64.b64encode(bytes(rec["pdf"])).decode("ascii"),
+        "consentName": (rec.get("doc_name") or "Uploaded document.pdf"),
+        "expectName": (rec.get("patient_name") or "").strip() or None,
+        "confirm": True,
+    }
+    out = _bridge_request("/his/consent/file", method="POST", body=body, timeout=60)
+    wrote = isinstance(out, dict) and out.get("wrote")
+    q("UPDATE scheduling.doc_uploads SET status=%s, filed_siratech=%s WHERE id=%s",
+      ("filed" if wrote else "uploaded", bool(wrote), doc_id), exec_only=True)
+    return bool(wrote)
+
+@app.post("/api/docupload/link")
+async def create_docupload_link(request: Request, user=Depends(require_radiology)):
+    """Create a one-time QR the tech opens on a phone to upload a document for this file."""
+    import secrets
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    file_no = str(b.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "A patient file number is required")
+    token = secrets.token_urlsafe(24)
+    tech = _consent_signer(user)
+    row = q("""INSERT INTO scheduling.doc_uploads
+                 (file_no, mrn, patient_name, bill_no, site, token, status, created_by, created_by_name, expires_at)
+               VALUES (%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '6 hours') RETURNING id""",
+            (file_no, (b.get("mrn") or file_no).strip(), (b.get("name") or "").strip(),
+             (b.get("bill_no") or None), (b.get("site") if isinstance(b.get("site"), int) else None),
+             token, user["id"], tech), one=True)
+    base = str(request.base_url).rstrip("/")
+    xf_host = request.headers.get("x-forwarded-host")
+    xf_proto = request.headers.get("x-forwarded-proto") or "https"
+    if xf_host:
+        base = f"{xf_proto}://{xf_host}"
+    url = f"{base}/doc-upload?t={token}"
+    qr = ""
+    try:
+        import segno
+        qr = segno.make(url, error="m").svg_data_uri(scale=5, border=2, dark="#12103a")
+    except Exception:
+        qr = ""
+    insert_audit(user, "DOCUPLOAD_LINK", file_no, json.dumps({"id": row["id"]}))
+    return {"ok": True, "id": row["id"], "url": url, "qr": qr}
+
+@app.get("/api/docupload/status/{doc_id}")
+def docupload_status(doc_id: int, user=Depends(require_radiology)):
+    """Poll whether a QR document upload has landed / been filed yet."""
+    r = q("SELECT status, filed_siratech, doc_name FROM scheduling.doc_uploads WHERE id=%s",
+          (doc_id,), one=True)
+    if not r:
+        raise HTTPException(404, "Upload not found")
+    return {"id": doc_id, "status": r["status"], "filed": bool(r.get("filed_siratech")),
+            "docName": r.get("doc_name")}
+
+@app.get("/api/docupload/list")
+def docupload_list(request: Request, user=Depends(require_radiology)):
+    """The documents already uploaded for a patient file (for the card)."""
+    file_no = (request.query_params.get("file") or "").strip()
+    if not file_no:
+        return {"ok": True, "documents": []}
+    rows = q("""SELECT id, doc_name, status, filed_siratech, created_at, created_by_name
+                FROM scheduling.doc_uploads
+                WHERE file_no=%s AND status IN ('uploaded','filed')
+                ORDER BY created_at DESC LIMIT 20""", (file_no,)) or []
+    return {"ok": True, "documents": rows}
+
+@app.get("/doc-upload")
+def serve_doc_upload():
+    """Public, login-free document-upload page opened from the QR on the phone."""
+    return FileResponse(os.path.join(DASHBOARD, "doc-upload.html"), media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+@app.get("/api/doc/info")
+def doc_info(request: Request):
+    """Public: the patient name for the upload page to show, by one-time token."""
+    r = _docupload_by_token(request.query_params.get("t"))
+    return {"ok": True, "patientName": r.get("patient_name") or "", "file": r.get("file_no"),
+            "status": r.get("status"), "done": r.get("status") in ("uploaded", "filed")}
+
+@app.post("/api/doc/submit")
+async def doc_submit(request: Request):
+    """Public: receive the uploaded document (data-URL), store it, and file it to the
+    patient's Siratech record. No login — the one-time token authorises this file only."""
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    r = _docupload_by_token(b.get("t"))
+    if r.get("status") in ("uploaded", "filed"):
+        return {"ok": True, "already": True, "filed": bool(r.get("filed_siratech"))}
+    data_url = str(b.get("file") or "")
+    m = re.match(r"data:([^;]+);base64,(.+)$", data_url, re.S)
+    if not m:
+        raise HTTPException(400, "No file was received")
+    mime, b64 = m.group(1), m.group(2)
+    try:
+        import base64 as _b64
+        raw = _b64.b64decode(b64)
+    except Exception:
+        raise HTTPException(400, "The file could not be read")
+    if len(raw) < 100:
+        raise HTTPException(400, "The file is empty")
+    if len(raw) > 15_000_000:
+        raise HTTPException(413, "The file is too large (max ~15 MB)")
+    pdf_bytes = _doc_to_pdf(raw, mime)
+    label = (str(b.get("name") or "Document").strip() or "Document")[:60]
+    ksa = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d")
+    doc_name = f"{label} - {ksa}.pdf"
+    q("""UPDATE scheduling.doc_uploads SET pdf=%s, doc_name=%s, status='uploaded', uploaded_at=NOW()
+         WHERE id=%s""", (psycopg2.Binary(pdf_bytes), doc_name, r["id"]), exec_only=True)
+    filed = False
+    try:
+        filed = _file_document_to_siratech(r["id"])
+    except Exception:
+        filed = False
+    return {"ok": True, "filed": bool(filed)}
 
 @app.get("/api/public/consent/{token}")
 def public_consent_get(token: str):
