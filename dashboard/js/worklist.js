@@ -1016,7 +1016,7 @@ function wlRow(it, key) {
   return `<div class="rowwrap">
     <div class="row${it.emergency ? ' stat' : ''}${done ? ' done' : ''}${hl ? ' hl' : ''}" data-phase="${phase}">
       <div class="pt">
-        <div class="pname">${escapeHtml(it.patientName || '—')}${it.emergency ? ' <span class="stat-b"><i></i>STAT</span>' : ''}</div>
+        <div class="pname pname-link" title="Open patient card" onclick="wlOpenPatientCard('${jsAttr(it.mrno)}')">${escapeHtml(it.patientName || '—')}${it.emergency ? ' <span class="stat-b"><i></i>STAT</span>' : ''}</div>
         <div class="pmeta">${escapeHtml(it.mrno || '')}${demo ? '<i></i>' + demo : ''}${it.branch ? '<i></i>' + escapeHtml(it.branch) : ''}${it.doctorName ? '<i></i><span class="dr">Dr ' + escapeHtml(it.doctorName) + '</span>' : ''}</div>
         ${wlIndEl(it)}
         ${(consent || preg) ? '<div class="safe">' + consent + preg + '</div>' : ''}
@@ -1264,6 +1264,71 @@ function wlOpenHandoff(mrno) {
   window._handoffPreload = mrno;
   showPage('handoff');
 }
+
+// Open the FULL patient card (labs · problem list · allergies · visits · appointments ·
+// exams · upload) in a modal straight from the worklist — click a patient's name to get
+// everything at a glance without leaving the board. Reuses the Patient-Lookup renderer:
+// renderPsDetail() paints into the #ps-detail we drop inside the modal, and every
+// psLoad* enrichment then fills its own section. Read-only.
+function wlEnsurePcardStyles() {
+  if (document.getElementById('wl-pcard-css')) return;
+  const s = document.createElement('style');
+  s.id = 'wl-pcard-css';
+  s.textContent = `
+    .wl-pcard-ov{position:fixed;inset:0;z-index:1200;background:rgba(20,17,40,.5);
+      backdrop-filter:blur(2px);display:flex;justify-content:center;align-items:flex-start;
+      padding:24px 14px;overflow:auto;animation:wlpcFade .15s ease}
+    @keyframes wlpcFade{from{opacity:0}to{opacity:1}}
+    .wl-pcard-sheet{width:100%;max-width:660px;background:var(--bg,#f4f2fc);border-radius:18px;
+      box-shadow:0 24px 70px rgba(20,17,40,.4);overflow:hidden;margin:auto 0}
+    .wl-pcard-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;
+      gap:10px;padding:13px 16px;background:var(--card,#fff);border-bottom:1px solid var(--border,#e7e4f0)}
+    .wl-pcard-head b{font-size:15px}
+    .wl-pcard-x{border:0;background:transparent;font-size:19px;cursor:pointer;color:var(--muted,#7a7690);
+      width:32px;height:32px;border-radius:9px;line-height:1}
+    .wl-pcard-x:hover{background:var(--card-alt,#f4f4f8)}
+    .wl-pcard-body{padding:14px;max-height:calc(100vh - 120px);overflow:auto}
+    .pname-link{cursor:pointer}
+    .pname-link:hover{color:var(--accent,#6B4EFF);text-decoration:underline}`;
+  document.head.appendChild(s);
+}
+async function wlOpenPatientCard(mrno) {
+  mrno = String(mrno || '').trim();
+  if (!mrno || typeof renderPsDetail !== 'function') return;
+  wlEnsurePcardStyles();
+  let ov = document.getElementById('wl-pcard');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'wl-pcard'; document.body.appendChild(ov); }
+  ov.className = 'wl-pcard-ov';
+  ov.onclick = (e) => { if (e.target === ov) wlClosePatientCard(); };
+  ov.innerHTML = `<div class="wl-pcard-sheet">
+    <div class="wl-pcard-head"><b>Patient card</b><button class="wl-pcard-x" title="Close" onclick="wlClosePatientCard()">✕</button></div>
+    <div class="wl-pcard-body"><div id="ps-detail">${typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : '<div class="card" style="padding:26px;text-align:center">Loading…</div>'}</div></div>
+  </div>`;
+  document.body.style.overflow = 'hidden';
+  if (!window._wlPcardEsc) {
+    window._wlPcardEsc = (e) => { if (e.key === 'Escape') wlClosePatientCard(); };
+    document.addEventListener('keydown', window._wlPcardEsc);
+  }
+  try {
+    const d = await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`);
+    if (!document.getElementById('wl-pcard')) return;                 // closed while loading
+    const pat = (d.patient && d.patient.mrno) ? d.patient : { ...(d.patient || {}), mrno };
+    psState.lookup = { ...d, patient: pat };
+    renderPsDetail();
+  } catch (e) {
+    const b = document.querySelector('#wl-pcard #ps-detail');
+    if (b) b.innerHTML = `<div class="card"><div class="empty" style="padding:22px 16px"><div class="empty-icon">⚠️</div>
+      <p>${escapeHtml(e.message || 'Could not load the patient')}</p></div></div>`;
+  }
+}
+function wlClosePatientCard() {
+  const ov = document.getElementById('wl-pcard');
+  if (ov) ov.remove();
+  document.body.style.overflow = '';
+  if (window._wlPcardEsc) { document.removeEventListener('keydown', window._wlPcardEsc); window._wlPcardEsc = null; }
+}
+window.wlOpenPatientCard = wlOpenPatientCard;
+window.wlClosePatientCard = wlClosePatientCard;
 
 // Live typeahead as the operator types: filter the board to MRNs that START WITH the
 // typed digits. Empty box → back to the full board. Purely local (no network), so it
