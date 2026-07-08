@@ -7325,7 +7325,10 @@ def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadm
     data = _bridge_request("/his/worklist", timeout=90)
     if not isinstance(data, dict):
         raise HTTPException(502, "worklist unreachable")
-    sites_raw = (get_setting("rad_autostamp_sites", "3") or "").strip()
+    # Optional read-only scope override (dry run only — never touches the live setting)
+    # so the operator can preview matching against a branch that has traffic right now.
+    sites_override = re.sub(r"[^0-9,]", "", request.query_params.get("sites") or "")
+    sites_raw = sites_override.strip() if sites_override.strip() else (get_setting("rad_autostamp_sites", "3") or "").strip()
     site_set = set(s.strip() for s in sites_raw.split(",") if s.strip()) if sites_raw else None
     n3_stations_raw = (get_setting("rad_autostamp_n3_stations", "") or "").strip()
     n3_stations = set(x.strip().upper() for x in n3_stations_raw.split(",") if x.strip())
