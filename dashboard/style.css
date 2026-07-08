@@ -3375,3 +3375,31 @@ body.dark .wl2 .live { background: rgba(0,200,150,.16); }
 .cmdk-row-hint { font-size: 11px; font-weight: 700; color: var(--muted);
   text-transform: uppercase; letter-spacing: .4px; flex: 0 0 auto; }
 .cmdk-empty { padding: 26px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ── Home quick-action tiles ──────────────────────────────────────────────── */
+.hm-quick {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px; margin-bottom: 18px;
+}
+.hm-qa {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; cursor: pointer; font-family: inherit; text-align: start;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-sm);
+  position: relative; overflow: hidden;
+  transition: transform .14s cubic-bezier(.34,1.4,.64,1), box-shadow .18s, border-color .18s;
+}
+.hm-qa::before {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: 0;
+  width: 4px; background: var(--ribbon); opacity: .0; transition: opacity .18s;
+}
+.hm-qa:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--lavender-strong); }
+.hm-qa:hover::before { opacity: 1; }
+.hm-qa:active { transform: scale(.98); }
+.hm-qa-ic {
+  width: 38px; height: 38px; flex: 0 0 auto; border-radius: 11px;
+  display: grid; place-items: center; color: var(--accent);
+  background: var(--violet-wash);
+}
+.hm-qa-ic svg { width: 19px; height: 19px; }
+.hm-qa-lb { font-size: 13.5px; font-weight: 700; color: var(--primary); letter-spacing: -.01em; }

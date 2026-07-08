@@ -33,6 +33,33 @@ function _hmStartClock() {
   _hmClockTimer = setInterval(tick, 1000);
 }
 
+// Quick-action tiles — built from the sidebar nav the user can actually see, so
+// they stay role-safe and route through the existing showPage() with no new
+// navigation logic. Especially useful for technologists, whose Home is sparse.
+function hmQuickActionsHtml() {
+  const MAP = {
+    worklist:      { label: 'Worklist',        ic: 'inbox' },
+    patientsearch: { label: 'Patient Lookup',  ic: 'search' },
+    orders:        { label: 'Orders',          ic: 'file-text' },
+    radstats:      { label: 'Radiology Stats', ic: 'bar-chart' },
+    schedule:      { label: 'Schedule',        ic: 'calendar' },
+    handoff:       { label: 'Handoff',         ic: 'refresh' },
+    staff:         { label: 'Staff',           ic: 'users' },
+  };
+  const order = ['worklist', 'patientsearch', 'orders', 'radstats', 'schedule', 'handoff', 'staff'];
+  const tiles = order.filter(p => {
+    const el = document.getElementById('nav-' + p);
+    return el && el.style.display !== 'none';
+  }).slice(0, 6).map(p => {
+    const m = MAP[p];
+    return `<button class="hm-qa" onclick="showPage('${p}')">
+        <span class="hm-qa-ic">${icon(m.ic)}</span>
+        <span class="hm-qa-lb">${m.label}</span>
+      </button>`;
+  }).join('');
+  return tiles ? `<div class="hm-quick">${tiles}</div>` : '';
+}
+
 async function renderHomePage() {
   setTopbar('Home', 'Your overview at a glance');
   const today = new Date();
@@ -59,6 +86,7 @@ async function renderHomePage() {
         </div>
       </div>
     </div>
+    ${hmQuickActionsHtml()}
     <div id="hm-radstats"></div>
     <div id="hm-fullstats" style="margin-top:14px"></div>
     <div id="hm-approvals"></div>
