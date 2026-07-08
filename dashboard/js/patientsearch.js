@@ -272,10 +272,26 @@ async function psLoadConsents() {
   box.innerHTML = list.map((c) => `
     <div class="ps-consent-row">
       <span>📄 ${escapeHtml(c.kind === 'non_pregnancy' ? 'Non-pregnancy' : c.kind)}${c.procedure ? ' · ' + escapeHtml(c.procedure) : ''}
-        <span style="color:var(--muted)">· ${escapeHtml(String(c.created_at || '').slice(0, 16).replace('T', ' '))}${c.created_by_name ? ' · ' + escapeHtml(c.created_by_name) : ''}</span></span>
-      <a class="ghost" style="text-decoration:none" href="/api/consent/${c.id}/pdf?file=${encodeURIComponent(p.mrno || '')}" target="_blank" rel="noopener">View</a>
+        <span style="color:var(--muted)">· ${escapeHtml(String(c.created_at || '').slice(0, 16).replace('T', ' '))}${c.created_by_name ? ' · ' + escapeHtml(c.created_by_name) : ''}</span>
+        ${c.filed_siratech ? '<span class="pill ok" title="On the patient\'s Siratech file">📎 On file</span>' : ''}</span>
+      <span style="display:inline-flex;gap:8px;align-items:center">
+        ${c.filed_siratech ? '' : `<button class="ghost" onclick="psFileConsent(${c.id}, this)">File to record</button>`}
+        <a class="ghost" style="text-decoration:none" href="/api/consent/${c.id}/pdf?file=${encodeURIComponent(p.mrno || '')}" target="_blank" rel="noopener">View</a>
+      </span>
     </div>`).join('');
 }
+async function psFileConsent(id, btn) {
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (btn) { btn.disabled = true; btn.textContent = 'Filing…'; }
+  try {
+    const r = await API.post(`/consent/${id}/file?file=${encodeURIComponent(p.mrno || '')}`, {});
+    if (r && r.wrote) { toast('Consent filed to the patient record · رُفعت للملف'); psLoadConsents(); }
+    else { toast((r && r.note) || 'Could not attach yet — it will ride the report.'); if (btn) { btn.disabled = false; btn.textContent = 'File to record'; } }
+  } catch (e) {
+    toast(e.message || 'Filing failed'); if (btn) { btn.disabled = false; btn.textContent = 'File to record'; }
+  }
+}
+window.psFileConsent = psFileConsent;
 
 // Best-effort timestamp for sorting: prefer the order date, fall back to the report
 // date. Handles ISO, dd/mm/yyyy, dd-mm-yyyy and dd-Mon-yyyy; unparseable → 0.
