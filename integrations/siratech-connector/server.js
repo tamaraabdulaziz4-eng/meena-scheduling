@@ -416,7 +416,7 @@ app.get('/health', (_req, res) => {
 // (after "/") and camelCase-initial verbs still match.
 const _CONN_WRITE = /(\bSave|Authoriz|\bDelete|\bUpdate|\bCancel|\bCreate|\bRegister|\bInsert|\bRemove|\bSend|\bSubmit|\bPay|\bRefund|\bApprove|\bSign|\bFile|\bEdit)/i;
 const _CONN_BILLED = /(ELMData|NPHIESPatientRegistry|Eligibility\/Check|EligibilityCheck|Discovery\/Check)/i;
-const _CONN_READ = /(Fetch|Search|\/Get|Details|\/List|\/View|Report|Image|Pdf|Log|Panel|Preview|Print|Scheme|Demographics|IdentifyingDocs|Slots|Notification\/GetNotification|Diagnosis|Allerg|VitalSign|Template)/i;
+const _CONN_READ = /(Fetch|Search|\/Get|Details|\/List|\/View|Report|Image|Pdf|Log|Panel|Preview|Print|Scheme|Demographics|IdentifyingDocs|Slots|Notification\/GetNotification|Diagnosis|Allerg|VitalSign|Template|Result|Encounter|Problem)/i;
 app.post('/admin/his', requireAuth, async (req, res) => {
   const { path, body, method } = req.body || {};
   if (!path || typeof path !== 'string' || !path.startsWith('/')) return res.status(400).json({ ok: false, error: 'path (starting with /) is required' });
