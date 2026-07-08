@@ -956,7 +956,7 @@ const WORKLIST_DAYS_BACK = Number(process.env.WORKLIST_DAYS_BACK || 3);
 // Per-mrno native radiology status cache (cpoeStatusDescription etc.) — keeps the
 // board's per-exam status fresh without re-hitting FetchRadiologyDetails every load.
 const RAD_STATUS_TTL = Number(process.env.RAD_STATUS_TTL_MS || 90000);
-const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 140);   // cap new lookups per load
+const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 220);   // cap new lookups per load
 const radStatusCache = new Map();   // mrno -> { ts, byKey: Map(key -> {status,cpoe,reported,imaged,invId,acc}) }
 
 // HIS timestamps come as NAIVE local KSA strings ("2026-07-05T09:06:00", no offset).
@@ -1200,6 +1200,12 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
           };
           if (!byKey.has(keyOf(d.billNo, d.serviceName))) byKey.set(keyOf(d.billNo, d.serviceName), rec);
           if (d.accessionNumber) byKey.set('acc:' + d.accessionNumber, rec);
+          // bill-level fallback for rows whose exam name didn't enrich (so they still
+          // land in the right lane). Prefer the most-advanced status on the bill so a
+          // mixed bill doesn't get pinned to its least-done exam.
+          const bk = 'bill:' + (d.billNo || '');
+          const rank = (x) => (x && x.reported ? 3 : /scan done/i.test(x && x.status || '') ? 2 : /in progress/i.test(x && x.status || '') ? 1 : 0);
+          if (!byKey.has(bk) || rank(rec) > rank(byKey.get(bk))) byKey.set(bk, rec);
         }
         radStatusCache.set(m, { ts: Date.now(), byKey });
       } catch (_e) { /* leave uncached — row keeps its coarse lane */ }
@@ -1207,7 +1213,9 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     for (const it of items) {
       const c = radStatusCache.get(String(it.mrno));
       if (!c) continue;
-      const rec = (it.accession && c.byKey.get('acc:' + it.accession)) || c.byKey.get(keyOf(it.billNo, it.exam));
+      const rec = (it.accession && c.byKey.get('acc:' + it.accession))
+        || c.byKey.get(keyOf(it.billNo, it.exam))
+        || c.byKey.get('bill:' + (it.billNo || ''));   // fallback when the exam name didn't enrich
       if (!rec) continue;
       if (rec.status) it.hisStatus = rec.status;
       it.hisReported = it.hisReported || rec.reported;
