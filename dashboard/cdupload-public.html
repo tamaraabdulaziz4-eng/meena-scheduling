@@ -7,13 +7,14 @@
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root { --primary:#0f2a6b; --accent:#2563eb; --accent2:#3b82f6; --muted:#6b7ba5;
-          --border:#d5e3fb; --card:#ffffff; --bg:#eff5ff; --ok:#00A87D; --red:#E25555; }
+  :root { --primary:#2e2a48; --accent:#6b4eff; --accent2:#8358fd; --muted:#7c7a99;
+          --border:#e0dcf5; --card:#ffffff; --bg:#f4f1fe; --ok:#00A87D; --red:#E25555; }
+  @media (prefers-color-scheme:dark){ :root{ --primary:#e9e7f5; --muted:#9b98c0; --border:#262340; --card:#17152b; --bg:#0d0b1a; } }
   * { box-sizing:border-box; }
   body { font-family:'Poppins',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary); -webkit-text-size-adjust:100%; }
   .wrap { max-width:600px; margin:0 auto; padding:18px 16px 48px; }
   .head { display:flex; align-items:center; gap:12px; margin:8px 0 14px; }
-  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(37,99,235,.18); }
+  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.18); }
   .head .t { font-size:17px; font-weight:800; }
   .head .s { font-size:12px; color:var(--muted); font-weight:600; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
@@ -22,30 +23,30 @@
   .fieldrow { margin-bottom:12px; }
   input, select, textarea { width:100%; padding:11px 12px; font-size:15px; font-family:inherit; color:var(--primary);
          border:1.5px solid var(--border); border-radius:11px; background:#fff; outline:none; }
-  input:focus, select:focus, textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.14); }
+  input:focus, select:focus, textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(107,78,255,.14); }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   @media (max-width:480px){ .grid2 { grid-template-columns:1fr; } }
   .req { color:var(--red); }
   .hint { font-size:12px; color:var(--muted); margin-top:6px; }
-  .pickbtn { width:100%; border:2px dashed var(--border); border-radius:14px; padding:16px; text-align:center; background:#fbfdff; cursor:pointer; font-family:inherit; color:var(--primary); }
-  .pickbtn:hover { border-color:var(--accent); background:#f2f7ff; }
+  .pickbtn { width:100%; border:2px dashed var(--border); border-radius:14px; padding:16px; text-align:center; background:#fbfaff; cursor:pointer; font-family:inherit; color:var(--primary); }
+  .pickbtn:hover { border-color:var(--accent); background:#f4f1fe; }
   .pickbtn .big { font-size:26px; }
   .pickbtn .ttl { font-weight:800; font-size:15px; margin-top:4px; }
   .pickbtn .sub { font-size:12px; color:var(--muted); margin-top:2px; }
   .orline { text-align:center; font-size:12px; color:var(--muted); font-weight:700; margin:10px 0; }
-  .selbox { border:1.5px solid var(--accent); border-radius:12px; padding:12px 14px; background:#f2f7ff; margin-top:4px; }
+  .selbox { border:1.5px solid var(--accent); border-radius:12px; padding:12px 14px; background:#f4f1fe; margin-top:4px; }
   .selbox .fn { font-weight:700; font-size:14px; word-break:break-all; }
   .selbox .fs { font-size:12px; color:var(--muted); margin-top:3px; }
   .selbox .chg { font-size:12px; color:var(--accent); margin-top:6px; cursor:pointer; font-weight:700; }
   .btn2 { width:100%; padding:14px 20px; font-size:16px; font-weight:800; font-family:inherit; color:#fff; border:none;
          border-radius:13px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
-         box-shadow:0 8px 20px rgba(37,99,235,.32); }
+         box-shadow:0 8px 20px rgba(107,78,255,.32); }
   .btn2:disabled { opacity:.55; cursor:default; }
   .msg { font-size:13px; padding:11px 13px; border-radius:11px; margin-top:12px; display:none; line-height:1.6; }
   .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
   .prog { margin-top:14px; display:none; }
   .prog.show { display:block; }
-  .bar { height:12px; border-radius:999px; background:#e4edff; overflow:hidden; }
+  .bar { height:12px; border-radius:999px; background:#ede9ff; overflow:hidden; }
   .fill { height:100%; width:0%; border-radius:999px; background:linear-gradient(90deg,var(--accent2),var(--accent)); transition:width .2s; }
   .prog .lbl { font-size:12px; color:var(--muted); margin-top:6px; display:flex; justify-content:space-between; }
   .refbox { text-align:center; padding:8px 0; }
