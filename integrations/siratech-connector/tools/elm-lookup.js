@@ -100,9 +100,16 @@ const looksLikePerson = (r) => { const s = JSON.stringify(r.json || r.text || ''
   console.log('  login OK.\n');
   const P = '/patient-api/api/v1';
 
-  // 1) علم / Yakeen — Patient/ELMData. Exact body shape unknown, so try the most
-  //    likely first and STOP on the first that returns a person (avoid extra billed calls).
-  const elmBodies = [
+  // 1) علم / Yakeen — Patient/ELMData. Yakeen's getCitizenInfo needs national ID +
+  //    date of birth, so shapes WITH dateOfBirth go first when a DOB is given. Print
+  //    the FULL response (esp. errorMessage) and STOP on the first person returned.
+  const elmBodies = DOB ? [
+    { idNumber: ID, dateOfBirth: DOB, hospitalId: HOSPITAL_ID },
+    { IdNumber: ID, DateOfBirth: DOB, HospitalId: HOSPITAL_ID },
+    { idNumber: ID, dob: DOB, hospitalId: HOSPITAL_ID },
+    { nationalId: ID, dateOfBirth: DOB, hospitalId: HOSPITAL_ID },
+    { idNumber: ID, birthDate: DOB, hospitalId: HOSPITAL_ID },
+  ] : [
     { idNumber: ID, hospitalId: HOSPITAL_ID },
     { IdNumber: ID, HospitalId: HOSPITAL_ID },
     { idNumber: ID },
@@ -112,8 +119,9 @@ const looksLikePerson = (r) => { const s = JSON.stringify(r.json || r.text || ''
   let elmHit = null;
   for (const b of elmBodies) {
     let r; try { r = await call(tok, 'POST', `${P}/Patient/ELMData`, b); }
-    catch (e) { console.log(`  ELMData ${JSON.stringify(b)} → ERROR ${String(e.message || e).slice(0,60)}`); continue; }
-    console.log(`  ELMData ${JSON.stringify(b)} → HTTP ${r.status}, ${String(r.text).slice(0,90).replace(/\s+/g,' ')}`);
+    catch (e) { console.log(`  ELMData ${JSON.stringify(b)} → ERROR ${String(e.message || e).slice(0,80)}`); continue; }
+    const msg = (r.json && (r.json.errorMessage || (r.json.data && r.json.data.errorMessage))) || '';
+    console.log(`  ELMData ${JSON.stringify(b)} → HTTP ${r.status}` + (msg ? `  msg="${msg}"` : `  body=${String(r.text).slice(0,140).replace(/\s+/g,' ')}`));
     if (looksLikePerson(r)) { elmHit = r; break; }
   }
   if (elmHit) { console.log('\n  ✅ ELMData returned a person:\n' + JSON.stringify(elmHit.json, null, 2).slice(0, 2000)); }
