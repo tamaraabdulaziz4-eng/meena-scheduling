@@ -36,7 +36,18 @@ let puppeteer;
 const HIS_BASE = (process.env.HIS_BASE || 'https://his.meena-health.com').replace(/\/+$/, '');
 const HIS_USER = process.env.HIS_USER || '', HIS_PASS = process.env.HIS_PASS || '', HIS_SITE = process.env.HIS_SITE || '';
 const RESULT_SITE = Number(process.env.RESULT_SITE || 3);
-const MRN = (process.argv[2] || '').trim();
+// Accept EITHER an MRN or a national ID / Iqama / mobile (the "enter the هوية →
+// what comes back" path). A 10-digit 1… = Saudi national ID, 2… = Iqama; a
+// 05…/5…/+966… value = mobile; anything else = treat as an MRN. For an ID/mobile
+// we first resolve the patient through the HIS's own EMRSearchPanel path (same as
+// the connector), then reuse that MRN for the downstream probes.
+const IDENT = (process.argv[2] || '').trim();
+const _IDDIGITS = IDENT.replace(/\D/g, '');
+const IDENT_KIND = /^1\d{9}$/.test(_IDDIGITS) ? 'saudiId'
+                 : /^2\d{9}$/.test(_IDDIGITS) ? 'iqama'
+                 : /^(?:00)?(?:966)?0?5\d{8}$/.test(_IDDIGITS) ? 'mobile'
+                 : 'mrn';
+let MRN = IDENT_KIND === 'mrn' ? IDENT : '';   // resolved after login for id/mobile
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (!HIS_USER || !HIS_PASS) { console.error('✗ HIS_USER/HIS_PASS not set (connector .env).'); process.exit(1); }
 
@@ -68,7 +79,7 @@ function scanValues(obj, out, kp='') {   // collect accession-like + keyword-bea
   return out;
 }
 
-const report = { base: HIS_BASE, mrno: MRN, endpoints: { all: [], byModule: {}, liveCalls: [] }, probes: [], flags: {} };
+const report = { base: HIS_BASE, ident: IDENT, identKind: IDENT_KIND, mrno: MRN, endpoints: { all: [], byModule: {}, liveCalls: [] }, probes: [], flags: {} };
 
 async function loginAndBundles() {
   const browser = await puppeteer.launch({ headless: true,
@@ -101,6 +112,19 @@ async function loginAndBundles() {
 
 async function post(tok, ep, body){ const res=await fetch(HIS_BASE+ep,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/plain, */*',Authorization:tok.auth,hospitalid:tok.hospitalid},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)}); const t=await res.text(); let j; try{j=JSON.parse(t);}catch(e){j=null;} return {status:res.status,json:j}; }
 async function get(tok, ep){ const res=await fetch(HIS_BASE+ep,{headers:{Accept:'application/json, text/plain, */*',Authorization:tok.auth,hospitalid:tok.hospitalid},signal:AbortSignal.timeout(30000)}); const t=await res.text(); let j; try{j=JSON.parse(t);}catch(e){j=null;} return {status:res.status,json:j}; }
+// The HIS UI's own national-ID / Iqama / phone lookup (server-side filtered by
+// {idType,category}). Same shape the connector's _emrSearch uses. READ-ONLY.
+async function emrSearch(tok, idType, category, value){
+  const body={ deptId:0, providerId:'', duration:0, hospitalId:Number(tok.hospitalid)||undefined,
+    nursingStationId:-1, idType, category, dischPatientsAccess:false, genLevelId:0,
+    idNumber:value, loginProviderId:'', patlistType:'EMR', roomTypeName:'',
+    searchCondition:'Search', searchConditionValue:'All', updateGenUserSettings:[] };
+  const headers={ 'Content-Type':'application/json', Accept:'application/json, text/plain, */*',
+    Authorization:tok.auth, hospitalid:tok.hospitalid,
+    clienttimezoneoffsetinminutes:'-180', localtimezoneoffsetinminutes:'-180', machinename:'YARWEB_UI' };
+  const res=await fetch(HIS_BASE+'/patient-api/api/v1/Patient/EMRSearchPanel/List',{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+  const t=await res.text(); let j; try{j=JSON.parse(t);}catch(e){j=null;} return {status:res.status,json:j};
+}
 function invBody(cat, filterResult, extra){ const today=new Date().toISOString().slice(0,10), y=new Date(Date.now()-120*864e5).toISOString().slice(0,10);
   return Object.assign({ mrno:MRN, billno:'', fromDate:`${y}T00:00:00.000Z`, toDate:`${today}T23:59:59.000Z`, baseCatgeory:0, hospitalId:RESULT_SITE, mode:6, cpoeStatus:0, isbilled:0, empId:String(HIS_USER).padStart(8,'0'), visitno:'', selectionType:2, filterResult, profileId:'', invCategoryId:null, baseInvCategoryId:cat, visitMode:'', invMastServiceId:0, sampleNo:'', isCreditWithoutBilling:0, cpoeSearchGroupMode:0, searchType:'B', visiType:'0', isFrequent:1 }, extra||{}); }
 
@@ -112,7 +136,7 @@ function record(name, ep, resp){ const rows=(resp.json&&(resp.json.data||resp.js
   return arr; }
 
 (async () => {
-  console.log(`── Siratech FULL discovery (read-only) — MRN ${MRN||'(none)'} ──`);
+  console.log(`── Siratech FULL discovery (read-only) — ${IDENT?`${IDENT_KIND}:${IDENT}`:'(no patient)'} ──`);
   const { tok, jsUrls } = await loginAndBundles();
   console.log(`  login OK. Enumerating endpoints from ${jsUrls.length} JS bundle(s)…`);
   const eps=new Set(report.endpoints.liveCalls);
@@ -121,6 +145,21 @@ function record(name, ep, resp){ const rows=(resp.json&&(resp.json.data||resp.js
   report.endpoints.all=[...eps].sort();
   for(const p of report.endpoints.all){ const mod=(p.match(/([\w-]*-api)\/api\/v\d+/)||[,'other'])[1]; (report.endpoints.byModule[mod]=report.endpoints.byModule[mod]||[]).push(p); }
   console.log(`  ${report.endpoints.all.length} endpoints across ${Object.keys(report.endpoints.byModule).length} module(s).`);
+
+  // Resolve a national ID / Iqama / mobile → MRN via the HIS's own typed search.
+  // This IS the "enter the هوية → what comes back" test: the EMRSearchPanel row is
+  // scanned for insurance/policy fields by record() before we drill into orders.
+  if (IDENT && IDENT_KIND !== 'mrn') {
+    console.log(`\n  Resolving ${IDENT_KIND} ${IDENT} via EMRSearchPanel (the HIS UI's own national-ID path)…`);
+    const plans = IDENT_KIND==='saudiId' ? [['SAUDI ID',2],['IQAMA ID',3]]
+                : IDENT_KIND==='iqama'   ? [['IQAMA ID',3],['IQAMA ID',4],['SAUDI ID',2]]
+                : [['PHONE NUMBER',6],['PHONE NUMBER',7],['PHONE NUMBER',8]];
+    for (const [idType,category] of plans) {
+      const arr = record(`EMRSearch ${idType} ${IDENT}`, '/patient-api/api/v1/Patient/EMRSearchPanel/List', await emrSearch(tok, idType, category, _IDDIGITS));
+      if (arr.length) { MRN = arr[0].mrno || arr[0].mrNo || arr[0].MRNO || MRN; report.mrno = MRN; console.log(`   → resolved to MRN ${MRN}`); break; }
+    }
+    if (!MRN) console.log('   ✗ national-ID lookup returned no patient (check the ID, or the category id differs on this build).');
+  }
 
   if (MRN) {
     console.log(`\n  Probing patient ${MRN}…`);
