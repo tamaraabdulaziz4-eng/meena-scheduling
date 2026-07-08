@@ -10243,6 +10243,17 @@ def _autostamp_enrich(mrno, chosen, cache, study_acc=None):
             "provider": o.get("provider"), "providerId": o.get("providerId"),
             "isER": bool(o.get("isER")), "matched": bool(o)}
 
+def _autostamp_order_acc(o):
+    """The native Siratech DICOM accession an order carries (e.g. 'SIRA2552'). The
+    worklist feed puts it in `accession` (set once the study is matched); the older
+    order-detail shape used `accessionNumber`. Read BOTH so accession matching works
+    on the live worklist rows — returns '' when neither holds a real accession."""
+    for k in ("accession", "accessionNumber"):
+        v = str((o or {}).get(k) or "").strip()
+        if _elite_is_real_accession(v):
+            return v
+    return ""
+
 def _radiology_autostamp_sweep():
     """The moment a patient's images land in DePACS, stamp what the radiologist needs
     to START READING with zero delay — the clinical indication (from the order), the
@@ -10321,7 +10332,8 @@ def _radiology_autostamp_sweep():
             # exams each receive THEIR OWN indication instead of one being written onto both.
             s_acc = str(s.get("accession_number") or "").strip()
             acc_cand = ([o for o in orders
-                         if _elite_bare_id(o.get("accessionNumber")) == _elite_bare_id(s_acc)]
+                         if _autostamp_order_acc(o)
+                         and _elite_bare_id(_autostamp_order_acc(o)) == _elite_bare_id(s_acc)]
                         if _elite_is_real_accession(s_acc) else [])
             cur_hist = str(s.get("clinical_history") or "").strip()
             # One-time: dump a study's field names so the DePACS branch/station field can
@@ -10343,9 +10355,17 @@ def _radiology_autostamp_sweep():
             # station/institution matches rad_autostamp_n3_stations. Unscoped (blank
             # sites) → write everywhere, as configured. Unconfirmed under a scope → skip.
             _station = _autostamp_study_station(s)
+            # Accession = the strongest, self-contained branch signal. The `orders` here
+            # were already filtered to the scoped branch(es) (site_set, at the feed step),
+            # AND a Siratech accession is unique to the exact order that produced it. So if
+            # the study's accession resolves to exactly one scoped-branch order, that single
+            # match confirms BOTH the exam and the branch — no MWL agent / station config
+            # needed. This is what makes auto-stamp work for the common case (accession-
+            # carrying study) without any per-branch station setup.
             n3_confirmed = (
                 (bool(n3_stations) and _station is not None and _station.strip().upper() in n3_stations)
                 or (_elite_is_real_accession(s_acc) and _elite_bare_id(s_acc) in mwl_accs)
+                or (len(acc_cand) == 1)
             )
             branch_ok = (site_set is None) or n3_confirmed
             # Write the moment images arrive (empty history). Guards, in order:
@@ -10376,7 +10396,7 @@ def _radiology_autostamp_sweep():
                 #  so reaching here with both real means they differ.) An accession-less
                 # order — the common case for this feed — has no real accession to
                 # conflict, so the clean 1:1 still stamps. Fail closed + audit.
-                _cand_acc = str(cand[0].get("accessionNumber") or "").strip()
+                _cand_acc = _autostamp_order_acc(cand[0])
                 if (_elite_is_real_accession(s_acc) and _elite_is_real_accession(_cand_acc)
                         and _elite_bare_id(s_acc) != _elite_bare_id(_cand_acc)):
                     insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
