@@ -236,8 +236,11 @@ html { overscroll-behavior-y: none; background: var(--bg); }
   border-bottom: 1px solid var(--sidebar-border);
   position: relative; z-index: 2;
 }
+/* Seat the logo on a soft white chip so the violet-navy wordmark always reads
+   on the deep sidebar ground (light + dark). */
 .logo-box {
-  background: transparent; padding: 4px; margin-bottom: 8px; box-shadow: none;
+  background: #fff; padding: 12px 14px; margin-bottom: 10px;
+  border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.22);
   display: flex; align-items: center; justify-content: center;
 }
 .logo-box img { max-width: 100%; height: auto; display: block; }
