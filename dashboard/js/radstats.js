@@ -9,7 +9,7 @@
 // yet cover.
 
 let radstats = {
-  from: '', to: '', preset: '30d',
+  from: '', to: '', preset: 'today',
   branches: [], sel: null,           // sel = Set of selected siteIds (null = all)
   data: null, loading: false,
   modData: null, modLoading: false, modError: '',
@@ -656,40 +656,42 @@ function rsRenderBody() {
     </div>`;
   }
 
+  // Layout — everything below is straight from Siratech HIS, grouped by theme:
+  //   Overview (headline counts) → Composition (what kind of work) →
+  //   Where the work is (branch · department · doctor) → Timing (trend · pending age)
+  //   → Financial (billed revenue · payer). Default range is TODAY.
+  const dayCount = (d.daily || []).length;
   const layout = `
     ${focusNote}
     ${rsSection('Overview')}
     ${kpis}
-    <div id="rs-throughput"></div>
+
+    ${rsSection('Composition')}
     <div class="rs-grid2">
-      ${rsPanel('Priority split', prioDonut)}
-      ${rsPanel('Daily trend', rsArea(d.daily || []), `${(d.daily || []).length} days`)}
+      ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
+      ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
+    </div>
+
+    ${rsSection('Where the work is')}
+    <div class="rs-grid2">
+      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
+      ${rsPanel('By ordering department', rsBarRows(deptItems, '#8358FD'), `${deptItems.length} departments`)}
+    </div>
+    ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15', 'rs-wide')}
+
+    ${rsSection('Timing')}
+    <div class="rs-grid2">
+      ${rsPanel('Daily trend', rsArea(d.daily || []), `${dayCount} day${dayCount === 1 ? '' : 's'} in range`)}
+      ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order')}
     </div>
 
     ${rsSection('Financial — revenue &amp; payer')}
-    ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}
-
-    ${rsSection('Breakdown')}
-    <div class="rs-grid2">
-      ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
-      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
-    </div>
-    <div class="rs-grid2">
-      ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15')}
-      ${rsPanel('By ordering department', rsBarRows(deptItems, '#8358FD'))}
-    </div>
-    ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order', 'rs-wide')}`;
+    ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
 
   const foot = `<div class="rs-foot">Range ${escapeHtml((d.range && d.range.from) || '')} → ${escapeHtml((d.range && d.range.to) || '')}
-    · updated ${escapeHtml(rsAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
+    · straight from Siratech HIS · updated ${escapeHtml(rsAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
   body.innerHTML = layout + foot;
-  rsTpRender();                       // re-attach the daily-throughput section
-  const tp = rsTpState();
-  // Follow the page's branch focus: a re-scope invalidates the cached month.
-  const scopeNow = rsSitesParam();
-  if (tp.scope !== undefined && tp.scope !== scopeNow) { tp.data = null; tp.error = ''; tp.open = null; }
-  if (!tp.data && !tp.loading && !tp.error) rsTpLoad();
 }
 
 function rsSection(title) { return `<div class="rs-section">${title}</div>`; }
@@ -765,157 +767,4 @@ function rsAgo(iso) {
   if (s < 60) return 'just now';
   if (s < 3600) return Math.floor(s / 60) + 'm ago';
   return Math.floor(s / 3600) + 'h ago';
-}
-
-// ── Daily throughput · الإنجاز اليومي ─────────────────────────────────────────
-// منجز (imaged) vs ما جا (ordered but never imaged), bucketed by the IMAGING date
-// (KSA day) — not the order date. Backed by GET /api/radiology/throughput, which
-// aggregates the local order ledger (scheduling.radiology_orders). Month-scoped
-// with a per-day drill-down listing every imaged patient (order date → imaging date).
-function rsTpState() {
-  if (!radstats.tp) radstats.tp = { month: rsKsaToday().slice(0, 7), data: null, loading: false, error: '', open: null, seq: 0 };
-  return radstats.tp;
-}
-function rsTpMonthRange(month) {
-  const [y, m] = month.split('-').map(Number);
-  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();   // day 0 of next month = last day
-  return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
-}
-function rsTpSetMonth(v) {
-  const tp = rsTpState();
-  if (!/^\d{4}-\d{2}$/.test(v || '') || v === tp.month) return;
-  tp.month = v; tp.data = null; tp.error = ''; tp.open = null;
-  rsTpLoad();
-}
-async function rsTpLoad() {
-  const tp = rsTpState();
-  const seq = ++tp.seq;                       // stale-response guard (fast month flips)
-  tp.loading = true; tp.error = '';
-  tp.scope = rsSitesParam();                  // remember the branch scope this data belongs to
-  rsTpRender();
-  const r = rsTpMonthRange(tp.month);
-  try {
-    const d = await API.get(`/radiology/throughput?from=${r.from}&to=${r.to}${tp.scope ? `&sites=${tp.scope}` : ''}`);
-    if (seq !== tp.seq) return;
-    tp.data = d;
-  } catch (e) {
-    if (seq !== tp.seq) return;
-    tp.error = (e && e.message) || 'Could not load the daily throughput';
-  } finally {
-    if (seq === tp.seq) { tp.loading = false; rsTpRender(); }
-  }
-}
-function rsTpToggleDay(date) {
-  const tp = rsTpState();
-  tp.open = tp.open === date ? null : date;
-  rsTpRender();
-}
-// Ledger modality token → Clinical Calm .mod class.
-const RS_TP_MOD = { CT: 'ct', MR: 'mri', MRI: 'mri', US: 'us', XR: 'xr', DX: 'xr', CR: 'xr', DR: 'xr', MG: 'mm' };
-function rsTpModChips(byMod) {
-  const entries = Object.entries(byMod || {}).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return '';
-  return entries.map(([m, n]) =>
-    `<span class="mod ${RS_TP_MOD[String(m).toUpperCase()] || 'xr'}">${escapeHtml(m === '?' ? '؟' : m)} · ${n}</span>`).join(' ');
-}
-function rsTpModChip(m) {
-  const k = String(m || '').split(',')[0].trim().toUpperCase();
-  if (!k) return '';
-  return `<span class="mod ${RS_TP_MOD[k] || 'xr'}">${escapeHtml(k)}</span>`;
-}
-function rsTpDay(iso) { return iso ? String(iso).slice(0, 10) : '—'; }
-function rsTpWeekday(date) {
-  try { return new Date(date + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short' }); }
-  catch (e) { return ''; }
-}
-// One imaged patient inside a day's drill-down: name/MRN · modality · exam · order date → imaging date.
-function rsTpItemRow(it) {
-  const exam = it.exam || it.department || '';
-  return `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap">
-    <div class="pt" style="flex:1;min-width:180px">
-      <div class="pname" style="font-size:13px">${escapeHtml(it.patientName || '—')}
-        <span style="color:var(--muted);font-weight:500;font-size:12px">· ${escapeHtml(it.mrno || '')}</span></div>
-      <div class="pmeta">${exam ? `<span>${escapeHtml(exam)}</span><i></i>` : ''}<span>طلب ${rsTpDay(it.orderedAt)} ← تصوير ${rsTpDay(it.imagedAt)}</span></div>
-    </div>
-    ${rsTpModChip(it.modality)}
-  </div>`;
-}
-function rsTpRender() {
-  const host = document.getElementById('rs-throughput');
-  if (!host) return;
-  const tp = rsTpState();
-  const monthPick = `<input type="month" class="input" style="width:auto;font-size:13px" value="${escapeHtml(tp.month)}"
-      max="${rsKsaToday().slice(0, 7)}" onchange="rsTpSetMonth(this.value)" aria-label="Month">`;
-  const head = `
-    ${rsSection('الإنجاز اليومي · Daily throughput')}
-    <div class="card rs-panel rs-wide" style="margin-bottom:14px">
-      <div class="rs-panel-head" style="flex-wrap:wrap;gap:8px">
-        <h3>منجز مقابل ما جا — by imaging date</h3>
-        <span style="display:inline-flex;align-items:center;gap:8px">
-          <span class="rs-panel-sub">counted on the day the patient was actually imaged</span>${monthPick}
-        </span>
-      </div>`;
-  if (tp.loading) {
-    const sh = (w) => `<div class="lrow"><span class="wl-shimmer" style="width:${w}%"></span></div>`;
-    host.innerHTML = head + `<div class="listcard" style="border:none;box-shadow:none">${sh(45)}${sh(65)}${sh(55)}${sh(40)}</div></div>`;
-    return;
-  }
-  if (tp.error) {
-    host.innerHTML = head + `<div class="empty" style="padding:20px 14px"><div class="empty-icon" style="color:var(--muted)">${icon('alert').replace('class="mi-ico"', 'class="mi-ico" style="width:38px;height:38px"')}</div>
-      <p>${escapeHtml(tp.error)}</p>
-      <button class="ghost" style="margin-top:8px" onclick="rsTpLoad()">↻ Retry · إعادة المحاولة</button></div></div>`;
-    return;
-  }
-  const d = tp.data;
-  if (!d || !d.ok) { host.innerHTML = head + `<div class="rs-empty">No data yet</div></div>`; return; }
-
-  const totals = d.totals || {};
-  const imaged = totals.imaged || 0, noShow = totals.noShow || 0;
-  const summary = `
-    <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:4px 0 14px">
-      ${rsKpi('c', 'var(--green,#00C896)', rsNum(imaged), 'منجز · Imaged')}
-      ${rsKpi('a', 'var(--yellow,#FFBA49)', rsNum(noShow), 'ما جا · No-show')}
-      ${rsKpi('d', 'var(--accent,#6B4EFF)', rsNum(imaged + noShow), 'الإجمالي · Total')}
-    </div>
-    ${Object.keys(totals.byModality || {}).length ? `<div class="exline" style="flex-wrap:wrap;margin:0 0 12px">${rsTpModChips(totals.byModality)}</div>` : ''}`;
-
-  // Merge imaged days with no-show-only days so a day where nobody showed still appears.
-  const dayMap = new Map((d.days || []).map((x) => [x.date, x]));
-  const nsMap = new Map((d.noShow || []).map((x) => [x.date, x]));
-  const allDates = [...new Set([...dayMap.keys(), ...nsMap.keys()])].sort().reverse();   // newest first
-  const items = d.items || [];
-  let rows;
-  if (!allDates.length) {
-    rows = `<div class="rs-empty">لا يوجد بيانات لهذا الشهر — no imaging recorded this month yet.<br>
-      <span style="font-size:12px;opacity:.8">The ledger fills as the worklist is viewed and orders are imaged.</span></div>`;
-  } else {
-    rows = `<div class="listcard">` + allDates.map((date) => {
-      const day = dayMap.get(date), ns = nsMap.get(date);
-      const n = (day && day.imaged) || 0;
-      const open = tp.open === date;
-      const drillItems = open ? items.filter((it) => it.date === date) : [];
-      const drill = open ? `
-        <div style="padding:8px 18px 12px;background:var(--card-alt);border-bottom:1px solid var(--border)">
-          ${drillItems.length ? drillItems.map(rsTpItemRow).join('')
-            : `<div style="font-size:12.5px;color:var(--muted);padding:6px 0">${n ? 'Patient rows for this day are beyond the item cap — narrow the range.' : 'ما جا أحد هذا اليوم — ordered patients did not reach imaging.'}</div>`}
-        </div>` : '';
-      return `<div class="lrow" role="button" tabindex="0" aria-expanded="${open}"
-          onclick="rsTpToggleDay('${date}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rsTpToggleDay('${date}')}"
-          style="cursor:pointer;flex-wrap:wrap${open ? ';background:var(--violet-wash,#F0EDFF)' : ''}">
-        <div style="min-width:112px">
-          <div style="font-weight:700;font-variant-numeric:tabular-nums">${escapeHtml(date)}</div>
-          <div style="font-size:11px;color:var(--muted)">${rsTpWeekday(date)}</div>
-        </div>
-        <div class="exline" style="flex:1;flex-wrap:wrap;min-width:120px">${day ? rsTpModChips(day.byModality) : ''}</div>
-        ${ns && ns.count ? `<span class="sc warn" title="ordered this day, never imaged">ما جا ${ns.count}</span>` : ''}
-        ${n ? `<span class="ris completed"><span class="rd"></span>${rsNum(n)} منجز</span>`
-            : `<span class="ris scheduled"><span class="rd"></span>0 منجز</span>`}
-        <span style="color:var(--muted);font-size:12px">${open ? icon('chevron-down') : icon('chevron-right')}</span>
-      </div>${drill}`;
-    }).join('') + `</div>`;
-  }
-  const basisNote = d.fallbackReported
-    ? `<div class="rs-foot" style="margin-top:8px">${icon('info')} ${escapeHtml(String(d.basis || ''))}</div>`
-    : '';
-  host.innerHTML = head + summary + rows + basisNote + `</div>`;
 }
