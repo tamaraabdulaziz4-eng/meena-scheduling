@@ -361,6 +361,28 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, loggedIn: !!cache.auth, tokenAgeMs: cache.auth ? Date.now() - cache.ts : null });
 });
 
+// ── Autonomy helper — guarded READ-ONLY generic Siratech call ──────────────────
+// Lets Meena (superadmin, through the bridge) make read-only HIS calls to build &
+// verify integrations without shipping a new connector route per endpoint. Hard
+// guards: WRITES are refused (Save/Update/Delete/Authorize/Cancel/Create/…), and
+// the BILLED government calls (ELMData / NPHIESPatientRegistry / Eligibility-Check /
+// Discovery-Check) are refused here too — those only ever run through the dedicated
+// consent-gated path. Everything reachable here is an internal HIS read.
+const _CONN_WRITE = /(Save|Authoriz|Delete|Update|Cancel|Create|Register|Insert|Remove|Send|Submit|Pay|Refund|Approve|Sign|File|Edit)/i;
+const _CONN_BILLED = /(ELMData|NPHIESPatientRegistry|Eligibility\/Check|EligibilityCheck|Discovery\/Check)/i;
+const _CONN_READ = /(Fetch|Search|\/Get|Details|\/List|\/View|Report|Image|Pdf|Log|Panel|Preview|Print|Scheme|Demographics|IdentifyingDocs|Slots|Notification\/GetNotification|Diagnosis|Allerg|VitalSign|Template)/i;
+app.post('/admin/his', requireAuth, async (req, res) => {
+  const { path, body, method } = req.body || {};
+  if (!path || typeof path !== 'string' || !path.startsWith('/')) return res.status(400).json({ ok: false, error: 'path (starting with /) is required' });
+  if (_CONN_WRITE.test(path) || _CONN_BILLED.test(path) || !_CONN_READ.test(path)) {
+    return res.status(403).json({ ok: false, error: 'refused: only internal read-only HIS paths are allowed here' });
+  }
+  try {
+    const r = await hisFetch(path, { method: String(method || 'POST').toUpperCase() === 'GET' ? 'GET' : 'POST', body: body || {} });
+    return res.json({ ok: true, status: r.status, data: r.json });
+  } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
 // ── Endpoint discovery (READ-ONLY) — "does Siratech expose a Nphies/eligibility
 // API?" ───────────────────────────────────────────────────────────────────────
 // Siratech is an Angular SPA: every API path it can call is baked into its JS

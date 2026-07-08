@@ -6681,6 +6681,21 @@ def radiology_find(request: Request, user=Depends(require_radiology)):
     dbg = "&debug=1" if (request.query_params.get("debug") or "").strip() == "1" else ""
     return _bridge_request("/his/search?q=" + urllib.parse.quote(q) + dbg, timeout=60)
 
+@app.api_route("/api/_conn/{path:path}", methods=["GET", "POST"])
+async def radiology_conn_passthrough(path: str, request: Request, user=Depends(require_superadmin)):
+    """Superadmin autonomy tunnel: proxy a call to the Saudi VPS connector (the only
+    host that can reach Siratech) so integration work can be driven and verified from
+    the app without a new backend route per feature. The connector side only exposes
+    read-only, non-billed HIS reads (its /admin/his guard), so this cannot write to
+    the EMR or fire a billed government call."""
+    body = None
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+    return _bridge_request("/his/" + path, method=request.method, body=body, timeout=150)
+
 @app.get("/api/radiology/discover")
 def radiology_discover(user=Depends(require_superadmin)):
     """READ-ONLY diagnostic: enumerate every Siratech API endpoint (from its Angular
