@@ -7315,6 +7315,80 @@ async def radiology_autostamp_set(request: Request, user=Depends(require_superad
                              "sites": get_setting("rad_autostamp_sites", "3")}))
     return radiology_autostamp_get(user=user)
 
+@app.get("/api/radiology/autostamp/diagnose")
+def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadmin)):
+    """READ-ONLY dry run of the auto-stamp matcher over the live board. Writes NOTHING —
+    it replicates exactly what the sweep would decide (per study: already-has-history,
+    would-stamp, or would-block + why) so the operator can see the feature is matching
+    studies to orders. Superadmin-only. `limit` caps how many patients to inspect."""
+    limit = max(1, min(60, int(request.query_params.get("limit") or 30)))
+    data = _bridge_request("/his/worklist", timeout=90)
+    if not isinstance(data, dict):
+        raise HTTPException(502, "worklist unreachable")
+    sites_raw = (get_setting("rad_autostamp_sites", "3") or "").strip()
+    site_set = set(s.strip() for s in sites_raw.split(",") if s.strip()) if sites_raw else None
+    n3_stations_raw = (get_setting("rad_autostamp_n3_stations", "") or "").strip()
+    n3_stations = set(x.strip().upper() for x in n3_stations_raw.split(",") if x.strip())
+    by_mrn = {}
+    for it in (data.get("items") or []):
+        if site_set is not None and str(it.get("site") or "").strip() not in site_set:
+            continue
+        m = str(it.get("mrno") or "").strip()
+        if m:
+            by_mrn.setdefault(m, []).append(it)
+    ksa_now = datetime.now(timezone.utc) + timedelta(hours=3)
+    fresh_days = {ksa_now.strftime("%Y%m%d"), (ksa_now - timedelta(days=1)).strftime("%Y%m%d")}
+    counts = {"patients": 0, "fresh_studies": 0, "already_history": 0,
+              "would_stamp": 0, "would_block": 0, "no_order_match": 0}
+    block_reasons, samples = {}, []
+    for mrno, orders in list(by_mrn.items())[:limit]:
+        counts["patients"] += 1
+        try:
+            studies = _elite_studies_for_file(mrno)
+        except Exception:
+            continue
+        fresh = [s for s in studies
+                 if re.sub(r"\D", "", str(s.get("study_date") or ""))[:8] in fresh_days]
+        fresh_mod_count = {}
+        for _s in fresh:
+            _fm = _AUTOSTAMP_MOD.get(str(_s.get("modality") or "").strip().upper())
+            if _fm:
+                fresh_mod_count[_fm] = fresh_mod_count.get(_fm, 0) + 1
+        for s in fresh:
+            counts["fresh_studies"] += 1
+            smod = _AUTOSTAMP_MOD.get(str(s.get("modality") or "").strip().upper())
+            s_acc = str(s.get("accession_number") or "").strip()
+            acc_cand = ([o for o in orders
+                         if _autostamp_order_acc(o)
+                         and _elite_bare_id(_autostamp_order_acc(o)) == _elite_bare_id(s_acc)]
+                        if _elite_is_real_accession(s_acc) else [])
+            cand = [o for o in orders
+                    if smod and _AUTOSTAMP_MOD.get(str(o.get("modality") or "").strip().upper()) == smod]
+            cur_hist = str(s.get("clinical_history") or "").strip()
+            n3_confirmed = (len(acc_cand) == 1
+                            or (_elite_is_real_accession(s_acc) and bool(n3_stations)
+                                and (_autostamp_study_station(s) or "").strip().upper() in n3_stations))
+            branch_ok = (site_set is None) or n3_confirmed
+            chosen = (acc_cand[0] if len(acc_cand) == 1
+                      else (cand[0] if smod and fresh_mod_count.get(smod, 0) == 1 and len(cand) == 1 else None))
+            verdict, reason = None, None
+            if cur_hist:
+                counts["already_history"] += 1; verdict = "already_history"
+            elif chosen is None:
+                counts["no_order_match"] += 1; verdict = "no_order_match"
+            elif not branch_ok:
+                counts["would_block"] += 1; verdict = "would_block"; reason = "branch_unconfirmed"
+                block_reasons[reason] = block_reasons.get(reason, 0) + 1
+            else:
+                counts["would_stamp"] += 1; verdict = "would_stamp"
+            if len(samples) < 25:
+                samples.append({"mrno": mrno, "studyId": s.get("study_id"), "modality": s.get("modality"),
+                                "studyAccession": s_acc, "matchedBy": ("accession" if len(acc_cand) == 1
+                                else ("modality1:1" if chosen is not None else None)),
+                                "verdict": verdict, "reason": reason})
+    return {"ok": True, "scope_sites": sites_raw or "ALL", "counts": counts,
+            "block_reasons": block_reasons, "samples": samples}
+
 # Default worklist look-back (days) when the client picks no date. A worklist is a
 # work queue: it must keep TODAY's orders AND every still-pending order from recent
 # days (a pending order must not vanish at midnight just because the date rolled).
