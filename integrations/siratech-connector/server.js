@@ -35,6 +35,25 @@ const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 55 * 60 * 1000);
 // The Result-Entry worklist is scoped to the logged-in user's site (not the
 // order's original siteId), so result lookups use this site. Default 1 (proven).
 const RESULT_SITE = Number(process.env.RESULT_SITE || 1);
+// Branches the connector's Siratech account can READ but that are missing from its
+// own Sites/ByUser list (e.g. N3 - Al Rawdah / siteId 3 was un-assigned from the
+// account by mistake). The data endpoints (RadiologySearch by hospitalId) still
+// return these sites' orders, so we force-include them in the site enumeration so
+// their patients appear on the board and get auto-stamped — no Siratech access
+// change needed. Default '3' (N3). Set FORCE_SITES='' to disable.
+const FORCE_SITES = (process.env.FORCE_SITES || '3')
+  .split(',').map((s) => Number(String(s).trim())).filter((n) => Number.isFinite(n) && n > 0);
+// Display names for force-included sites (Sites/ByUser can't supply them since the
+// site isn't assigned). Override/extend via FORCE_SITE_NAMES="3=N3 - Al Rawdah,...".
+const FORCE_SITE_NAMES = (() => {
+  const m = { 3: 'N3 - Al Rawdah' };
+  for (const pair of String(process.env.FORCE_SITE_NAMES || '').split(',')) {
+    const i = pair.indexOf('=');
+    if (i > 0) { const id = Number(pair.slice(0, i).trim()); const nm = pair.slice(i + 1).trim();
+      if (Number.isFinite(id) && nm) m[id] = nm; }
+  }
+  return m;
+})();
 // A verified radiology report is filed as a PDF ATTACHMENT on the result row (the
 // exams here are template-less, so there is no free-text/template result to type —
 // the proven path is: attach the DePACS PDF under the EMR "Report" file-attachment
@@ -2144,8 +2163,17 @@ async function getSites() {
   const rows = (r.json && r.json.data) || [];
   const list = rows
     .map((s) => ({ siteId: Number(s.siteId), name: s.siteName || `Branch ${s.siteId}`, shortName: (s.siteShortName || '').trim() || s.siteName || `Branch ${s.siteId}` }))
-    .filter((s) => Number.isFinite(s.siteId))
-    .sort((a, b) => a.siteId - b.siteId);
+    .filter((s) => Number.isFinite(s.siteId));
+  // Union in force-included branches the account can read but that its Sites/ByUser
+  // omits (e.g. N3 after being un-assigned). Only added when not already present.
+  const present = new Set(list.map((s) => s.siteId));
+  for (const sid of FORCE_SITES) {
+    if (!present.has(sid)) {
+      const nm = FORCE_SITE_NAMES[sid] || `Branch ${sid}`;
+      list.push({ siteId: sid, name: nm, shortName: nm, forced: true });
+    }
+  }
+  list.sort((a, b) => a.siteId - b.siteId);
   if (list.length) sitesCache = { list, ts: Date.now() };
   return list;
 }
