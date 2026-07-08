@@ -182,6 +182,7 @@ function renderPsDetail() {
       <div id="ps-clinical"></div>
       <div id="ps-labresults"></div>
       <div id="ps-visits"></div>
+      <div id="ps-appts"></div>
       ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
         ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
         : ''}
@@ -211,6 +212,7 @@ function renderPsDetail() {
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech)
   psLoadRealLabs();                            // lab results — test · value · range (from Siratech)
   psLoadVisits();                              // recent clinic visits (encounter history)
+  psLoadAppointments();                        // appointment history
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
 }
 
@@ -284,20 +286,69 @@ async function psLoadVisits() {
   catch (e) { box.innerHTML = ''; return; }
   const visits = (d && d.visits) || [];
   if (!visits.length) { box.innerHTML = ''; return; }
-  const rows = visits.slice(0, 12).map((v) => {
+  const rows = visits.slice(0, 12).map((v, i) => {
     const er = String(v.visitType || '').toUpperCase() === 'ER';
     const badge = v.visitType ? `<span class="sc ${er ? 'no' : 'ok'}" style="${er ? '' : 'background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)'}">${escapeHtml(v.visitType)}</span>` : '';
     const sub = [v.provider, v.department, v.site].filter(Boolean).map(escapeHtml).join(' · ');
+    const enc = v.encounterId;
+    const canNote = enc != null;
     return `<div style="padding:7px 0;border-bottom:1px dashed var(--border)">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:92px">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;${canNote ? 'cursor:pointer' : ''}" ${canNote ? `onclick="psToggleVisitNote('${escapeHtml(String(enc))}','psvn-${i}',this)"` : ''}>
+        ${canNote ? `<span id="psvn-${i}-c" style="color:var(--muted);width:12px">▸</span>` : '<span style="width:12px"></span>'}
+        <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:88px">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
         ${badge}
         ${v.chiefComplaint ? `<span style="flex:1;min-width:120px;font-size:12.5px">${escapeHtml(v.chiefComplaint)}</span>` : '<span style="flex:1"></span>'}
       </div>
-      ${sub ? `<div style="color:var(--muted);font-size:11.5px;margin-top:2px">${sub}</div>` : ''}
+      ${sub ? `<div style="color:var(--muted);font-size:11.5px;margin:2px 0 0 22px">${sub}</div>` : ''}
+      <div id="psvn-${i}" style="display:none;margin:6px 0 2px 22px"></div>
     </div>`;
   }).join('');
   box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div>${rows}</div>`;
+}
+
+// Expand a visit row to show the doctor's clinical note(s) for that encounter,
+// fetched on demand from Siratech (Visits/DetailsByGroup → EmrHtmlPreview). Read-only.
+async function psToggleVisitNote(encounterId, elId, caretRow) {
+  const box = document.getElementById(elId);
+  if (!box) return;
+  const caret = document.getElementById(elId + '-c');
+  if (box.style.display !== 'none') { box.style.display = 'none'; if (caret) caret.textContent = '▸'; return; }
+  box.style.display = ''; if (caret) caret.textContent = '▾';
+  if (box.dataset.loaded) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  box.innerHTML = '<span style="color:var(--muted);font-size:12px">Loading note from Siratech…</span>';
+  let d;
+  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/visit-note?encounterId=${encodeURIComponent(encounterId)}`); }
+  catch (e) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">Could not load the note.</span>`; return; }
+  const notes = (d && d.notes) || [];
+  if (!notes.length) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">No readable note on this visit.</span>`; box.dataset.loaded = '1'; return; }
+  box.dataset.loaded = '1';
+  box.innerHTML = notes.map((n) => `
+    <div style="border-left:2px solid var(--border);padding:2px 0 2px 10px;margin-bottom:8px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${escapeHtml(n.templateName || 'Note')}${n.by ? ' · ' + escapeHtml(n.by) : ''}${n.date ? ' · ' + escapeHtml(String(n.date).slice(0, 10)) : ''}</div>
+      ${n.sections.map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('')}
+    </div>`).join('');
+}
+
+// The patient's appointment history — date · speciality · doctor · status. Read-only.
+async function psLoadAppointments() {
+  const box = document.getElementById('ps-appts');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/appointments`); }
+  catch (e) { box.innerHTML = ''; return; }
+  const appts = (d && d.appointments) || [];
+  if (!appts.length) { box.innerHTML = ''; return; }
+  const statusColor = (s) => /cancel/i.test(s) ? '#c0261a' : (/miss|no.?show/i.test(s) ? '#e2571f' : (/confirm|complet|attend/i.test(s) ? '#0a8f5b' : 'var(--muted)'));
+  const rows = appts.slice(0, 10).map((a) => `
+    <div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap">
+      <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:112px">${escapeHtml(String(a.date || '').slice(0, 16).replace('T', ' '))}</span>
+      <span style="flex:1;min-width:120px;font-size:12.5px">${escapeHtml(a.resource || a.speciality || '')}${a.speciality && a.resource ? ` · ${escapeHtml(a.speciality)}` : ''}</span>
+      ${a.status ? `<span style="font-size:11.5px;font-weight:600;color:${statusColor(a.status)}">${escapeHtml(a.status)}</span>` : ''}
+    </div>`).join('');
+  box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Appointments · ${appts.length}</div><div>${rows}</div>`;
 }
 
 // The patient's lab results — test · value · reference range · normal/abnormal,

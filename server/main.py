@@ -6695,6 +6695,27 @@ def radiology_patient_labs(file_no: str, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/labs", timeout=90)
 
+@app.get("/api/radiology/patient/{file_no}/appointments")
+def radiology_patient_appointments(file_no: str, user=Depends(require_radiology)):
+    """The patient's appointment history (date · speciality · doctor · status),
+    live from Siratech. Read-only."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/appointments", timeout=90)
+
+@app.get("/api/radiology/patient/{file_no}/visit-note")
+def radiology_patient_visit_note(file_no: str, request: Request, user=Depends(require_radiology)):
+    """The doctor's clinical note(s) for one encounter, live from Siratech. Read-only."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    enc = (request.query_params.get("encounterId") or "").strip()
+    if not file_no or not enc:
+        raise HTTPException(400, "file and encounterId are required")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no)
+                           + "/visit-note?encounterId=" + urllib.parse.quote(enc), timeout=90)
+
 @app.get("/api/radiology/find")
 def radiology_find(request: Request, user=Depends(require_radiology)):
     """Unified patient lookup: search Siratech by file/MRN, national ID, or phone

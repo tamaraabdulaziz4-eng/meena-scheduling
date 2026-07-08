@@ -848,6 +848,86 @@ app.get('/patient/:file/labs', requireAuth, async (req, res) => {
   }
 });
 
+// ── Patient APPOINTMENTS (READ-ONLY) ──────────────────────────────────────────
+// The patient's appointment history (date · speciality · resource/doctor · status),
+// from Appointments/History/ByPatient. Read-only.
+app.get('/patient/:file/appointments', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  try {
+    await getToken();
+    const uid = currentProviderId() || String(HIS_USER).padStart(8, '0');
+    const r = await hisFetch('/emr-api/api/v1/Appointments/History/ByPatient', { body: {
+      mrno: file, apptDate: '1900-01-01', providerName: '', genSpecialityId: 0,
+      hospitalId: 0, userId: String(uid), isOutsider: false } });
+    const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const rows = ((r.json && r.json.data) || []).map((a) => ({
+      date: a.allocationDate || a.confirmationDate || a.enteredDate || null,
+      speciality: clean(a.specialityName) || null,
+      resource: clean(a.apptResourceName) || null,
+      status: clean(a.apptstatus) || null,
+      site: clean(a.hospitalShortName || a.hospitalName) || null,
+      remarks: clean(a.apptRemarks) || null,
+    })).sort((x, y) => (parseHisDate(y.date || '') || 0) - (parseHisDate(x.date || '') || 0));
+    return res.json({ ok: true, file, appointments: rows, fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// ── Visit clinical NOTE (READ-ONLY) ───────────────────────────────────────────
+// The doctor's note(s) for ONE encounter: Visits/DetailsByGroup lists the note
+// templates on the visit, then EMRCore/EmrHtmlPreview renders each — we strip its
+// emrPrintFormats down to label/text sections (chief complaint, findings, plan,
+// diagnosis). On-demand (drill-in from a visit row). Read-only.
+function _stripHtml(s) {
+  return String(s || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/\s+/g, ' ').trim();
+}
+app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  const encounterId = String(req.query.encounterId || '').trim();
+  if (!file || !encounterId) return res.status(400).json({ ok: false, error: 'file and encounterId are required' });
+  try {
+    await getToken();
+    const providerId = currentProviderId() || String(HIS_USER).padStart(8, '0');
+    const pd = await hisFetch('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0', { method: 'GET' })
+      .then((r) => (r.json && r.json.data)).catch(() => null);
+    const p = (Array.isArray(pd) ? pd[0] : pd) || {};
+    const gender = p.gender || '', age = p.ageInDays || 0;
+    const from = new Date(Date.now() - 3650 * 864e5).toISOString();
+    const to = new Date(Date.now() + 864e5).toISOString();
+    const dg = await hisFetch('/emr-api/api/v1/Visits/DetailsByGroup', { body: {
+      mrno: file, fromDate: from, toDate: to, hospitalId: null, groupByValue: String(encounterId),
+      searchText: '', searchType: 0, groupBy: 0, limit: 20, offset: 0, empcat: '1,2,3' } });
+    const noteRows = (dg.json && dg.json.data) || [];
+    const notes = [];
+    for (const row of noteRows) {
+      try {
+        const prev = await hisFetch('/emr-api/api/v1/EMRCore/EmrHtmlPreview', { body: {
+          emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
+          templateId: row.emrTemplateId || row.templateId || 0, mrno: file, providerId: String(providerId),
+          gender, age, patFinEncounterId: Number(encounterId) || 0,
+          emrPatTemplateId: row.emrPatTemplateId || 0, isValid: 1, editStatus: 0 } });
+        const pr = (prev.json && prev.json.data) || [];
+        const pdata = Array.isArray(pr) ? pr[0] : pr;
+        const sections = [];
+        for (const fmt of ((pdata && pdata.emrPrintFormats) || [])) {
+          for (const rr of (fmt.printRowDataList || [])) {
+            const text = _stripHtml(rr.data);
+            if (text) sections.push({ label: _stripHtml(rr.label) || null, text });
+          }
+        }
+        if (sections.length) notes.push({ templateName: (row.templateName || '').trim() || 'Note',
+          by: (row.employeeName || '').trim() || null, date: row.emrDate || null, sections });
+      } catch (_e) { /* skip this note */ }
+    }
+    return res.json({ ok: true, file, encounterId, notes, fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // ── Radiology result linking ─────────────────────────────────────────────────
 // Match a patient's Siratech radiology order(s) to the VERIFIED DePACS study that
 // holds the report — the strict, no-guess gate. READ-ONLY: it never writes.
