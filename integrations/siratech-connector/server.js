@@ -429,7 +429,10 @@ app.get('/admin/rispanel-debug', requireAuth, async (req, res) => {
       });
       const srows = (sr.json && sr.json.data) || [];
       rs.keys = srows[0] ? Object.keys(srows[0]) : [];
-      rs.statusish = srows.slice(0, 4).map((r) => { const o = {}; for (const k of Object.keys(r)) if (/status|report|verif|scan|cpoe|done|progress|pend/i.test(k)) o[k] = r[k]; return o; });
+      const dist = {};
+      for (const r of srows) { const k = 'cpoeStatus=' + r.cpoeStatus; dist[k] = (dist[k] || 0) + 1; }
+      rs.cpoeStatusDist = dist;
+      rs.sample = srows.slice(0, 8).map((r) => ({ mrno: r.mrno, cpoeStatus: r.cpoeStatus, resultEntry: r.resultEntry, svc: r.serviceName }));
     } catch (e) { rs.err = String((e && e.message) || e); }
     res.json({ ok: true, ris: { count: rows.length, keys: rows[0] ? Object.keys(rows[0]) : [], statusish: pick }, radiologySearch: rs });
   } catch (e) { res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
