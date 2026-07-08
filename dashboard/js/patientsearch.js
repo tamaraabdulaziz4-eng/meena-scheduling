@@ -179,6 +179,7 @@ function renderPsDetail() {
         ${psField('Date of birth', p.dob)}
         ${psField('Marital status', p.maritalStatus)}
       </div>
+      <div id="ps-clinical"></div>
       ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
         ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
         : ''}
@@ -205,7 +206,52 @@ function renderPsDetail() {
   det.innerHTML = patCard + examBlock;
   psLoadConsents();
   psLoadLabs();
+  psLoadClinical();                            // problem list · allergies · vitals (from Siratech)
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
+}
+
+// Patient clinical context — problem list (ICD diagnoses), allergies / clinical
+// warnings, and vitals — straight from Siratech EMR. Loaded after the card paints,
+// best-effort (a failure just shows nothing). Read-only.
+async function psLoadClinical() {
+  const box = document.getElementById('ps-clinical');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/clinical`); }
+  catch (e) { box.innerHTML = ''; return; }
+  const dx = (d && d.diagnoses) || [];
+  const al = (d && d.allergies) || {};
+  const vi = d && d.vitals;
+  const secL = (t) => `<div class="ps-sec-l" style="margin-top:14px">${t}</div>`;
+  let html = '';
+  // Allergies / warnings FIRST — contrast safety must be impossible to miss.
+  const allergies = [...(al.drug || []).map((x) => ({ ...x, k: 'Drug' })),
+    ...(al.other || []).map((x) => ({ ...x, k: '' })), ...(al.warnings || []).map((x) => ({ ...x, k: 'Warning' }))];
+  if (allergies.length) {
+    html += `<div class="ps-alert" style="margin-top:12px">⚠️ <b>Allergies / warnings:</b> ${allergies.map((a) =>
+      escapeHtml(a.name) + (a.severity ? ` (${escapeHtml(a.severity)})` : '') + (a.reaction ? ` — ${escapeHtml(a.reaction)}` : '')).join(' · ')}</div>`;
+  }
+  // Vitals — shown only when the clinic actually recorded them (often none here).
+  if (vi) {
+    const chip = (lbl, v, u) => (v == null || String(v).trim() === '') ? '' :
+      `<span style="display:inline-flex;gap:4px;align-items:baseline;background:var(--card-alt,#f4f4f8);border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:12.5px"><b>${escapeHtml(String(v))}${u || ''}</b><span style="color:var(--muted)">${lbl}</span></span>`;
+    const bp = (vi.systolic && vi.diastolic) ? chip('BP', `${vi.systolic}/${vi.diastolic}`, '') : '';
+    const chips = [chip('Height', vi.height, vi.height && Number(vi.height) > 3 ? ' cm' : ''),
+      chip('Weight', vi.weight, ' kg'), chip('BMI', vi.bmi, ''), bp, chip('Pulse', vi.pulse, ''),
+      chip('Temp', vi.temperature, '°'), chip('SpO₂', vi.spo2, '%'), chip('Resp', vi.respiratoryRate, '')].filter(Boolean).join('');
+    if (chips) html += secL(`Vitals${vi.recordedAt ? ` · ${escapeHtml(String(vi.recordedAt).slice(0, 10))}` : ''}`)
+      + `<div style="display:flex;gap:7px;flex-wrap:wrap">${chips}</div>`;
+  }
+  // Problem list — the patient's ICD-coded diagnoses (the radiologist's clinical context).
+  if (dx.length) {
+    html += secL(`Problem list · ${dx.length}`) + `<div style="display:flex;gap:7px;flex-wrap:wrap">` +
+      dx.map((x) => `<span title="${escapeHtml(x.icdCode || '')}${x.date ? ' · ' + escapeHtml(x.date) : ''}"
+        style="display:inline-flex;gap:6px;align-items:center;background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF);border-radius:8px;padding:4px 10px;font-size:12.5px">
+        ${escapeHtml(x.name)}${x.chronic ? '<span style="font-size:10px;font-weight:700;background:#e2571f;color:#fff;border-radius:4px;padding:1px 5px">CHRONIC</span>' : ''}</span>`).join('') + `</div>`;
+  }
+  box.innerHTML = html ? (secL('Clinical history · from Siratech') + html) : '';
 }
 
 // Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG

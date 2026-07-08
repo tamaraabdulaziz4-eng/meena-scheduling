@@ -652,6 +652,77 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
   }
 });
 
+// ── Patient clinical history (READ-ONLY) ──────────────────────────────────────
+// The radiologist's context for a study: the patient's PROBLEM LIST (ICD-coded
+// diagnoses), known ALLERGIES / clinical warnings (contrast safety), and any
+// recorded VITAL SIGNS (height/weight/BP — often absent in an imaging-only clinic,
+// so shown only when present). All from Siratech EMR, in one parallel call; loaded
+// after the card paints so it never slows the first render. Never writes.
+function _clinAllergyList(a) {
+  const pick = (o) => o && (o.allergyName || o.allergen || o.drugName || o.itemName || o.name
+    || o.description || o.warningName || o.problemName || o.reactionName);
+  const sev = (o) => o && (o.severity || o.severityName || o.reactionSeverity || null);
+  const rxn = (o) => o && (o.reaction || o.reactionName || o.reactionType || null);
+  return (Array.isArray(a) ? a : []).map((o) => ({
+    name: (pick(o) || '').toString().trim() || null,
+    severity: sev(o) ? String(sev(o)).trim() : null,
+    reaction: rxn(o) ? String(rxn(o)).trim() : null,
+  })).filter((x) => x.name);
+}
+const _VITAL_MAP = [
+  ['height', ['height', 'heightCm', 'heightValue', 'vitalHeight']],
+  ['weight', ['weight', 'weightKg', 'weightValue', 'vitalWeight']],
+  ['bmi', ['bmi', 'bodyMassIndex', 'bmiValue']],
+  ['systolic', ['systolic', 'bpSystolic', 'systolicValue', 'sbp']],
+  ['diastolic', ['diastolic', 'bpDiastolic', 'diastolicValue', 'dbp']],
+  ['pulse', ['pulse', 'heartRate', 'pulseValue', 'hr']],
+  ['temperature', ['temperature', 'temp', 'temperatureValue']],
+  ['spo2', ['spo2', 'spO2', 'oxygenSaturation', 'saturation']],
+  ['respiratoryRate', ['respiratoryRate', 'respRate', 'rr']],
+];
+function _clinVitals(list) {
+  const rows = Array.isArray(list) ? list : [];
+  if (!rows.length) return null;
+  // Newest first, then collapse to the most recent non-empty value per vital.
+  rows.sort((a, b) => (parseHisDate(b.vitalDate || b.recordedDate || b.emrDate || '') || 0)
+    - (parseHisDate(a.vitalDate || a.recordedDate || a.emrDate || '') || 0));
+  const out = {};
+  for (const [key, names] of _VITAL_MAP) {
+    for (const r of rows) { const v = firstOf(r, names); if (v != null && String(v).trim() !== '') { out[key] = String(v).trim(); break; } }
+  }
+  const when = rows[0] && (rows[0].vitalDate || rows[0].recordedDate || rows[0].emrDate);
+  return Object.keys(out).length ? { ...out, recordedAt: when || null } : null;
+}
+app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  try {
+    await getToken();
+    const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
+    const [dx, allergyD, vitalList] = await Promise.all([
+      H('/emr-api/api/v1/Diagnosis/PatientProblemlist', { mrno: file }),
+      H('/emr-api/api/v1/EMR/Allergies/ClinicalWarnings', { mrno: file }),
+      H('/emr-api/api/v1/VitalSign/List', { mrno: file }),
+    ]);
+    const seen = new Set();
+    const diagnoses = (Array.isArray(dx) ? dx : [])
+      .map((d) => ({ icdCode: d.icdCode || null, name: (d.icdName || '').trim(),
+        chronic: !!d.isChronic, history: !!d.isHistory, date: d.emrDate ? String(d.emrDate).slice(0, 10) : null }))
+      .filter((d) => d.name && !seen.has(d.icdCode + d.name) && seen.add(d.icdCode + d.name));
+    const A = allergyD || {};
+    const allergies = {
+      drug: _clinAllergyList(A.drugAllergy),
+      other: _clinAllergyList(A.otherAllergy),
+      warnings: _clinAllergyList(A.clinicalWarning),
+    };
+    allergies.any = allergies.drug.length + allergies.other.length + allergies.warnings.length;
+    return res.json({ ok: true, file, diagnoses, allergies, vitals: _clinVitals(vitalList),
+      fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // ── Radiology result linking ─────────────────────────────────────────────────
 // Match a patient's Siratech radiology order(s) to the VERIFIED DePACS study that
 // holds the report — the strict, no-guess gate. READ-ONLY: it never writes.
