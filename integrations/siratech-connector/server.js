@@ -725,16 +725,16 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   }
 });
 
-// ── Patient LAB results (READ-ONLY, exploratory) ──────────────────────────────
-// Labs ride the SAME investigation-api as radiology (baseInvCategoryId=1). This
-// gathers the patient's lab ENCOUNTERS (EncounterWise/Result — visits that carry
-// results) and, using the connector's real empId, tries the generic result search +
-// per-order detail to pull actual test values. `debug=1` echoes the raw step shapes
-// so the exact result-values path can be pinned from live data. Never writes.
-app.get('/patient/:file/labs', requireAuth, async (req, res) => {
+// ── Patient recent VISITS (READ-ONLY) ─────────────────────────────────────────
+// The patient's recent clinic encounters (date · OP/ER · ordering provider · branch)
+// from EncounterWise/Result — a real "browse the patient's history" view for the
+// radiologist. NOTE on labs: this imaging centre does not expose per-test lab VALUES
+// through any reachable API (the generic result search returns nothing even with
+// full credentials, and the "print" route is a UI page, not data), so only the
+// visit history is surfaced here, not lab numbers. Never writes.
+app.get('/patient/:file/visits', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
-  const debug = String(req.query.debug || '') === '1';
   try {
     await getToken();
     const empId = currentEmpId() || '';
@@ -743,8 +743,6 @@ app.get('/patient/:file/labs', requireAuth, async (req, res) => {
     const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
     const from = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
     const to = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-    const dbg = {};
-    // 1) Lab encounters (visits with investigation results), across every branch.
     const encMap = new Map();
     await pool(sites, STATS_SITE_CONCURRENCY, async (site) => {
       try {
@@ -758,39 +756,8 @@ app.get('/patient/:file/labs', requireAuth, async (req, res) => {
         }
       } catch (_e) { /* skip site */ }
     });
-    const encounters = [...encMap.values()].sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
-    // 2) Try the generic result search (cat1) per site — with the REAL empId this time.
-    const tests = [];
-    const rawSearch = [];
-    await pool(sites, STATS_SITE_CONCURRENCY, async (site) => {
-      try {
-        const r = await hisFetch('/investigation-api/api/v1/ResultEntry/Search', { body:
-          results.radiologySearchBody({ mrno: file, hospitalId: site, empId, baseInvCategoryId: 1,
-            filterResult: '2', selectionType: 2, isFrequent: 1,
-            fromDate: `${from}T00:00:00.000Z`, toDate: `${to}T23:59:59.000Z` }) });
-        const rows = (r.json && r.json.data) || [];
-        if (rows.length && debug && !rawSearch.length) rawSearch.push({ site, keys: Object.keys(rows[0]), sample: rows[0] });
-        for (const row of rows) {
-          const name = String(row.serviceName || row.testName || row.profileName || row.invMastServiceName || '').trim();
-          const svcId = row.invMastserviceId || row.invMastServiceId || 0;
-          tests.push({ site, name: name || null, invMastServiceId: svcId || null,
-            genPatBillingId: row.genPatBillingId || null, sampleNo: row.sampleNo || null,
-            collectionDate: row.collectionDate || row.billDate || null,
-            authStatus: row.authStatus, category: row.categoryName || null, _row: debug ? undefined : undefined });
-          // 3) Drill values when the row carries a service id.
-          if (svcId) {
-            try {
-              const dr = await hisFetch('/investigation-api/api/v1/ResultEntry/Details', { body:
-                results.radiologyDetailsBody({ ...row, invMastserviceId: svcId }, { hospitalId: site, empId }) });
-              const dd = (dr.json && dr.json.data) || [];
-              if (debug && !dbg.detailSample) dbg.detailSample = { keys: Array.isArray(dd) && dd[0] ? Object.keys(dd[0]) : Object.keys(dd || {}), sample: Array.isArray(dd) ? dd.slice(0, 2) : dd };
-            } catch (_e) { /* skip */ }
-          }
-        }
-      } catch (_e) { /* skip site */ }
-    });
-    if (debug) { dbg.rawSearch = rawSearch; dbg.empId = empId ? 'present' : 'MISSING'; dbg.sitesTried = sites.length; }
-    return res.json({ ok: true, file, encounters, tests, ...(debug ? { debug: dbg } : {}), fetchedAt: new Date().toISOString() });
+    const visits = [...encMap.values()].sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
+    return res.json({ ok: true, file, visits, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }

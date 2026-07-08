@@ -180,6 +180,7 @@ function renderPsDetail() {
         ${psField('Marital status', p.maritalStatus)}
       </div>
       <div id="ps-clinical"></div>
+      <div id="ps-visits"></div>
       ${(!p.height && !p.weight && Array.isArray(d.patientRawKeys) && d.patientRawKeys.length)
         ? `<div style="font-size:10.5px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;word-break:break-all">ℹ️ height/weight not in this record. Available fields: ${escapeHtml(d.patientRawKeys.join(', '))}</div>`
         : ''}
@@ -207,6 +208,7 @@ function renderPsDetail() {
   psLoadConsents();
   psLoadLabs();
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech)
+  psLoadVisits();                              // recent clinic visits (encounter history)
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
 }
 
@@ -252,6 +254,32 @@ async function psLoadClinical() {
         ${escapeHtml(x.name)}${x.chronic ? '<span style="font-size:10px;font-weight:700;background:#e2571f;color:#fff;border-radius:4px;padding:1px 5px">CHRONIC</span>' : ''}</span>`).join('') + `</div>`;
   }
   box.innerHTML = html ? (secL('Clinical history · from Siratech') + html) : '';
+}
+
+// The patient's recent clinic visits (encounters) — date · OP/ER · provider · branch,
+// straight from Siratech. Lets the radiologist browse the patient's recent history.
+// (Per-test lab VALUES aren't exposed by the HIS API for this centre, so only the
+// visit history is shown, not lab numbers.) Read-only, best-effort.
+async function psLoadVisits() {
+  const box = document.getElementById('ps-visits');
+  if (!box) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  if (!p.mrno) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/visits`); }
+  catch (e) { box.innerHTML = ''; return; }
+  const visits = (d && d.visits) || [];
+  if (!visits.length) { box.innerHTML = ''; return; }
+  const rows = visits.slice(0, 10).map((v) => {
+    const er = String(v.visitType || '').toUpperCase() === 'ER';
+    const badge = v.visitType ? `<span class="sc ${er ? 'no' : 'ok'}" style="${er ? '' : 'background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)'}">${escapeHtml(v.visitType)}</span>` : '';
+    return `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap">
+      <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:92px">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
+      ${badge}
+      <span style="flex:1;min-width:120px;color:var(--muted);font-size:12.5px">${escapeHtml(v.provider || '')}${v.site ? ` · ${escapeHtml(v.site)}` : ''}</span>
+    </div>`;
+  }).join('');
+  box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div>${rows}</div>`;
 }
 
 // Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG

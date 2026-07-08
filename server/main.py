@@ -6675,6 +6675,16 @@ def radiology_patient_clinical(file_no: str, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/clinical", timeout=90)
 
+@app.get("/api/radiology/patient/{file_no}/visits")
+def radiology_patient_visits(file_no: str, user=Depends(require_radiology)):
+    """The patient's recent clinic encounters (date · OP/ER · provider · branch),
+    live from Siratech — a browse-the-history view for the lookup card. Read-only."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/visits", timeout=90)
+
 @app.get("/api/radiology/find")
 def radiology_find(request: Request, user=Depends(require_radiology)):
     """Unified patient lookup: search Siratech by file/MRN, national ID, or phone
