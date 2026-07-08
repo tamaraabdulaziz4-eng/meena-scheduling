@@ -307,15 +307,10 @@ async function wlLoad(force, silent) {
     const data = await API.get('/radiology/worklist?' + qs.toString());
     if (wlState._loadGen !== gen) return;         // superseded — the watchdog gave up, a newer load owns the board
     wlState.data = data;
-    // The fast pass carries a PRELIMINARY stage (from the HIS RIS status text). Move it
-    // to stagePrelim and clear it.stage so it.stage stays STRICTLY DePACS-authoritative
-    // (set only by the ready pass). The preliminary value still drives the FIRST-PAINT
-    // bucketing via wlPrelimStage — but CAPPED at Imaged, so it can never assert a draft
-    // or a verified report. That's what lets rows land in the right strip instantly
-    // without waiting on the slow DePACS pass, while Final stays PACS-grounded.
-    for (const it of (wlState.data.items || [])) {
-      if (it.stage) { it.stagePrelim = it.stage; delete it.stage; }
-    }
+    // Lanes are driven by the NATIVE Siratech status (it.hisStatus) via wlLane(), which
+    // the connector stamps on the fast pass — so rows land in the right lane on the FIRST
+    // paint with no DePACS wait (this is what removed the old "everyone sits in Waiting
+    // then jumps" glitch). No stage-withholding needed.
     wlState.lastGood = Date.now(); wlState.reconnecting = false; wlPaintLive();
     wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
@@ -403,13 +398,10 @@ async function wlEnrich(silent) {
   // single combined request made the Exam/Type columns shimmer until the SLOWEST
   // work finished; now each pass merges + repaints the moment it lands.
   try {
-    await Promise.all([
-      // modality pass: exam+modality ONLY — must never touch the stage (it carries just
-      // the preliminary stage, which would stomp the accurate one from the ready pass).
-      API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d, false)).catch(() => {}),
-      // ready pass: the authoritative DePACS-grounded stage.
-      API.get('/radiology/worklist?' + mkQs({ ready: '1' })).then((d) => wlMergeEnrich(d, true)).catch(() => {}),
-    ]);
+    // Modality/exam enrichment only. The pipeline STAGE now comes from the native
+    // Siratech status (hisStatus) already on the fast pass, so the slow per-patient
+    // DePACS "ready" pass is no longer fetched for the board (it drove the old glitch).
+    await API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d, false)).catch(() => {});
     wlState.lastEnrich = Date.now();
   } finally {
     clearTimeout(enrichWatch);
@@ -962,16 +954,8 @@ function wlIndPump() {
   }
 }
 
-// Row-level "Report PDF": the actual per-study print links live in the drill (wlMatch
-// → wlPrintReport). Open the drill via its own toggle button so the wiring stays intact,
-// or scroll to it if it's already open.
-function wlRowPdf(dkey) {
-  const row = document.getElementById('wl-dr-' + dkey);
-  const btn = document.getElementById('wl-open-' + dkey);
-  if (!row) return;
-  if (row.style.display === 'none') { if (btn) btn.click(); }
-  else if (row.scrollIntoView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
+// (wlRowPdf removed — the row's "Report / Images" button now opens the native
+// Siratech report + images directly via odOpenStudy.)
 
 function wlRow(it, key) {
   // Drill identity must be STABLE per order, NOT the row's position — otherwise a live
@@ -1002,7 +986,7 @@ function wlRow(it, key) {
   // Second action: native Siratech report + images (report text + cloud viewer) for
   // imaged-or-later rows; otherwise Handoff. Everything from Siratech, no DePACS.
   const secondBtn = (done || bucket === 'reporting' || wlLane(it) === 'imaged' || wlLane(it) === 'reported')
-    ? `<button class="btn ghost" onclick="odOpenStudy(this,'${jsAttr(it.mrno)}','${jsAttr(acc || '')}')">${icon('file-text')}Report / Images</button>`
+    ? `<button class="btn ghost" onclick="odOpenStudy(this,'${jsAttr(it.mrno)}','${jsAttr(acc || '')}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}Report / Images</button>`
     : `<button class="btn ghost" onclick="wlOpenHandoff('${jsAttr(it.mrno)}')">${WL_SVG.send}Handoff</button>`;
   // Row-level one-click indication write — only where it matters: images are in PACS but
   // the report isn't filed yet. Hidden for waiting (no study) and reported/done (moot).
@@ -1030,7 +1014,7 @@ function wlRow(it, key) {
         ${indBtn}
       </div>
     </div>
-    <div class="rdetail" id="wl-dr-${dkey}" style="display:none">${wlTrack(it)}<div id="wl-d-${dkey}"></div></div>
+    <div class="rdetail" id="wl-dr-${dkey}" style="display:none"><div id="wl-d-${dkey}"></div></div>
   </div>`;
 }
 
@@ -1057,37 +1041,9 @@ function wlTimeOnly(s) {
   if (t) return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return s ? wlTrackFmt(s) : '';
 }
-function wlTrack(it) {
-  const reported = it.stage === 'reported' || it.stage === 'draft';
-  const steps = [
-    { label: 'Ordered', at: it.orderedDate, on: !!it.orderedDate },
-    { label: 'Arrived', at: it.arrivedAt, on: !!it.arrivedAt },
-    { label: 'In exam', at: it.examStartAt, on: !!it.examStartAt },
-    { label: 'Imaged', at: it.examEndAt || null, on: !!(it.examEndAt || it.scanned) },
-    { label: 'Reported', at: null, on: reported },
-  ];
-  let lastOn = -1; steps.forEach((s, i) => { if (s.on) lastOn = i; });
-  const anyTracking = it.arrivedAt || it.examStartAt || it.examEndAt;
-  const dur = (a, b) => {
-    const ta = wlParseTs(a), tb = wlParseTs(b);
-    if (!ta || !tb || tb < ta) return '';
-    const m = Math.round((tb - ta) / 60000);
-    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
-  };
-  const hhmm = (s) => { const t = wlParseTs(s); return t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; };
-  let html = '';
-  steps.forEach((s, i) => {
-    if (i > 0) {
-      const prev = steps[i - 1];
-      const gap = (prev.at && s.at) ? dur(prev.at, s.at) : '';
-      html += `<div class="bar${i <= lastOn ? ' done' : ''}">${gap ? `<span class="gap">${escapeHtml(gap)}</span>` : ''}</div>`;
-    }
-    const cls = i < lastOn ? ' done' : (i === lastOn ? ' now' : '');
-    html += `<div class="step${cls}"><span class="dot"></span><span class="lb">${escapeHtml(s.label)}</span>${s.on && s.at ? `<span class="tm tnum">${escapeHtml(hhmm(s.at))}</span>` : ''}</div>`;
-  });
-  return `<div class="jwrap"><div class="jhead">Patient journey${anyTracking ? '' : ' · <span>arrival &amp; exam times not recorded yet</span>'}</div>
-    <div class="journey">${html}</div></div>`;
-}
+// (Patient-journey stepper removed — this HIS never records arrival/exam times, so it
+// only ever rendered the dead "arrival & exam times not recorded yet" state. The native
+// stage lanes convey where each study is.)
 
 // Read-only drill: expand a detail row that matches the finished DePACS report(s) to
 // this patient's order(s).
@@ -1205,20 +1161,17 @@ function wlMatch(d, indIdx, mrno) {
     const actRow = acts.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${acts.join('')}</div>` : '';
     if (t.decision === 'unique') {
       return `<div class="ho-de-box ok" style="display:block;margin-bottom:6px">
-        <div><b>✅ ${escapeHtml(test.serviceName || '')}</b> — report ready
-          · ${escapeHtml(s.modality || '')} ${escapeHtml(s.desc || '')}${rep.pdfOk ? ' · 📄 PDF' : ''}</div>
+        <div><b>${escapeHtml(test.serviceName || '')}</b>${s.modality ? ' · ' + escapeHtml(s.modality) : ''} ${escapeHtml(s.desc || '')}</div>
         ${indRow}
-        ${rep.preview ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(rep.preview.slice(0, 200))}…</div>` : ''}
         ${actRow}
       </div>`;
     }
-    return `<div class="ho-de-box" style="display:block;margin-bottom:6px;border-color:var(--warn,#b7791f)">
-      <div><b>⚠️ ${escapeHtml(test.serviceName || '')}</b> — ${escapeHtml(t.reason || t.decision)}. Manual review.</div>
+    return `<div class="ho-de-box" style="display:block;margin-bottom:6px">
+      <div><b>${escapeHtml(test.serviceName || '')}</b> — open <b>Report / Images</b> for the report &amp; images.</div>
       ${indRow}
       ${actRow}</div>`;
   };
-  return orders.map(o => (o.tests || []).map(t => card(t, o)).join('')).join('')
-    + `<div style="font-size:12px;color:var(--muted);margin-top:2px">A verified report is filed automatically — it will drop off the board on its own.</div>`;
+  return orders.map(o => (o.tests || []).map(t => card(t, o)).join('')).join('');
 }
 
 // Open the study's rendered PDF report (style 2) in a new tab — the backend route

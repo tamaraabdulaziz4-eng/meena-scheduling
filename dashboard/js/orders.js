@@ -294,7 +294,7 @@ function odRow(o) {
         ? ris('scheduled', 'Filed elsewhere', 'Left the board filed/resolved outside Meena — turnaround unknown')
         : ris('final', 'Filed'))
     : o.state === 'reported' ? ris('prelim', 'Reported')
-      : (o.imagedAt ? ris('completed', 'Imaged', 'Images are in DePACS — awaiting the report')
+      : (o.imagedAt ? ris('completed', 'Imaged', 'Scan done — awaiting the report')
                     : ris('scheduled', 'Ordered'));
   const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--yellow,#e0a800)') : null;
   const border = attBorder || (emerg ? 'var(--danger,#E25555)' : null);
@@ -357,12 +357,14 @@ function odTimeline(o, step) {
 // Opens a modal with the radiology report TEXT + status + a button to the cloud
 // image viewer — all live from Siratech (FetchRadiologyReport / FetchRadiologyImage
 // / cpoeStatusDescription), no DePACS. Keyed by mrno + accession.
-async function odOpenStudy(btn, mrno, accession) {
+async function odOpenStudy(btn, mrno, accession, invId) {
   const old = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '… loading'; }
   let d;
   try {
-    const qs = new URLSearchParams({ mrno }); if (accession) qs.set('accession', accession);
+    const qs = new URLSearchParams({ mrno });
+    if (invId) qs.set('invPatTestResultId', invId);   // exact per-exam key (preferred)
+    if (accession) qs.set('accession', accession);
     d = await API.get('/radiology/study?' + qs.toString());
   } catch (e) { d = { ok: false, error: (e && e.message) || 'failed' }; }
   if (btn) { btn.disabled = false; btn.textContent = old; }

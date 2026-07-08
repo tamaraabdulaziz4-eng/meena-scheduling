@@ -407,37 +407,6 @@ app.post('/admin/his', requireAuth, async (req, res) => {
 // Everything from Siratech (no DePACS): status = cpoeStatusDescription; report text
 // = FetchRadiologyReport(invPatTestResultId); image = FetchRadiologyImage → a cloud
 // (ZFP) viewer URL. Keyed by mrno + accession (or invPatTestResultId). Read-only.
-// TEMP diagnostic: reveal FetchRISPanel's real field names + status/report values so
-// we can map the native status correctly (uses the connector's own userId). Read-only.
-app.get('/admin/rispanel-debug', requireAuth, async (req, res) => {
-  const site = Number(req.query.site || 1);
-  const today = new Date().toISOString().slice(0, 10);
-  try {
-    const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
-      mrno: '', fromDate: today + 'T00:00:00', toDate: today + 'T23:59:59',
-      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
-      serviceCategoryId: 0, emrPatRisPanelId: 0, userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
-    } });
-    const rows = (rp.json && rp.json.data) || [];
-    const pick = rows.slice(0, 4).map((r) => { const o = {}; for (const k of Object.keys(r)) if (/status|report|verif|scan|arriv|exam|cpoe|done|progress|pend/i.test(k)) o[k] = r[k]; return o; });
-    // Also probe RadiologySearch (the free site-wide source) — does IT carry the text status?
-    let rs = { keys: [], statusish: [] };
-    try {
-      const today2 = today;
-      const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
-        body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId: currentEmpId(), filterResult: '0', fromDate: today2 + 'T00:00:00.000Z', toDate: today2 + 'T23:59:59.000Z' }),
-      });
-      const srows = (sr.json && sr.json.data) || [];
-      rs.keys = srows[0] ? Object.keys(srows[0]) : [];
-      const dist = {};
-      for (const r of srows) { const k = 'cpoeStatus=' + r.cpoeStatus; dist[k] = (dist[k] || 0) + 1; }
-      rs.cpoeStatusDist = dist;
-      rs.sample = srows.slice(0, 8).map((r) => ({ mrno: r.mrno, cpoeStatus: r.cpoeStatus, resultEntry: r.resultEntry, svc: r.serviceName }));
-    } catch (e) { rs.err = String((e && e.message) || e); }
-    res.json({ ok: true, ris: { count: rows.length, keys: rows[0] ? Object.keys(rows[0]) : [], statusish: pick }, radiologySearch: rs });
-  } catch (e) { res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
-});
-
 app.get('/radiology/study', requireAuth, async (req, res) => {
   const mrno = String(req.query.mrno || '').trim();
   const accession = String(req.query.accession || '').trim();
@@ -1213,16 +1182,21 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     for (const it of items) {
       const c = radStatusCache.get(String(it.mrno));
       if (!c) continue;
-      const rec = (it.accession && c.byKey.get('acc:' + it.accession))
-        || c.byKey.get(keyOf(it.billNo, it.exam))
-        || c.byKey.get('bill:' + (it.billNo || ''));   // fallback when the exam name didn't enrich
+      // EXACT per-exam match (accession or bill+exam-name) vs the bill-level fallback.
+      const exact = (it.accession && c.byKey.get('acc:' + it.accession)) || c.byKey.get(keyOf(it.billNo, it.exam));
+      const rec = exact || c.byKey.get('bill:' + (it.billNo || ''));
       if (!rec) continue;
-      if (rec.status) it.hisStatus = rec.status;
-      it.hisReported = it.hisReported || rec.reported;
+      if (rec.status) it.hisStatus = rec.status;   // display status: exact or bill-level is fine
       it.hisCpoe = rec.cpoe != null ? rec.cpoe : it.hisCpoe;
-      if (rec.imaged && !it.scanned) it.scanned = true;
-      if (rec.invId && !it.invPatTestResultId) it.invPatTestResultId = rec.invId;
-      if (rec.acc && !it.accession) it.accession = rec.acc;
+      // The report flag + per-exam identity come ONLY from an exact match — never the
+      // bill-level fallback, which on a multi-exam bill could inherit a sibling exam's
+      // report and mislabel this row's lane (works-verifier finding #1/#2).
+      if (exact) {
+        it.hisReported = it.hisReported || exact.reported;
+        if (exact.imaged && !it.scanned) it.scanned = true;
+        if (exact.invId && !it.invPatTestResultId) it.invPatTestResultId = exact.invId;
+        if (exact.acc && !it.accession) it.accession = exact.acc;
+      }
     }
   } catch (_e) { /* status enrichment is best-effort */ }
 
