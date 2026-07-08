@@ -171,7 +171,6 @@ function _rsrInsights(cur, prev, meta) {
   return notes;
 }
 
-const RSR_MOD_COLOR = { CT: 'var(--accent,#6b4eff)', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
 const RSR_PAYER_COLOR = { 'Insurance': 'var(--accent,#6b4eff)', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
 
 function _rsrBuildDeck(ctx) {
@@ -221,7 +220,7 @@ function _rsrBuildDeck(ctx) {
 
   // 5 — Modality mix
   if (cur.modality && cur.modality.mix && cur.modality.mix.length) {
-    const segs = cur.modality.mix.map((x) => ({ label: x.modality, count: x.count, color: RSR_MOD_COLOR[x.modality] || '#94a3b8' }));
+    const segs = cur.modality.mix.map((x) => ({ label: x.modality, count: x.count, color: MOD_COLOR[x.modality] || '#94a3b8' }));
     slides.push(_rsrSlide('Case mix', `Modality mix — exams`, `<div class="rsr-center">${rsDonut(segs, { centerVal: cur.exams, centerLabel: 'exams' })}</div>`));
   }
 

@@ -132,7 +132,7 @@ function renderTicketsList() {
             ${cat.label}
             ${isManager ? ' · ' + escapeHtml(t.staff_name || t.created_by_name || '') : ''}
             ${t.branch_name ? ' · ' + escapeHtml(t.branch_name) : ''}
-            · ${ticketTimeAgo(t.updated_at)}${Number(t.updates) ? ' · ' + t.updates + ' replies' : ''}
+            · ${timeAgo(t.updated_at, { weekFallback: true })}${Number(t.updates) ? ' · ' + t.updates + ' replies' : ''}
           </div>
         </div>
         ${hi}
@@ -210,7 +210,7 @@ function renderTicketDetail(t) {
                 background:${u.is_status_change ? 'rgba(91,141,239,0.08)' : 'var(--card)'};
                 border:1px solid var(--border)">
       <div style="font-size:12px;color:var(--muted);margin-bottom:3px">
-        ${escapeHtml(u.author || 'system')} · ${ticketTimeAgo(u.created_at)}
+        ${escapeHtml(u.author || 'system')} · ${timeAgo(u.created_at, { weekFallback: true })}
       </div>
       <div style="white-space:pre-wrap">${escapeHtml(u.body)}</div>
     </div>`).join('') || `<div style="color:var(--muted);font-size:13px;padding:6px 0">No replies yet.</div>`;
@@ -238,7 +238,7 @@ function renderTicketDetail(t) {
       ${t.branch_name ? `<span style="font-size:12px;color:var(--muted)">${escapeHtml(t.branch_name)}</span>` : ''}
     </div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
-      Raised by ${escapeHtml(t.staff_name || t.created_by_name || '')} · ${ticketTimeAgo(t.created_at)}
+      Raised by ${escapeHtml(t.staff_name || t.created_by_name || '')} · ${timeAgo(t.created_at, { weekFallback: true })}
       ${t.handled_by_name ? ' · handled by ' + escapeHtml(t.handled_by_name) : ''}
     </div>
     ${t.description ? `<div style="white-space:pre-wrap;padding:12px;border:1px solid var(--border);
@@ -308,15 +308,6 @@ async function loadTicketsBadge() {
 }
 
 // ── Helpers + lazily-injected modals ──────────────────────────────────────────
-function ticketTimeAgo(ts) {
-  if (!ts) return '';
-  const d = new Date(ts); const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
-  return d.toLocaleDateString('en-GB');
-}
 
 function ensureTicketModal() {
   if (document.getElementById('ticket-create-overlay')) return;

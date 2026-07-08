@@ -87,9 +87,6 @@ async function initApp() {
   document.getElementById('nav-audit').style.display       = showAdminTools ? 'flex' : 'none';
   const staffNav = document.getElementById('nav-staff');
   if (staffNav) staffNav.style.display = canSeeStaff ? 'flex' : 'none';
-  // Nest Config is deprecated; keep hidden.
-  const nestNav = document.getElementById('nav-nest-config');
-  if (nestNav) nestNav.style.display = 'none';
   // Review page for reviewers (manager + full admin)
   const reviewNav = document.getElementById('nav-review');
   if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
@@ -204,7 +201,6 @@ function resolvePage(page) {
   if (page === 'home' && !['admin','manager','superadmin'].includes(role))
     return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'schedule'   && role === 'staff')  return 'myschedule';
-  if (page === 'nest-config')                     return 'schedule';
   if (page === 'swaps' && role === 'viewer') return 'schedule';
   // Branches, shift types, and the audit log are full-admin (superadmin) tools —
   // the backend rejects everyone else, so the route guard must match (a team lead

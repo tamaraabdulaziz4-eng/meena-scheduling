@@ -245,12 +245,6 @@ function groupLeaveRanges(leaves) {
   return groups;
 }
 
-function fmtDateDisplay(dateStr) {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' });
-}
-
 // ── Modal ─────────────────────────────────────────────────────────────────────
 function openLeaveModal() {
   const ls = document.getElementById('leave-staff');

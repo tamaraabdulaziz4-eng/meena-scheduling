@@ -208,36 +208,6 @@ async function renderHomeApprovals() {
     </div></div>`;
 }
 
-// ── Expiring credentials alert (team lead: own branch · manager: all) ─────────
-async function renderHomeCredentials() {
-  const box = document.getElementById('hm-credentials');
-  if (!box) return;
-  let d;
-  try { d = await API.get('/credentials/expiring?days=60'); } catch (e) { box.innerHTML = ''; return; }
-  const items = (d && d.items) || [];
-  if (!items.length) { box.innerHTML = ''; return; }   // nothing expiring → no clutter
-  const kindLabel = (k) => (typeof _credKindLabel === 'function' ? _credKindLabel(k) : (k || 'Other'));
-  const statusOf = (n) => {
-    n = Number(n);
-    if (n < 0) return [`Expired ${Math.abs(n)}d ago`, 'var(--danger-ink,#e25555)'];
-    if (n === 0) return ['Expires today', 'var(--danger-ink,#e25555)'];
-    if (n <= 30) return [`${n}d left`, '#E2933F'];
-    return [`${n}d left`, '#C9A227'];
-  };
-  const rows = items.slice(0, 8).map(r => {
-    const [txt, col] = statusOf(r.days_left);
-    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
-      <div style="font-size:13px"><b>${escapeHtml(r.staff_name || '')}</b> · ${escapeHtml(kindLabel(r.kind))}${r.label ? ' · ' + escapeHtml(r.label) : ''} <span class="hm-muted">(${escapeHtml(r.expiry_date || '')})</span></div>
-      <div style="font-size:12px;font-weight:700;color:${col}">${txt}</div></div>`;
-  }).join('');
-  box.innerHTML = `<div class="cc"><div class="board" style="margin-bottom:14px">
-    <div class="bhead"><div class="bhrow">
-      <div class="btitle">Expiring credentials <span class="sc warn">${items.length}</span></div>
-      <div class="bh-actions"><button class="ghost" onclick="showPage('reports')">Manage →</button></div>
-    </div></div>
-    <div style="padding:6px 18px 14px">${rows}</div></div></div>`;
-}
-
 // TODAY's radiology across all branches — the live centrepiece of the manager
 // Home. Auto-refreshes so it reads as a real-time control room. A team lead is
 // scoped to their own branch (fail-closed); managers/superadmin see all branches.
@@ -405,30 +375,6 @@ async function homeApproveTimeback(id) {
     await API.put(`/timeback/${id}/status`, { status: 'approved' });
     toast('Time-back approved'); renderHomeApprovals();
   } catch (e) { toast(e.message, 'err'); }
-}
-
-function renderHomeActions(d) {
-  const box = document.getElementById('hm-actions');
-  if (!box || !d) { if (box) box.innerHTML = ''; return; }
-  const items = [];
-  if (['manager', 'superadmin'].includes(d.role)) items.push(['Reviews', d.pending_reviews, 'review']);
-  if (['manager', 'superadmin', 'admin'].includes(d.role)) {
-    items.push(['Leave', d.pending_leaves, 'leaves']);
-    items.push(['Registrations', d.pending_registrations || 0, 'staff']);
-  }
-  items.push(['Swaps', d.pending_swaps, 'swaps']);
-  // Counters read as one system with the rest of the app: the mockup .cc .kpi
-  // accent cards (same shape as Radiology-today / Staff), still clickable.
-  const accents = ['a', 'b', 'c', 'd'];
-  const dots = { a: 'var(--amber,#F4B740)', b: 'var(--blue,#3BA0FF)', c: 'var(--green,#00C896)', d: 'var(--violet,#6B4EFF)' };
-  box.innerHTML = `<div class="kpis">${items.map(([label, n, link], i) => {
-    const ac = accents[i % accents.length];
-    return `<button type="button" class="kpi ${ac}${n > 0 ? ' active' : ''}"
-      style="text-align:start;font:inherit;cursor:pointer" onclick="showPage('${link}')">
-      <div class="kl"><span class="kd" style="background:${dots[ac]}"></span>${label}</div>
-      <div class="kv">${n}</div>
-      <div class="kt">pending</div></button>`;
-  }).join('')}</div>`;
 }
 
 // ── Manager home: live staff lookup by name / employee ID ─────────────────────

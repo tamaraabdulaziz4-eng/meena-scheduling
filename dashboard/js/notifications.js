@@ -36,16 +36,6 @@ function toggleNotifPanel() {
   panel.classList.add('open');            // CSS animates it in/out
 }
 
-function notifTimeAgo(iso) {
-  if (!iso) return '';
-  const then = new Date(iso + 'Z'); // server sends UTC without tz
-  const secs = Math.max(0, (Date.now() - then.getTime()) / 1000);
-  if (secs < 60) return 'just now';
-  if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
-  return `${Math.floor(secs/86400)}d ago`;
-}
-
 const NOTIF_ICON = {
   review: '📤', submitted: '📤', approved: '✅', reviewed: '👀',
   returned: '↩️', rejected: '⛔', leave: '🌴', swap: '🔄', info: '🔔',
@@ -64,7 +54,7 @@ function renderNotifList() {
       <span class="notif-ico">${NOTIF_ICON[n.type] || '🔔'}</span>
       <div style="flex:1;min-width:0">
         <div class="notif-msg">${escapeHtml(n.message)}</div>
-        <div class="notif-time">${notifTimeAgo(n.created_at)}</div>
+        <div class="notif-time">${timeAgo(n.created_at, { utc: true })}</div>
       </div>
       ${n.is_read ? '' : '<span class="notif-dot"></span>'}
     </div>`).join('');

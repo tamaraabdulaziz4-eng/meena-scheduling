@@ -243,19 +243,6 @@ function odWhen(iso) {
   } catch (e) { return '—'; }
 }
 
-const OD_MOD = {
-  CT: { label: 'CT', cls: 'ct' }, MR: { label: 'MRI', cls: 'mri' }, MRI: { label: 'MRI', cls: 'mri' },
-  US: { label: 'US', cls: 'us' }, XR: { label: 'X-Ray', cls: 'xr' }, DX: { label: 'X-Ray', cls: 'xr' },
-  CR: { label: 'X-Ray', cls: 'xr' }, MG: { label: 'Mammo', cls: 'mm' },
-};
-function odModBadges(modality) {
-  if (!modality) return '';
-  return String(modality).split(',').map((m) => {
-    const k = m.trim().toUpperCase(), info = OD_MOD[k];
-    return `<span class="mod ${info ? info.cls : 'xr'}">${escapeHtml(info ? info.label : k)}</span>`;
-  }).join(' ');
-}
-
 const OD_STEP_ORDER = { ordered: 0, reported: 1, filed: 2 };
 // "Stuck" thresholds (hours): a report verified but not filed for this long almost
 // always means the match was ambiguous and needs a human; an order with no report
@@ -308,11 +295,11 @@ function odRow(o) {
           ${o.billNo ? 'Bill ' + escapeHtml(String(o.billNo)) + ' · ' : ''}${escapeHtml(o.department || '')}${o.doctor ? ' · ' + escapeHtml(o.doctor) : ''}${o.studyId ? ' · study #' + escapeHtml(String(o.studyId)) : ''}</span></div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-        ${odModBadges(o.modality)}
+        ${modBadges(o.modality, { fallbackCls: 'xr' })}
         ${o.accession ? `<span class="acc" title="Exact image↔order link — matched on DICOM accession ${escapeHtml(String(o.accession))}${o.accessionSource ? ' (' + escapeHtml(String(o.accessionSource)) + ')' : ''}">🔗 ${escapeHtml(String(o.accession))}</span>` : ''}
         ${(o.state === 'reported' || o.state === 'filed' || o.imagedAt || o.accession) && o.mrno
           ? `<button class="ghost" title="Open the radiology report + images — live from Siratech"
-               onclick="odOpenStudy(this,'${escapeHtml(String(o.mrno))}','${escapeHtml(String(o.accession || ''))}')">📄 Report / Images</button>` : ''}
+               onclick="openStudyViewer(this,'${escapeHtml(String(o.mrno))}','${escapeHtml(String(o.accession || ''))}')">📄 Report / Images</button>` : ''}
         ${att ? `<span class="sc ${att.cls === 'badge-red' ? 'no' : 'warn'}" title="Still in-flight — may need a human">⚠ ${att.label}</span>` : ''}
         ${odIsOrphan(o) ? '<span class="sc warn" title="Report was verified but Meena never filed it — confirm it reached the file">⚠ Report unconfirmed</span>' : ''}
         ${stateBadge}
@@ -354,57 +341,5 @@ function odTimeline(o, step) {
 }
 
 // ── Native Siratech report + images for one exam ──────────────────────────────
-// Opens a modal with the radiology report TEXT + status + a button to the cloud
-// image viewer — all live from Siratech (FetchRadiologyReport / FetchRadiologyImage
-// / cpoeStatusDescription), no DePACS. Keyed by mrno + accession.
-async function odOpenStudy(btn, mrno, accession, invId) {
-  const old = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '… loading'; }
-  let d;
-  try {
-    const qs = new URLSearchParams({ mrno });
-    if (invId) qs.set('invPatTestResultId', invId);   // exact per-exam key (preferred)
-    if (accession) qs.set('accession', accession);
-    d = await API.get('/radiology/study?' + qs.toString());
-  } catch (e) { d = { ok: false, error: (e && e.message) || 'failed' }; }
-  if (btn) { btn.disabled = false; btn.textContent = old; }
-  odShowStudyModal(mrno, d || {});
-}
-
-function odShowStudyModal(mrno, d) {
-  document.getElementById('od-study-modal')?.remove();
-  const rep = (d.reportText || '').trim();
-  const wrap = document.createElement('div');
-  wrap.id = 'od-study-modal';
-  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
-  const statusPill = d.status ? `<span class="ris ${/scan done|complet|verif|report|final/i.test(d.status) ? 'final' : 'prelim'}"><span class="rd"></span>${escapeHtml(d.status)}</span>` : '';
-  const imgBtn = d.imageUrl
-    ? `<a class="btn btn-sm btn-primary" style="text-decoration:none" href="${escapeHtml(d.imageUrl)}" target="_blank" rel="noopener">🖼 Open images</a>`
-    : `<span style="color:var(--muted);font-size:12px">No image link</span>`;
-  const body = !d.ok
-    ? `<div style="color:var(--danger,#E25555)">Couldn't load: ${escapeHtml(d.error || 'error')}</div>`
-    : d.found === false
-      ? `<div style="color:var(--muted)">No matching exam found in Siratech for this order.</div>`
-      : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-           ${statusPill}
-           ${d.modality ? `<span class="mod">${escapeHtml(String(d.modality))}</span>` : ''}
-           ${d.reportDate ? `<span style="color:var(--muted);font-size:12px">Reported ${escapeHtml(String(d.reportDate))}</span>` : ''}
-           <span style="flex:1"></span>${imgBtn}
-         </div>
-         ${d.verifiedBy ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Verified by ${escapeHtml(d.verifiedBy)}</div>` : ''}
-         ${rep
-            ? `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13.5px;line-height:1.6;background:var(--surface,#f7f7fb);border:1px solid var(--border,#e5e5ee);border-radius:10px;padding:12px;max-height:52vh;overflow:auto;margin:0">${escapeHtml(rep)}</pre>`
-            : `<div style="color:var(--muted)">${d.hasReport ? 'Report is filed but has no readable text.' : 'No report yet — images may still be available above.'}</div>`}`;
-  wrap.innerHTML = `<div class="card" style="max-width:760px;width:100%;max-height:86vh;overflow:auto;padding:16px 18px">
-      <div style="display:flex;align-items:center;margin-bottom:10px">
-        <div style="font-weight:700;font-size:15px">Radiology report${d.serviceName ? ' · ' + escapeHtml(String(d.serviceName)) : ''}
-          <span style="color:var(--muted);font-weight:500;font-size:12.5px"> · ${escapeHtml(String(mrno))}</span></div>
-        <span style="flex:1"></span>
-        <button class="ghost" onclick="document.getElementById('od-study-modal').remove()">✕</button>
-      </div>
-      ${body}
-      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Live from Siratech · read-only</div>
-    </div>`;
-  document.body.appendChild(wrap);
-}
+// The radiology study viewer (report text + images) lives in util.js as
+// openStudyViewer / showStudyModal — shared by this board and the worklist.

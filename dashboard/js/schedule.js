@@ -315,6 +315,11 @@ function renderNoScheduleState() {
   ['schedule-status-bar', 'tl-status-banner-wrap', 'schedule-stats', 'shift-legend'].forEach(id => {
     const el = document.getElementById(id); if (el) el.innerHTML = '';
   });
+  // Avoid two Generate buttons at once — the empty state below carries its own
+  // Generate CTA, so hide the toolbar one until a schedule exists (the shell
+  // rebuilds it on the next render).
+  const tbGen = document.getElementById('btn-generate');
+  if (tbGen) tbGen.style.display = 'none';
   const role = currentUser?.role;
   const canBuild = ['admin', 'superadmin'].includes(role);
   const canGenerate = ['admin', 'superadmin'].includes(role);
@@ -1290,36 +1295,6 @@ async function clearCell() {
   }
 }
 
-async function applyCrossBranch() {
-  if (!pickerCell) return;
-  const savedCell = pickerCell;
-  closePicker();
-  // Simple prompt — pick branch
-  const names = allBranches.filter(b => b.id !== currentBranchId).map(b => `${b.id}:${b.name}`).join('\n');
-  const picked = prompt(`Enter branch ID for cross-branch assignment:\n${names}`);
-  if (!picked) return;
-  const crossId = parseInt(picked);
-  if (isNaN(crossId)) return;
-
-  const staffId = Number(savedCell.dataset.staff);
-  const date    = savedCell.dataset.date;
-  setCellSaving(savedCell, true);
-  try {
-    const entry = await API.put(`/schedules/${currentSchedule.id}/entries`, {
-      staff_id: staffId, date, shift_code: 'M',
-      cross_branch_id: crossId, is_oncall: false
-    });
-    currentEntries = currentEntries.filter(e => !(e.staff_id===staffId && e.date?.slice(0,10)===date));
-    currentEntries.push(entry);
-    buildEntryMap();
-    renderRotaGrid();
-    toast('Cross-branch assigned');
-  } catch (err) {
-    setCellSaving(savedCell, false);
-    toast(err.message, 'err');
-  }
-}
-
 // ── Generate modal ────────────────────────────────────────────────────────────
 
 // Which section the next Generate run targets: '' = all sections.
@@ -1702,7 +1677,7 @@ async function runGenerate() {
 }
 
 function openGenerateDiagnosticsModal({ title, solver_status, sections, top_error }) {
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc = s => escapeHtml(String(s ?? ''));   // shared escaping; keep numeric 0 → "0"
 
   const sectionRows = Object.entries(sections || {}).map(([name, info]) => {
     const status = info?.status || 'UNKNOWN';

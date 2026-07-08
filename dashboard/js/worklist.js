@@ -484,14 +484,6 @@ function wlMergeEnrich(d, isReady) {
 //   imaged   — a study exists in DePACS/PACS (scan done), not yet reported
 //   reported — the DePACS study is VERIFIED (signed) → auto-file files it and it
 //              then drops off this board on its own.
-function wlStageBadge(stage) {
-  if (stage === 'reported') return '<span class="badge badge-green" title="Report signed — auto-file will file it, then it leaves the board">Report ready</span>';
-  if (stage === 'draft')    return '<span class="badge" style="background:#7c5cff;color:#fff" title="A report exists but is NOT verified yet — radiologist mid-report">Not verified</span>';
-  if (stage === 'imaged')   return '<span class="badge badge-orange" title="Images are in DePACS — nothing written yet">Imaged</span>';
-  if (stage === 'ordered')  return '<span class="badge" title="Ordered — images not in DePACS yet">Ordered</span>';
-  return '<span class="badge" style="opacity:.55">…</span>';
-}
-
 // The full radiology exam-status lifecycle, the way a real RIS (Epic Radiant, Sectra,
 // Merge) models it, mapped onto the signals Meena has:
 //   Scheduled/Ordered → Arrived → In progress → Completed(imaged) → Preliminary(draft)
@@ -534,19 +526,6 @@ function wlPhase(it) {
   if (s === 'prelim') return 'reporting';
   if (s === 'final') return 'final';
   return 'toscan';   // scheduled / arrived
-}
-// BUG #1: clicking a phase HIGHLIGHTS it + scrolls to its first row — it never hides
-// any patient. Clicking the active phase again clears the highlight.
-function wlPhaseJump(key) {
-  wlState.phaseHi = (wlState.phaseHi === key) ? null : key;
-  wlRender();
-  if (wlState.phaseHi) {
-    const target = wlState.phaseHi;
-    setTimeout(() => {
-      const el = document.querySelector('.wl2 .row[data-phase="' + target + '"]');
-      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 40);
-  }
 }
 function wlSetMod(m) { wlState.modFilter = (m === '' || wlState.modFilter === m) ? null : m; if (wlState.openDrills) wlState.openDrills.clear(); wlRender(); }
 // Modality of a row, normalised to the coarse RIS bucket for filtering.
@@ -739,15 +718,6 @@ function wlRestoreOpenState() {
     if (box && cached) box.innerHTML = cached;                // restore last result, no refetch flicker
   }
 }
-function wlToggleStrip(id) {
-  const list = document.getElementById(`wl-${id}-list`), arrow = document.getElementById(`wl-${id}-arrow`);
-  if (!list) return;
-  const open = list.style.display !== 'none';
-  list.style.display = open ? 'none' : '';
-  if (arrow) arrow.textContent = open ? '▸' : '▾';
-  if (open) wlState.openStrips.delete(id); else wlState.openStrips.add(id);
-}
-
 // RIS worklist table. Sort: STAT / emergency pinned to the very top, then by workflow
 // phase (to-scan → reported), then NEWEST first within a phase (freshest order on top —
 // the operator's chosen order).
@@ -766,21 +736,6 @@ function wlTable(items, prefix) {
 }
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }
-
-// Friendly labels + colour per imaging modality so the board reads at a glance.
-const WL_MOD = {
-  CT: { label: 'CT', cls: 'ct' }, MR: { label: 'MRI', cls: 'mri' },
-  US: { label: 'US', cls: 'us' }, XR: { label: 'X-Ray', cls: 'xr' },
-  MG: { label: 'Mammo', cls: 'mm' },
-};
-function wlModBadges(modality) {
-  if (!modality) return '';
-  return String(modality).split(',').map((m) => {
-    const k = m.trim().toUpperCase(), info = WL_MOD[k];
-    if (!info) return `<span class="mod">${escapeHtml(k)}</span>`;
-    return `<span class="mod ${info.cls}">${escapeHtml(info.label)}</span>`;
-  }).join(' ');
-}
 
 // A female patient needs a signed non-pregnancy consent BEFORE imaging. Detect
 // female from the HIS gender and surface the consent state right on the row.
@@ -874,19 +829,6 @@ function wlPregBadge(r) {
     return `<span class="sc warn" title="${nm} resulted${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''} — read the value">${icon('droplet')} Resulted${dstr}</span>`;
   }
   return `<span class="sc warn" title="${nm} ordered but result still pending">${icon('droplet')} Test pending${dstr}</span>`;
-}
-async function wlPregCheck(mrno, site, id, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'checking…'; }
-  try {
-    const qs = new URLSearchParams({ mrno }); if (site) qs.set('site', String(site));
-    const r = await API.get('/radiology/labs/pregnancy?' + qs.toString());
-    wlState.pregCache.set(String(mrno), r);
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = wlPregBadge(r);
-  } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Preg check'; }
-    if (typeof toast === 'function') toast('Pregnancy lookup failed', 'err');
-  }
 }
 function wlConsent(mrno, name, exam, doctor, branch) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
@@ -983,7 +925,7 @@ function wlIndPump() {
 }
 
 // (wlRowPdf removed — the row's "Report / Images" button now opens the native
-// Siratech report + images directly via odOpenStudy.)
+// Siratech report + images directly via openStudyViewer.)
 
 function wlRow(it, key) {
   // Drill identity must be STABLE per order, NOT the row's position — otherwise a live
@@ -1014,7 +956,7 @@ function wlRow(it, key) {
   // Second action: native Siratech report + images (report text + cloud viewer) for
   // imaged-or-later rows; otherwise Handoff. Everything from Siratech, no DePACS.
   const secondBtn = (done || bucket === 'reporting' || wlLane(it) === 'imaged' || wlLane(it) === 'reported')
-    ? `<button class="btn ghost" onclick="odOpenStudy(this,'${jsAttr(it.mrno)}','${jsAttr(acc || '')}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}Report / Images</button>`
+    ? `<button class="btn ghost" onclick="openStudyViewer(this,'${jsAttr(it.mrno)}','${jsAttr(acc || '')}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}Report / Images</button>`
     : `<button class="btn ghost" onclick="wlOpenHandoff('${jsAttr(it.mrno)}')">${WL_SVG.send}Handoff</button>`;
   // Row-level one-click indication write — only where it matters: images are in PACS but
   // the report isn't filed yet. Hidden for waiting (no study) and reported/done (moot).
@@ -1031,7 +973,7 @@ function wlRow(it, key) {
         ${(consent || preg) ? '<div class="safe">' + consent + preg + '</div>' : ''}
       </div>
       <div class="exam">
-        <div class="exline">${wlModBadges(it.modality)}${proc}</div>
+        <div class="exline">${modBadges(it.modality)}${proc}</div>
         ${acc ? `<span class="acc" title="DICOM accession">${WL_SVG.link}${escapeHtml(String(acc))}</span>` : ''}
       </div>
       <div class="when"><div class="big tnum">${wlTimeOnly(it.orderedDate)}</div>${(age && !done && bucket !== 'reported') ? '<div class="sm wait tnum">waiting ' + age + '</div>' : '<div class="sm tnum">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
