@@ -403,6 +403,21 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
         .filter(([k]) => /site|hospital|branch|facility|location|center|clinic/i.test(k)));
       console.log('[lookup] order site/branch fields:', JSON.stringify(siteFields));
     }
+    // Correct each order's branch to where it was ACTUALLY ordered (FetchRadiologyDetails
+    // gives the patient's registration site, not the ordering branch). Doing this BEFORE
+    // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
+    // o.siteId, so once the site is right it finds the order's row and its indication.
+    try {
+      const billToSite = await discoverOrderSites(file);
+      for (const o of rawOrders) {
+        const t = billToSite.get(String(o.billNo));
+        if (t && t.siteId && Number(t.siteId) !== Number(o.siteId)) {
+          console.log(`[lookup] bill ${o.billNo}: site ${o.siteId} (${o.site}) -> ${t.siteId} (${t.site})`);
+          o.siteId = t.siteId;
+          o.site = t.site;
+        }
+      }
+    } catch (e) { /* keep the original registration site on any failure */ }
     // Enrich each order with its clinical indication + billing/ER status.
     const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
     const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
@@ -475,6 +490,42 @@ async function discoverOrderSite(file, wantBillNo) {
     const sid = Number((match || {}).siteId);
     return Number.isFinite(sid) && sid > 0 ? sid : 0;
   } catch (e) { return 0; }
+}
+
+// FetchRadiologyDetails stamps each order with the patient's REGISTRATION site (e.g.
+// N1 - Almalqa), NOT the branch the order was actually placed at (e.g. NEST 3). The
+// result-entry RadiologySearch IS properly per-site — exactly like the live worklist —
+// so the site whose search returns an order's bill is where it was truly ordered.
+// Query every site for THIS patient (pending + resulted) and map billNo -> true site.
+// Best-effort: a site that fails is skipped, and orders we can't place keep their
+// original site, so this can never regress below today's behaviour.
+async function discoverOrderSites(file) {
+  const out = new Map();   // String(billNo) -> { siteId, site }
+  try {
+    await getToken();
+    const empId = currentEmpId();
+    if (!empId) return out;
+    const siteList = await getSites().catch(() => []);
+    const sites = siteList.length ? siteList.map((s) => s.siteId) : [RESULT_SITE];
+    const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+    await pool(sites, STATS_SITE_CONCURRENCY, async (site) => {
+      // filterResult 0 = still pending; the resulted-list shape (2 / selectionType 2 /
+      // isFrequent 1) covers already-reported orders — query both so done exams place too.
+      const variants = [{ filterResult: '0' }, { filterResult: '2', selectionType: 2, isFrequent: 1 }];
+      for (const v of variants) {
+        try {
+          const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+            body: results.radiologySearchBody({ mrno: file, hospitalId: site, empId, ...v }),
+          });
+          for (const r of ((sr.json && sr.json.data) || [])) {
+            const b = r.billNo != null ? String(r.billNo) : '';
+            if (b && !out.has(b)) out.set(b, { siteId: site, site: nameOf.get(site) || `Branch ${site}` });
+          }
+        } catch (e) { /* skip this site/variant */ }
+      }
+    });
+  } catch (e) { /* best-effort — callers fall back to the registration site */ }
+  return out;
 }
 
 // Siratech's EMR forward view of a patient's radiology — the endpoint that actually
