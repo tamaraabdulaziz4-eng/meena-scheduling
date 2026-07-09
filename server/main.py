@@ -7644,6 +7644,26 @@ def _annotate_worklist_overlay(items):
     except Exception:
         pass
 
+def _rad_assert_order_scope(gpb, user, body_site=None):
+    """Branch isolation for the workflow WRITE endpoints (كل فرع لفرعه). The read paths
+    all scope by _rad_scope_site; the overlay writes address an order purely by its
+    gen_pat_billing_id, so without this a branch-locked operator could mutate/cancel an
+    order in another branch just by supplying its gpb. Org-wide roles (scope None) are
+    unrestricted. For a branch-locked caller we fail CLOSED: the order must already be
+    known to belong to their site (the board persists every order it shows, with its
+    site), otherwise we refuse rather than trust the client-supplied site."""
+    scope = _rad_scope_site(user)
+    if scope is None:
+        return
+    row = q("SELECT site FROM scheduling.radiology_orders WHERE gen_pat_billing_id=%s", (int(gpb),), one=True)
+    order_site = row.get("site") if row else None
+    try:
+        ok = order_site is not None and int(order_site) == int(scope)
+    except Exception:
+        ok = False
+    if not ok:
+        raise HTTPException(403, "This order belongs to another branch")
+
 def _rad_overlay_apply(gpb, user, set_sql, set_params=(), mrno=None, site=None, patient_name=None):
     """UPSERT the local workflow overlay for ONE order (keyed by gen_pat_billing_id).
     Inserts a minimal row first if the board never persisted this order yet (mrno is
@@ -7651,6 +7671,8 @@ def _rad_overlay_apply(gpb, user, set_sql, set_params=(), mrno=None, site=None, 
     local_by + local_updated_at are always stamped. `set_sql` is a fixed per-route
     literal (never user input) so it carries no injection risk; values ride `set_params`."""
     gpb = int(gpb)
+    # Enforce branch isolation before any write (see _rad_assert_order_scope).
+    _rad_assert_order_scope(gpb, user, body_site=site)
     mr = str(mrno) if mrno else str(gpb)
     try:
         st = int(site) if site is not None and str(site).strip() != "" else None
@@ -7735,9 +7757,10 @@ async def radiology_order_note(gpb: int, request: Request, user=Depends(require_
     return {"ok": True}
 
 @app.post("/api/radiology/orders/{gpb}/cancel")
-async def radiology_order_cancel(gpb: int, request: Request, user=Depends(require_radiology)):
+async def radiology_order_cancel(gpb: int, request: Request, user=Depends(require_radiology_write)):
     """Mark the order Not Done with a reason (Meena overlay ONLY — this is never written
-    back to Siratech). Auto-file / reconcile skip a locally-cancelled order."""
+    back to Siratech). Auto-file / reconcile skip a locally-cancelled order, so this has a
+    filing consequence and is a privileged write (require_radiology_write, not view-only)."""
     b = await _rad_body(request)
     reason = str(b.get("reason") or "").strip()
     if not reason:
@@ -8193,6 +8216,41 @@ def _ksa_now():
         # (a UTC stamp near midnight would print the wrong calendar date on the form).
         return datetime.now(timezone.utc) + timedelta(hours=3)
 
+def _signature_has_ink(png_bytes):
+    """True only if the signature PNG carries actual strokes — not a blank/transparent
+    or all-white canvas. The browser's HAS_INK / length>200 guard is client-side and the
+    public sign endpoint is token-only (no login, directly scriptable), so a blank but
+    syntactically valid PNG would otherwise be filed to the live HIS as a legally-binding
+    signed radiation-safety consent. We re-check pixels server-side and FAIL CLOSED: an
+    image we cannot decode counts as no ink (reject), never accept an unverifiable sig."""
+    try:
+        import fitz
+        pix = fitz.Pixmap(png_bytes)
+        s = pix.samples
+        n = pix.n                      # components per pixel (includes alpha if present)
+        has_a = bool(pix.alpha)
+        total = pix.width * pix.height
+        if total <= 0:
+            return False
+        step = max(1, total // 20000)  # sample up to ~20k pixels for speed
+        ink = 0
+        i = 0
+        while i < total:
+            base = i * n
+            a = s[base + n - 1] if has_a else 255
+            if a > 24:                 # visibly opaque
+                r = s[base]
+                g = s[base + 1] if n >= 3 else r
+                bl = s[base + 2] if n >= 3 else r
+                if r < 220 or g < 220 or bl < 220:   # not near-white → real ink
+                    ink += 1
+                    if ink >= 12:      # a genuine stroke has far more; blank has none
+                        return True
+            i += step
+        return False
+    except Exception:
+        return False
+
 @app.post("/api/consent")
 async def create_consent(request: Request, user=Depends(require_radiology)):
     """Generate the signed Declaration of Non-Pregnancy PDF from the captured form
@@ -8227,6 +8285,8 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
             png = None
     if not png:
         raise HTTPException(400, "The patient signature is required")
+    if not _signature_has_ink(png):
+        raise HTTPException(400, "The signature looks blank — please capture the patient's actual signature")
     now = _ksa_now()
     tech = _consent_signer(user)
     data = {
@@ -8683,6 +8743,8 @@ async def public_consent_sign(token: str, request: Request):
             png = None
     if not png:
         raise HTTPException(400, "Signature is required")
+    if not _signature_has_ink(png):
+        raise HTTPException(400, "The signature looks blank — please sign before submitting")
     now = _ksa_now()
     weight = (b.get("weight") or r.get("weight") or "").strip()
     height = (b.get("height") or r.get("height") or "").strip()
