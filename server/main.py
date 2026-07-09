@@ -7603,12 +7603,27 @@ def _annotate_worklist_consent(items):
     if not files:
         return
     try:
-        rows = q("""SELECT DISTINCT file_no FROM scheduling.consents
+        # A non-pregnancy consent is per-exam / per-visit (pregnancy status changes over
+        # time), so ANY-signed-consent-ever must NOT suppress the prompt for a later exam.
+        # Treat the prompt as satisfied only when THIS exam's bill already has a signed
+        # consent, or a consent was signed very recently (same visit / 3-day window).
+        rows = q("""SELECT file_no, bill_no,
+                           (signed_at > NOW() - INTERVAL '3 days') AS recent
+                    FROM scheduling.consents
                     WHERE file_no = ANY(%s) AND status='signed' AND pdf IS NOT NULL""",
                  (files,)) or []
-        have = {r["file_no"] for r in rows}
+        bills_by_file, recent_files = {}, set()
+        for r in rows:
+            fn = r["file_no"]
+            bn = str(r.get("bill_no") or "").strip()
+            if bn:
+                bills_by_file.setdefault(fn, set()).add(bn)
+            if r.get("recent"):
+                recent_files.add(fn)
         for it in items:
-            it["consentOnFile"] = str(it.get("mrno")) in have
+            fn = str(it.get("mrno"))
+            bill = str(it.get("billNo") or "").strip()
+            it["consentOnFile"] = (fn in recent_files) or bool(bill and bill in bills_by_file.get(fn, set()))
     except Exception:
         pass
 
@@ -7679,15 +7694,23 @@ def _rad_assert_order_scope(gpb, user, body_site=None):
     if not ok:
         raise HTTPException(403, "This order belongs to another branch")
 
-def _rad_overlay_apply(gpb, user, set_sql, set_params=(), mrno=None, site=None, patient_name=None):
+def _rad_overlay_apply(gpb, user, set_sql, set_params=(), mrno=None, site=None, patient_name=None,
+                       block_if_cancelled=False):
     """UPSERT the local workflow overlay for ONE order (keyed by gen_pat_billing_id).
     Inserts a minimal row first if the board never persisted this order yet (mrno is
     NOT NULL, so fall back to the order key), then applies the operator's field change.
     local_by + local_updated_at are always stamped. `set_sql` is a fixed per-route
-    literal (never user input) so it carries no injection risk; values ride `set_params`."""
+    literal (never user input) so it carries no injection risk; values ride `set_params`.
+    `block_if_cancelled` makes a progress action refuse to silently resurrect a Not-Done
+    order (see the receive/start/complete routes)."""
     gpb = int(gpb)
     # Enforce branch isolation before any write (see _rad_assert_order_scope).
     _rad_assert_order_scope(gpb, user, body_site=site)
+    if block_if_cancelled:
+        cur = q("SELECT local_status FROM scheduling.radiology_orders WHERE gen_pat_billing_id=%s",
+                (gpb,), one=True)
+        if cur and cur.get("local_status") == "cancelled":
+            raise HTTPException(409, "This order is marked Not Done. Reopen it before changing its status.")
     mr = str(mrno) if mrno else str(gpb)
     try:
         st = int(site) if site is not None and str(site).strip() != "" else None
@@ -7714,8 +7737,9 @@ async def radiology_order_receive(gpb: int, request: Request, user=Depends(requi
     """Mark the patient as received/arrived at the department (Meena overlay)."""
     b = await _rad_body(request)
     _rad_overlay_apply(gpb, user,
-        "received_at=COALESCE(received_at, NOW()), local_status='received', cancel_reason=NULL",
-        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+        "received_at=COALESCE(received_at, NOW()), local_status='received'",
+        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"),
+        block_if_cancelled=True)
     insert_audit(user, "RADIOLOGY_RECEIVE", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
     return {"ok": True}
 
@@ -7724,8 +7748,9 @@ async def radiology_order_start(gpb: int, request: Request, user=Depends(require
     """Mark the exam started / in progress (Meena overlay)."""
     b = await _rad_body(request)
     _rad_overlay_apply(gpb, user,
-        "started_at=COALESCE(started_at, NOW()), received_at=COALESCE(received_at, NOW()), local_status='in_progress', cancel_reason=NULL",
-        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+        "started_at=COALESCE(started_at, NOW()), received_at=COALESCE(received_at, NOW()), local_status='in_progress'",
+        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"),
+        block_if_cancelled=True)
     insert_audit(user, "RADIOLOGY_START", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
     return {"ok": True}
 
@@ -7735,8 +7760,9 @@ async def radiology_order_complete(gpb: int, request: Request, user=Depends(requ
     stays the auto-file / results-file path into Siratech."""
     b = await _rad_body(request)
     _rad_overlay_apply(gpb, user,
-        "completed_at=COALESCE(completed_at, NOW()), local_status='completed', cancel_reason=NULL",
-        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+        "completed_at=COALESCE(completed_at, NOW()), local_status='completed'",
+        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"),
+        block_if_cancelled=True)
     insert_audit(user, "RADIOLOGY_COMPLETE", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
     return {"ok": True}
 
@@ -7784,6 +7810,17 @@ async def radiology_order_cancel(gpb: int, request: Request, user=Depends(requir
         mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
     insert_audit(user, "RADIOLOGY_CANCEL", str(b.get("mrno") or gpb),
                  json.dumps({"gpb": gpb, "reason": reason}))
+    return {"ok": True}
+
+@app.post("/api/radiology/orders/{gpb}/reopen")
+async def radiology_order_reopen(gpb: int, request: Request, user=Depends(require_radiology_write)):
+    """Reopen a Not-Done (cancelled) order — the ONLY way to undo a cancel now that the
+    progress actions refuse to silently resurrect one. Clears the cancel so the normal
+    workflow and auto-file resume. Privileged, same as cancel."""
+    b = await _rad_body(request)
+    _rad_overlay_apply(gpb, user, "local_status=NULL, cancel_reason=NULL", (),
+        mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_REOPEN", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
     return {"ok": True}
 
 @app.get("/api/radiology/technologists")
@@ -8231,6 +8268,20 @@ def _ksa_now():
         # (a UTC stamp near midnight would print the wrong calendar date on the form).
         return datetime.now(timezone.utc) + timedelta(hours=3)
 
+def _coerce_site(v):
+    """Site id as an int, accepting an int OR a numeric string. The connector serialises
+    siteId as a string on some paths (the worklist wraps it in Number() for exactly this),
+    but the patient-card consent/upload paths pass it straight through — an isinstance(int)
+    check there silently dropped the site to NULL, so auto-file could bind to the wrong
+    branch/order. Coerce centrally instead."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    return None
+
 def _signature_has_ink(png_bytes):
     """True only if the signature PNG carries actual strokes — not a blank/transparent
     or all-white canvas. The browser's HAS_INK / length>200 guard is client-side and the
@@ -8324,7 +8375,7 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
                RETURNING id, created_at""",
             (file_no, data["mrn"], name, data["procedure"], patient_type or None, reason or None,
              lmp or None, data["physician"] or None, tech,
-             (b.get("bill_no") or None), (b.get("site") if isinstance(b.get("site"), int) else None),
+             (b.get("bill_no") or None), _coerce_site(b.get("site")),
              psycopg2.Binary(pdf), user["id"], tech), one=True)
     insert_audit(user, "CONSENT_CREATE", file_no,
                  json.dumps({"id": row["id"], "kind": "non_pregnancy", "procedure": data["procedure"]}))
@@ -8355,8 +8406,19 @@ def _file_consent_to_siratech(consent_id):
     so the report path won't re-attach it. Safe to call repeatedly (idempotent by flag)."""
     rec = q("""SELECT id, file_no, mrn, patient_name, bill_no, site, pdf, filed_siratech
                FROM scheduling.consents WHERE id=%s""", (consent_id,), one=True)
-    if not rec or not rec.get("pdf") or rec.get("filed_siratech"):
-        return bool(rec and rec.get("filed_siratech"))
+    if not rec or not rec.get("pdf"):
+        return False
+    if rec.get("filed_siratech"):
+        return True
+    # Atomically CLAIM the filing BEFORE the slow (~40s) bridge call. Otherwise a concurrent
+    # report-ride (file_results) would read filed_siratech=false during this window and attach
+    # the SAME consent PDF a second time — two identical genFileAttachments on the file. Only
+    # the claimer proceeds; if the write fails we RELEASE the claim so the report ride (or a
+    # later manual/auto attempt) can still file it — never leaving it marked-filed-but-unfiled.
+    claimed = q("""UPDATE scheduling.consents SET filed_siratech=true
+                   WHERE id=%s AND filed_siratech=false RETURNING id""", (consent_id,), one=True)
+    if not claimed:
+        return True   # another path already claimed/filed it
     import base64 as _b64
     body = {
         "file": str(rec["file_no"]).strip(),
@@ -8367,13 +8429,17 @@ def _file_consent_to_siratech(consent_id):
         "expectName": (rec.get("patient_name") or "").strip() or None,
         "confirm": True,
     }
-    # Bounded so signing stays responsive — a slow/unreachable HIS just falls back to
-    # riding the report later (filed_siratech stays false).
-    out = _bridge_request("/his/consent/file", method="POST", body=body, timeout=60)
-    wrote = isinstance(out, dict) and out.get("wrote")
-    if wrote:
+    wrote = False
+    try:
+        # Bounded so signing stays responsive — a slow/unreachable HIS just falls back to
+        # riding the report later (the claim is released below).
+        out = _bridge_request("/his/consent/file", method="POST", body=body, timeout=60)
+        wrote = isinstance(out, dict) and out.get("wrote")
+    except Exception:
+        wrote = False
+    if not wrote:
         try:
-            q("UPDATE scheduling.consents SET filed_siratech=true WHERE id=%s",
+            q("UPDATE scheduling.consents SET filed_siratech=false WHERE id=%s",
               (consent_id,), exec_only=True)
         except Exception:
             pass
@@ -8463,7 +8529,7 @@ async def create_consent_link(request: Request, user=Depends(require_radiology))
                RETURNING id""",
             (file_no, (b.get("mrn") or file_no).strip(), (b.get("name") or "").strip(),
              (b.get("procedure") or "").strip(), patient_type or None, (b.get("physician") or "").strip() or None,
-             tech, (b.get("bill_no") or None), (b.get("site") if isinstance(b.get("site"), int) else None),
+             tech, (b.get("bill_no") or None), _coerce_site(b.get("site")),
              (b.get("dob") or "").strip() or None, (b.get("branch") or "").strip() or None,
              (b.get("weight") or "").strip() or None, (b.get("height") or "").strip() or None,
              token, user["id"], tech), one=True)
@@ -8586,7 +8652,7 @@ async def create_docupload_link(request: Request, user=Depends(require_radiology
                  (file_no, mrn, patient_name, bill_no, site, token, status, created_by, created_by_name, expires_at)
                VALUES (%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '6 hours') RETURNING id""",
             (file_no, (b.get("mrn") or file_no).strip(), (b.get("name") or "").strip(),
-             (b.get("bill_no") or None), (b.get("site") if isinstance(b.get("site"), int) else None),
+             (b.get("bill_no") or None), _coerce_site(b.get("site")),
              token, user["id"], tech), one=True)
     base = str(request.base_url).rstrip("/")
     xf_host = request.headers.get("x-forwarded-host")
