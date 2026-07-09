@@ -341,7 +341,7 @@ async function psToggleVisitNote(encounterId, elId, caretRow) {
   box.innerHTML = notes.map((n) => `
     <div style="border-left:2px solid var(--border);padding:2px 0 2px 10px;margin-bottom:8px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${escapeHtml(n.templateName || 'Note')}${n.by ? ' · ' + escapeHtml(n.by) : ''}${n.date ? ' · ' + escapeHtml(String(n.date).slice(0, 10)) : ''}</div>
-      ${(Array.isArray(n.sections) ? n.sections : []).map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No readable content in this note.</div>'}
+      ${(Array.isArray(n.sections) ? n.sections : []).map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px;white-space:pre-line">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No readable content in this note.</div>'}
     </div>`).join('');
 }
 
