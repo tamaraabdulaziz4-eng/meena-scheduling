@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'flags-fetal-probe-2026-07-09e';
+const CONNECTOR_BUILD = 'flags-fetal-2026-07-09f';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -792,28 +792,37 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     // Cap the vitals calls so a slow/invalid endpoint can never hang the card (the whole HIS
     // timeout is 30s; the card must not wait that long for a non-critical section).
     const cap = (p) => Promise.race([p, sleep(8000).then(() => null)]);
-    const [dx, allergyD, vitalList, vitalReport, vitalSummary, patData] = await Promise.all([
+    const [dx, allergyD, vitalList, vitalReport, vitalSummary, patData, birthMother] = await Promise.all([
       H('/emr-api/api/v1/Diagnosis/PatientProblemlist', { mrno: file }),
       H('/emr-api/api/v1/EMR/Allergies/ClinicalWarnings', { mrno: file }),
       cap(H('/emr-api/api/v1/VitalSign/List', { mrno: file })),
       cap(H('/emr-api/api/v1/Clinicalreport/Vitals', vBody)),
       cap(H('/emr-api/api/v1/VitalSign/Summary', vBody)),
-      G('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0'),
+      // PatientData lives under patient-api (NOT emr-api — that path 404s, which left every flag
+      // blank). It carries blood group, infection status, VIP, clinical warning and pregnancy.
+      cap(G('/patient-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0')),
+      // Gestational age (fetal) for a pregnant patient — relevant to radiation safety.
+      cap(G('/emr-api/api/v1/EMR/FetchBirthNoteMotherDetails?Mrno=' + encodeURIComponent(file))),
     ]);
     // Radiology-relevant patient flags: infection status (isolation / contrast &
-    // scanner precautions), blood group, VIP, and any clinical warning text.
+    // scanner precautions), blood group, VIP, pregnancy, and any clinical warning text.
     const pd = (Array.isArray(patData) ? patData[0] : patData) || {};
     const infections = [];
     if (Number(pd.isHepatitisB) > 0) infections.push('Hep B');
     if (Number(pd.isHepatitisC) > 0) infections.push('Hep C');
     if (Number(pd.isHiv) > 0) infections.push('HIV');
+    // Gestational age from FetchBirthNoteMotherDetails ({gWeek,gDays}); shown only when present.
+    const bm = (Array.isArray(birthMother) ? birthMother[0] : birthMother) || {};
+    const gW = Number(bm.gWeek), gD = Number(bm.gDays);
+    const fetal = ((Number.isFinite(gW) && gW > 0) || (Number.isFinite(gD) && gD > 0))
+      ? { gestationWeeks: Number.isFinite(gW) && gW > 0 ? gW : null, gestationDays: Number.isFinite(gD) && gD > 0 ? gD : null }
+      : null;
     const flags = {
       bloodGroup: (pd.bloodGroup || '').toString().trim() || null,
       infections,
       vip: Number(pd.isVip) > 0,
+      pregnant: Number(pd.pregnanyStatus) > 0 || !!fetal,
       clinicalWarning: (pd.clinicalWarning || '').toString().trim() || null,
-      lastVisitDate: pd.lastVistDate ? String(pd.lastVistDate).slice(0, 10) : null,
-      lastVisitSite: (pd.lastVistSite || '').toString().trim() || null,
     };
     const seen = new Set();
     const diagnoses = (Array.isArray(dx) ? dx : [])
@@ -843,19 +852,6 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       const patVit = _vitalsByPattern(allVitalRows);
       if (patVit) vitals = Object.assign({}, patVit, vitals || {});
     }
-    // Log the SHAPE of each vitals response (NO PHI values) so `journalctl | grep vital`
-    // tells us whether it's structured data (array/keys), rendered HTML, or an image —
-    // which decides whether we extract fields or just display the report.
-    try {
-      const shape = (x) => {
-        if (x == null) return 'null';
-        if (typeof x === 'string') { const h = x.slice(0, 30).replace(/\s+/g, ' '); return `string(len=${x.length}) starts="${h}"`; }
-        if (Array.isArray(x)) { const r = _asVitalRows(x); return `array(${x.length}) keys=[${Object.keys(r[0] || {}).join(',')}]`; }
-        if (typeof x === 'object') { const r = _asVitalRows(x); return `object keys=[${Object.keys(x).join(',')}] rowKeys=[${Object.keys(r[0] || {}).join(',')}]`; }
-        return typeof x;
-      };
-      console.log(`[vitals] report=${shape(vitalReport)} || summary=${shape(vitalSummary)} || list=${shape(vitalList)} || pdKeys=[${Object.keys(pd || {}).join(',')}] || extracted=${JSON.stringify(vitals || {})}`);
-    } catch (e) { console.log('[vitals] log-error', String(e && e.message)); }
     const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
     const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
     let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
@@ -873,29 +869,7 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
         }
       }
     }
-    // One-time key-name diagnostic (NO PHI values) so the real HIS field for a missing
-    // vital can be mapped from the connector log without a live debugger.
-    // Surface the raw field names IN THE RESPONSE (no PHI values, just keys + row counts) so
-    // the exact HIS vital field can be read from the browser Network tab — no VPS log needed.
-    const keysOf = (x) => { try { const r = _asVitalRows(x); return { rows: r.length, keys: Object.keys(r[0] || {}) }; } catch (e) { return { rows: 0, keys: [] }; } };
-    const vitalsDebug = {
-      report: keysOf(vitalReport), summary: keysOf(vitalSummary), list: keysOf(vitalList),
-      patientData: Object.keys(pd || {}),
-      // The vital NAMES (labels, not PHI values) so the name→field mapping can be verified.
-      reportNames: _vnvNames(_asVitalRows(vitalReport)),
-    };
-    // TEMP read-only discovery (shapes/keys only, NO PHI values) — verify the correct endpoint for
-    // the blank `flags` (PatientData 404s under /emr-api; patient-api is the candidate) and for
-    // fetal/birth notes, BEFORE wiring them. Sequential + 5s-capped + wrapped, so it stays light on
-    // the 2GB box and can never hang. Removed once the mapping is confirmed.
-    const cap5 = (p) => Promise.race([p, sleep(5000).then(() => ({ status: 'timeout', json: null }))]);
-    const shape = (r) => { const d = r && r.json && (r.json.data !== undefined ? r.json.data : r.json); const rows = Array.isArray(d) ? d : (d ? [d] : []); return { status: (r && r.status) || null, rows: Array.isArray(d) ? d.length : (d ? 1 : 0), keys: Object.keys(rows[0] || {}).slice(0, 60) }; };
-    const _probe = {};
-    try { _probe.patientData_patientApi = shape(await cap5(hisFetch('/patient-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0', { method: 'GET' }))); } catch (e) { _probe.patientData_patientApi = { error: String(e && e.message) }; }
-    try { _probe.patientBannerInfo = shape(await cap5(hisFetch('/patient-api/api/v1/Patient/PatientBannerInfo', { body: { mrno: file, hospitalId: 0 } }))); } catch (e) { _probe.patientBannerInfo = { error: String(e && e.message) }; }
-    try { _probe.birthNoteList = shape(await cap5(hisFetch('/emr-api/api/v1/EMR/BirthNote/List', { body: { mrno: file } }))); } catch (e) { _probe.birthNoteList = { error: String(e && e.message) }; }
-    try { _probe.birthMother = shape(await cap5(hisFetch('/emr-api/api/v1/EMR/FetchBirthNoteMotherDetails?Mrno=' + encodeURIComponent(file), { method: 'GET' }))); } catch (e) { _probe.birthMother = { error: String(e && e.message) }; }
-    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, flags, vitalsDebug, _probe,
+    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, fetal, flags,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
