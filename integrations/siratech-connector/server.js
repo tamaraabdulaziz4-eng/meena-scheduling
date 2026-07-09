@@ -1067,6 +1067,16 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
       mrno: file, fromDate: from, toDate: to, hospitalId: null, groupByValue: String(encounterId),
       searchText: '', searchType: 0, groupBy: 0, limit: 20, offset: 0, empcat: '1,2,3' } });
     const noteRows = (dg.json && dg.json.data) || [];
+    // Diagnostic (NO PHI values — only shapes, counts and template LABELS) so we can see
+    // exactly where the note fetch yields nothing: an empty DetailsByGroup, an empty preview,
+    // or all-blank sections. Surfaced in the response for one-query inspection.
+    const noteDebug = {
+      dgStatus: dg.status || null,
+      dgRows: noteRows.length,
+      dgFirstKeys: Object.keys(noteRows[0] || {}),
+      dgTemplateNames: noteRows.map((r) => (r.templateName || r.templateNAME || r.emrTemplateName || '').toString().trim()).filter(Boolean),
+      previews: [],
+    };
     const notes = [];
     for (const row of noteRows) {
       try {
@@ -1084,11 +1094,19 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
             if (text) sections.push({ label: _stripHtml(rr.label) || null, text });
           }
         }
+        noteDebug.previews.push({
+          tpl: (row.templateName || '').toString().trim() || null,
+          prevStatus: prev.status || null,
+          prShape: Array.isArray(pr) ? `array(${pr.length})` : (pr && typeof pr === 'object' ? `object[${Object.keys(pr).join(',')}]` : typeof pr),
+          fmtKeys: (pdata && typeof pdata === 'object') ? Object.keys(pdata) : [],
+          fmts: ((pdata && pdata.emrPrintFormats) || []).length,
+          sections: sections.length,
+        });
         if (sections.length) notes.push({ templateName: (row.templateName || '').trim() || 'Note',
           by: (row.employeeName || '').trim() || null, date: row.emrDate || null, sections });
-      } catch (_e) { /* skip this note */ }
+      } catch (e) { noteDebug.previews.push({ tpl: (row.templateName || '').toString().trim() || null, error: String(e && e.message || e) }); }
     }
-    return res.json({ ok: true, file, encounterId, notes, fetchedAt: new Date().toISOString() });
+    return res.json({ ok: true, file, encounterId, notes, noteDebug, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
