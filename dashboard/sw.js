@@ -2,7 +2,7 @@
 //  • Web Push notifications (even when the app is closed).
 //  • Offline support: runtime-caches the app shell so the installed app opens
 //    without a connection after the first online visit.
-const CACHE = 'meena-v52';
+const CACHE = 'meena-v53';
 const CORE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png',
               '/apple-touch-icon.png', '/meena_logo.png', '/meena_logo_transparent.png'];
 
@@ -40,7 +40,19 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE).then(c => c.put('/', copy)).catch(() => {});
         }
         return res;
-      }).catch(() => caches.match(req).then(r => r || caches.match('/')))
+      }).catch(() => caches.match(req).then(r => {
+        if (r) return r;
+        // Only the app itself lives at '/'. A public page (/consent-sign, /reports, …) must
+        // NOT be substituted with the internal RIS app shell when offline — serve a plain
+        // offline notice instead so the patient/doctor never sees the operator login.
+        if (url.pathname === '/') return caches.match('/');
+        return new Response(
+          '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<div style="font:600 16px/1.6 -apple-system,system-ui,sans-serif;color:#1f1940;text-align:center;padding:48px 20px">' +
+          '<div style="font-size:40px">📡</div><p>You’re offline.<br>This page needs an internet connection.</p>' +
+          '<p style="color:#7c7a99;font-weight:500;direction:rtl">أنت غير متصل بالإنترنت — تحتاج هذه الصفحة إلى اتصال.</p></div>',
+          { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }))
     );
     return;
   }

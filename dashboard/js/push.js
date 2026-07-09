@@ -4,28 +4,55 @@ let _pushReg = null;          // active ServiceWorkerRegistration
 let _pushVapid = null;        // cached server VAPID public key
 
 // ── Auto-apply new deploys ────────────────────────────────────────────────────
-// The service worker serves cached assets, so a new deploy used to need TWO reloads
-// (first reload updates the worker in the background; the page kept running old JS).
-// Register the worker unconditionally on EVERY page (not just when push is enabled),
-// proactively check for a new version, and reload ONCE the moment a new worker takes
-// control — so a deploy shows up on the next normal reload, no hard-refresh needed.
+// Detect a new deploy by comparing the build id baked into THIS page (meta meena-build)
+// against the server's current build (/api/build). This does not rely on the frozen
+// hadController flag (which left a first-session tab running old JS against a new backend
+// forever) and never yanks the page out from under an operator mid-task: it reloads
+// immediately only when the tab is hidden, otherwise it offers a non-destructive
+// "reload" banner and reloads on the next time the tab is hidden.
 (function autoUpdateSW() {
   if (!('serviceWorker' in navigator)) return;
-  const hadController = !!navigator.serviceWorker.controller;   // returning visitor?
-  let reloading = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    // Reload only on an UPDATE (a worker was already in control) — not on the very
-    // first install, where the page is already running the latest assets.
-    if (reloading || !hadController) return;
-    reloading = true;
-    location.reload();
-  });
-  const check = (reg) => { try { reg && reg.update(); } catch (e) {} };
+  const meta = document.querySelector('meta[name="meena-build"]');
+  const LOADED = meta ? (meta.getAttribute('content') || '') : '';
+  let reloading = false, pending = false;
+  function doReload() { if (!reloading) { reloading = true; location.reload(); } }
+  function showBanner() {
+    if (pending || document.getElementById('sw-update-banner')) return;
+    pending = true;
+    const d = document.createElement('div');
+    d.id = 'sw-update-banner';
+    d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99999;background:#12103a;color:#fff;padding:9px 12px 9px 15px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.32);font:600 13px -apple-system,system-ui,sans-serif;display:flex;gap:12px;align-items:center;max-width:92vw';
+    d.innerHTML = '<span>A new version is available</span>';
+    const b = document.createElement('button');
+    b.textContent = 'Reload';
+    b.style.cssText = 'background:#6B4EFF;color:#fff;border:none;padding:6px 13px;border-radius:9px;font:700 13px inherit;cursor:pointer';
+    b.onclick = doReload;
+    d.appendChild(b);
+    document.body.appendChild(d);
+  }
+  function applyUpdate() {
+    if (reloading) return;
+    if (document.hidden) doReload();   // safe: no one is mid-task on a hidden tab
+    else showBanner();                 // reloads on click or on the next hide
+  }
+  async function checkBuild() {
+    if (!LOADED || reloading) return;
+    try {
+      const r = await fetch('/api/build', { cache: 'no-store' });
+      const j = await r.json();
+      if (j && j.build && j.build !== LOADED) applyUpdate();
+    } catch (e) {}
+  }
   navigator.serviceWorker.register('/sw.js').then((reg) => {
-    check(reg);
-    setInterval(() => check(reg), 60000);        // catch a deploy while the tab stays open
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) check(reg); });
+    try { reg.update(); } catch (e) {}
+    checkBuild();
+    setInterval(() => { try { reg.update(); } catch (e) {} checkBuild(); }, 60000);
   }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', checkBuild);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (pending) doReload(); }   // finish a deferred update
+    else checkBuild();
+  });
 })();
 
 function pushSupported() {

@@ -2053,10 +2053,18 @@ def _compute_build_id():
     if sha:
         return sha[:12]
     try:
-        files = _glob.glob(os.path.join(DASHBOARD, "js", "*.js"))
+        # Hash asset CONTENT, not mtime: a redeploy that doesn't bump mtimes (or a real
+        # code change with an unchanged mtime) must still advance the id, otherwise BOTH
+        # the ?v= URL buster and the SW cache name stay stuck and the device is pinned to
+        # old code with no recovery path.
+        files = sorted(_glob.glob(os.path.join(DASHBOARD, "js", "*.js")))
         files += [os.path.join(DASHBOARD, n) for n in ("index.html", "sw.js", "style.css")]
-        mt = max(os.path.getmtime(f) for f in files if os.path.exists(f))
-        return _hashlib.md5(str(int(mt)).encode()).hexdigest()[:12]
+        h = _hashlib.md5()
+        for f in files:
+            if os.path.exists(f):
+                with open(f, "rb") as fh:
+                    h.update(fh.read())
+        return h.hexdigest()[:12]
     except Exception:
         return "dev"
 BUILD_ID = _compute_build_id()
@@ -2070,8 +2078,18 @@ def _stamped(name, transform):
             return transform(f.read())
     except Exception:
         return None
-_INDEX_HTML = _stamped("index.html", lambda h: _ASSET_VER_RE.sub(f'?v={BUILD_ID}', h))
+_INDEX_HTML = _stamped("index.html", lambda h: _ASSET_VER_RE.sub(f'?v={BUILD_ID}', h)
+                        .replace('</head>', f'<meta name="meena-build" content="{BUILD_ID}"></head>', 1))
 _SW_JS = _stamped("sw.js", lambda j: _re_cb.sub(r"const CACHE\s*=\s*'[^']*'", f"const CACHE = 'meena-{BUILD_ID}'", j, count=1))
+
+@app.get("/api/build")
+def serve_build_id():
+    """The current deploy's build id. The client compares it to the build baked into the
+    page it loaded; a mismatch means a new deploy landed, so it can reload ONCE on its own
+    terms (fixes the frozen-hadController stale-tab case and gives a recovery path even if
+    the SW cache is stale). No auth — it's just a version string."""
+    return Response('{"build":"%s"}' % BUILD_ID, media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
 
 app.mount("/js", StaticFiles(directory=os.path.join(DASHBOARD, "js")), name="js")
 
