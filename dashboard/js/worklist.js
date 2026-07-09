@@ -344,7 +344,28 @@ function wlStartTimer() {
 
 // Changing the branch shows a different set — re-seed the emergency baseline so
 // switching scope never fires a false "new emergency" alarm.
-function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlExitSearch(); wlSwitchReload(); }
+function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlExitSearch(); wlSwitchBranch(); }
+
+// Branch switch (org-wide roles only). Unlike a DATE change — which fetches a genuinely
+// different window — a branch is just a SUBSET of what's already on the board (the
+// "All branches" load holds every branch's rows). So instead of blanking to the loading
+// screen and force-refetching, we RE-FILTER and repaint INSTANTLY client-side (wlRender
+// scopes items by wlState.site), then refresh SILENTLY in the background for fresh scoped
+// data. This kills the "pick a branch → back to loading → loads again" flash.
+//
+// We deliberately DON'T clear the per-order caches/ratchet here (unlike wlSwitchReload):
+// they're keyed per order, so keeping them lets the branch's rows keep their already-known
+// modality/stage instead of blanking and re-shimmering. The per-order enrichment for the
+// full board is still valid for the subset we now show.
+function wlSwitchBranch() {
+  wlState._loadGen++;             // supersede any in-flight (old-scope) load so it can't repaint
+  wlState.loading = false;        // …so the silent refresh below isn't dropped by the lock
+  _wlEnrichBusy = false;          // free the enrich lock for the (possibly narrower) new scope
+  wlState.openRows.clear(); wlState.selMrns.clear();
+  wlRender();                     // INSTANT: client-side site filter — branch rows if in hand,
+                                  // else a brief empty (never a blank spinner or the wrong branch)
+  wlLoad(false, true);            // silent background refresh — no loading flash
+}
 
 // Supersede any in-flight load and immediately fetch the new scope (branch/date). Without
 // this, wlLoad early-returns while a poll is in flight, so the switch is silently dropped
@@ -679,7 +700,14 @@ function wlRowMod(it) {
 }
 
 function wlRender() {
-  const d = wlState.data || {}, items = d.items || [];
+  const d = wlState.data || {};
+  let items = d.items || [];
+  // Client-side branch scope: the board may hold ALL branches (an org-wide "All branches"
+  // load) while the operator has picked one branch — filter to that site so switching
+  // branch repaints INSTANTLY from data already in hand, with no refetch/loading flash.
+  // When the server already scoped the fetch (branch team lead, or after the silent scoped
+  // refresh lands) this is a harmless no-op.
+  if (wlState.site) items = items.filter((it) => String(it.site) === String(wlState.site));
   wlCheckNewEmergencies(items);
   // Classify every row once with the SINGLE unified status, and stash the coarse bucket
   // the kept wlAutoIndication reads (completed/reported → imaged/reported so done rows
