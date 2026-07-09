@@ -374,6 +374,9 @@ async function psLoadRealLabs() {
   if (!box) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { box.innerHTML = ''; return; }
+  // Immediate placeholder so the section doesn't sit blank while the HIS call returns.
+  box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Lab results</div>
+    <div style="color:var(--muted);font-size:12px;padding:6px 2px">${typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : 'Loading labs…'}</div>`;
   let d;
   try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/labs`); }
   catch (e) { box.innerHTML = ''; return; }
@@ -386,7 +389,7 @@ async function psLoadRealLabs() {
     <span>Lab results · ${results.length}</span>
     ${abn ? `<span style="font-size:10px;font-weight:800;letter-spacing:.03em;color:#fff;background:#e2571f;border-radius:5px;padding:1px 6px">${abn} ABNORMAL</span>`
           : `<span style="font-size:10px;font-weight:800;letter-spacing:.03em;color:#fff;background:#0a8f5b;border-radius:5px;padding:1px 6px">ALL NORMAL</span>`}
-    ${when ? `<span style="font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0">· ${escapeHtml(when)}</span>` : ''}
+    ${when ? `<span style="font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0">Last lab · ${escapeHtml(when)}</span>` : ''}
   </div>`;
   const rowHtml = (r) => {
     const crit = r.critical, ab = r.abnormal || crit;
@@ -398,20 +401,21 @@ async function psLoadRealLabs() {
       ${r.range ? `<span style="color:var(--muted);font-size:11px;min-width:90px;text-align:right">${escapeHtml(r.range)}</span>` : ''}
     </div>`;
   };
-  // Collapsible groups: click a panel's header to expand/collapse its tests. Panels
-  // with an abnormal/critical result open by default (so they can't be missed); the
-  // rest start collapsed to keep the card compact.
+  // Collapsible groups: ALL start collapsed — click a group header to expand its tests.
+  // The abnormal-count badge stays on the collapsed header so a group with an abnormal
+  // result is still flagged without opening it. Each group shows its own draw date.
   const panelHtml = (pan, idx) => {
     const nAbn = pan.tests.filter((t) => t.abnormal || t.critical).length;
-    const open = nAbn > 0;
     const bodyId = 'ps-lab-p' + idx;
+    const pdate = pan.date || pan.drawnAt || pan.resultDate || pan.orderDate || '';
+    const pdstr = pdate ? String(pdate).slice(0, 11).trim() : '';
     return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:10px;background:var(--card,#fff)">
       <button type="button" onclick="psTogglePanel(this,'${bodyId}')" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:var(--card-alt,#f4f4f8);border:0;border-bottom:1px solid var(--border);cursor:pointer;font:inherit;text-align:start">
-        <span style="font-weight:700;font-size:12.5px;display:flex;align-items:center;gap:8px"><span class="ps-lab-chev" style="display:inline-block;transition:transform .15s;color:var(--muted)${open ? ';transform:rotate(90deg)' : ''}">▸</span>${escapeHtml(pan.name)}</span>
+        <span style="font-weight:700;font-size:12.5px;display:flex;align-items:center;gap:8px"><span class="ps-lab-chev" style="display:inline-block;transition:transform .15s;color:var(--muted)">▸</span>${escapeHtml(pan.name)}${pdstr ? `<span style="font-weight:500;color:var(--muted);font-size:11px">· ${escapeHtml(pdstr)}</span>` : ''}</span>
         ${nAbn ? `<span style="font-size:10px;font-weight:800;color:#fff;background:var(--warn-ink,#e2571f);border-radius:5px;padding:1px 6px">${nAbn} ▲</span>`
                : `<span style="font-size:11px;color:var(--muted)">${pan.tests.length} tests</span>`}
       </button>
-      <div id="${bodyId}"${open ? '' : ' style="display:none"'}>${pan.tests.map(rowHtml).join('')}</div>
+      <div id="${bodyId}" style="display:none">${pan.tests.map(rowHtml).join('')}</div>
     </div>`;
   };
   box.innerHTML = head + panels.map(panelHtml).join('');
