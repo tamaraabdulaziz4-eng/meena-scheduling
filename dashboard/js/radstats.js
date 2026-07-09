@@ -428,7 +428,6 @@ async function rsLoadFinancial() {
 }
 
 // ── rendering ─────────────────────────────────────────────────────────────────
-const RS_MOD_COLOR = { CT: 'var(--accent,#6b4eff)', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
 const rsNum = (n) => Number(n || 0).toLocaleString();
 const rsPct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
 
@@ -689,7 +688,7 @@ function rsRenderBody() {
     ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
 
   const foot = `<div class="rs-foot">Range ${escapeHtml((d.range && d.range.from) || '')} → ${escapeHtml((d.range && d.range.to) || '')}
-    · straight from Siratech HIS · updated ${escapeHtml(rsAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
+    · straight from Siratech HIS · updated ${escapeHtml(timeAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
   body.innerHTML = layout + foot;
 }
@@ -718,7 +717,7 @@ function rsModalityInner() {
   }
   if (m.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — the modality mix can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
-  const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: RS_MOD_COLOR[x.modality] || '#94a3b8' }));
+  const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: MOD_COLOR[x.modality] || '#94a3b8' }));
   return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
 }
 
@@ -758,13 +757,4 @@ function rsFinancialInner() {
       <div><div class="rs-subhead">Revenue: insurance vs cash</div>${revDonut}</div>
     </div>
   </div>`;
-}
-
-function rsAgo(iso) {
-  const t = Date.parse(iso || '');
-  if (!Number.isFinite(t)) return 'just now';
-  const s = Math.round((Date.now() - t) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return Math.floor(s / 60) + 'm ago';
-  return Math.floor(s / 3600) + 'h ago';
 }

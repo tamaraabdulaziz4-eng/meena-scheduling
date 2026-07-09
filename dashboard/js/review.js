@@ -187,11 +187,3 @@ async function loadReviewBadgeCount() {
     else badge.style.display = 'none';
   } catch (e) { /* silent */ }
 }
-
-// small helper
-function timeAgo(ts) {
-  const d = new Date(ts); const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 3600) return `${Math.max(1, Math.floor(diff/60))}m ago`;
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-  return `${Math.floor(diff/86400)}d ago`;
-}

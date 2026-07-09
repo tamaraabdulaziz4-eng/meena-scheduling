@@ -155,11 +155,6 @@ function renderConsent(ov) {
   consentInitPad();
 }
 
-function consentSetType(t, btn) {
-  _consent.prefill.patient_type = t;
-  const seg = document.getElementById('cn-type');
-  if (seg) seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
-}
 function consentSetReason(r) {
   const lmp = document.getElementById('cn-lmp');
   if (lmp) lmp.disabled = (r !== 'lmp');

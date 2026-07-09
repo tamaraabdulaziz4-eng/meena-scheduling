@@ -148,14 +148,3 @@ async function saveShiftType() {
     showSuccess('Shift saved');
   } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
 }
-
-async function deleteShiftConfirm(id, code) {
-  const ok = await showConfirm('Reset Shift Times', `Reset "${code}" to default times?`);
-  if (!ok) return;
-  try {
-    await API.delete(`/shift-types/${id}`);
-    allShiftTypesRaw = allShiftTypesRaw.filter(s => s.id !== id);
-    renderShiftsPage();
-    toast(`${code} reset to default`);
-  } catch (err) { toast(err.message, 'err'); }
-}

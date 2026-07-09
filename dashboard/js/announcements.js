@@ -6,7 +6,7 @@
 let announcementsData = [];
 
 function annCanPost() {
-  return ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
+  return ADMIN_ROLES.includes(currentUser?.role);
 }
 
 // Swap {name}/{الاسم} for the viewer's own name when showing a circular (the
@@ -93,7 +93,7 @@ function renderAnnouncementsList() {
           <div style="font-size:12px;color:var(--muted)">
             ${escapeHtml(a.created_by_name || 'Management')}
             ${a.audience === 'branch' && a.branch_name ? ' · ' + escapeHtml(a.branch_name) : ' · All staff'}
-            · ${annTimeAgo(a.created_at)}
+            · ${timeAgo(a.created_at, { weekFallback: true })}
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${ackBtn}${mgrTools}</div>
         </div>
@@ -214,16 +214,6 @@ async function loadAnnouncementsBadge() {
     if (n > 0) { badge.textContent = n; badge.style.display = 'inline-block'; }
     else badge.style.display = 'none';
   } catch (e) { /* silent */ }
-}
-
-function annTimeAgo(ts) {
-  if (!ts) return '';
-  const d = new Date(ts); const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
-  return d.toLocaleDateString('en-GB');
 }
 
 function ensureAnnModal() {

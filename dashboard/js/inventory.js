@@ -5,7 +5,7 @@
 let _invItems = [];
 let _invBranch = '';
 
-function _invIsAdmin() { return ['admin', 'manager', 'superadmin'].includes(currentUser?.role); }
+function _invIsAdmin() { return ADMIN_ROLES.includes(currentUser?.role); }
 
 async function renderInventoryPage() {
   setTopbar('Inventory', 'Consumables stock');

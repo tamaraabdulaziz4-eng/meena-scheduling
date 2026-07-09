@@ -56,13 +56,6 @@ async function sendPhoneCode() {
   finally { btn.disabled = false; btn.textContent = label; }
 }
 
-// Legacy code-gated signup (kept for any older link); no longer the default path.
-function showSignupView() {
-  const m = document.getElementById('signup-msg'); if (m) m.textContent = '';
-  const c = document.getElementById('signup-code'); if (c) c.value = '';
-  _showAuthView('signup-view');
-  setTimeout(() => document.getElementById('signup-code')?.focus(), 50);
-}
 async function submitInviteCode() {
   const code = document.getElementById('signup-code').value.trim();
   const msg  = document.getElementById('signup-msg');

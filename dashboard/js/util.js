@@ -1,12 +1,99 @@
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Management roles: team lead (admin), manager, and full admin (superadmin). Shared
+// so the role gate isn't a bare literal repeated across ~20 sites.
+const ADMIN_ROLES = ['admin', 'manager', 'superadmin'];
 // Can the current user FILE a radiology result into the HIS? Team leads / managers /
 // full admins always can; a plain staff member only if granted the per-user privilege.
 function canFileRadiology() {
   if (typeof currentUser === 'undefined' || !currentUser) return false;
-  if (['admin', 'manager', 'superadmin'].includes(currentUser.role)) return true;
+  if (ADMIN_ROLES.includes(currentUser.role)) return true;
   return currentUser.role === 'staff' && !!currentUser.can_file_radiology;
 }
+
+// ── Imaging modality vocab (shared by the worklist + orders board + rad stats) ──
+// One map + renderer (was OD_MOD/odModBadges in orders and WL_MOD/wlModBadges in
+// worklist). Superset of both: orders' MRI/DX/CR aliases + worklist's neutral
+// fallback. Pass { fallbackCls } to style an unrecognised modality's badge.
+const MOD = {
+  CT:  { label: 'CT',    cls: 'ct'  },
+  MR:  { label: 'MRI',   cls: 'mri' },
+  MRI: { label: 'MRI',   cls: 'mri' },
+  US:  { label: 'US',    cls: 'us'  },
+  XR:  { label: 'X-Ray', cls: 'xr'  },
+  DX:  { label: 'X-Ray', cls: 'xr'  },
+  CR:  { label: 'X-Ray', cls: 'xr'  },
+  MG:  { label: 'Mammo', cls: 'mm'  },
+};
+function modBadges(modality, { fallbackCls = '' } = {}) {
+  if (!modality) return '';
+  return String(modality).split(',').map((m) => {
+    const k = m.trim().toUpperCase(), info = MOD[k];
+    if (info) return `<span class="mod ${info.cls}">${escapeHtml(info.label)}</span>`;
+    return `<span class="mod${fallbackCls ? ' ' + fallbackCls : ''}">${escapeHtml(k)}</span>`;
+  }).join(' ');
+}
+// Modality → chart colour (shared by rad stats + rad report).
+const MOD_COLOR = { CT: 'var(--accent,#6b4eff)', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
+
+// ── Radiology study viewer ────────────────────────────────────────────────────
+// Opens a modal with the radiology report TEXT + status + a button to the cloud
+// image viewer — all live from Siratech (FetchRadiologyReport / FetchRadiologyImage
+// / cpoeStatusDescription), no DePACS. Keyed by mrno + accession (+ optional exact
+// per-exam invPatTestResultId). Shared by the Orders board and the worklist (was
+// defined in orders.js as odOpenStudy and reached into cross-page).
+async function openStudyViewer(btn, mrno, accession, invId) {
+  const old = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '… loading'; }
+  let d;
+  try {
+    const qs = new URLSearchParams({ mrno });
+    if (invId) qs.set('invPatTestResultId', invId);   // exact per-exam key (preferred)
+    if (accession) qs.set('accession', accession);
+    d = await API.get('/radiology/study?' + qs.toString());
+  } catch (e) { d = { ok: false, error: (e && e.message) || 'failed' }; }
+  if (btn) { btn.disabled = false; btn.textContent = old; }
+  showStudyModal(mrno, d || {});
+}
+
+function showStudyModal(mrno, d) {
+  document.getElementById('od-study-modal')?.remove();
+  const rep = (d.reportText || '').trim();
+  const wrap = document.createElement('div');
+  wrap.id = 'od-study-modal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
+  const statusPill = d.status ? `<span class="ris ${/scan done|complet|verif|report|final/i.test(d.status) ? 'final' : 'prelim'}"><span class="rd"></span>${escapeHtml(d.status)}</span>` : '';
+  const imgBtn = d.imageUrl
+    ? `<a class="btn btn-sm btn-primary" style="text-decoration:none" href="${escapeHtml(d.imageUrl)}" target="_blank" rel="noopener">🖼 Open images</a>`
+    : `<span style="color:var(--muted);font-size:12px">No image link</span>`;
+  const body = !d.ok
+    ? `<div style="color:var(--danger,#E25555)">Couldn't load: ${escapeHtml(d.error || 'error')}</div>`
+    : d.found === false
+      ? `<div style="color:var(--muted)">No matching exam found in Siratech for this order.</div>`
+      : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+           ${statusPill}
+           ${d.modality ? `<span class="mod">${escapeHtml(String(d.modality))}</span>` : ''}
+           ${d.reportDate ? `<span style="color:var(--muted);font-size:12px">Reported ${escapeHtml(String(d.reportDate))}</span>` : ''}
+           <span style="flex:1"></span>${imgBtn}
+         </div>
+         ${d.verifiedBy ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Verified by ${escapeHtml(d.verifiedBy)}</div>` : ''}
+         ${rep
+            ? `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13.5px;line-height:1.6;background:var(--surface,#f7f7fb);border:1px solid var(--border,#e5e5ee);border-radius:10px;padding:12px;max-height:52vh;overflow:auto;margin:0">${escapeHtml(rep)}</pre>`
+            : `<div style="color:var(--muted)">${d.hasReport ? 'Report is filed but has no readable text.' : 'No report yet — images may still be available above.'}</div>`}`;
+  wrap.innerHTML = `<div class="card" style="max-width:760px;width:100%;max-height:86vh;overflow:auto;padding:16px 18px">
+      <div style="display:flex;align-items:center;margin-bottom:10px">
+        <div style="font-weight:700;font-size:15px">Radiology report${d.serviceName ? ' · ' + escapeHtml(String(d.serviceName)) : ''}
+          <span style="color:var(--muted);font-weight:500;font-size:12.5px"> · ${escapeHtml(String(mrno))}</span></div>
+        <span style="flex:1"></span>
+        <button class="ghost" onclick="document.getElementById('od-study-modal').remove()">✕</button>
+      </div>
+      ${body}
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Live from Siratech · read-only</div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
 // ── Inline line icons (Feather-style) ─────────────────────────────────────────
 // Returns a self-contained inline SVG string for a named glyph so onclick /
 // template strings can drop clean `currentColor` stroke icons in place of emoji.
@@ -133,10 +220,6 @@ function hideLoader() {
     _loaderHideTimer = setTimeout(() => { pl.classList.remove('show', 'fading'); }, 300);
   }
 }
-// Kept as no-ops so existing call sites stay valid (the bar was removed).
-function startTopBar() {}
-function stopTopBar() {}
-
 // Animated inline loading state (no static hourglass).
 const LOADING_HTML = '<div class="loading-inline"><span class="mini-spin"></span><span>Loading…</span></div>';
 
@@ -173,17 +256,6 @@ function playPageReveal() {
   _revealTimer = setTimeout(() => content.classList.remove('page-reveal'), 900);
 }
 
-// A shimmer skeleton shown only while a slow page is still fetching, so a
-// navigation feels instant instead of freezing on the old page.
-const PAGE_SKELETON = `
-  <div class="skel-wrap">
-    <div class="skel skel-line lg"></div>
-    <div class="skel-grid">
-      <div class="skel skel-card"></div><div class="skel skel-card"></div>
-      <div class="skel skel-card"></div><div class="skel skel-card"></div>
-    </div>
-    <div class="skel skel-block"></div>
-  </div>`;
 // Loader variant that cycles through several messages (for long waits like Generate)
 function showLoaderCycling(messages = ['Working…'], intervalMs = 1400) {
   const el = document.getElementById('page-loader');
@@ -471,18 +543,6 @@ function openReport(innerHtml, landscape = false) {
   setTimeout(() => window.print(), 80);   // let layout settle first
 }
 
-// ── Populate select ───────────────────────────────────────────────────────────
-function populateSelect(selectId, items, valueKey, labelKey, placeholder = '') {
-  const el = document.getElementById(selectId);
-  el.innerHTML = placeholder ? `<option value="">${placeholder}</option>` : '';
-  items.forEach(item => {
-    const opt = document.createElement('option');
-    opt.value = item[valueKey];
-    opt.textContent = item[labelKey];
-    el.appendChild(opt);
-  });
-}
-
 // ── Time formatting ───────────────────────────────────────────────────────────
 // Convert "HH:MM" 24h → "H:MM AM/PM"
 function fmt12(t) {
@@ -492,10 +552,30 @@ function fmt12(t) {
   const h12  = h % 12 || 12;
   return m ? `${h12}:${String(m).padStart(2, '0')} ${ampm}` : `${h12}:00 ${ampm}`;
 }
-// Format a shift's time range: "8:00 AM - 8:00 PM"
-function fmtTimeRange(start, end) {
-  if (!start || !end) return '—';
-  return `${fmt12(start)} - ${fmt12(end)}`;
+// ── Relative time ─────────────────────────────────────────────────────────────
+// One shared "time ago" for every page (was reimplemented in review/announcements/
+// tickets/notifications/radstats). Options:
+//   utc:true          → server sent UTC without a timezone (append 'Z')
+//   weekFallback:true → after a week, show the locale date instead of "Nd ago"
+function timeAgo(ts, { utc = false, weekFallback = false } = {}) {
+  if (!ts && ts !== 0) return '';
+  const d = new Date(utc ? ts + 'Z' : ts);
+  const t = d.getTime();
+  if (!Number.isFinite(t)) return 'just now';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60)    return 'just now';
+  if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (weekFallback && s >= 604800) return d.toLocaleDateString('en-GB');
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// A date rendered as "3 Jun 2026" (UTC). Shared by leave/swap/home/portal/employee
+// file — was previously defined in leaves.js and relied on by everything via load order.
+function fmtDateDisplay(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' });
 }
 
 // ── Colour brightness ─────────────────────────────────────────────────────────

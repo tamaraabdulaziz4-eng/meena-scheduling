@@ -176,7 +176,7 @@ async function loadDowntimeLog() {
   catch (e) { box.innerHTML = `<div class="rep-empty">${escapeHtml(e.message || 'Failed to load')}</div>`; return; }
   const rows = d.studies || [];
   _dtStudies = rows;
-  const isAdmin = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
+  const isAdmin = ADMIN_ROLES.includes(currentUser?.role);
   const hasActions = isAdmin || rows.some(s => s.can_delete);
   if (!rows.length) { box.innerHTML = `<div class="lrow" style="justify-content:center;padding:24px;color:var(--muted);border-bottom:none">No downtime studies logged yet.</div>`; return; }
   box.innerHTML = rows.map(s => {

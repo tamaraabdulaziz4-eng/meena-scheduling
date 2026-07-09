@@ -608,7 +608,7 @@ function psExamCard(o, open) {
     o.hasReport ? ris('final', 'Report ready') : '',
     o.cpacsUrl ? `<a class="ghost" style="text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer" onclick="event.stopPropagation()">🖼 Images</a>` : '',
   ].filter(Boolean).join('');
-  const mods = (typeof odModBadges === 'function') ? odModBadges(o.modality) : '';
+  const mods = modBadges(o.modality, { fallbackCls: 'xr' });
   const day = (o.orderedDate || o.reportDate || '').toString().slice(0, 10);
   const acc = (o.accessionNumber != null && String(o.accessionNumber).trim() !== '')
     ? `<span class="acc" title="DICOM accession — the exact image↔order link">🔗 ${escapeHtml(String(o.accessionNumber))}</span>` : '';

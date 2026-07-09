@@ -173,7 +173,7 @@ async function setLeaveRangeStatus(ids, status) {
 // once and approved deliberately.
 async function approveAllPendingLeaves() {
   const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
-  const canEdit = ['admin','manager','superadmin'].includes(currentUser?.role);
+  const canEdit = ADMIN_ROLES.includes(currentUser?.role);
   const actionable = groupLeaveRanges(allLeaves).filter(g =>
     (g.status === 'pending' && canEdit) || (g.status === 'lead_approved' && isReviewer));
   if (!actionable.length) { toast('Nothing is awaiting your approval'); return; }
@@ -243,12 +243,6 @@ function groupLeaveRanges(leaves) {
     });
   }
   return groups;
-}
-
-function fmtDateDisplay(dateStr) {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' });
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────

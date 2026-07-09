@@ -6,7 +6,7 @@ let _eqList = [];
 let _eqBranch = '';
 let _eqKinds = ['preventive', 'corrective', 'calibration', 'inspection', 'other'];
 
-function _eqIsAdmin() { return ['admin', 'manager', 'superadmin'].includes(currentUser?.role); }
+function _eqIsAdmin() { return ADMIN_ROLES.includes(currentUser?.role); }
 
 // Returns [label, .sc chip modifier] — overdue/due → no (red), soon → warn, healthy → ok.
 function _eqStatus(d) {
