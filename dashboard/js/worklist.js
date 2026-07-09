@@ -581,6 +581,7 @@ function wlRowMod(it) {
   const raw = String(it.modality || it.exam || '').toUpperCase();
   if (/\bMRI?\b|MAGNET/.test(raw)) return 'MR';
   if (/ULTRA|SONO|\bUS\b|DOPPLER/.test(raw)) return 'US';
+  if (/\bDEXA\b|\bDXA\b|\bBMD\b|BONE\s*DENSIT|DENSITOMET/.test(raw)) return 'BMD';  // ionizing (low-dose)
   if (/\bCT\b|COMPUTED|TOMOGRAPH/.test(raw)) return 'CT';
   if (/MAMMO|\bMG\b/.test(raw)) return 'MG';
   if (/X.?RAY|\bXR\b|\bCR\b|\bDX\b|\bDR\b|RADIOGRAPH/.test(raw)) return 'XR';
@@ -674,13 +675,13 @@ function wlRenderTabs(items) {
 
 // ── Left filter panel (modality chips from the modalities present + the distinct
 //    referring doctors). Radios / sort stay static in the shell and drive wlState. ──
-const _WL_MOD_META = { CT: ['CT', '#6B4EFF'], MR: ['MRI', '#3BA0FF'], US: ['US', '#00C896'], XR: ['X-Ray', '#8358FD'], MG: ['Mammo', '#E4739B'] };
+const _WL_MOD_META = { CT: ['CT', '#6B4EFF'], MR: ['MRI', '#3BA0FF'], US: ['US', '#00C896'], XR: ['X-Ray', '#8358FD'], MG: ['Mammo', '#E4739B'], BMD: ['BMD', '#14B8A6'] };
 function wlRenderFilters(items) {
   const modCounts = {};
   for (const it of items) { const m = wlRowMod(it); if (m) modCounts[m] = (modCounts[m] || 0) + 1; }
   // If a selected modality has left the board, drop it so the view can't strand empty.
   for (const m of [...wlState.fMods]) if (!modCounts[m]) wlState.fMods.delete(m);
-  const order = ['CT', 'MR', 'US', 'XR', 'MG'].filter((k) => modCounts[k]);
+  const order = ['CT', 'MR', 'US', 'XR', 'MG', 'BMD'].filter((k) => modCounts[k]);
   const chipsEl = document.getElementById('rw-modchips');
   if (chipsEl) chipsEl.innerHTML = order.length
     ? order.map((k) => {

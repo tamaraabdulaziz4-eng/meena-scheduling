@@ -476,6 +476,7 @@ function psModBucket(o) {
   const raw = String((o && (o.modality || o.service)) || '').toUpperCase();
   if (/\bMRI?\b|MAGNET/.test(raw)) return 'MR';
   if (/ULTRA|SONO|\bUS\b|DOPPLER/.test(raw)) return 'US';
+  if (/\bDEXA\b|\bDXA\b|\bBMD\b|BONE\s*DENSIT|DENSITOMET/.test(raw)) return 'BMD';  // ionizing (low-dose)
   if (/\bCT\b|COMPUTED|TOMOGRAPH/.test(raw)) return 'CT';
   if (/MAMMO|\bMG\b/.test(raw)) return 'MG';
   if (/X.?RAY|\bXR\b|\bCR\b|\bDX\b|\bDR\b|RADIOGRAPH/.test(raw)) return 'XR';

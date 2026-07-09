@@ -237,8 +237,8 @@ button,
 }
 .nav-item {
   display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto;
-  padding: 8px 11px; font-size: 12.5px; font-weight: 600;
-  color: var(--muted); cursor: pointer; border: none;
+  padding: 8px 12px; font-size: 12.5px; font-weight: 600;
+  color: var(--text); cursor: pointer; border: none;
   background: none; text-align: left; white-space: nowrap;
   border-radius: 10px;
   transition: color .18s, background .18s, transform .12s cubic-bezier(.34,1.5,.64,1);
@@ -2092,6 +2092,7 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
   color:#fff; background:var(--accent); padding:3px 7px; border-radius:6px; }
 .ps-exam .mod.ct{ background:#6B4EFF; } .ps-exam .mod.mri{ background:#3BA0FF; } .ps-exam .mod.us{ background:#00C896; }
 .ps-exam .mod.xr{ background:#8358FD; } .ps-exam .mod.mm{ background:#E4739B; }
+.ps-exam .mod.bmd{ background:#14B8A6; }
 .ps-exam .ris { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; padding:3px 9px; border-radius:var(--radius-pill); }
 .ps-exam .ris .rd { width:6px; height:6px; border-radius:50%; flex:0 0 auto; }
 .ps-exam .ris.scheduled { background:var(--surface-2);    color:var(--muted); }        .ps-exam .ris.scheduled .rd{ background:var(--muted); }
@@ -2708,6 +2709,7 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cc .mod.us  { background: #00C896; }
 .cc .mod.xr  { background: #8358FD; }
 .cc .mod.mm  { background: #E4739B; }
+.cc .mod.bmd { background: #14B8A6; }
 .cc .proc { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 .cc .acc { font-size: 12px; color: var(--ink-3); font-weight: 500;
@@ -2946,20 +2948,21 @@ body.dark .cc .tab .n { background: var(--surface-2); }
   background: var(--card); color: var(--text); font: inherit; font-size: 13px; }
 
 /* ── Status tabs ── */
-.rw .rw-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1.5px solid var(--border);
-  margin-bottom: 14px; scrollbar-width: none; }
+.rw .rw-tabs { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 14px; padding-bottom: 2px; scrollbar-width: none; }
 .rw .rw-tabs::-webkit-scrollbar { display: none; }
-.rw .rw-tab { display: inline-flex; align-items: center; gap: 7px; border: none; background: none; font: inherit;
-  font-size: 13px; font-weight: 700; color: var(--muted); padding: 9px 13px; cursor: pointer;
-  border-bottom: 2.5px solid transparent; margin-bottom: -1.5px; white-space: nowrap; }
-.rw .rw-tab:hover { color: var(--text); }
-.rw .rw-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+.rw .rw-tab { display: inline-flex; align-items: center; gap: 7px; border: 1.5px solid var(--border); background: var(--card);
+  font: inherit; font-size: 13px; font-weight: 700; color: var(--text); padding: 8px 14px; cursor: pointer;
+  border-radius: var(--radius-pill); white-space: nowrap; transition: color .15s, background .15s, border-color .15s; }
+.rw .rw-tab:hover { border-color: var(--accent); color: var(--accent); }
+.rw .rw-tab.on { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 2px 8px rgba(107,78,255,.28); }
 .rw .rw-tab .cnt { font-size: 11px; font-weight: 800; background: var(--surface-2); color: var(--muted);
   padding: 1px 7px; border-radius: var(--radius-pill); min-width: 20px; text-align: center; }
-.rw .rw-tab.on .cnt { background: var(--violet-wash); color: var(--accent); }
-.rw .rw-tab.urg { color: var(--danger-ink); }
-.rw .rw-tab.urg.on { border-bottom-color: var(--danger); }
+.rw .rw-tab.on .cnt { background: rgba(255,255,255,.25); color: #fff; }
+.rw .rw-tab.urg { color: var(--danger-ink); border-color: var(--danger-wash); }
+.rw .rw-tab.urg:hover { border-color: var(--danger); }
+.rw .rw-tab.urg.on { background: var(--danger); border-color: var(--danger); color: #fff; box-shadow: 0 2px 8px rgba(226,85,85,.28); }
 .rw .rw-tab.urg .cnt { background: var(--danger-wash); color: var(--danger-ink); }
+.rw .rw-tab.urg.on .cnt { background: rgba(255,255,255,.25); color: #fff; }
 
 /* ── Main split ── */
 .rw .rw-main { display: block; }
@@ -3028,6 +3031,7 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 .rw .mod.us { background: #00C896; }
 .rw .mod.xr { background: #8358FD; }
 .rw .mod.mm { background: #E4739B; }
+.rw .mod.bmd { background: #14B8A6; }
 
 .rw .branch-cell { font-size: 12.5px; color: var(--text); font-weight: 600; }
 .rw .branch-cell .dept { font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; display: flex; align-items: center; gap: 4px; }
