@@ -902,11 +902,7 @@ async function wlPostOrder(gpb, action, body, okMsg) {
 function wlActReceive(gpb, mrno, site)  { wlPostOrder(gpb, 'receive',  { mrno, site }, 'Patient received'); }
 function wlActStart(gpb, mrno, site)    { wlPostOrder(gpb, 'start',    { mrno, site }, 'Exam started'); }
 function wlActComplete(gpb, mrno, site) { wlPostOrder(gpb, 'complete', { mrno, site }, 'Exam completed'); }
-function wlActAssign(gpb, mrno, site) {
-  const n = prompt('Assign technologist — enter the name (leave blank to clear):');
-  if (n === null) return;
-  wlPostOrder(gpb, 'assign', { mrno, site, tech_name: n.trim() }, n.trim() ? 'Technologist assigned' : 'Assignment cleared');
-}
+function wlActAssign(gpb, mrno, site) { wlOpenTechPicker(gpb, mrno, site); }
 function wlActNote(gpb, mrno, site) {
   const n = prompt('Add a note for this order:');
   if (!n || !n.trim()) return;
@@ -917,6 +913,92 @@ function wlActCancel(gpb, mrno, site) {
   if (!r || !r.trim()) return;
   wlPostOrder(gpb, 'cancel', { mrno, site, reason: r.trim() }, 'Marked not done');
 }
+
+// ── Technologist picker (elegant modal; styles injected once, not in style.css) ──
+function wlEnsureTechStyles() {
+  if (document.getElementById('wl-tech-css')) return;
+  const s = document.createElement('style');
+  s.id = 'wl-tech-css';
+  s.textContent = `
+    .wl-tech-ov{position:fixed;inset:0;z-index:1300;background:rgba(20,17,40,.5);backdrop-filter:blur(2px);
+      display:flex;align-items:flex-start;justify-content:center;padding:60px 14px;overflow:auto;animation:wltFade .14s ease}
+    @keyframes wltFade{from{opacity:0}to{opacity:1}}
+    .wl-tech-sheet{width:100%;max-width:420px;background:var(--card,#fff);border:1px solid var(--border,#e7e4f0);
+      border-radius:16px;box-shadow:0 24px 70px rgba(20,17,40,.4);overflow:hidden;margin:auto 0}
+    .wl-tech-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border,#eee)}
+    .wl-tech-head b{font-size:15px;flex:1}
+    .wl-tech-x{border:0;background:transparent;font-size:18px;cursor:pointer;color:var(--muted,#7a7690);width:30px;height:30px;border-radius:8px}
+    .wl-tech-x:hover{background:var(--surface-2,#f0eef7)}
+    .wl-tech-search{margin:12px 16px 8px}
+    .wl-tech-search input{width:100%;padding:9px 12px;border:1px solid var(--border-strong,#ddd);border-radius:10px;
+      background:var(--card,#fff);color:var(--text);font:inherit;font-size:14px;outline:none}
+    .wl-tech-search input:focus{border-color:var(--accent,#6B4EFF);box-shadow:0 0 0 3px rgba(107,78,255,.14)}
+    .wl-tech-list{max-height:46vh;overflow:auto;padding:0 10px 8px}
+    .wl-tech-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:none;
+      font:inherit;font-size:14px;color:var(--text);padding:10px 12px;border-radius:10px;cursor:pointer}
+    .wl-tech-item:hover{background:var(--violet-wash,#f0edff)}
+    .wl-tech-item.cur{background:var(--violet-wash,#f0edff);font-weight:700}
+    .wl-tech-av{width:30px;height:30px;border-radius:9px;background:var(--violet-wash,#f0edff);color:var(--accent,#6B4EFF);
+      display:grid;place-items:center;font-weight:800;font-size:12px;flex:none}
+    .wl-tech-foot{display:flex;gap:8px;padding:10px 16px 14px;border-top:1px solid var(--border,#eee)}
+    .wl-tech-foot .btn{flex:1;justify-content:center}
+    .wl-tech-empty{padding:24px;text-align:center;color:var(--muted)}`;
+  document.head.appendChild(s);
+}
+async function wlOpenTechPicker(gpb, mrno, site) {
+  if (gpb == null) return;
+  wlEnsureTechStyles();
+  const items = (wlState.data && wlState.data.items) || [];
+  const cur = items.find((x) => Number(x.genPatBillingId) === Number(gpb)) || {};
+  wlState._techPick = { gpb, mrno, site, curName: cur.assignedTechName || '' };
+  let ov = document.getElementById('wl-tech');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'wl-tech'; document.body.appendChild(ov); }
+  ov.className = 'wl-tech-ov';
+  ov.onclick = (e) => { if (e.target === ov) wlCloseTechPicker(); };
+  ov.innerHTML = `<div class="wl-tech-sheet">
+    <div class="wl-tech-head"><b>Assign technologist</b><button class="wl-tech-x" title="Close" onclick="wlCloseTechPicker()">✕</button></div>
+    <div class="wl-tech-search"><input id="wl-tech-q" placeholder="Search staff…" oninput="wlTechFilter(this.value)" autocomplete="off"></div>
+    <div class="wl-tech-list" id="wl-tech-list">${typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : 'Loading…'}</div>
+    <div class="wl-tech-foot">
+      <button class="btn" onclick="wlPickTech(0, '')">Clear assignment</button>
+      <button class="btn" onclick="wlCloseTechPicker()">Cancel</button>
+    </div>
+  </div>`;
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => { const q = document.getElementById('wl-tech-q'); if (q) q.focus(); }, 40);
+  if (!wlState.techs) {
+    try { const d = await API.get('/radiology/technologists'); wlState.techs = (d && d.technologists) || []; }
+    catch (e) { wlState.techs = []; }
+  }
+  if (document.getElementById('wl-tech')) wlTechFilter('');
+}
+function wlTechRender(list) {
+  const box = document.getElementById('wl-tech-list'); if (!box) return;
+  const cur = (wlState._techPick && wlState._techPick.curName) || '';
+  if (!list.length) { box.innerHTML = '<div class="wl-tech-empty">No staff found.</div>'; return; }
+  box.innerHTML = list.map((t) => {
+    const nm = String(t.name || '');
+    const ini = nm.trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
+    return `<button class="wl-tech-item${nm === cur ? ' cur' : ''}" onclick="wlPickTech(${Number(t.id) || 0}, '${jsAttr(nm)}')">
+      <span class="wl-tech-av">${escapeHtml(ini)}</span>${escapeHtml(nm)}${nm === cur ? ' · current' : ''}</button>`;
+  }).join('');
+}
+function wlTechFilter(v) {
+  const term = String(v || '').trim().toLowerCase();
+  const all = wlState.techs || [];
+  wlTechRender(term ? all.filter((t) => String(t.name || '').toLowerCase().includes(term)) : all);
+}
+function wlPickTech(id, name) {
+  const p = wlState._techPick; if (!p) return;
+  wlCloseTechPicker();
+  wlPostOrder(p.gpb, 'assign', { mrno: p.mrno, site: p.site, staff_id: id || null, tech_name: name || '' },
+    name ? 'Technologist assigned' : 'Assignment cleared');
+}
+function wlCloseTechPicker() {
+  const ov = document.getElementById('wl-tech'); if (ov) ov.remove();
+  document.body.style.overflow = '';
+}
+
 // Contextual workflow buttons for the expand card + action bar, gated by current status.
 function wlWorkflowBtns(it, st) {
   const gpb = it.genPatBillingId;

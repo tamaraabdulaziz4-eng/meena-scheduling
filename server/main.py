@@ -7748,6 +7748,17 @@ async def radiology_order_cancel(gpb: int, request: Request, user=Depends(requir
                  json.dumps({"gpb": gpb, "reason": reason}))
     return {"ok": True}
 
+@app.get("/api/radiology/technologists")
+def radiology_technologists(user=Depends(require_radiology)):
+    """Active staff for the worklist's technologist picker (assign action). Org-wide
+    roles (manager / superadmin) see everyone; a branch operator sees their own branch."""
+    bid = user.get("branch_id")
+    if user.get("role") in ("manager", "superadmin") or not bid:
+        rows = q("SELECT id, name FROM scheduling.staff WHERE active ORDER BY name") or []
+    else:
+        rows = q("SELECT id, name FROM scheduling.staff WHERE active AND branch_id=%s ORDER BY name", (bid,)) or []
+    return {"technologists": [{"id": r["id"], "name": r["name"]} for r in rows]}
+
 @app.get("/api/radiology/stats/history")
 def radiology_stats_history(
     from_: str = Query("", alias="from"),
