@@ -899,6 +899,10 @@ function wlActCancel(gpb, mrno, site) {
   if (!r || !r.trim()) return;
   wlPostOrder(gpb, 'cancel', { mrno, site, reason: r.trim() }, 'Marked not done');
 }
+function wlActReopen(gpb, mrno, site) {
+  if (!confirm('Reopen this order? It returns to the active workflow.')) return;
+  wlPostOrder(gpb, 'reopen', { mrno, site }, 'Order reopened');
+}
 
 // ── Technologist picker (elegant modal; styles injected once, not in style.css) ──
 function wlEnsureTechStyles() {
@@ -998,6 +1002,8 @@ function wlWorkflowBtns(it, st) {
     b.push(`<button class="btn" onclick="wlActAssign(${g},'${mr}',${site})">${icon('user')}Assign tech</button>`);
     b.push(`<button class="btn" onclick="wlActNote(${g},'${mr}',${site})">${icon('edit')}Add note</button>`);
     b.push(`<button class="btn" style="color:var(--danger-ink);border-color:var(--danger-wash)" onclick="wlActCancel(${g},'${mr}',${site})">Not done</button>`);
+  } else {
+    b.push(`<button class="btn solid" onclick="wlActReopen(${g},'${mr}',${site})">${icon('refresh')}Reopen</button>`);
   }
   return b.join('');
 }
