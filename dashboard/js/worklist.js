@@ -60,7 +60,15 @@ function wlRowKey(it) {
   // separately or the caches would smear one exam's modality/stage onto its sibling.
   // Prefer the stable service id; fall back to the exam NAME (also stable) rather than
   // the per-response array index, which can reorder between the fast and enrich passes.
-  const svc = it.svcId != null ? it.svcId : (it.exam ? 'x' + it.exam : null);
+  // Discriminate siblings by the most stable per-exam value available; NEVER the response
+  // array index (it can reorder between the fast and enrich passes). Falls through svc id →
+  // exam name → the exam's own HIS/DePACS ids so two exams on one bill can't collide even
+  // when svcId and exam are both absent.
+  const svc = it.svcId != null ? it.svcId
+    : it.exam ? 'x' + it.exam
+    : it.invPatTestResultId != null ? 'i' + it.invPatTestResultId
+    : it.accession ? 'a' + it.accession
+    : null;
   return svc != null ? base + ':' + svc : base;
 }
 
@@ -611,16 +619,33 @@ function wlStatus(it) {
   const k = wlRowKey(it);
   if (!k) return raw;                                  // keyless → can't ratchet safely
   const rawRank = _WL_ST_RANK[raw];
-  const prev = wlState.statusRatchet.get(k);
-  if (prev == null || rawRank >= prev) { wlState.statusRatchet.set(k, rawRank); return raw; }
-  return _WL_ST_BY_RANK[prev];                         // hold the furthest-along status seen
+  const r = wlState.statusRatchet.get(k);
+  if (r == null || rawRank >= r.rank) {                // forward (or first sight) → accept
+    wlState.statusRatchet.set(k, { rank: rawRank, low: 0 });
+    return raw;
+  }
+  // raw is BELOW the furthest-along status seen. Hold it to smooth a transient poll blip,
+  // BUT a genuine revert (an order re-opened, a report un-verified) stays lower across polls
+  // — so if it persists for a few consecutive reads, accept it instead of pinning the row at
+  // the stale higher status forever (the forward-only lock's old failure mode).
+  const low = (r.low || 0) + 1;
+  if (low >= 3) { wlState.statusRatchet.set(k, { rank: rawRank, low: 0 }); return raw; }
+  wlState.statusRatchet.set(k, { rank: r.rank, low });
+  return _WL_ST_BY_RANK[r.rank];                        // hold the furthest-along status (for now)
 }
 // The tabs across the top; counts are computed live in wlRenderTabs.
 const WL_TABS = [['all', 'All', false], ['ordered', 'Ordered', false], ['received', 'Received', false],
   ['progress', 'In Progress', false], ['completed', 'Completed', false], ['reported', 'Reported', false],
   ['notdone', 'Not Done', false], ['urgent', 'Urgent', true]];
 // A DOM-safe, stable-per-order id for the expand Set + onclick (mirrors the old drill key).
-function wlRowUid(it) { return 'u' + String(wlRowKey(it) || ('m' + (it.mrno || ''))).replace(/[^A-Za-z0-9_-]/g, ''); }
+function wlRowUid(it) {
+  const k = wlRowKey(it);
+  if (k) return 'u' + String(k).replace(/[^A-Za-z0-9_-]/g, '');
+  // Keyless order (no genPatBillingId / billNo): still disambiguate per exam so two exams for
+  // the same MRN don't share a uid (which made them co-expand and cross-talk on status).
+  const disc = it.invPatTestResultId || it.accession || it.exam || '';
+  return 'u' + ('m' + (it.mrno || '') + (disc ? '_' + disc : '')).replace(/[^A-Za-z0-9_-]/g, '');
+}
 // Modality of a row, normalised to the coarse RIS bucket for filtering.
 function wlRowMod(it) {
   // Word-boundary matching (a plain substring wrongly read "SINUS" as US, hiding the
