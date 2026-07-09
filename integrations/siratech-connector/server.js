@@ -107,6 +107,10 @@ let loginInFlight = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Bump on every deploy-relevant change so the running version can be read straight from the
+// clinical response — no VPS shell needed to confirm which code is actually live.
+const CONNECTOR_BUILD = 'flags-fetal-2026-07-09f';
+
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
     headless: true,
@@ -685,6 +689,80 @@ const _VITAL_MAP = [
   ['spo2', ['spo2', 'spO2', 'oxygenSaturation', 'saturation']],
   ['respiratoryRate', ['respiratoryRate', 'respRate', 'rr']],
 ];
+// The vitals endpoints return in different shapes (a bare array, or an object wrapping the
+// rows, or a single object of values) — normalise any of them to an array of rows.
+function _asVitalRows(x) {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  if (typeof x === 'object') {
+    for (const k of ['rows', 'vitals', 'list', 'items', 'data', 'result', 'vitalSigns']) {
+      if (Array.isArray(x[k])) return x[k];
+    }
+    return [x];
+  }
+  return [];
+}
+// Pattern fallback: scan EVERY key of the vital rows so an unexpected HIS field name is
+// still caught without knowing it in advance (label keys like *Unit/*Date are skipped).
+const _VITAL_PAT = [
+  ['height', /height|(^|[^a-z])ht([^a-z]|$)/i],
+  ['weight', /weight|bodyweight|(^|[^a-z])wt([^a-z]|$)/i],
+  ['bmi', /bmi|bodymass/i],
+  ['systolic', /systolic|sbp|bpsys/i],
+  ['diastolic', /diastolic|dbp|bpdia/i],
+  ['pulse', /pulse|heartrate|(^|[^a-z])hr([^a-z]|$)/i],
+  ['temperature', /temperature|(^|[^a-z])temp/i],
+  ['spo2', /spo2|oxygensat|saturation|o2sat/i],
+  ['respiratoryRate', /respiratory|resprate|(^|[^a-z])rr([^a-z]|$)/i],
+];
+function _vitalsByPattern(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const out = {};
+  for (const [key, re] of _VITAL_PAT) {
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      for (const [k, v] of Object.entries(r)) {
+        if (v == null || String(v).trim() === '' || String(v).trim() === '0') continue;
+        if (re.test(k) && !/date|time|id$|name|unit|note|type|method|remark/i.test(k)) { out[key] = String(v).trim(); break; }
+      }
+      if (out[key] != null) break;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+// Name/value vital rows (Clinicalreport/Vitals): each row is ONE vital — the type is in a
+// *Name field (vsPhysName) and the value in a *Value field (vsPhysValue). Map by name.
+const _VNV_NAME = ['vsPhysName', 'vitalName', 'physName', 'parameterName', 'vsName', 'name'];
+const _VNV_VAL = ['vsPhysValue', 'vitalValue', 'physValue', 'parameterValue', 'vsValue', 'result', 'value'];
+const _VNV_MAP = [
+  ['height', /height|طول|\bht\b/i],
+  ['weight', /weight|وزن|\bwt\b/i],
+  ['bmi', /bmi|body\s*mass/i],
+  ['systolic', /systolic|\bsbp\b/i],
+  ['diastolic', /diastolic|\bdbp\b/i],
+  ['bp', /blood\s*pressure|\bbp\b|ضغط/i],
+  ['pulse', /pulse|heart\s*rate|نبض|\bhr\b/i],
+  ['temperature', /temp|حرار/i],
+  ['spo2', /spo2|oxygen|saturation|تشبع/i],
+  ['respiratoryRate', /respirat|resp\s*rate|تنفس|\brr\b/i],
+];
+function _vnvNames(rows) {
+  const pick = (r, keys) => { for (const k of keys) if (r && r[k] != null && String(r[k]).trim() !== '') return String(r[k]).trim(); return null; };
+  return (Array.isArray(rows) ? rows : []).map((r) => pick(r, _VNV_NAME)).filter(Boolean);
+}
+function _vitalsFromNameValue(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const pick = (r, keys) => { for (const k of keys) if (r && r[k] != null && String(r[k]).trim() !== '') return String(r[k]).trim(); return null; };
+  const out = {};
+  for (const r of rows) {
+    const nm = pick(r, _VNV_NAME), vl = pick(r, _VNV_VAL);
+    if (!nm || vl == null) continue;
+    for (const [key, re] of _VNV_MAP) { if (re.test(nm) && out[key] == null) { out[key] = vl; break; } }
+  }
+  if (out.bp && !out.systolic) { const m = String(out.bp).match(/(\d+)\s*\/\s*(\d+)/); if (m) { out.systolic = m[1]; out.diastolic = m[2]; } }
+  delete out.bp;
+  return Object.keys(out).length ? out : null;
+}
 function _clinVitals(list) {
   const rows = Array.isArray(list) ? list : [];
   if (!rows.length) return null;
@@ -705,26 +783,46 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     await getToken();
     const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
     const G = (path) => hisFetch(path, { method: 'GET' }).then((r) => (r.json && r.json.data)).catch(() => null);
-    const [dx, allergyD, vitalList, patData] = await Promise.all([
+    // Vitals come from these EMR endpoints (mrno + fromDate/toDate). VitalSign/List was the
+    // old (empty) source; Clinicalreport/Vitals and VitalSign/Summary are the ones the HIS
+    // actually populates — query all and use whichever returns rows.
+    const vFrom = new Date(Date.now() - 730 * 864e5).toISOString();   // ~2 years back
+    const vTo = new Date(Date.now() + 864e5).toISOString();
+    const vBody = { mrno: file, fromDate: vFrom, toDate: vTo };
+    // Cap the vitals calls so a slow/invalid endpoint can never hang the card (the whole HIS
+    // timeout is 30s; the card must not wait that long for a non-critical section).
+    const cap = (p) => Promise.race([p, sleep(8000).then(() => null)]);
+    const [dx, allergyD, vitalList, vitalReport, vitalSummary, patData, birthMother] = await Promise.all([
       H('/emr-api/api/v1/Diagnosis/PatientProblemlist', { mrno: file }),
       H('/emr-api/api/v1/EMR/Allergies/ClinicalWarnings', { mrno: file }),
-      H('/emr-api/api/v1/VitalSign/List', { mrno: file }),
-      G('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0'),
+      cap(H('/emr-api/api/v1/VitalSign/List', { mrno: file })),
+      cap(H('/emr-api/api/v1/Clinicalreport/Vitals', vBody)),
+      cap(H('/emr-api/api/v1/VitalSign/Summary', vBody)),
+      // PatientData lives under patient-api (NOT emr-api — that path 404s, which left every flag
+      // blank). It carries blood group, infection status, VIP, clinical warning and pregnancy.
+      cap(G('/patient-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0')),
+      // Gestational age (fetal) for a pregnant patient — relevant to radiation safety.
+      cap(G('/emr-api/api/v1/EMR/FetchBirthNoteMotherDetails?Mrno=' + encodeURIComponent(file))),
     ]);
     // Radiology-relevant patient flags: infection status (isolation / contrast &
-    // scanner precautions), blood group, VIP, and any clinical warning text.
+    // scanner precautions), blood group, VIP, pregnancy, and any clinical warning text.
     const pd = (Array.isArray(patData) ? patData[0] : patData) || {};
     const infections = [];
     if (Number(pd.isHepatitisB) > 0) infections.push('Hep B');
     if (Number(pd.isHepatitisC) > 0) infections.push('Hep C');
     if (Number(pd.isHiv) > 0) infections.push('HIV');
+    // Gestational age from FetchBirthNoteMotherDetails ({gWeek,gDays}); shown only when present.
+    const bm = (Array.isArray(birthMother) ? birthMother[0] : birthMother) || {};
+    const gW = Number(bm.gWeek), gD = Number(bm.gDays);
+    const fetal = ((Number.isFinite(gW) && gW > 0) || (Number.isFinite(gD) && gD > 0))
+      ? { gestationWeeks: Number.isFinite(gW) && gW > 0 ? gW : null, gestationDays: Number.isFinite(gD) && gD > 0 ? gD : null }
+      : null;
     const flags = {
       bloodGroup: (pd.bloodGroup || '').toString().trim() || null,
       infections,
       vip: Number(pd.isVip) > 0,
+      pregnant: Number(pd.pregnanyStatus) > 0 || !!fetal,
       clinicalWarning: (pd.clinicalWarning || '').toString().trim() || null,
-      lastVisitDate: pd.lastVistDate ? String(pd.lastVistDate).slice(0, 10) : null,
-      lastVisitSite: (pd.lastVistSite || '').toString().trim() || null,
     };
     const seen = new Set();
     const diagnoses = (Array.isArray(dx) ? dx : [])
@@ -741,7 +839,19 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     // Height/weight/BMI often live on the patient RECORD (PatientData), not the per-visit
     // VitalSign list — merge those in as a fallback so the card can show them even when the
     // clinic didn't file a vitals row. Same broad aliases as normalizePatient.
-    let vitals = _clinVitals(vitalList);
+    // Clinicalreport/Vitals is a NAME/VALUE list — each row is one vital (type in vsPhysName,
+    // value in vsPhysValue), not columns. Extract by matching the name; fall back to the old
+    // column-based extractors for any source that IS column-shaped.
+    const allVitalRows = [].concat(_asVitalRows(vitalReport), _asVitalRows(vitalSummary), _asVitalRows(vitalList));
+    let vitals = _vitalsFromNameValue(allVitalRows);
+    if (!vitals) {
+      for (const src of [vitalReport, vitalSummary, vitalList]) {
+        const v = _clinVitals(_asVitalRows(src));
+        if (v) { vitals = v; break; }
+      }
+      const patVit = _vitalsByPattern(allVitalRows);
+      if (patVit) vitals = Object.assign({}, patVit, vitals || {});
+    }
     const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
     const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
     let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
@@ -759,16 +869,7 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
         }
       }
     }
-    // One-time key-name diagnostic (NO PHI values) so the real HIS field for a missing
-    // vital can be mapped from the connector log without a live debugger.
-    if (!_clinKeysLogged) {
-      _clinKeysLogged = true;
-      try {
-        console.log('[clinical] PatientData keys:', Object.keys(pd || {}).join(','));
-        console.log('[clinical] VitalSign[0] keys:', Object.keys((Array.isArray(vitalList) ? vitalList[0] : {}) || {}).join(','));
-      } catch (e) { /* ignore */ }
-    }
-    return res.json({ ok: true, file, diagnoses, allergies, vitals, flags,
+    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, fetal, flags,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -955,28 +1056,45 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
       mrno: file, fromDate: from, toDate: to, hospitalId: null, groupByValue: String(encounterId),
       searchText: '', searchType: 0, groupBy: 0, limit: 20, offset: 0, empcat: '1,2,3' } });
     const noteRows = (dg.json && dg.json.data) || [];
+    // The note render lives under a DIFFERENT base than the rest of the EMR API: it is
+    // /emr-core-api/api/v1/EMRCore/EmrHtmlPreview (NOT /emr-api/...) — the wrong base was the 404.
+    // Its data carries emrPrintFormats[]: each is a SECTION (mainHeading) whose printRowDataList[]
+    // rows hold the text in `data` (with `isHeading` marking sub-headings). Render each note with a
+    // SINGLE sequential call (hard-capped at 6s) — light on the 2GB box, no browser, no fan-out.
+    const cap6 = (p) => Promise.race([p, sleep(6000).then(() => ({ status: 'timeout', json: null, text: '' }))]);
     const notes = [];
     for (const row of noteRows) {
+      const body = {
+        emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
+        templateId: Number(row.emrTemplateId) || 0, emrTemplateId: Number(row.emrTemplateId) || 0,
+        mrno: file, providerId: String(providerId), gender, age,
+        patFinEncounterId: Number(encounterId) || 0, patFinEncounterID: Number(encounterId) || 0,
+        emrPatTemplateId: Number(row.emrPatTemplateId) || 0, emrNoteType: row.emrNoteType,
+        isValid: 1, editStatus: 0,
+      };
       try {
-        const prev = await hisFetch('/emr-api/api/v1/EMRCore/EmrHtmlPreview', { body: {
-          emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
-          templateId: row.emrTemplateId || row.templateId || 0, mrno: file, providerId: String(providerId),
-          gender, age, patFinEncounterId: Number(encounterId) || 0,
-          emrPatTemplateId: row.emrPatTemplateId || 0, isValid: 1, editStatus: 0 } });
-        const pr = (prev.json && prev.json.data) || [];
+        const prev = await cap6(hisFetch('/emr-core-api/api/v1/EMRCore/EmrHtmlPreview', { body }));
+        const pr = (prev.json && prev.json.data);
         const pdata = Array.isArray(pr) ? pr[0] : pr;
         const sections = [];
         for (const fmt of ((pdata && pdata.emrPrintFormats) || [])) {
+          const lines = [];
           for (const rr of (fmt.printRowDataList || [])) {
             const text = _stripHtml(rr.data);
-            if (text) sections.push({ label: _stripHtml(rr.label) || null, text });
+            if (text) lines.push(text);
           }
+          const label = _stripHtml(fmt.mainHeading) || null;
+          if (lines.length) sections.push({ label, text: lines.join('\n') });
         }
-        if (sections.length) notes.push({ templateName: (row.templateName || '').trim() || 'Note',
-          by: (row.employeeName || '').trim() || null, date: row.emrDate || null, sections });
-      } catch (_e) { /* skip this note */ }
+        if (sections.length) notes.push({
+          templateName: (row.templateName || '').trim() || 'Note',
+          by: ((pdata && pdata.enteredBy) || row.employeeName || '').toString().trim() || null,
+          date: (pdata && pdata.visitDate) || row.emrDate || null,
+          sections,
+        });
+      } catch (_e) { /* skip a note that fails to render; the others still show */ }
     }
-    return res.json({ ok: true, file, encounterId, notes, fetchedAt: new Date().toISOString() });
+    return res.json({ ok: true, build: CONNECTOR_BUILD, file, encounterId, notes, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }

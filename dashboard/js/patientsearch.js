@@ -252,6 +252,15 @@ async function psLoadClinical() {
   if (fl.infections && fl.infections.length) {
     html += `<div class="ps-alert" style="margin-top:12px">🧬 <b>Infection status:</b> ${fl.infections.map(escapeHtml).join(' · ')} — observe precautions.</div>`;
   }
+  // Pregnancy + gestational age — radiation safety must be loud, like infection status.
+  const fet = (d && d.fetal) || null;
+  if (fl.pregnant || fet) {
+    const parts = [];
+    if (fet && fet.gestationWeeks != null) parts.push(fet.gestationWeeks + ' wk');
+    if (fet && fet.gestationDays != null) parts.push(fet.gestationDays + ' d');
+    const ga = parts.join(' ');
+    html += `<div class="ps-alert" style="margin-top:12px">🤰 <b>Pregnant</b>${ga ? ' · Gestational age ' + escapeHtml(ga) : ''} — observe radiation precautions.</div>`;
+  }
   // Blood group + VIP + any clinical warning as compact chips.
   const infoChips = [
     fl.bloodGroup ? `<span style="display:inline-flex;gap:5px;align-items:baseline;background:var(--card-alt,#f4f4f8);border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:12.5px"><b>${escapeHtml(fl.bloodGroup)}</b><span style="color:var(--muted)">Blood</span></span>` : '',
@@ -341,7 +350,7 @@ async function psToggleVisitNote(encounterId, elId, caretRow) {
   box.innerHTML = notes.map((n) => `
     <div style="border-left:2px solid var(--border);padding:2px 0 2px 10px;margin-bottom:8px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${escapeHtml(n.templateName || 'Note')}${n.by ? ' · ' + escapeHtml(n.by) : ''}${n.date ? ' · ' + escapeHtml(String(n.date).slice(0, 10)) : ''}</div>
-      ${(Array.isArray(n.sections) ? n.sections : []).map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No readable content in this note.</div>'}
+      ${(Array.isArray(n.sections) ? n.sections : []).map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px;white-space:pre-line">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No readable content in this note.</div>'}
     </div>`).join('');
 }
 
