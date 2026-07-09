@@ -726,6 +726,39 @@ function _vitalsByPattern(rows) {
   }
   return Object.keys(out).length ? out : null;
 }
+// Name/value vital rows (Clinicalreport/Vitals): each row is ONE vital — the type is in a
+// *Name field (vsPhysName) and the value in a *Value field (vsPhysValue). Map by name.
+const _VNV_NAME = ['vsPhysName', 'vitalName', 'physName', 'parameterName', 'vsName', 'name'];
+const _VNV_VAL = ['vsPhysValue', 'vitalValue', 'physValue', 'parameterValue', 'vsValue', 'result', 'value'];
+const _VNV_MAP = [
+  ['height', /height|طول|\bht\b/i],
+  ['weight', /weight|وزن|\bwt\b/i],
+  ['bmi', /bmi|body\s*mass/i],
+  ['systolic', /systolic|\bsbp\b/i],
+  ['diastolic', /diastolic|\bdbp\b/i],
+  ['bp', /blood\s*pressure|\bbp\b|ضغط/i],
+  ['pulse', /pulse|heart\s*rate|نبض|\bhr\b/i],
+  ['temperature', /temp|حرار/i],
+  ['spo2', /spo2|oxygen|saturation|تشبع/i],
+  ['respiratoryRate', /respirat|resp\s*rate|تنفس|\brr\b/i],
+];
+function _vnvNames(rows) {
+  const pick = (r, keys) => { for (const k of keys) if (r && r[k] != null && String(r[k]).trim() !== '') return String(r[k]).trim(); return null; };
+  return (Array.isArray(rows) ? rows : []).map((r) => pick(r, _VNV_NAME)).filter(Boolean);
+}
+function _vitalsFromNameValue(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const pick = (r, keys) => { for (const k of keys) if (r && r[k] != null && String(r[k]).trim() !== '') return String(r[k]).trim(); return null; };
+  const out = {};
+  for (const r of rows) {
+    const nm = pick(r, _VNV_NAME), vl = pick(r, _VNV_VAL);
+    if (!nm || vl == null) continue;
+    for (const [key, re] of _VNV_MAP) { if (re.test(nm) && out[key] == null) { out[key] = vl; break; } }
+  }
+  if (out.bp && !out.systolic) { const m = String(out.bp).match(/(\d+)\s*\/\s*(\d+)/); if (m) { out.systolic = m[1]; out.diastolic = m[2]; } }
+  delete out.bp;
+  return Object.keys(out).length ? out : null;
+}
 function _clinVitals(list) {
   const rows = Array.isArray(list) ? list : [];
   if (!rows.length) return null;
@@ -793,16 +826,19 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     // Height/weight/BMI often live on the patient RECORD (PatientData), not the per-visit
     // VitalSign list — merge those in as a fallback so the card can show them even when the
     // clinic didn't file a vitals row. Same broad aliases as normalizePatient.
-    // First vitals source that yields any value wins (report → summary → old list),
-    // then a pattern scan across ALL sources fills any field the alias map missed.
-    let vitals = null;
-    for (const src of [vitalReport, vitalSummary, vitalList]) {
-      const v = _clinVitals(_asVitalRows(src));
-      if (v) { vitals = v; break; }
-    }
+    // Clinicalreport/Vitals is a NAME/VALUE list — each row is one vital (type in vsPhysName,
+    // value in vsPhysValue), not columns. Extract by matching the name; fall back to the old
+    // column-based extractors for any source that IS column-shaped.
     const allVitalRows = [].concat(_asVitalRows(vitalReport), _asVitalRows(vitalSummary), _asVitalRows(vitalList));
-    const patVit = _vitalsByPattern(allVitalRows);
-    if (patVit) vitals = Object.assign({}, patVit, vitals || {});   // explicit wins, pattern fills gaps
+    let vitals = _vitalsFromNameValue(allVitalRows);
+    if (!vitals) {
+      for (const src of [vitalReport, vitalSummary, vitalList]) {
+        const v = _clinVitals(_asVitalRows(src));
+        if (v) { vitals = v; break; }
+      }
+      const patVit = _vitalsByPattern(allVitalRows);
+      if (patVit) vitals = Object.assign({}, patVit, vitals || {});
+    }
     // Log the SHAPE of each vitals response (NO PHI values) so `journalctl | grep vital`
     // tells us whether it's structured data (array/keys), rendered HTML, or an image —
     // which decides whether we extract fields or just display the report.
@@ -841,6 +877,8 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     const vitalsDebug = {
       report: keysOf(vitalReport), summary: keysOf(vitalSummary), list: keysOf(vitalList),
       patientData: Object.keys(pd || {}),
+      // The vital NAMES (labels, not PHI values) so the name→field mapping can be verified.
+      reportNames: _vnvNames(_asVitalRows(vitalReport)),
     };
     return res.json({ ok: true, file, diagnoses, allergies, vitals, flags, vitalsDebug,
       fetchedAt: new Date().toISOString() });
