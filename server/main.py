@@ -7540,8 +7540,15 @@ def _rad_seed_confirmed_stages(items):
     if not ids:
         return
     try:
+        # Don't seed 'reported' when an operator acted on the order AFTER the report was
+        # recorded (local_updated_at > reported_at): the durable HIS 'reported' is sticky
+        # forever, and re-seeding it on every cold open would silently mask a more-recent
+        # operator local_status (received / in progress / completed) as Final. When the
+        # report is the latest word (no later operator action), seed it as before.
         rows = q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
-                    WHERE gen_pat_billing_id = ANY(%s) AND state='reported'""", (ids,)) or []
+                    WHERE gen_pat_billing_id = ANY(%s) AND state='reported'
+                      AND NOT (local_updated_at IS NOT NULL AND reported_at IS NOT NULL
+                               AND local_updated_at > reported_at)""", (ids,)) or []
         reported = {r["gen_pat_billing_id"] for r in rows}
         if not reported:
             return
