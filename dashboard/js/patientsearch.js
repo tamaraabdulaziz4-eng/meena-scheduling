@@ -341,7 +341,7 @@ async function psToggleVisitNote(encounterId, elId, caretRow) {
   box.innerHTML = notes.map((n) => `
     <div style="border-left:2px solid var(--border);padding:2px 0 2px 10px;margin-bottom:8px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${escapeHtml(n.templateName || 'Note')}${n.by ? ' · ' + escapeHtml(n.by) : ''}${n.date ? ' · ' + escapeHtml(String(n.date).slice(0, 10)) : ''}</div>
-      ${n.sections.map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('')}
+      ${(Array.isArray(n.sections) ? n.sections : []).map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No readable content in this note.</div>'}
     </div>`).join('');
 }
 
@@ -384,7 +384,7 @@ async function psLoadRealLabs() {
   const results = (d && d.results) || [];
   if (!panels.length) { box.innerHTML = ''; return; }
   const abn = results.filter((r) => r.abnormal || r.critical).length;
-  const when = (d && d.latest) ? String(d.latest).slice(0, 11).trim() : '';
+  const when = (d && d.latest) ? String(d.latest).slice(0, 10).trim() : '';
   const head = `<div class="ps-sec-l" style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
     <span>Lab results · ${results.length}</span>
     ${abn ? `<span style="font-size:10px;font-weight:800;letter-spacing:.03em;color:#fff;background:#e2571f;border-radius:5px;padding:1px 6px">${abn} ABNORMAL</span>`
@@ -408,7 +408,7 @@ async function psLoadRealLabs() {
     const nAbn = pan.tests.filter((t) => t.abnormal || t.critical).length;
     const bodyId = 'ps-lab-p' + idx;
     const pdate = pan.date || pan.drawnAt || pan.resultDate || pan.orderDate || '';
-    const pdstr = pdate ? String(pdate).slice(0, 11).trim() : '';
+    const pdstr = pdate ? String(pdate).slice(0, 10).trim() : '';
     return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:10px;background:var(--card,#fff)">
       <button type="button" onclick="psTogglePanel(this,'${bodyId}')" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:var(--card-alt,#f4f4f8);border:0;border-bottom:1px solid var(--border);cursor:pointer;font:inherit;text-align:start">
         <span style="font-weight:700;font-size:12.5px;display:flex;align-items:center;gap:8px"><span class="ps-lab-chev" style="display:inline-block;transition:transform .15s;color:var(--muted)">▸</span>${escapeHtml(pan.name)}${pdstr ? `<span style="font-weight:500;color:var(--muted);font-size:11px">· ${escapeHtml(pdstr)}</span>` : ''}</span>
@@ -627,13 +627,21 @@ function psOrderTime(o) {
 function psParseDate(s) {
   if (!s) return 0;
   const str = String(s).trim();
-  let t = Date.parse(str);
-  if (!isNaN(t)) return t;
+  // ISO (YYYY-MM-DD[...]) is unambiguous — let the engine parse it. Everything else must
+  // be matched EXPLICITLY first: Date.parse reads a "DD/MM/YYYY" slash date as US
+  // "MM/DD/YYYY" and returns a valid (non-NaN) timestamp, silently swapping day and month.
+  let t;
+  if (/^\d{4}-\d{2}/.test(str) || str.includes('T')) {
+    t = Date.parse(str);
+    if (!isNaN(t)) return t;
+  }
   let m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (m) { const y = +m[3] < 100 ? 2000 + +m[3] : +m[3]; t = Date.UTC(y, (+m[2]) - 1, +m[1]); if (!isNaN(t)) return t; }
   m = str.match(/^(\d{1,2})[\/\-]([A-Za-z]{3})[\/\-](\d{2,4})/);
   if (m) { t = Date.parse(`${m[1]} ${m[2]} ${m[3]}`); if (!isNaN(t)) return t; }
-  return 0;
+  // Last resort for any other engine-parseable form (e.g. "Jul 9 2026").
+  t = Date.parse(str);
+  return isNaN(t) ? 0 : t;
 }
 function psToggleExam(btn) {
   const card = btn.closest('.ps-exam');
@@ -704,7 +712,15 @@ function psExamCard(o, open) {
 }
 
 function psRepId(o) {
-  return 'ps-rep-' + String((o && (o.billNo || o.accessionNumber)) || Math.abs(psParseDate(o && o.orderedDate) || 0)).replace(/[^A-Za-z0-9_-]/g, '');
+  // MUST be unique PER EXAM, not per bill: one bill routinely bundles several exams
+  // (CT Abdomen + CT Pelvis), and keying on billNo first gave every sibling the same DOM
+  // id, so getElementById returned only the first node and reports loaded into the wrong
+  // card / stuck. Prefer the exam-unique invPatTestResultId/accession; for un-imaged
+  // siblings fall back to bill+service (distinct names) so ids still can't collide.
+  const uniq = (o && (o.invPatTestResultId || o.accessionNumber))
+    || (o && o.billNo ? String(o.billNo) + '_' + String((o && o.service) || '') : '')
+    || Math.abs(psParseDate(o && o.orderedDate) || 0);
+  return 'ps-rep-' + String(uniq).replace(/[^A-Za-z0-9_-]/g, '');
 }
 // Auto-load each exam's report on open — no clicking. Every report is pulled STRAIGHT
 // FROM SIRATECH (FetchRadiologyReport, keyed by the exam's own invPatTestResultId), so
