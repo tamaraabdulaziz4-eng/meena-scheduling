@@ -937,6 +937,21 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS accession_source TEXT;")
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS pacs_id TEXT;")
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS cpacs_url TEXT;")
+            # ── RIS Phase 2: operator-driven workflow overlay (Meena-owned) ──────────────
+            # receive / start / complete / assign technologist / note / cancel. This is a
+            # LOCAL layer over the read-only HIS board — it is NEVER written back to
+            # Siratech, and the auto-file/reconcile loops treat local_status='cancelled'
+            # as off-limits so a "Not Done" order can't be auto-filed.
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS local_status TEXT;")   # received | in_progress | completed | cancelled
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS assigned_tech_id INTEGER;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS assigned_tech_name TEXT;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS note TEXT;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS local_by INTEGER;")
+            cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS local_updated_at TIMESTAMPTZ;")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -7558,6 +7573,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             _rad_upsert_orders(data.get("items"))
             _rad_reconcile_resolved(data.get("items"))
             _annotate_worklist_consent(data.get("items"))
+            _annotate_worklist_overlay(data.get("items"))
     except Exception:
         pass
     return data
@@ -7580,6 +7596,157 @@ def _annotate_worklist_consent(items):
             it["consentOnFile"] = str(it.get("mrno")) in have
     except Exception:
         pass
+
+# ── RIS Phase 2: operator workflow overlay ────────────────────────────────────
+def _annotate_worklist_overlay(items):
+    """Merge Meena's local workflow overlay (receive / start / complete / assign tech /
+    note / cancel) onto the live board by genPatBillingId — one query for the whole
+    board. These operator-driven fields are Meena-owned and layered on the read-only HIS
+    mirror; they are never written back to Siratech."""
+    if not isinstance(items, list) or not items:
+        return
+    ids = []
+    for it in items:
+        try:
+            g = it.get("genPatBillingId")
+            if g:
+                ids.append(int(g))
+        except Exception:
+            pass
+    if not ids:
+        return
+    try:
+        rows = q("""SELECT gen_pat_billing_id, local_status, received_at, started_at,
+                           completed_at, assigned_tech_id, assigned_tech_name, note,
+                           cancel_reason, local_updated_at
+                    FROM scheduling.radiology_orders
+                    WHERE gen_pat_billing_id = ANY(%s)""", (ids,)) or []
+        by = {r["gen_pat_billing_id"]: r for r in rows}
+        def _iso(v):
+            return v.isoformat() if v else None
+        for it in items:
+            try:
+                g = int(it.get("genPatBillingId")) if it.get("genPatBillingId") else None
+            except Exception:
+                g = None
+            r = by.get(g)
+            if not r:
+                continue
+            it["localStatus"]      = r.get("local_status")
+            it["receivedAt"]       = _iso(r.get("received_at"))
+            it["startedAt"]        = _iso(r.get("started_at"))
+            it["completedAt"]      = _iso(r.get("completed_at"))
+            it["assignedTechId"]   = r.get("assigned_tech_id")
+            it["assignedTechName"] = r.get("assigned_tech_name")
+            it["note"]             = r.get("note")
+            it["cancelReason"]     = r.get("cancel_reason")
+            it["localUpdatedAt"]   = _iso(r.get("local_updated_at"))
+    except Exception:
+        pass
+
+def _rad_overlay_apply(gpb, user, set_sql, set_params=(), mrno=None, site=None, patient_name=None):
+    """UPSERT the local workflow overlay for ONE order (keyed by gen_pat_billing_id).
+    Inserts a minimal row first if the board never persisted this order yet (mrno is
+    NOT NULL, so fall back to the order key), then applies the operator's field change.
+    local_by + local_updated_at are always stamped. `set_sql` is a fixed per-route
+    literal (never user input) so it carries no injection risk; values ride `set_params`."""
+    gpb = int(gpb)
+    mr = str(mrno) if mrno else str(gpb)
+    try:
+        st = int(site) if site is not None and str(site).strip() != "" else None
+    except Exception:
+        st = None
+    q("""INSERT INTO scheduling.radiology_orders (mrno, gen_pat_billing_id, site, patient_name, state)
+         VALUES (%s,%s,%s,%s,'ordered')
+         ON CONFLICT (gen_pat_billing_id) DO NOTHING""",
+      (mr, gpb, st, patient_name), exec_only=True)
+    q(f"""UPDATE scheduling.radiology_orders
+             SET {set_sql}, local_by=%s, local_updated_at=NOW(), updated_at=NOW()
+           WHERE gen_pat_billing_id=%s""",
+      (*set_params, user.get("id"), gpb), exec_only=True)
+
+async def _rad_body(request):
+    try:
+        b = await request.json()
+        return b if isinstance(b, dict) else {}
+    except Exception:
+        return {}
+
+@app.post("/api/radiology/orders/{gpb}/receive")
+async def radiology_order_receive(gpb: int, request: Request, user=Depends(require_radiology)):
+    """Mark the patient as received/arrived at the department (Meena overlay)."""
+    b = await _rad_body(request)
+    _rad_overlay_apply(gpb, user,
+        "received_at=COALESCE(received_at, NOW()), local_status='received', cancel_reason=NULL",
+        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_RECEIVE", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
+    return {"ok": True}
+
+@app.post("/api/radiology/orders/{gpb}/start")
+async def radiology_order_start(gpb: int, request: Request, user=Depends(require_radiology)):
+    """Mark the exam started / in progress (Meena overlay)."""
+    b = await _rad_body(request)
+    _rad_overlay_apply(gpb, user,
+        "started_at=COALESCE(started_at, NOW()), received_at=COALESCE(received_at, NOW()), local_status='in_progress', cancel_reason=NULL",
+        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_START", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
+    return {"ok": True}
+
+@app.post("/api/radiology/orders/{gpb}/complete")
+async def radiology_order_complete(gpb: int, request: Request, user=Depends(require_radiology)):
+    """Mark the exam completed / imaged (Meena overlay). Does NOT file the report — that
+    stays the auto-file / results-file path into Siratech."""
+    b = await _rad_body(request)
+    _rad_overlay_apply(gpb, user,
+        "completed_at=COALESCE(completed_at, NOW()), local_status='completed', cancel_reason=NULL",
+        (), mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_COMPLETE", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
+    return {"ok": True}
+
+@app.post("/api/radiology/orders/{gpb}/assign")
+async def radiology_order_assign(gpb: int, request: Request, user=Depends(require_radiology)):
+    """Assign (or clear) the technologist for this order (Meena overlay). The frontend
+    sends the picked staff's id + display name; passing neither clears the assignment."""
+    b = await _rad_body(request)
+    tech_id = b.get("staff_id")
+    try:
+        tech_id = int(tech_id) if tech_id not in (None, "") else None
+    except Exception:
+        tech_id = None
+    tech_name = (str(b.get("tech_name") or "").strip() or None)
+    _rad_overlay_apply(gpb, user,
+        "assigned_tech_id=%s, assigned_tech_name=%s", (tech_id, tech_name),
+        mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_ASSIGN", str(b.get("mrno") or gpb),
+                 json.dumps({"gpb": gpb, "staff_id": tech_id, "tech_name": tech_name}))
+    return {"ok": True}
+
+@app.post("/api/radiology/orders/{gpb}/note")
+async def radiology_order_note(gpb: int, request: Request, user=Depends(require_radiology)):
+    """Attach a free-text operational note to this order (Meena overlay — stored locally,
+    NOT written into the DePACS study; that stays the handoff write-history path)."""
+    b = await _rad_body(request)
+    note = str(b.get("note") or "").strip()
+    if not note:
+        raise HTTPException(400, "A note is required")
+    _rad_overlay_apply(gpb, user, "note=%s", (note[:2000],),
+        mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_NOTE", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
+    return {"ok": True}
+
+@app.post("/api/radiology/orders/{gpb}/cancel")
+async def radiology_order_cancel(gpb: int, request: Request, user=Depends(require_radiology)):
+    """Mark the order Not Done with a reason (Meena overlay ONLY — this is never written
+    back to Siratech). Auto-file / reconcile skip a locally-cancelled order."""
+    b = await _rad_body(request)
+    reason = str(b.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "A reason is required to mark an order not done")
+    _rad_overlay_apply(gpb, user, "local_status='cancelled', cancel_reason=%s", (reason[:500],),
+        mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
+    insert_audit(user, "RADIOLOGY_CANCEL", str(b.get("mrno") or gpb),
+                 json.dumps({"gpb": gpb, "reason": reason}))
+    return {"ok": True}
 
 @app.get("/api/radiology/stats/history")
 def radiology_stats_history(
@@ -10420,8 +10587,26 @@ def _radiology_autofile_sweep():
     if not isinstance(data, dict) or not data.get("ok"):
         return 0
     filed = 0
-    for c in (data.get("candidates") or []):
+    cands = data.get("candidates") or []
+    # Skip any order an operator marked Not Done (local overlay) — a cancelled order must
+    # never be auto-filed even if a stray verified study matches it.
+    cancelled = set()
+    try:
+        gpbs = [int(c.get("genPatBillingId")) for c in cands if c.get("genPatBillingId")]
+        if gpbs:
+            rows = q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
+                        WHERE gen_pat_billing_id = ANY(%s) AND local_status='cancelled'""", (gpbs,)) or []
+            cancelled = {r["gen_pat_billing_id"] for r in rows}
+    except Exception:
+        pass
+    for c in cands:
         try:
+            try:
+                _cg = int(c.get("genPatBillingId")) if c.get("genPatBillingId") else None
+            except Exception:
+                _cg = None
+            if _cg is not None and _cg in cancelled:
+                continue   # operator marked this order Not Done — never auto-file it
             body = {
                 "file": c.get("file"), "site": c.get("site"), "billNo": c.get("billNo"),
                 "serviceId": c.get("serviceId"), "expectStudyId": c.get("studyId"),

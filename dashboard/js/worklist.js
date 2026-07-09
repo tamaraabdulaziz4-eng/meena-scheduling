@@ -580,15 +580,20 @@ const WL_STATUS_LABEL = { ordered: 'Ordered', received: 'Received', progress: 'I
 const _WL_ST_RANK = { ordered: 0, received: 1, progress: 2, completed: 3, reported: 4 };
 const _WL_ST_BY_RANK = ['ordered', 'received', 'progress', 'completed', 'reported'];
 function wlStatusRaw(it) {
+  // A Meena "Not Done" (locally cancelled) order is terminal and off the progress ladder.
+  if (it.localStatus === 'cancelled') return 'notdone';
   const s = String(it.hisStatus || '').toLowerCase();
   if (it.hisReported || it.stage === 'reported' || it.readyToFile) return 'reported';
-  if (/scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt || it.stage === 'draft') return 'completed';
-  if (/in\s*progress|scanning|ongoing|started/.test(s) || it.examStartAt) return 'progress';
-  if (it.arrivedAt || /arrived/.test(s)) return 'received';
+  // Operator overlay actions (completedAt/startedAt/receivedAt) advance the row alongside
+  // the HIS signals, so a manually-driven exam moves even before Siratech reflects it.
+  if (it.completedAt || /scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt || it.stage === 'draft') return 'completed';
+  if (it.startedAt || /in\s*progress|scanning|ongoing|started/.test(s) || it.examStartAt) return 'progress';
+  if (it.receivedAt || it.arrivedAt || /arrived/.test(s)) return 'received';
   return 'ordered';
 }
 function wlStatus(it) {
   const raw = wlStatusRaw(it);
+  if (raw === 'notdone') return 'notdone';             // terminal — never ratcheted
   const k = wlRowKey(it);
   if (!k) return raw;                                  // keyless → can't ratchet safely
   const rawRank = _WL_ST_RANK[raw];
@@ -661,7 +666,6 @@ function wlRender() {
   // Phase-2 backend feature and stays empty for now).
   let rows = items;
   if (wlState.tab === 'urgent') rows = rows.filter((it) => it.emergency);
-  else if (wlState.tab === 'notdone') rows = [];
   else if (wlState.tab !== 'all') rows = rows.filter((it) => it.__status === wlState.tab);
 
   // Left-panel filters (all client-side).
@@ -773,7 +777,7 @@ function wlRowHtml(it) {
       <span class="val">${escapeHtml(age || '—')}</span>
       <span class="bar"><i style="width:${wp}%"></i></span>
     </div>
-    <div><span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>${pillNote}</div>
+    <div><span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>${pillNote}${it.assignedTechName ? `<div class="prelim-note">🧑‍🔬 ${escapeHtml(String(it.assignedTechName))}</div>` : ''}</div>
     <div class="acts">
       ${primaryAct}
       <button class="iconbtn" title="Expand" onclick="wlToggleRow('${uid}',event)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
@@ -808,13 +812,15 @@ function wlExpandHtml(it, st) {
       <span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>
     </div>
     ${needConsent ? `<div class="alert">${icon('alert')}Non-pregnancy consent required before imaging a female patient of childbearing age.</div>` : ''}
+    ${(st === 'notdone' && it.cancelReason) ? `<div class="alert" style="color:var(--danger-ink);background:var(--danger-wash)">${icon('alert')}Not done · ${escapeHtml(it.cancelReason)}</div>` : ''}
+    ${it.note ? `<div class="alert" style="color:var(--text);background:var(--surface-2)">${icon('edit')}${escapeHtml(it.note)}</div>` : ''}
     ${preg ? `<div class="rw-preg">${preg}</div>` : ''}
     <div class="xgrid">
       <div class="xf"><div class="k">Exam</div><div class="v">${it.modality ? escapeHtml(String(it.modality)) + ' · ' : ''}${it.exam ? escapeHtml(it.exam) : '<span style="color:var(--muted)">—</span>'}</div></div>
       <div class="xf"><div class="k">Accession</div><div class="v tnum">${acc ? escapeHtml(String(acc)) : '—'}</div></div>
       <div class="xf"><div class="k">Ordering doctor</div><div class="v">${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : '—'}${dept ? ' · ' + escapeHtml(dept) : ''}</div></div>
       <div class="xf"><div class="k">Ordered</div><div class="v tnum">${it.orderedDate ? escapeHtml(wlTrackFmt(it.orderedDate)) : (age ? age + ' ago' : '—')}</div></div>
-      <div class="xf"><div class="k">Technologist</div><div class="v"><span style="color:var(--muted)">Unassigned</span></div></div>
+      <div class="xf"><div class="k">Technologist</div><div class="v">${it.assignedTechName ? escapeHtml(String(it.assignedTechName)) : '<span style="color:var(--muted)">Unassigned</span>'}</div></div>
       <div class="xf"><div class="k">Priority</div><div class="v">${it.emergency ? '<span style="color:var(--danger-ink);font-weight:800">STAT / Emergency</span>' : 'Routine'}</div></div>
     </div>
     <div class="xsec-title">Clinical indication</div>
@@ -825,9 +831,7 @@ function wlExpandHtml(it, st) {
       ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
       ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
-      <button class="btn ghost-soon" disabled title="Available in the next update">Receive<span class="soon">SOON</span></button>
-      <button class="btn ghost-soon" disabled title="Available in the next update">Assign tech<span class="soon">SOON</span></button>
-      <button class="btn ghost-soon" disabled title="Available in the next update">Add note<span class="soon">SOON</span></button>
+      ${wlWorkflowBtns(it, st)}
     </div>
   </div>`;
 }
@@ -851,8 +855,8 @@ function wlSyncActionbar() {
     single ? `<button class="btn" onclick="wlOpenPatientCard('${jsAttr(sel[0])}')">${icon('user')}Patient card</button>` : '',
     canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(it.mrno)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}Report / Images</button>` : '',
   ].join('');
-  const soon = [['Receive'], ['Start exam'], ['Complete'], ['Assign tech'], ['Add note'], ['Not done']]
-    .map(([l]) => `<button class="btn ghost-soon" disabled title="Available in the next update">${escapeHtml(l)}<span class="soon">SOON</span></button>`).join('');
+  // Workflow actions apply to a single order; a multi-select keeps just the count.
+  const soon = (single && it) ? wlWorkflowBtns(it, it.__status || wlStatus(it)) : '';
   const info = bar.querySelector('.ab-info'); if (info) info.innerHTML = `<span class="n">${escapeHtml(name)}</span><span class="s">${sub}</span>`;
   const count = bar.querySelector('.ab-count'); if (count) count.textContent = sel.length > 1 ? sel.length : '';
   const acts = bar.querySelector('.ab-acts'); if (acts) acts.innerHTML = real + soon;
@@ -882,6 +886,53 @@ function wlToggleRow(uid, e) { if (e) e.stopPropagation(); if (wlState.openRows.
 function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRender(); }
 function wlClearSel() { wlState.selMrns.clear(); wlRender(); }
 function wlToggleMobFilters() { const f = document.getElementById('rw-filters'); if (f) f.classList.toggle('open'); }
+
+// ── Phase-2 workflow actions (Meena-owned local overlay) ──────────────────────
+// receive / start / complete / assign / note / cancel — POST to the order endpoint,
+// then a forced refresh repaints the row with the new state. genPatBillingId is the
+// order key; mrno/site ride along so an order the ledger hasn't persisted yet upserts.
+async function wlPostOrder(gpb, action, body, okMsg) {
+  if (gpb == null || gpb === '') { if (typeof toast === 'function') toast('This order has no id yet — try again in a moment', 'err'); return; }
+  try {
+    await API.post(`/radiology/orders/${encodeURIComponent(gpb)}/${action}`, body || {});
+    if (okMsg && typeof toast === 'function') toast(okMsg);
+    wlLoad(true);
+  } catch (e) { if (typeof toast === 'function') toast(e.message || 'Action failed', 'err'); }
+}
+function wlActReceive(gpb, mrno, site)  { wlPostOrder(gpb, 'receive',  { mrno, site }, 'Patient received'); }
+function wlActStart(gpb, mrno, site)    { wlPostOrder(gpb, 'start',    { mrno, site }, 'Exam started'); }
+function wlActComplete(gpb, mrno, site) { wlPostOrder(gpb, 'complete', { mrno, site }, 'Exam completed'); }
+function wlActAssign(gpb, mrno, site) {
+  const n = prompt('Assign technologist — enter the name (leave blank to clear):');
+  if (n === null) return;
+  wlPostOrder(gpb, 'assign', { mrno, site, tech_name: n.trim() }, n.trim() ? 'Technologist assigned' : 'Assignment cleared');
+}
+function wlActNote(gpb, mrno, site) {
+  const n = prompt('Add a note for this order:');
+  if (!n || !n.trim()) return;
+  wlPostOrder(gpb, 'note', { mrno, site, note: n.trim() }, 'Note saved');
+}
+function wlActCancel(gpb, mrno, site) {
+  const r = prompt('Mark this order Not Done — reason (e.g. patient no-show, cancelled):');
+  if (!r || !r.trim()) return;
+  wlPostOrder(gpb, 'cancel', { mrno, site, reason: r.trim() }, 'Marked not done');
+}
+// Contextual workflow buttons for the expand card + action bar, gated by current status.
+function wlWorkflowBtns(it, st) {
+  const gpb = it.genPatBillingId;
+  if (gpb == null) return '';
+  const g = Number(gpb), mr = jsAttr(String(it.mrno || '')), site = Number(it.site) || 0;
+  const b = [];
+  if (st === 'ordered')       b.push(`<button class="btn solid" onclick="wlActReceive(${g},'${mr}',${site})">${icon('check')}Receive patient</button>`);
+  else if (st === 'received') b.push(`<button class="btn solid" onclick="wlActStart(${g},'${mr}',${site})">Start exam</button>`);
+  else if (st === 'progress') b.push(`<button class="btn solid" onclick="wlActComplete(${g},'${mr}',${site})">Mark completed</button>`);
+  if (st !== 'notdone') {
+    b.push(`<button class="btn" onclick="wlActAssign(${g},'${mr}',${site})">${icon('user')}Assign tech</button>`);
+    b.push(`<button class="btn" onclick="wlActNote(${g},'${mr}',${site})">${icon('edit')}Add note</button>`);
+    b.push(`<button class="btn" style="color:var(--danger-ink);border-color:var(--danger-wash)" onclick="wlActCancel(${g},'${mr}',${site})">Not done</button>`);
+  }
+  return b.join('');
+}
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }
 
