@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'note-safe-probe-2026-07-09b';
+const CONNECTOR_BUILD = 'note-minimal-2026-07-09c';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1071,25 +1071,30 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
       mrno: file, fromDate: from, toDate: to, hospitalId: null, groupByValue: String(encounterId),
       searchText: '', searchType: 0, groupBy: 0, limit: 20, offset: 0, empcat: '1,2,3' } });
     const noteRows = (dg.json && dg.json.data) || [];
-    // Diagnostic (NO PHI values — only shapes, counts and template LABELS) so we can see
-    // exactly where the note fetch yields nothing: an empty DetailsByGroup, an empty preview,
-    // or all-blank sections. Surfaced in the response for one-query inspection.
+    // MINIMAL & SAFE: EmrHtmlPreview 404s for every template. EmrNoteLogPreview is the note READ
+    // endpoint the HIS actually serves (rows flagged isEmrNoteLogEnabled). Render each note with a
+    // SINGLE call (sequential, hard-capped at 6s), so the whole handler stays a handful of HIS calls
+    // — an earlier multi-endpoint fan-out overloaded the bridge and knocked the connector offline.
+    const cap6 = (p) => Promise.race([p, sleep(6000).then(() => ({ status: 'timeout', json: null, text: '' }))]);
     const noteDebug = {
       dgStatus: dg.status || null,
       dgRows: noteRows.length,
-      dgFirstKeys: Object.keys(noteRows[0] || {}),
-      dgTemplateNames: noteRows.map((r) => (r.templateName || r.templateNAME || r.emrTemplateName || '').toString().trim()).filter(Boolean),
-      previews: [],
+      dgTemplateNames: noteRows.map((r) => (r.templateName || '').toString().trim()).filter(Boolean),
+      renders: [],
     };
     const notes = [];
     for (const row of noteRows) {
+      const body = {
+        emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
+        templateId: Number(row.emrTemplateId) || 0, emrTemplateId: Number(row.emrTemplateId) || 0,
+        mrno: file, providerId: String(providerId), gender, age,
+        patFinEncounterId: Number(encounterId) || 0, patFinEncounterID: Number(encounterId) || 0,
+        emrPatTemplateId: Number(row.emrPatTemplateId) || 0, emrNoteType: row.emrNoteType,
+        isValid: 1, editStatus: 0, isEmrNoteLog: 1,
+      };
       try {
-        const prev = await hisFetch('/emr-api/api/v1/EMRCore/EmrHtmlPreview', { body: {
-          emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
-          templateId: row.emrTemplateId || row.templateId || 0, mrno: file, providerId: String(providerId),
-          gender, age, patFinEncounterId: Number(encounterId) || 0,
-          emrPatTemplateId: row.emrPatTemplateId || 0, isValid: 1, editStatus: 0 } });
-        const pr = (prev.json && prev.json.data) || [];
+        const prev = await cap6(hisFetch('/emr-api/api/v1/EMRCore/EmrNoteLogPreview', { body }));
+        const pr = (prev.json && prev.json.data);
         const pdata = Array.isArray(pr) ? pr[0] : pr;
         const sections = [];
         for (const fmt of ((pdata && pdata.emrPrintFormats) || [])) {
@@ -1098,52 +1103,22 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
             if (text) sections.push({ label: _stripHtml(rr.label) || null, text });
           }
         }
-        noteDebug.previews.push({
-          tpl: (row.templateName || '').toString().trim() || null,
-          prevStatus: prev.status || null,
-          prShape: Array.isArray(pr) ? `array(${pr.length})` : (pr && typeof pr === 'object' ? `object[${Object.keys(pr).join(',')}]` : typeof pr),
-          fmtKeys: (pdata && typeof pdata === 'object') ? Object.keys(pdata) : [],
-          fmts: ((pdata && pdata.emrPrintFormats) || []).length,
-          sections: sections.length,
-        });
+        // Capture the raw shape (keys only, NO PHI values) of the doctor/assessment row so the
+        // parser can be adapted if EmrNoteLogPreview returns a shape other than emrPrintFormats.
+        if (/doctor|assessment|physician|progress/i.test(row.templateName || '') || noteDebug.renders.length === 0) {
+          noteDebug.renders.push({
+            tpl: (row.templateName || '').toString().trim() || null,
+            status: prev.status || null,
+            prShape: Array.isArray(pr) ? `array(${pr.length})` : (pr && typeof pr === 'object' ? `object[${Object.keys(pr).join(',')}]` : (pr == null ? 'null' : typeof pr)),
+            pdataKeys: (pdata && typeof pdata === 'object') ? Object.keys(pdata) : [],
+            fmts: ((pdata && pdata.emrPrintFormats) || []).length,
+            sections: sections.length,
+            textHint: (prev.text || '').slice(0, 80).replace(/\s+/g, ' '),
+          });
+        }
         if (sections.length) notes.push({ templateName: (row.templateName || '').trim() || 'Note',
           by: (row.employeeName || '').trim() || null, date: row.emrDate || null, sections });
-      } catch (e) { noteDebug.previews.push({ tpl: (row.templateName || '').toString().trim() || null, error: String(e && e.message || e) }); }
-    }
-    // EmrHtmlPreview 404s for every template, so no note ever renders. When nothing came back,
-    // probe candidate render endpoints against the real doctor row (no query param needed — the
-    // Meena route doesn't forward one) and report which returns data, so we can lock in the winner.
-    // SAFE: all candidates run in PARALLEL, each hard-capped at 5s, each wrapped so a bad path can
-    // never hang or crash the connector (an earlier sequential version stalled it in production).
-    if (!notes.length && noteRows.length) {
-      const row = noteRows.find((r) => /doctor|assessment|physician|progress/i.test(r.templateName || '')) || noteRows[0] || {};
-      const b = {
-        emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
-        templateId: row.emrTemplateId || 0, emrTemplateId: Number(row.emrTemplateId) || 0,
-        mrno: file, providerId: String(providerId), gender, age,
-        patFinEncounterId: Number(encounterId) || 0, patFinEncounterID: Number(encounterId) || 0,
-        emrPatTemplateId: Number(row.emrPatTemplateId) || 0, emrNoteType: row.emrNoteType, isValid: 1, editStatus: 0,
-        isEmrNoteLog: 1, emrProviderVisitID: Number(row.emrProviderVisitId) || 0,
-      };
-      const cands = [
-        '/emr-api/api/v1/EMRCore/EmrNoteLogPreview',
-        '/emr-api/api/v1/EMRCore/GetEmrNoteLogPreview',
-        '/emr-api/api/v1/EMRCore/GetEmrHtmlPreview',
-        '/emr-api/api/v1/EMRCore/EmrPreview',
-        '/emr-api/api/v1/EMR/EmrHtmlPreview',
-        '/emr-api/api/v1/EMRCore/EmrNotePreview',
-      ];
-      const probeCap = (path) => Promise.race([
-        hisFetch(path, { body: b }).then((r) => {
-          const d = r.json && r.json.data;
-          return { path: path.replace('/emr-api/api/v1', ''), status: r.status,
-            dataShape: Array.isArray(d) ? `array(${d.length})` : (d && typeof d === 'object' ? `object[${Object.keys(d).join(',')}]` : (d == null ? 'null' : typeof d)),
-            textHint: (r.text || '').slice(0, 80).replace(/\s+/g, ' ') };
-        }).catch((e) => ({ path: path.replace('/emr-api/api/v1', ''), error: String(e && e.message || e) })),
-        sleep(5000).then(() => ({ path: path.replace('/emr-api/api/v1', ''), status: 'timeout>5s' })),
-      ]);
-      noteDebug.probeRow = { tpl: row.templateName || null };
-      noteDebug.probe = await Promise.all(cands.map(probeCap));
+      } catch (e) { noteDebug.renders.push({ tpl: (row.templateName || '').toString().trim() || null, error: String(e && e.message || e) }); }
     }
     return res.json({ ok: true, build: CONNECTOR_BUILD, file, encounterId, notes, noteDebug, fetchedAt: new Date().toISOString() });
   } catch (e) {
