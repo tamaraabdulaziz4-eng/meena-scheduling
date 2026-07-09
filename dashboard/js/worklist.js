@@ -20,16 +20,19 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 modCache: new Map(), stageCache: new Map(), pregCache: new Map(),
                 // Per-MRN clinical-indication index cache (bug #2 — inline row indication).
                 indCache: new Map(),
-                // Modality is the only board filter now — the phase strip HIGHLIGHTS
-                // + scrolls (bug #1), it never hides a patient. `phaseHi` is the currently
-                // highlighted phase (or null).
-                modFilter: null, phaseHi: null,
                 // Live-pill + watchdog bookkeeping (bug #3): the timestamp of the last
                 // good load, a "reconnecting" flag, and a monotonic load generation so a
                 // hung request that the watchdog gave up on can never paint stale data.
                 lastGood: 0, reconnecting: false, _loadGen: 0,
-                // Bucket-per-order from the previous render → transient "moved from …" tag.
-                prevPhase: new Map(), movedTags: new Map() };
+                // ── Unified redesign render state (worklist UI v2) ──
+                // A single status vocabulary per order, ratcheted forward; the active tab;
+                // row density; the checkbox selection (by MRN) and expanded rows (by row uid);
+                // and the left-panel filters (modality set / priority / doctor / sort).
+                tab: 'all', density: 'compact',
+                selMrns: new Set(), openRows: new Set(),
+                fMods: new Set(), fPrio: '', fDoc: '', fSort: 'wait',
+                _docSig: null, mobFilters: false,
+                statusRatchet: new Map() };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
 // dropping off) shows without the operator touching anything. ~12s to feel like a live
@@ -160,9 +163,14 @@ async function renderWorklistPage() {
   setTopbar('Radiology worklist', 'Live RIS status board · STAT first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState._paintedOnce = false;                        // entrance animation once per visit
-  wlState.phaseHi = null;                              // no phase highlighted on entry
   wlState.reconnecting = false; wlState.lastGood = Date.now();
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
+  // Fresh redesign view state on every entry: default tab, compact rows, nothing
+  // selected/expanded, no left-panel filters.
+  wlState.tab = 'all'; wlState.density = 'compact';
+  wlState.selMrns.clear(); wlState.openRows.clear();
+  wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = ''; wlState.fSort = 'wait';
+  wlState._docSig = null; wlState.mobFilters = false;
   // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
   // that patient (search finds them even if they're not on today's board).
   const jumpMrn = window._wlPendingFilter; window._wlPendingFilter = null;
@@ -174,38 +182,93 @@ async function renderWorklistPage() {
   //    branch · refresh. The controls live in the STATIC shell (not #wl-body) so a
   //    45s poll never interrupts typing or steals focus. ──
   c.innerHTML = `
-    <div class="cc wl2">
-      <div class="top">
-        <div class="brand">
-          <img class="wl-logo" src="/meena_logo.png" alt="Meena">
-          <div>
-            <h1>Meena RIS · Worklist</h1>
-            <div class="sub">${branch ? escapeHtml(String(branch)) + ' · ' : ''}${escapeHtml(dateStr)}</div>
-          </div>
+    <div class="rw">
+      <div class="rw-top">
+        <div class="rw-title">
+          <h1>Radiology Worklist</h1>
+          <p>Live RIS board${branch ? ' · ' + escapeHtml(String(branch)) : ''} · ${escapeHtml(dateStr)}</p>
         </div>
         <span class="live" id="wl-live"><i></i>Live · updated 0s ago</span>
-        <div class="spacer"></div>
-        <label class="search">
+        <div class="rw-spacer"></div>
+        <label class="rw-search">
           ${icon('search')}
-          <input id="wl-search" placeholder="Search patient, MRN, or accession" autocomplete="off"
+          <input id="wl-search" placeholder="Name · MRN · accession" autocomplete="off"
                  oninput="wlLiveFilter(this.value)" onkeydown="if(event.key==='Enter')wlSearch(this.value)">
         </label>
-        <button class="tbtn today" id="wl-today-btn" onclick="wlTodayRange()">Today</button>
-        <button class="tbtn" onclick="wlToggleDate()">${icon('calendar')}Date</button>
-        <select id="wl-branch" class="tbtn wl-branchsel" onchange="wlOnBranch()">
+        <div class="seg" title="Row density">
+          <button id="rw-dCompact" class="on" onclick="wlSetDensity('compact')">Compact</button>
+          <button id="rw-dDetailed" onclick="wlSetDensity('detailed')">Detailed</button>
+        </div>
+        <button class="ctrl mobfilter" onclick="wlToggleMobFilters()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Filters</button>
+        <button class="ctrl tbtn today" id="wl-today-btn" onclick="wlTodayRange()">Today</button>
+        <button class="ctrl" onclick="wlToggleDate()">${icon('calendar')}Date</button>
+        <select id="wl-branch" class="ctrl wl-branchsel" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <button class="tbtn icon" title="Refresh now" onclick="wlLoad(true)">${icon('refresh')}</button>
+        <button class="ctrl" title="Refresh now" onclick="wlLoad(true)">${icon('refresh')}</button>
+        <div class="datepop rw-datepop" id="wl-datepop" style="display:none">
+          <button class="ctrl icon" onclick="wlShiftDay(-1)" title="Previous day">‹</button>
+          <span class="dl">From</span>
+          <input type="date" id="wl-from" value="${wlState.from}" onchange="wlSetFrom(this.value)" title="From date">
+          <span class="dl">To</span>
+          <input type="date" id="wl-to" value="${wlState.to}" onchange="wlSetTo(this.value)" title="To date">
+          <button class="ctrl icon" onclick="wlShiftDay(1)" title="Next day">›</button>
+        </div>
       </div>
-      <div class="datepop" id="wl-datepop" style="display:none">
-        <button class="tbtn icon" onclick="wlShiftDay(-1)" title="Previous day">‹</button>
-        <span class="dl">From</span>
-        <input type="date" id="wl-from" value="${wlState.from}" onchange="wlSetFrom(this.value)" title="From date">
-        <span class="dl">To</span>
-        <input type="date" id="wl-to" value="${wlState.to}" onchange="wlSetTo(this.value)" title="To date">
-        <button class="tbtn icon" onclick="wlShiftDay(1)" title="Next day">›</button>
+
+      <nav class="rw-tabs" id="rw-tabs"></nav>
+
+      <div class="rw-main">
+        <aside class="rw-filters" id="rw-filters">
+          <div class="fgroup">
+            <h4>Modality</h4>
+            <div class="chips" id="rw-modchips"></div>
+          </div>
+          <div class="fgroup">
+            <h4>Priority</h4>
+            <div class="frow">
+              <label class="fopt"><input type="radio" name="rw-prio" value="" checked onchange="wlSetPrio('')">All priorities</label>
+              <label class="fopt"><input type="radio" name="rw-prio" value="stat" onchange="wlSetPrio('stat')">STAT / emergency only</label>
+              <label class="fopt"><input type="radio" name="rw-prio" value="routine" onchange="wlSetPrio('routine')">Routine only</label>
+            </div>
+          </div>
+          <div class="fgroup">
+            <h4>Referring doctor</h4>
+            <select class="fsel" id="rw-docsel" onchange="wlSetDoc(this.value)"><option value="">All doctors</option></select>
+          </div>
+          <div class="fgroup">
+            <h4>Sort by</h4>
+            <select class="fsel" id="rw-sortsel" onchange="wlSetSort(this.value)">
+              <option value="wait">Longest waiting</option>
+              <option value="prio">Priority first</option>
+              <option value="recent">Most recent order</option>
+            </select>
+          </div>
+          <button class="fclear" onclick="wlResetFilters()">Clear all filters</button>
+        </aside>
+
+        <section class="rw-list">
+          <div class="rw-scroll">
+            <div class="rw-colhead" id="rw-colhead">
+              <span></span>
+              <span>Patient · MRN</span>
+              <span>Exam</span>
+              <span>Branch</span>
+              <span class="sortable act" onclick="wlSetSort('wait')">Waiting</span>
+              <span>Status</span>
+              <span style="text-align:right">Action</span>
+            </div>
+            <div class="rw-rows" id="wl-body"></div>
+          </div>
+        </section>
       </div>
-      <div id="wl-body"></div>
+
+      <div class="rw-actionbar" id="rw-actionbar">
+        <div class="ab-info"></div>
+        <span class="ab-count"></span>
+        <div class="ab-acts"></div>
+        <button class="ab-x" onclick="wlClearSel()" title="Clear selection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
     </div>`;
 
   // Only org-wide roles can switch branches; a team lead is scoped server-side to
@@ -307,10 +370,10 @@ async function wlLoad(force, silent) {
     const data = await API.get('/radiology/worklist?' + qs.toString());
     if (wlState._loadGen !== gen) return;         // superseded — the watchdog gave up, a newer load owns the board
     wlState.data = data;
-    // Lanes are driven by the NATIVE Siratech status (it.hisStatus) via wlLane(), which
-    // the connector stamps on the fast pass — so rows land in the right lane on the FIRST
-    // paint with no DePACS wait (this is what removed the old "everyone sits in Waiting
-    // then jumps" glitch). No stage-withholding needed.
+    // Status is driven by the NATIVE Siratech status (it.hisStatus), which the connector
+    // stamps on the fast pass — so rows land in the right status bucket on the FIRST paint
+    // with no DePACS wait (this is what removed the old "everyone sits in Waiting then
+    // jumps" glitch). No stage-withholding needed.
     wlState.lastGood = Date.now(); wlState.reconnecting = false; wlPaintLive();
     wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
@@ -443,7 +506,7 @@ function wlCurRank(it) {
 // Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
 // sibling pass may still be running, but whatever this one filled shows now.
 function wlMergeEnrich(d, isReady) {
-  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); if (wlState.laneCache) wlState.laneCache.clear(); }
+  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); wlState.statusRatchet.clear(); }
   const enr = new Map();
   for (const it of ((d && d.items) || [])) {
     const k = wlRowKey(it);
@@ -507,27 +570,41 @@ function wlRisStatus(it) {
     return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '', state: 'arrived' };
   return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '', state: 'scheduled' };
 }
-// The five workflow phases shown on the strip. Finer than the coarse RIS bucket
-// (To scan splits into scheduled/arrived; In progress is the on-table state).
-const _WL_PHASES = [
-  { key: 'toscan',     label: 'To scan',     dot: 'var(--slate)' },
-  { key: 'inprogress', label: 'In progress', dot: 'var(--amber)' },
-  { key: 'imaged',     label: 'Imaged',      dot: 'var(--green)' },
-  { key: 'reporting',  label: 'Reporting',   dot: 'var(--blue)' },
-  { key: 'final',      label: 'Final',       dot: 'var(--green-ink)' },
-];
-const _WL_PHASE_RANK = { toscan: 0, inprogress: 1, imaged: 2, reporting: 3, final: 4 };
-function wlPhaseLabel(k) { const p = _WL_PHASES.find((x) => x.key === k); return p ? p.label : k; }
-// A row's workflow phase, derived from its RIS status state.
-function wlPhase(it) {
-  const s = (it.__ris || wlRisStatus(it)).state;
-  if (s === 'progress') return 'inprogress';
-  if (s === 'completed') return 'imaged';
-  if (s === 'prelim') return 'reporting';
-  if (s === 'final') return 'final';
-  return 'toscan';   // scheduled / arrived
+// ── Unified status model (worklist UI v2) ──────────────────────────────────────
+// One vocabulary for the whole board: ordered → received → progress → completed →
+// reported. `wlStatusRaw` reads the freshest signal; `wlStatus` RATCHETS it forward
+// (a row never moves backward on a live refresh — same guarantee the old lane ratchet
+// gave). STAT/urgent (it.emergency) is a cross-cutting flag, not a status.
+const WL_STATUS_LABEL = { ordered: 'Ordered', received: 'Received', progress: 'In progress',
+                          completed: 'Completed', reported: 'Reported', notdone: 'Not done' };
+const _WL_ST_RANK = { ordered: 0, received: 1, progress: 2, completed: 3, reported: 4 };
+const _WL_ST_BY_RANK = ['ordered', 'received', 'progress', 'completed', 'reported'];
+function wlStatusRaw(it) {
+  const s = String(it.hisStatus || '').toLowerCase();
+  if (it.hisReported || it.stage === 'reported' || it.readyToFile) return 'reported';
+  if (/scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt || it.stage === 'draft') return 'completed';
+  if (/in\s*progress|scanning|ongoing|started/.test(s) || it.examStartAt) return 'progress';
+  if (it.arrivedAt || /arrived/.test(s)) return 'received';
+  return 'ordered';
 }
-function wlSetMod(m) { wlState.modFilter = (m === '' || wlState.modFilter === m) ? null : m; if (wlState.openDrills) wlState.openDrills.clear(); wlRender(); }
+function wlStatus(it) {
+  const raw = wlStatusRaw(it);
+  const k = wlRowKey(it);
+  if (!k) return raw;                                  // keyless → can't ratchet safely
+  const rawRank = _WL_ST_RANK[raw];
+  const prev = wlState.statusRatchet.get(k);
+  if (prev == null || rawRank >= prev) { wlState.statusRatchet.set(k, rawRank); return raw; }
+  return _WL_ST_BY_RANK[prev];                         // hold the furthest-along status seen
+}
+// The tabs across the top; counts are computed live in wlRenderTabs.
+const WL_TABS = [['all', 'All', false], ['ordered', 'Ordered', false], ['received', 'Received', false],
+  ['progress', 'In Progress', false], ['completed', 'Completed', false], ['reported', 'Reported', false],
+  ['notdone', 'Not Done', false], ['urgent', 'Urgent', true]];
+// Waiting-age → gradient bucket (green < 1.5h, amber 1.5–4h, red ≥ 4h) + bar fill %.
+function wlWaitClass(h) { h = h || 0; return h >= 4 ? 'hi' : h >= 1.5 ? 'mid' : 'ok'; }
+function wlWaitPct(h) { return Math.min(100, Math.round((h || 0) / 8 * 100)); }
+// A DOM-safe, stable-per-order id for the expand Set + onclick (mirrors the old drill key).
+function wlRowUid(it) { return 'u' + String(wlRowKey(it) || ('m' + (it.mrno || ''))).replace(/[^A-Za-z0-9_-]/g, ''); }
 // Modality of a row, normalised to the coarse RIS bucket for filtering.
 function wlRowMod(it) {
   const raw = String(it.modality || it.exam || '').toUpperCase();
@@ -540,200 +617,271 @@ function wlRowMod(it) {
 function wlRender() {
   const d = wlState.data || {}, items = d.items || [];
   wlCheckNewEmergencies(items);
-  // Classify every row once: RIS status, coarse bucket, and the finer workflow phase.
-  // `scanned` = Siratech recorded an exam start/end (a hard fact) → imaged, even before
-  // the DePACS pass and regardless of the demoted preliminary stage text.
-  for (const it of items) { it.__ris = wlRisStatus(it); it.__bucket = it.__ris.bucket; it.__phase = wlPhase(it); }
-  const counts = { toscan: 0, inprogress: 0, imaged: 0, reporting: 0, final: 0 };
-  for (const it of items) counts[it.__phase] = (counts[it.__phase] || 0) + 1;
-
-  // BUG #1: a row that ADVANCES a phase between renders gets a transient "moved from …"
-  // tag (~8s) so the promotion is visible in place — the patient never vanishes.
-  const _now = Date.now();
+  // Classify every row once with the SINGLE unified status, and stash the coarse bucket
+  // the kept wlAutoIndication reads (completed/reported → imaged/reported so done rows
+  // skip the indication auto-fetch; everything else → 'waiting').
   for (const it of items) {
-    const rk = wlRowKey(it); if (!rk) continue;
-    const cur = it.__phase, prev = wlState.prevPhase.get(rk);
-    if (prev !== undefined && prev !== cur && _WL_PHASE_RANK[cur] > _WL_PHASE_RANK[prev])
-      wlState.movedTags.set(rk, { from: wlPhaseLabel(prev), at: _now });
-    wlState.prevPhase.set(rk, cur);
+    const st = wlStatus(it);
+    it.__status = st;
+    it.__bucket = st === 'reported' ? 'reported' : st === 'completed' ? 'imaged' : 'waiting';
   }
-  // Drop expired "moved from …" tags so the Map can't grow across a long shift.
-  for (const [k, v] of wlState.movedTags) if (_now - v.at > 8000) wlState.movedTags.delete(k);
-
   const body = document.getElementById('wl-body');
   if (!body) return;
   // A cross-branch search result view is showing — don't let a live refresh clobber it.
   if (wlState.searchView) return;
-  // Entrance animation fires ONCE per visit. Every later repaint (45s poll, enrich
-  // merge, chip/phase switch) recreates the board nodes, which would replay the row
-  // stagger as a visible flicker — the .cc-still class pins those repaints.
-  const ccRoot = document.querySelector('#content > .cc');
-  if (ccRoot) { ccRoot.classList.toggle('cc-still', !!wlState._paintedOnce); wlState._paintedOnce = true; }
+  // Entrance animation fires ONCE per visit. Later repaints (12s poll, enrich merge,
+  // tab/filter switch) recreate the board nodes; the .rw-still class pins the stagger.
+  const rwRoot = document.querySelector('#content .rw');
+  if (rwRoot) { rwRoot.classList.toggle('rw-still', !!wlState._paintedOnce); wlState._paintedOnce = true; }
+  const colhead = document.getElementById('rw-colhead'); if (colhead) colhead.style.display = '';
+
   // Live typeahead: as the operator types digits, filter the board to the MRNs that
-  // START WITH what's typed (prefix), so the patient narrows down live — no need to
-  // type the whole number or press Enter.
+  // START WITH what's typed (prefix) — rendered in the SAME dense row format.
   if (wlState.filter) {
     const f = wlState.filter;
     const match = items.filter((it) => String(it.mrno || '').replace(/\D/g, '').startsWith(f));
-    const banner = `<div class="wl-filterbar"><span>${match.length} on this board starting with "${escapeHtml(f)}"</span>
-      <button class="tbtn" onclick="wlClearFilter()">← Back to full board</button></div>`;
+    const banner = `<div class="rw-filterbar"><span>${match.length} on this board starting with “${escapeHtml(f)}”</span>
+      <button class="btn" onclick="wlClearFilter()">← Back to full board</button></div>`;
     body.innerHTML = banner + (match.length
-      ? wlTable(match)
-      : `<div class="empty" style="padding:20px"><p>No patient on this board starts with "${escapeHtml(f)}".${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
-    wlAutoPreg(); wlAutoIndication();
+      ? wlRowsHtml(match)
+      : `<div class="empty"><div class="ei">🔍</div><p>No patient on this board starts with “${escapeHtml(f)}”.${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
+    wlRenderTabs(items);
+    wlAutoPreg(); wlAutoIndication(); wlSyncActionbar();
     return;
   }
-  if (!items.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders awaiting a result.</p></div>`; return; }
 
-  // ── Modality filter chips (only modalities actually present) ────────────────
-  const modCounts = {};
-  for (const it of items) { const m = wlRowMod(it); if (m) modCounts[m] = (modCounts[m] || 0) + 1; }
-  const present = new Set(Object.keys(modCounts));
-  // If the active modality filter is no longer on the board (its rows all filed/dropped),
-  // auto-clear it — otherwise the chip bar strands the board empty with no way to reset.
-  if (wlState.modFilter && !present.has(wlState.modFilter)) wlState.modFilter = null;
-  const MOD_ORDER = [['CT', 'CT'], ['MR', 'MRI'], ['US', 'US'], ['XR', 'X-Ray'], ['MG', 'Mammo']];
-  const MOD_DOT = { CT: 'var(--accent,#6b4eff)', MR: 'var(--info,#3ba0ff)', US: 'var(--success,#00c896)', XR: 'var(--accent2,#8358fd)', MG: '#E4739B' };
-  const modChips = present.size > 1 ? `<div class="mods">
-      <span class="lbl">Modality</span>
-      <button class="chip${!wlState.modFilter ? ' on' : ''}" onclick="wlSetMod('')">All</button>
-      ${MOD_ORDER.filter(([k]) => present.has(k)).map(([k, lbl]) =>
-        `<button class="chip${wlState.modFilter === k ? ' on' : ''}" onclick="wlSetMod('${k}')"><span class="dot" style="background:${MOD_DOT[k]}"></span>${lbl}<span class="c">${modCounts[k] || 0}</span></button>`).join('')}
-    </div>` : '';
-
-  // Modality is the only filter (a real, logical narrowing). Nobody is hidden by status.
-  let rows = items;
-  if (wlState.modFilter) rows = rows.filter((it) => wlRowMod(it) === wlState.modFilter);
-
-  // ── Split into FOUR clear stage lanes driven by Siratech's OWN status
-  //    (cpoeStatusDescription: Pending / Scan In Progress / Scan Done) + the native
-  //    report flag — every patient sits under exactly one lane and moves to the next
-  //    the moment its HIS status updates (live 45s refresh). Counts live in the headers.
-  //      في الانتظار (waiting) · قيد التصوير (imaging) · تم التصوير (imaged) · تم التقرير (reported)
-  wlState.collapsedSections = wlState.collapsedSections || new Set();   // all lanes open by default
-  const grp = { waiting: [], imaging: [], imaged: [], reported: [] };
-  for (const it of rows) grp[wlLane(it)].push(it);
-  if (!rows.length) {
-    body.innerHTML = modChips + `<div class="empty" style="padding:22px"><p>Nothing matches this modality.</p></div>`;
-  } else {
-    body.innerHTML = modChips
-      + wlSection('waiting', 'Waiting', grp.waiting, 'w', 'var(--muted,#98a2b3)')
-      + wlSection('imaging', 'In imaging', grp.imaging, 'g', 'var(--blue,#3BA0FF)')
-      + wlSection('imaged', 'Imaged', grp.imaged, 'i', 'var(--yellow,#FFBA49)')
-      + wlSection('reported', 'Reported', grp.reported, 'r', 'var(--green,#00C896)');
+  wlRenderTabs(items);
+  wlRenderFilters(items);
+  if (!items.length) {
+    body.innerHTML = `<div class="empty"><div class="ei">🗂️</div><p>No orders awaiting a result.</p></div>`;
+    wlSyncActionbar(); return;
   }
-  wlRestoreOpenState();   // a live refresh must not collapse drills the operator opened
+
+  // Active tab → status filter (Urgent = emergency across all statuses; Not Done is a
+  // Phase-2 backend feature and stays empty for now).
+  let rows = items;
+  if (wlState.tab === 'urgent') rows = rows.filter((it) => it.emergency);
+  else if (wlState.tab === 'notdone') rows = [];
+  else if (wlState.tab !== 'all') rows = rows.filter((it) => it.__status === wlState.tab);
+
+  // Left-panel filters (all client-side).
+  if (wlState.fMods.size) rows = rows.filter((it) => wlState.fMods.has(wlRowMod(it)));
+  if (wlState.fPrio === 'stat') rows = rows.filter((it) => it.emergency);
+  else if (wlState.fPrio === 'routine') rows = rows.filter((it) => !it.emergency);
+  if (wlState.fDoc) rows = rows.filter((it) => String(it.doctorName || '').trim() === wlState.fDoc);
+
+  // Sort.
+  rows = rows.slice();
+  if (wlState.fSort === 'wait') rows.sort((a, b) => (b.ageHours || 0) - (a.ageHours || 0));
+  else if (wlState.fSort === 'recent') rows.sort((a, b) => (a.ageHours || 0) - (b.ageHours || 0));
+  else rows.sort((a, b) => (Number(!!b.emergency) - Number(!!a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+
+  body.innerHTML = rows.length
+    ? wlRowsHtml(rows)
+    : `<div class="empty"><div class="ei">🗂️</div><p>No orders match this view.</p><div class="hint">Try clearing a filter or switching tabs.</div></div>`;
+
+  // Selection + expanded state are re-derived from the wlState Sets while building the
+  // row HTML, so they survive every 12s repaint with no separate restore pass.
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
   wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
+  wlSyncActionbar();      // reflect the current checkbox selection in the sticky action bar
 }
 
-// One collapsible board section. Rows sort STAT→newest within the section. The done
-// sections (imaged/reported) dim their rows via `.done`. Collapse state persists in
-// wlState.collapsedSections across every repaint (poll, enrich, modality switch).
-function wlSection(key, title, secRows, prefix, color) {
-  const n = secRows.length;
-  const collapsed = wlState.collapsedSections.has(key);
-  const sorted = secRows.slice().sort((a, b) =>
-    (Number(b.emergency) - Number(a.emergency)) || ((a.ageHours || 0) - (b.ageHours || 0)));
-  const inner = collapsed ? ''
-    : (n ? `<div class="board"><div class="rows">${sorted.map((it, i) => wlRow(it, prefix + i)).join('')}</div></div>`
-         : `<div class="wl-sec-empty">No studies in this stage right now.</div>`);
-  const dot = color ? ` style="background:${color}"` : '';
-  const bar = color ? `box-shadow:inset 3px 0 0 ${color};` : '';
-  return `<div class="wl-sec sec-${key}${collapsed ? ' collapsed' : ''}" data-sec="${key}" style="${bar}">
-    <button class="wl-sec-h" onclick="wlToggleSection('${key}')">
-      <span class="wl-sec-dot"${dot}></span>
-      <span class="wl-sec-t">${title}</span>
-      <span class="wl-sec-n">${n}</span>
-      <span class="wl-sec-chev">${collapsed ? '›' : '⌄'}</span>
-    </button>${inner}</div>`;
-}
-
-// Native Siratech workflow lane for the board. Driven by the HIS's own status text
-// (hisStatus = cpoeStatusDescription: Pending / Scan In Progress / Scan Done) and its
-// native report flag (hisReported), with safe fallbacks to the exam timestamps and
-// the DePACS-grounded stage for rows the RIS panel hasn't stamped yet. One of:
-//   waiting · imaging · imaged · reported
-const _WL_LANE_RANK = { waiting: 0, imaging: 1, imaged: 2, reported: 3 };
-const _WL_LANE_BY_RANK = ['waiting', 'imaging', 'imaged', 'reported'];
-wlState.laneCache = wlState.laneCache || new Map();   // rowKey -> highest lane rank ever shown
-function wlLaneRaw(it) {
-  const s = String(it.hisStatus || '').toLowerCase();
-  if (it.hisReported || it.stage === 'reported' || it.readyToFile) return 'reported';
-  if (/scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt) return 'imaged';
-  if (/in\s*progress|scanning|ongoing|started|arrived/.test(s) || it.examStartAt) return 'imaging';
-  return 'waiting';   // Pending / Ordered / Scheduled
-}
-// RATCHET the lane forward (bug: "row jumps back to Waiting"). The radiology pipeline
-// is monotonic — images don't un-scan, a signed report doesn't un-sign, and a truly
-// finished row leaves the board entirely. So a row must never move BACKWARD. If a
-// refresh lands a row with a blank/weaker status (e.g. the connector's per-load status
-// cap didn't cover it this pass, or a transient HIS blip), we hold it at the highest
-// lane it has already shown instead of dropping it into Waiting. Keyless rows can't be
-// tracked safely (collision risk), so they use the raw lane.
-function wlLane(it) {
-  const raw = wlLaneRaw(it);
-  const k = wlRowKey(it);
-  if (!k) return raw;
-  const rawRank = _WL_LANE_RANK[raw];
-  const prev = wlState.laneCache.get(k);
-  if (prev == null || rawRank >= prev) { wlState.laneCache.set(k, rawRank); return raw; }
-  return _WL_LANE_BY_RANK[prev];   // hold the furthest-along lane already seen
-}
-
-// The native Siratech status pill (the HIS's OWN cpoeStatusDescription text, e.g.
-// "Scan Done" / "Scan In Progress" / "Pending"), coloured by its lane. Empty until
-// the RIS-panel enrichment stamps the row — the derived badge shows meanwhile.
-function wlHisBadge(it) {
-  if (!it.hisStatus) return '';
-  const lane = wlLane(it);
-  const color = lane === 'reported' ? 'var(--green,#00C896)'
-    : lane === 'imaged' ? 'var(--yellow,#FFBA49)'
-      : lane === 'imaging' ? 'var(--blue,#3BA0FF)' : 'var(--muted,#98a2b3)';
-  return `<span class="ris" title="Live status from Siratech"
-     style="background:transparent;border:1px solid ${color};color:${color}">
-     <span class="rd" style="background:${color}"></span>${escapeHtml(String(it.hisStatus))}</span>`;
-}
-function wlToggleSection(key) {
-  wlState.collapsedSections = wlState.collapsedSections || new Set();
-  if (wlState.collapsedSections.has(key)) wlState.collapsedSections.delete(key);
-  else wlState.collapsedSections.add(key);
-  wlRender();
-}
-
-// Which strips + Check drills the operator has open — preserved across every repaint
-// (live refresh, enrichment merge) so the board never "resets" under their hands.
-wlState.openStrips = wlState.openStrips || new Set();
-wlState.openDrills = wlState.openDrills || new Set();
-function wlRestoreOpenState() {
-  for (const id of wlState.openStrips) {
-    const list = document.getElementById(`wl-${id}-list`), arrow = document.getElementById(`wl-${id}-arrow`);
-    if (list) { list.style.display = ''; if (arrow) arrow.textContent = '▾'; }
+// ── Tab bar with live counts (rendered into the static #rw-tabs shell node) ────
+function wlRenderTabs(items) {
+  const el = document.getElementById('rw-tabs'); if (!el) return;
+  const cnt = { all: items.length, ordered: 0, received: 0, progress: 0, completed: 0, reported: 0, notdone: 0, urgent: 0 };
+  for (const it of items) {
+    if (it.__status) cnt[it.__status] = (cnt[it.__status] || 0) + 1;
+    if (it.emergency) cnt.urgent++;
   }
-  for (const key of wlState.openDrills) {
-    const row = document.getElementById('wl-dr-' + key), box = document.getElementById('wl-d-' + key);
-    if (!row) { wlState.openDrills.delete(key); continue; }   // its row left the board
-    row.style.display = '';
-    const cached = wlState.drillHtml && wlState.drillHtml.get(key);
-    if (box && cached) box.innerHTML = cached;                // restore last result, no refetch flicker
-  }
+  el.innerHTML = WL_TABS.map(([k, lbl, urg]) =>
+    `<button class="rw-tab${urg ? ' urg' : ''}${wlState.tab === k ? ' on' : ''}" onclick="wlSetTab('${k}')">${urg ? '🚨 ' : ''}${lbl}<span class="cnt tnum">${cnt[k] || 0}</span></button>`
+  ).join('');
 }
-// RIS worklist table. Sort: STAT / emergency pinned to the very top, then by workflow
-// phase (to-scan → reported), then NEWEST first within a phase (freshest order on top —
-// the operator's chosen order).
-function wlTable(items, prefix) {
-  const p = prefix || 'a';   // namespace row ids — several tables coexist
-  const border = { waiting: 0, imaged: 1, reporting: 2, reported: 3 };
-  const bk = (it) => border[it.__bucket != null ? it.__bucket : wlRisStatus(it).bucket] ?? 0;
-  const rows = items.slice().sort((a, b) =>
-    (Number(b.emergency) - Number(a.emergency))     // STAT / emergency always on top
-    || (bk(a) - bk(b))                              // then by workflow phase (to-scan → reported)
-    || ((a.ageHours || 0) - (b.ageHours || 0)));    // then NEWEST first (freshest order on top)
-  return `<div class="board">
-    <div class="bhead"><div>Patient &amp; indication</div><div>Exam</div><div>Ordered</div><div>RIS status</div><div class="r">Actions</div></div>
-    <div class="rows">${rows.map((it, i) => wlRow(it, p + i)).join('')}</div>
+
+// ── Left filter panel (modality chips from the modalities present + the distinct
+//    referring doctors). Radios / sort stay static in the shell and drive wlState. ──
+const _WL_MOD_META = { CT: ['CT', '#6B4EFF'], MR: ['MRI', '#3BA0FF'], US: ['US', '#00C896'], XR: ['X-Ray', '#8358FD'], MG: ['Mammo', '#E4739B'] };
+function wlRenderFilters(items) {
+  const modCounts = {};
+  for (const it of items) { const m = wlRowMod(it); if (m) modCounts[m] = (modCounts[m] || 0) + 1; }
+  // If a selected modality has left the board, drop it so the view can't strand empty.
+  for (const m of [...wlState.fMods]) if (!modCounts[m]) wlState.fMods.delete(m);
+  const order = ['CT', 'MR', 'US', 'XR', 'MG'].filter((k) => modCounts[k]);
+  const chipsEl = document.getElementById('rw-modchips');
+  if (chipsEl) chipsEl.innerHTML = order.length
+    ? order.map((k) => {
+        const [lbl, hex] = _WL_MOD_META[k]; const on = wlState.fMods.has(k);
+        return `<span class="chip${on ? ' on' : ''}" data-m="${k}" onclick="wlToggleMod('${k}')"><span class="cdot" style="background:${hex}"></span>${lbl}</span>`;
+      }).join('')
+    : '<span class="fhint">None on this board</span>';
+
+  const docs = [...new Set(items.map((it) => String(it.doctorName || '').trim()).filter(Boolean))].sort();
+  const sig = docs.join('|');
+  const docsel = document.getElementById('rw-docsel');
+  if (docsel && wlState._docSig !== sig) {
+    wlState._docSig = sig;
+    docsel.innerHTML = '<option value="">All doctors</option>' +
+      docs.map((dn) => `<option value="${escapeHtml(dn)}">Dr ${escapeHtml(dn)}</option>`).join('');
+  }
+  if (docsel) docsel.value = wlState.fDoc;
+}
+
+function wlRowsHtml(rows) { return rows.map(wlRowHtml).join(''); }
+
+// One dense board row (compact or detailed) + its (hidden until open) expand card.
+function wlRowHtml(it) {
+  const det = wlState.density === 'detailed';
+  const uid = wlRowUid(it);
+  const mrn = String(it.mrno || '');
+  const sel = wlState.selMrns.has(mrn);
+  const open = wlState.openRows.has(uid);
+  const st = it.__status || wlStatus(it);
+  const stat = !!it.emergency;
+  const enriching = wlState.enriching;
+  const age = wlAge(it.ageHours);
+  const wc = wlWaitClass(it.ageHours);
+  const wp = wlWaitPct(it.ageHours);
+  const acc = it.accession || it.accessionNumber || '';
+  const gender = it.gender ? String(it.gender).charAt(0).toUpperCase() : '';
+  const ageg = [it.age, gender].filter((x) => x != null && x !== '').map((x) => escapeHtml(String(x))).join('');
+  const dept = it.department || (it.doctorName ? 'Dr ' + it.doctorName : '');
+  const consentChip = (wlNeedsRadSafety(it) && !it.consentOnFile) ? '<span class="consent-tag">CONSENT</span>' : '';
+  const prelim = (st === 'completed' && it.stage === 'draft');
+  const pillNote = prelim ? '<div class="prelim-note">Preliminary read</div>' : '';
+  const examCell = it.exam
+    ? `<span class="ename">${escapeHtml(it.exam)}</span>`
+    : (enriching ? '<span class="wl-shimmer" style="width:120px"></span>' : '<span class="ename" style="color:var(--muted)">—</span>');
+  const canReport = (st === 'completed' || st === 'reported');
+  const primaryAct = canReport
+    ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
+    : `<button class="iconbtn" title="Handoff" onclick="event.stopPropagation();wlOpenHandoff('${jsAttr(mrn)}')">${icon('inbox')}</button>`;
+  return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" onclick="wlToggleRow('${uid}',event)">
+    <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
+    <div class="pt">
+      <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}</div>
+      <div class="l2 tnum"><span>MRN ${escapeHtml(mrn)}</span>${ageg ? `<span>${ageg}</span>` : ''}${det && it.doctorName ? `<span>Dr ${escapeHtml(it.doctorName)}</span>` : ''}</div>
+      ${det ? `<div class="l2 rw-indline">${wlIndEl(it)}</div>` : ''}
+    </div>
+    <div class="exam">
+      <div class="l1">${modBadges(it.modality) || ''}${examCell}</div>
+      <div class="l2">${acc ? escapeHtml(String(acc)) : '<span style="color:var(--muted)">no accession</span>'}</div>
+    </div>
+    <div class="branch-cell">${escapeHtml(it.branch || '—')}${dept ? `<div class="dept">${escapeHtml(dept)}</div>` : ''}</div>
+    <div class="wait ${wc}">
+      <span class="val">${escapeHtml(age || '—')}</span>
+      <span class="bar"><i style="width:${wp}%"></i></span>
+    </div>
+    <div><span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>${pillNote}</div>
+    <div class="acts">
+      ${primaryAct}
+      <button class="iconbtn" title="Expand" onclick="wlToggleRow('${uid}',event)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
+    </div>
+  </div>
+  <div class="rw-expand">${wlExpandHtml(it, st)}</div>`;
+}
+
+// The expand card built from the real item fields.
+function wlExpandHtml(it, st) {
+  const mrn = String(it.mrno || '');
+  const nm = it.patientName || '—';
+  const initials = String(nm).trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
+  const gender = it.gender ? String(it.gender).charAt(0).toUpperCase() : '';
+  const genderFull = gender === 'F' ? 'Female' : gender === 'M' ? 'Male' : '';
+  const dept = it.department || '';
+  const acc = it.accession || it.accessionNumber || '';
+  const age = wlAge(it.ageHours);
+  const canReport = (st === 'completed' || st === 'reported');
+  const needConsent = wlNeedsRadSafety(it) && !it.consentOnFile;
+  const demo = [it.age != null ? escapeHtml(String(it.age)) + 'y' : '', genderFull].filter(Boolean).join(' · ');
+  const chips = [`MRN ${escapeHtml(mrn)}`, demo, it.branch ? escapeHtml(it.branch) : '', dept ? escapeHtml(dept) : '']
+    .filter(Boolean).map((c) => `<span class="xchip">${c}</span>`).join('');
+  const preg = wlPregEl(it);
+  return `<div class="xcard" onclick="event.stopPropagation()">
+    <div class="xhead">
+      <div class="xavatar">${escapeHtml(initials)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="xname">${escapeHtml(nm)}</div>
+        <div class="xchips">${chips}</div>
+      </div>
+      <span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>
+    </div>
+    ${needConsent ? `<div class="alert">${icon('alert')}Non-pregnancy consent required before imaging a female patient of childbearing age.</div>` : ''}
+    ${preg ? `<div class="rw-preg">${preg}</div>` : ''}
+    <div class="xgrid">
+      <div class="xf"><div class="k">Exam</div><div class="v">${it.modality ? escapeHtml(String(it.modality)) + ' · ' : ''}${it.exam ? escapeHtml(it.exam) : '<span style="color:var(--muted)">—</span>'}</div></div>
+      <div class="xf"><div class="k">Accession</div><div class="v tnum">${acc ? escapeHtml(String(acc)) : '—'}</div></div>
+      <div class="xf"><div class="k">Ordering doctor</div><div class="v">${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : '—'}${dept ? ' · ' + escapeHtml(dept) : ''}</div></div>
+      <div class="xf"><div class="k">Ordered</div><div class="v tnum">${it.orderedDate ? escapeHtml(wlTrackFmt(it.orderedDate)) : (age ? age + ' ago' : '—')}</div></div>
+      <div class="xf"><div class="k">Technologist</div><div class="v"><span style="color:var(--muted)">Unassigned</span></div></div>
+      <div class="xf"><div class="k">Priority</div><div class="v">${it.emergency ? '<span style="color:var(--danger-ink);font-weight:800">STAT / Emergency</span>' : 'Routine'}</div></div>
+    </div>
+    <div class="xsec-title">Clinical indication</div>
+    <div class="rw-xind">${wlIndEl(it)}</div>
+    <div class="xsec-title">Exam history</div>
+    <div class="hist"><div class="hist-muted">History opens in the full patient card.</div></div>
+    <div class="xbtns">
+      ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
+      <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
+      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
+      <button class="btn ghost-soon" disabled title="Available in the next update">Receive<span class="soon">SOON</span></button>
+      <button class="btn ghost-soon" disabled title="Available in the next update">Assign tech<span class="soon">SOON</span></button>
+      <button class="btn ghost-soon" disabled title="Available in the next update">Add note<span class="soon">SOON</span></button>
+    </div>
   </div>`;
 }
+
+// Sticky action bar — appears when ≥1 row is checkbox-selected. Real buttons (Patient
+// card / Report / Images) are enabled for a single selection; the Phase-2 workflow
+// actions render disabled with a SOON tag.
+function wlSyncActionbar() {
+  const bar = document.getElementById('rw-actionbar');
+  if (!bar) return;
+  const sel = [...wlState.selMrns];
+  if (!sel.length) { bar.classList.remove('show'); return; }
+  const items = (wlState.data && wlState.data.items) || [];
+  const single = sel.length === 1;
+  const it = single ? items.find((x) => String(x.mrno) === sel[0]) : null;
+  const name = single ? (it ? (it.patientName || ('MRN ' + sel[0])) : ('MRN ' + sel[0])) : (sel.length + ' patients selected');
+  const sub = (single && it) ? `MRN ${escapeHtml(it.mrno || '')}${it.exam ? ' · ' + escapeHtml(it.exam) : ''}` : '';
+  const canReport = single && it && (it.__status === 'completed' || it.__status === 'reported');
+  const acc = it ? (it.accession || it.accessionNumber || '') : '';
+  const real = [
+    single ? `<button class="btn" onclick="wlOpenPatientCard('${jsAttr(sel[0])}')">${icon('user')}Patient card</button>` : '',
+    canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(it.mrno)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}Report / Images</button>` : '',
+  ].join('');
+  const soon = [['Receive'], ['Start exam'], ['Complete'], ['Assign tech'], ['Add note'], ['Not done']]
+    .map(([l]) => `<button class="btn ghost-soon" disabled title="Available in the next update">${escapeHtml(l)}<span class="soon">SOON</span></button>`).join('');
+  const info = bar.querySelector('.ab-info'); if (info) info.innerHTML = `<span class="n">${escapeHtml(name)}</span><span class="s">${sub}</span>`;
+  const count = bar.querySelector('.ab-count'); if (count) count.textContent = sel.length > 1 ? sel.length : '';
+  const acts = bar.querySelector('.ab-acts'); if (acts) acts.innerHTML = real + soon;
+  bar.classList.add('show');
+}
+
+// ── Redesign view-state handlers (all repaint via wlRender) ────────────────────
+function wlSetTab(k) { wlState.tab = k; wlRender(); }
+function wlToggleMod(m) { if (wlState.fMods.has(m)) wlState.fMods.delete(m); else wlState.fMods.add(m); wlRender(); }
+function wlSetPrio(p) { wlState.fPrio = p; wlRender(); }
+function wlSetDoc(v) { wlState.fDoc = v; wlRender(); }
+function wlSetSort(v) { wlState.fSort = v; const s = document.getElementById('rw-sortsel'); if (s && s.value !== v) s.value = v; wlRender(); }
+function wlSetDensity(dn) {
+  wlState.density = dn;
+  const a = document.getElementById('rw-dCompact'), b = document.getElementById('rw-dDetailed');
+  if (a) a.classList.toggle('on', dn === 'compact');
+  if (b) b.classList.toggle('on', dn === 'detailed');
+  wlRender();
+}
+function wlResetFilters() {
+  wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = '';
+  const r = document.querySelector('input[name="rw-prio"][value=""]'); if (r) r.checked = true;
+  const ds = document.getElementById('rw-docsel'); if (ds) ds.value = '';
+  wlRender();
+}
+function wlToggleRow(uid, e) { if (e) e.stopPropagation(); if (wlState.openRows.has(uid)) wlState.openRows.delete(uid); else wlState.openRows.add(uid); wlRender(); }
+function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRender(); }
+function wlClearSel() { wlState.selMrns.clear(); wlRender(); }
+function wlToggleMobFilters() { const f = document.getElementById('rw-filters'); if (f) f.classList.toggle('open'); }
 
 function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`); }
 
@@ -751,11 +899,6 @@ function wlIsFemale(g) {
 const WL_NONRAD_MODS = new Set(['US', 'MR']);
 function wlNeedsRadSafety(it) {
   return wlIsFemale(it.gender) && !WL_NONRAD_MODS.has(wlRowMod(it));
-}
-function wlConsentEl(it) {
-  if (!wlNeedsRadSafety(it)) return '';
-  if (it.consentOnFile) return '<span class="sc ok" title="Non-pregnancy consent signed">✓ Consent</span>';
-  return `<button class="sc no" title="Sign the non-pregnancy consent before imaging" onclick="wlConsent('${jsAttr(it.mrno)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">⚠ Consent needed</button>`;
 }
 // Radiation-safety decision support: for a female patient of child-bearing age,
 // let the tech check β-hCG / pregnancy lab status BEFORE imaging — on demand, per
@@ -840,24 +983,8 @@ function wlConsent(mrno, name, exam, doctor, branch) {
   if (typeof toast === 'function') toast('Consent module unavailable', 'err');
 }
 
-// The RIS status badge (icon + label), coloured by workflow phase.
-function wlRisStatusBadge(it) {
-  const p = wlState.enriching;
-  // While the stage is still being checked and we have no signal at all, shimmer.
-  if (p && !it.stage && !it.scanned && !it.arrivedAt && !it.stagePrelim) return `<span class="wl-shimmer" style="width:70px"></span>`;
-  const s = wlRisStatus(it);
-  // Imaged-from-preliminary-only rows show a subtle pulsing dot ("confirming with PACS")
-  // that clears in place the moment the DePACS ready pass sets it.stage — no row moves.
-  const confirming = s.pending ? ' confirming' : '';
-  const title = s.pending ? ' title="Imaged per HIS — confirming with PACS…"' : '';
-  return `<span class="ris ${s.state}${confirming}"${title}><span class="rd"></span>${escapeHtml(s.label)}</span>`;
-}
-// Inline Feather SVGs for the few glyphs not in util.js's icon() map (link chain,
-// send/handoff). Sized by the .wl2 scope like the shared .mi-ico icons.
-const WL_SVG = {
-  link: '<svg class="mi-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
-  send: '<svg class="mi-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V4s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>',
-};
+// (The old per-phase status badge + inline SVG map are gone — the redesign renders the
+// unified .ris pill and util.js icon() glyphs directly; see the row/expand builders.)
 
 // ── BUG #2: inline clinical indication on the row ───────────────────────────
 // The cell is keyed by MRN (like the pregnancy cell) so a live refresh keeps it and
@@ -927,66 +1054,8 @@ function wlIndPump() {
 // (wlRowPdf removed — the row's "Report / Images" button now opens the native
 // Siratech report + images directly via openStudyViewer.)
 
-function wlRow(it, key) {
-  // Drill identity must be STABLE per order, NOT the row's position — otherwise a live
-  // refresh that re-sorts the board (a new STAT order jumps to top) would re-open the
-  // drill onto a DIFFERENT patient's row and show the previous patient's cached report.
-  // Use the per-order key; fall back to the positional key only for keyless rows.
-  const dkey = 'k' + String(wlRowKey(it) || key).replace(/[^A-Za-z0-9_-]/g, '');
-  const rk = wlRowKey(it);
-  const phase = it.__phase || wlPhase(it);
-  const bucket = it.__bucket || wlRisStatus(it).bucket;
-  const done = (bucket === 'imaged' || bucket === 'reported');   // dimmed, but STAYS (bug #1)
-  const hl = wlState.phaseHi && phase === wlState.phaseHi;
-  const age = wlAge(it.ageHours);
-  // While the background HIS enrichment is still running, show a loading shimmer for
-  // the exam instead of a bare "—" so the board reads as "loading", not broken.
-  const p = wlState.enriching;
-  const dash = '<span style="color:var(--ink-3)">—</span>';
-  const acc = it.accession || it.accessionNumber || null;
-  const demo = [it.age, (it.gender ? String(it.gender).charAt(0).toUpperCase() : '')].filter(Boolean).map((x) => escapeHtml(String(x))).join(' ');
-  const ordered = it.orderedDate ? wlTrackFmt(it.orderedDate) : '';
-  const consent = wlConsentEl(it), preg = wlPregEl(it);
-  const proc = it.exam ? `<span class="proc">${escapeHtml(it.exam)}</span>`
-    : (p ? `<span class="wl-shimmer" style="width:90px"></span>` : dash);
-  // Transient "moved from …" tag (~8s) — bug #1.
-  const mv = rk && wlState.movedTags.get(rk);
-  const moved = (mv && (Date.now() - mv.at < 8000))
-    ? `<div class="movedtag">${icon('check')}moved from “${escapeHtml(mv.from)}” just now</div>` : '';
-  // Second action: native Siratech report + images (report text + cloud viewer) for
-  // imaged-or-later rows; otherwise Handoff. Everything from Siratech, no DePACS.
-  const secondBtn = (done || bucket === 'reporting' || wlLane(it) === 'imaged' || wlLane(it) === 'reported')
-    ? `<button class="btn ghost" onclick="openStudyViewer(this,'${jsAttr(it.mrno)}','${jsAttr(acc || '')}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}Report / Images</button>`
-    : `<button class="btn ghost" onclick="wlOpenHandoff('${jsAttr(it.mrno)}')">${WL_SVG.send}Handoff</button>`;
-  // Row-level one-click indication write — only where it matters: images are in PACS but
-  // the report isn't filed yet. Hidden for waiting (no study) and reported/done (moot).
-  const indBtn = (bucket === 'imaged')
-    ? `<button class="btn ghost" title="Write indication to PACS" onclick="wlRowWriteIndication('${dkey}','${jsAttr(it.mrno)}',${Number(it.site) || 0},this)">${icon('edit')}Indication</button>`
-    : '';
-  const openLbl = bucket === 'reported' ? 'View ›' : 'Open ›';
-  return `<div class="rowwrap">
-    <div class="row${it.emergency ? ' stat' : ''}${done ? ' done' : ''}${hl ? ' hl' : ''}" data-phase="${phase}">
-      <div class="pt">
-        <div class="pname pname-link" title="Open patient card" onclick="wlOpenPatientCard('${jsAttr(it.mrno)}')">${escapeHtml(it.patientName || '—')}${it.emergency ? ' <span class="stat-b"><i></i>STAT</span>' : ''}</div>
-        <div class="pmeta">${escapeHtml(it.mrno || '')}${demo ? '<i></i>' + demo : ''}${it.branch ? '<i></i>' + escapeHtml(it.branch) : ''}${it.doctorName ? '<i></i><span class="dr">Dr ' + escapeHtml(it.doctorName) + '</span>' : ''}</div>
-        ${wlIndEl(it)}
-        ${(consent || preg) ? '<div class="safe">' + consent + preg + '</div>' : ''}
-      </div>
-      <div class="exam">
-        <div class="exline">${modBadges(it.modality)}${proc}</div>
-        ${acc ? `<span class="acc" title="DICOM accession">${WL_SVG.link}${escapeHtml(String(acc))}</span>` : ''}
-      </div>
-      <div class="when"><div class="big tnum">${wlTimeOnly(it.orderedDate)}</div>${(age && !done && bucket !== 'reported') ? '<div class="sm wait tnum">waiting ' + age + '</div>' : '<div class="sm tnum">' + (ordered ? escapeHtml(ordered) : '') + '</div>'}</div>
-      <div>${wlHisBadge(it) || wlRisStatusBadge(it)}${moved}</div>
-      <div class="acts">
-        <button class="btn ${it.emergency ? 'solid' : 'primary'}" id="wl-open-${dkey}" onclick="wlToggle('${dkey}','${jsAttr(it.mrno)}',${Number(it.site) || 0},this)">${openLbl}</button>
-        ${secondBtn}
-        ${indBtn}
-      </div>
-    </div>
-    <div class="rdetail" id="wl-dr-${dkey}" style="display:none"><div id="wl-d-${dkey}"></div></div>
-  </div>`;
-}
+// (The old table-style row builder is gone — the dense redesign rows are built by
+// wlRowHtml / wlExpandHtml above.)
 
 // Patient-journey tracker (RIS "arrival → exam → done"), built from Siratech's own
 // FetchRISPanel timestamps already on the row. A horizontal stepper: each reached
@@ -1004,58 +1073,8 @@ function wlParseTs(s) {
   const t = Date.parse(String(s));
   return isNaN(t) ? 0 : t;
 }
-// HH:MM for the board's "Ordered" column; falls back to the raw-ish string when the
-// timestamp doesn't parse.
-function wlTimeOnly(s) {
-  const t = wlParseTs(s);
-  if (t) return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return s ? wlTrackFmt(s) : '';
-}
-// (Patient-journey stepper removed — this HIS never records arrival/exam times, so it
-// only ever rendered the dead "arrival & exam times not recorded yet" state. The native
-// stage lanes convey where each study is.)
-
-// Read-only drill: expand a detail row that matches the finished DePACS report(s) to
-// this patient's order(s).
-async function wlToggle(key, mrno, site, btn) {
-  const row = document.getElementById('wl-dr-' + key), box = document.getElementById('wl-d-' + key);
-  if (!row || !box) return;
-  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = btn.dataset.lbl || 'Open ›'; wlState.openDrills.delete(key); return; }
-  if (!btn.dataset.lbl) btn.dataset.lbl = btn.textContent;   // remember "Open ›"/"View ›" to restore on close
-  row.style.display = ''; btn.textContent = 'Hide'; box.innerHTML = LOADING_HTML;
-  wlState.openDrills.add(key);
-  wlState.drillHtml = wlState.drillHtml || new Map();
-  // Re-entrancy guard: the match call is heavy (DePACS lookup); a second click while
-  // it's in flight must not fire a duplicate request.
-  wlState._drillLoading = wlState._drillLoading || new Set();
-  if (wlState._drillLoading.has(key)) return;
-  wlState._drillLoading.add(key);
-  try {
-    // Fetch the report match AND the order detail (which carries the clinical indication,
-    // reason and remarks — the /match payload doesn't) in parallel. The lookup is
-    // best-effort: if it fails, the drill still shows the report, just without indication.
-    const [d, lk] = await Promise.all([
-      API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`),
-      API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`).catch(() => null),
-    ]);
-    const html = wlMatch(d, wlIndexIndications(lk), mrno);
-    // Cache FIRST so wlRestoreOpenState paints the result (not a blank box) if a
-    // 45s silent refresh already repainted the board while we were awaiting.
-    wlState.drillHtml.set(key, html);
-    // …and write to the CURRENT node — the one captured before the await may have
-    // been detached by that repaint, which left the drill stuck on "loading".
-    const live = document.getElementById('wl-d-' + key);
-    if (live && wlState.openDrills.has(key)) live.innerHTML = html;
-  } catch (e) {
-    const live = document.getElementById('wl-d-' + key);
-    if (live) live.innerHTML = `<div class="ho-note">${escapeHtml(e.message || 'Result match failed')}</div>`;
-  } finally {
-    wlState._drillLoading.delete(key);
-  }
-}
-
 // Build a lookup index of clinical indication keyed by bill (+ service), from the
-// /radiology/lookup order detail, so wlMatch can show each exam's indication.
+// /radiology/lookup order detail, consumed by the background indication auto-fetch.
 function wlIndexIndications(lk) {
   const idx = {}, er = {};
   const orders = (lk && lk.orders) || [];
@@ -1076,140 +1095,6 @@ function wlIndexIndications(lk) {
   Object.defineProperty(idx, '__er', { value: er, enumerable: false });
   return idx;
 }
-// Resolve ONE matched test to the fields the write action needs — the single source of
-// truth shared by the drill render (wlMatch) and the row one-click (wlRowWriteIndication),
-// so the safety-critical study/accession/indication resolution can never drift between them.
-function wlResolveTest(t, o, indIdx) {
-  indIdx = indIdx || {};
-  const s = t.study || {}, test = t.test || {};
-  const studyId = s.studyId != null ? s.studyId : (test.studyId != null ? test.studyId : null);
-  const bn = String((o && o.billNo) || (t.order && t.order.billNo) || t.billNo || '').trim();
-  const svc = String(test.serviceName || test.service || '').trim().toLowerCase();
-  const ind = test.clinicalIndication || test.reasonForOrder || test.indication
-    || t.clinicalIndication || t.reasonForOrder || t.indication
-    || (bn && (indIdx['b:' + bn + '|' + svc] || indIdx['b:' + bn])) || '';
-  // The ORDER's accession (independent of the study) so the backend mismatch gate is
-  // meaningful — the study's own accession would trivially pass its own check.
-  const accession = String(test.accession || (o && o.accession) || (t && t.accession) || '').trim();
-  const isEmerg = !!(indIdx.__er && (indIdx.__er['b:' + bn + '|' + svc] != null
-    ? indIdx.__er['b:' + bn + '|' + svc] : indIdx.__er['b:' + bn]));
-  return { decision: t.decision, studyId, ind: String(ind || ''), accession, isEmerg,
-           serviceName: test.serviceName || test.service || '' };
-}
-function wlResolveTests(d, indIdx) {
-  const out = [];
-  for (const o of ((d && d.orders) || [])) for (const t of (o.tests || [])) out.push(wlResolveTest(t, o, indIdx));
-  return out;
-}
-function wlMatch(d, indIdx, mrno) {
-  indIdx = indIdx || {};
-  mrno = mrno || (d && (d.file || d.mrno)) || '';
-  const orders = (d && d.orders) || [];
-  if (!orders.length) return `<div class="ho-note">No order awaiting a result for this file.</div>`;
-  const card = (t, o) => {
-    const s = t.study || {}, rep = t.report || {}, test = t.test || {};
-    const rr = wlResolveTest(t, o, indIdx);
-    // studyId → Print report; cpacsUrl → View images. Both come straight off the
-    // /radiology/results/match payload; render each action only when its data is present.
-    const studyId = rr.studyId;
-    const cpacsUrl = test.cpacsUrl || s.cpacsUrl || '';
-    const ind = rr.ind;
-    const indRow = ind ? `<div class="pmeta" style="margin-top:4px"><b>Indication:</b> ${escapeHtml(String(ind))}</div>` : '';
-    const accession = rr.accession;
-    const isEmerg = rr.isEmerg;
-    const acts = [];
-    // One-click: write THIS exam's indication straight into its PACS study. Only offered on
-    // a UNIQUE study↔order match (never an ambiguous one — that could target the wrong exam);
-    // the human picks the patient and the backend hard-gates patient + accession → fail closed.
-    if (t.decision === 'unique' && studyId != null && ind) {
-      // Collapse whitespace/newlines — the value rides an inline onclick attribute.
-      const indClean = String(ind).replace(/\s+/g, ' ').trim();
-      acts.push(`<button class="ghost" onclick="wlWriteIndication(${Number(studyId)}, '${jsAttr(String(mrno))}', '${jsAttr(indClean)}', '${jsAttr(accession)}', ${isEmerg ? 'true' : 'false'}, this)">${icon('edit')} Write indication → PACS</button>`);
-    }
-    if (cpacsUrl) acts.push(`<a class="ghost" target="_blank" rel="noopener" href="${escapeHtml(String(cpacsUrl))}">${icon('image')} View images</a>`);
-    if (studyId != null) acts.push(`<button class="ghost" onclick="wlPrintReport(${Number(studyId)})">${icon('printer')} Print report</button>`);
-    const actRow = acts.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${acts.join('')}</div>` : '';
-    if (t.decision === 'unique') {
-      return `<div class="ho-de-box ok" style="display:block;margin-bottom:6px">
-        <div><b>${escapeHtml(test.serviceName || '')}</b>${s.modality ? ' · ' + escapeHtml(s.modality) : ''} ${escapeHtml(s.desc || '')}</div>
-        ${indRow}
-        ${actRow}
-      </div>`;
-    }
-    return `<div class="ho-de-box" style="display:block;margin-bottom:6px">
-      <div><b>${escapeHtml(test.serviceName || '')}</b> — open <b>Report / Images</b> for the report &amp; images.</div>
-      ${indRow}
-      ${actRow}</div>`;
-  };
-  return orders.map(o => (o.tests || []).map(t => card(t, o)).join('')).join('');
-}
-
-// Open the study's rendered PDF report (style 2) in a new tab — the backend route
-// /api/reports/study/:studyId/pdf?style=2 already serves it.
-function wlPrintReport(studyId) {
-  window.open('/api/reports/study/' + studyId + '/pdf?style=2', '_blank');
-}
-
-// One-click: write this exam's clinical indication into its DePACS study. Goes through
-// /api/handoff/write-history, which re-reads the study and HARD-gates on patient +
-// accession before writing (fails closed) — so the operator picking the patient makes
-// this safe even on a PACS shared across branches. Emergency flag rides from the order.
-async function wlWriteIndication(studyId, mrno, indication, accession, emergency, btn) {
-  if (!studyId || !indication) return;
-  if (!confirm('Write this indication into the PACS study?\n\n' + indication)) return;
-  const orig = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'Writing…'; }
-  try {
-    await API.post('/handoff/write-history', {
-      study_id: studyId, history: String(indication), file_no: String(mrno || ''),
-      accession: accession || '', emergency: !!emergency,
-      priority: emergency ? 'emergency' : 'routine',
-    });
-    if (typeof toast === 'function') toast('Indication written to PACS · تمت كتابة الاندكيشن');
-    if (btn) { btn.disabled = true; btn.textContent = '✓ Written'; }
-  } catch (e) {
-    if (typeof toast === 'function') toast(e.message || 'Could not write the indication', 'err');
-    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
-  }
-}
-
-// Row-level one-click: run the same match the drill does, then write the indication ONLY
-// when it resolves to exactly one unique study with an indication. Anything ambiguous (or
-// nothing matched yet) opens the drill instead of guessing — the write itself still goes
-// through wlWriteIndication → /api/handoff/write-history (hard patient + accession gate).
-async function wlRowWriteIndication(dkey, mrno, site, btn) {
-  if (!mrno) return;
-  const orig = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = orig; } };
-  let d, lk;
-  try {
-    [d, lk] = await Promise.all([
-      API.get(`/radiology/results/match/${encodeURIComponent(mrno)}${site ? `?site=${site}` : ''}`),
-      API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`).catch(() => null),
-    ]);
-  } catch (e) {
-    if (typeof toast === 'function') toast(e.message || 'Match lookup failed', 'err');
-    restore(); return;
-  }
-  const writable = wlResolveTests(d, wlIndexIndications(lk))
-    .filter(x => x.decision === 'unique' && x.studyId != null && x.ind);
-  if (writable.length === 1) {
-    restore();
-    const w = writable[0];
-    return wlWriteIndication(w.studyId, mrno, w.ind, w.accession, w.isEmerg, btn);
-  }
-  restore();
-  // 0 or >1 → let the operator review/pick inside the drill (never auto-write an ambiguous set).
-  const openBtn = document.getElementById('wl-open-' + dkey);
-  if (openBtn && (openBtn.textContent || '').indexOf('Hide') === -1) wlToggle(dkey, mrno, site, openBtn);
-  if (typeof toast === 'function') {
-    toast(writable.length > 1
-      ? 'Several exams — pick one inside'
-      : 'No matched study with an indication yet — opened for review');
-  }
-}
-
 // Deep-link into the trusted Handoff wizard, pre-loaded with this patient's file.
 function wlOpenHandoff(mrno) {
   window._handoffPreload = mrno;
@@ -1332,18 +1217,19 @@ function wlShowMatches(pts) {
   wlState.searchView = true; wlState.filter = null;
   const body = document.getElementById('wl-body');
   if (!body) return;
+  const colhead = document.getElementById('rw-colhead'); if (colhead) colhead.style.display = 'none';
   const rows = pts.slice(0, 25).map((p) => {
     const mrn = String(p.mrno || p.file_no || '');
     const nm = p.patientName || p.name || '—';
     const sub = [p.gender, p.birthDate || p.dob, p.branch].filter(Boolean).map(escapeHtml).join(' · ');
     const consent = wlIsFemale(p.gender)
-      ? `<button class="btn btn-sm" style="background:#e0a800;color:#fff;border:none" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(nm)}','','','${jsAttr(p.branch || '')}')">⚠ Consent</button>` : '';
-    return `<div class="card" style="margin-bottom:6px;padding:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-      <div><div style="font-weight:700">${escapeHtml(nm)} <span style="color:var(--muted);font-weight:500">· ${escapeHtml(mrn)}</span></div>
-        ${sub ? `<div style="font-size:12px;color:var(--muted)">${sub}</div>` : ''}</div>
-      <div style="display:flex;gap:6px;align-items:center">${consent}
-        <button class="btn btn-sm btn-primary" onclick="wlOpenHandoff('${jsAttr(mrn)}')">Open →</button></div></div>`;
+      ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(nm)}','','','${jsAttr(p.branch || '')}')">${icon('alert')}Consent</button>` : '';
+    return `<div class="rw-match">
+      <div class="rw-match-id"><div class="n">${escapeHtml(nm)} <span class="mrn">· ${escapeHtml(mrn)}</span></div>
+        ${sub ? `<div class="s">${sub}</div>` : ''}</div>
+      <div class="rw-match-acts">${consent}
+        <button class="btn solid" onclick="wlOpenHandoff('${jsAttr(mrn)}')">Open →</button></div></div>`;
   }).join('');
-  body.innerHTML = `<div style="margin:6px 2px 10px;font-weight:700">${pts.length} found on other branches — pick the patient</div>${rows}
-    <button class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="wlClearFilter()">← Back to worklist</button>`;
+  body.innerHTML = `<div class="rw-filterbar"><span>${pts.length} found on other branches — pick the patient</span>
+    <button class="btn" onclick="wlClearFilter()">← Back to worklist</button></div>${rows}`;
 }
