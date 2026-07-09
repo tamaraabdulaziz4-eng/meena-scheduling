@@ -803,6 +803,12 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     const allVitalRows = [].concat(_asVitalRows(vitalReport), _asVitalRows(vitalSummary), _asVitalRows(vitalList));
     const patVit = _vitalsByPattern(allVitalRows);
     if (patVit) vitals = Object.assign({}, patVit, vitals || {});   // explicit wins, pattern fills gaps
+    // Log the raw field names + row counts (NO PHI values) so `journalctl | grep -i vital`
+    // reveals the exact HIS vital keys to map. One line per clinical request.
+    try {
+      const kz = (x) => { const r = _asVitalRows(x); return `rows=${r.length} keys=[${Object.keys(r[0] || {}).join(',')}]`; };
+      console.log(`[vitals] Clinicalreport/Vitals ${kz(vitalReport)} | VitalSign/Summary ${kz(vitalSummary)} | VitalSign/List ${kz(vitalList)} | PatientData keys=[${Object.keys(pd || {}).join(',')}] | extracted=${JSON.stringify(vitals || {})}`);
+    } catch (e) { /* ignore */ }
     const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
     const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
     let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
