@@ -160,9 +160,11 @@ function renderPsDetail() {
   // Contrast-safety: a known allergy must be impossible to miss on a radiology screen.
   const allergyAlert = p.allergy
     ? `<div class="ps-alert">⚠️ <b>Allergy:</b> ${escapeHtml(p.allergy)}</div>` : '';
+  // A polished masthead (header band) + body: safety zone → stats → clinical → demographics
+  // → async sections → consent footer. Async psLoad* helpers fill their own #id below.
   const patCard = `
     <div class="card ps-pt-card">
-      <div class="ps-id">
+      <div class="ps-head">
         <div class="ps-avatar">${escapeHtml(psInitials(p.name || p.nameArabic))}</div>
         <div class="ps-id-main">
           <div class="ps-pt-name">${escapeHtml(p.name || '—')}</div>
@@ -179,26 +181,35 @@ function renderPsDetail() {
           <div class="ps-id-mrn-v">${escapeHtml(p.mrno || '—')}</div>
         </div>
       </div>
-      ${allergyAlert}
-      <div id="ps-labs" style="margin-top:10px"></div>
-      ${tiles ? `<div class="kpis" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">${tiles}</div>` : ''}
-      <div class="ps-grid ps-idgrid">
-        ${psField('National ID / Iqama', p.nationalId)}
-        ${psField('Phone', p.phone)}
-        ${psField('Date of birth', p.dob)}
-        ${psField('Marital status', p.maritalStatus)}
-      </div>
-      <div id="ps-clinical"></div>
-      <div id="ps-labresults"></div>
-      <div id="ps-visits"></div>
-      <div id="ps-appts"></div>
-      <div class="ps-consent">
-        ${psIsFemale(p)
-          ? `<button class="btn btn-primary ps-consent-btn female" onclick="psStartConsent()">🖊️ Non-pregnancy consent · إقرار عدم الحمل</button>`
-          : ''}
-        <button class="btn btn-ghost ps-consent-btn"${psIsFemale(p) ? ' style="margin-inline-start:8px"' : ''} onclick="psUploadDocument()">📎 Upload document</button>
-        <div id="ps-consent-list" class="ps-consent-list"></div>
-        <div id="ps-doc-list" class="ps-consent-list"></div>
+      <div class="ps-body">
+        <div class="ps-safety">
+          <div id="ps-labs"></div>
+          ${allergyAlert}
+        </div>
+        ${tiles ? `<div class="kpis">${tiles}</div>` : ''}
+        <div id="ps-clinical"></div>
+        <div class="ps-sec ps-demog">
+          <div class="ps-sec-l">Demographics</div>
+          <div class="ps-grid ps-idgrid">
+            ${psField('National ID / Iqama', p.nationalId)}
+            ${psField('Phone', p.phone)}
+            ${psField('Date of birth', p.dob)}
+            ${psField('Marital status', p.maritalStatus)}
+          </div>
+        </div>
+        <div id="ps-labresults"></div>
+        <div id="ps-visits"></div>
+        <div id="ps-appts"></div>
+        <div class="ps-consent">
+          <div class="ps-actions">
+            ${psIsFemale(p)
+              ? `<button class="btn btn-primary" onclick="psStartConsent()">🖊️ Non-pregnancy consent · إقرار عدم الحمل</button>`
+              : ''}
+            <button class="btn btn-ghost" onclick="psUploadDocument()">📎 Upload document</button>
+          </div>
+          <div id="ps-consent-list" class="ps-consent-list"></div>
+          <div id="ps-doc-list" class="ps-consent-list"></div>
+        </div>
       </div>
     </div>`;
 
@@ -212,7 +223,7 @@ function renderPsDetail() {
       .map((x) => x.o);
     // Collapsible rows keep a long history scannable: only the most recent exam is
     // expanded by default; the rest show a one-line summary you can tap open.
-    examBlock = `<div class="ho-lbl" style="margin:16px 0 8px">Radiology exams (${sorted.length}) · newest first</div>` +
+    examBlock = `<div class="ps-sec-l ps-examhead">Radiology exams · ${sorted.length}<span>newest first</span></div>` +
       sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
   det.innerHTML = patCard + examBlock;
@@ -245,12 +256,12 @@ async function psLoadClinical() {
   let html = '';
   // Infection status — isolation / scanner & contrast precautions. Must be loud.
   if (fl.infections && fl.infections.length) {
-    html += `<div class="ps-alert" style="margin-top:12px;background:rgba(192,38,26,0.12);border-color:#c0261a">🧬 <b>Infection status:</b> ${fl.infections.map(escapeHtml).join(' · ')} — observe precautions.</div>`;
+    html += `<div class="ps-alert" style="margin-top:12px">🧬 <b>Infection status:</b> ${fl.infections.map(escapeHtml).join(' · ')} — observe precautions.</div>`;
   }
   // Blood group + VIP + any clinical warning as compact chips.
   const infoChips = [
     fl.bloodGroup ? `<span style="display:inline-flex;gap:5px;align-items:baseline;background:var(--card-alt,#f4f4f8);border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:12.5px"><b>${escapeHtml(fl.bloodGroup)}</b><span style="color:var(--muted)">Blood</span></span>` : '',
-    fl.vip ? `<span style="background:#7c5cff;color:#fff;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700">VIP</span>` : '',
+    fl.vip ? `<span style="background:var(--accent);color:#fff;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700">VIP</span>` : '',
   ].filter(Boolean).join('');
   if (infoChips) html += secL('Patient flags') + `<div style="display:flex;gap:7px;flex-wrap:wrap">${infoChips}</div>`;
   if (fl.clinicalWarning) html += `<div class="ps-alert" style="margin-top:10px">⚠️ <b>Clinical warning:</b> ${escapeHtml(fl.clinicalWarning)}</div>`;
@@ -351,7 +362,7 @@ async function psLoadAppointments() {
   catch (e) { box.innerHTML = ''; return; }
   const appts = (d && d.appointments) || [];
   if (!appts.length) { box.innerHTML = ''; return; }
-  const statusColor = (s) => /cancel/i.test(s) ? '#c0261a' : (/miss|no.?show/i.test(s) ? '#e2571f' : (/confirm|complet|attend/i.test(s) ? '#0a8f5b' : 'var(--muted)'));
+  const statusColor = (s) => /cancel/i.test(s) ? 'var(--danger-ink)' : (/miss|no.?show/i.test(s) ? 'var(--warn-ink)' : (/confirm|complet|attend/i.test(s) ? 'var(--success-ink)' : 'var(--muted)'));
   const rows = appts.slice(0, 10).map((a) => `
     <div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap">
       <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:112px">${escapeHtml(String(a.date || '').slice(0, 16).replace('T', ' '))}</span>
@@ -424,15 +435,15 @@ async function psLoadLabs() {
   const nm = r && r.testName ? escapeHtml(String(r.testName)) : 'pregnancy test';
   let html;
   if (!r || !r.found || !r.hasPregnancyTest) {
-    html = `<div class="ps-alert" style="background:rgba(224,168,0,0.12);border-color:#e0a800">🤰 <b>No recent pregnancy / β-hCG lab</b> on file — confirm status before imaging.</div>`;
+    html = `<div class="ps-alert warn">🤰 <b>No recent pregnancy / β-hCG lab</b> on file — confirm status before imaging.</div>`;
   } else if (r.verdict === 'positive') {
     html = `<div class="ps-alert">🤰 <b>Pregnancy test POSITIVE</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Do NOT irradiate without physician review.</div>`;
   } else if (r.verdict === 'negative') {
-    html = `<div class="ps-alert" style="background:rgba(46,158,107,0.12);border-color:#2e9e6b">🤰 <b>Pregnancy test negative</b> — ${nm}${dstr}.</div>`;
+    html = `<div class="ps-alert ok">🤰 <b>Pregnancy test negative</b> — ${nm}${dstr}.</div>`;
   } else if (r.resulted) {
-    html = `<div class="ps-alert" style="background:rgba(107,114,128,0.12);border-color:#6b7280">🤰 <b>Pregnancy test resulted</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Read the value.</div>`;
+    html = `<div class="ps-alert neutral">🤰 <b>Pregnancy test resulted</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Read the value.</div>`;
   } else {
-    html = `<div class="ps-alert" style="background:rgba(224,168,0,0.12);border-color:#e0a800">🤰 <b>Pregnancy test pending</b> — ${nm} ordered${dstr}, result not back yet.</div>`;
+    html = `<div class="ps-alert warn">🤰 <b>Pregnancy test pending</b> — ${nm} ordered${dstr}, result not back yet.</div>`;
   }
   box.innerHTML = html;
 }

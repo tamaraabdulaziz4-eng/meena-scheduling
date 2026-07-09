@@ -239,7 +239,7 @@ async function renderWorklistPage() {
           <div class="fgroup">
             <h4>Sort by</h4>
             <select class="fsel" id="rw-sortsel" onchange="wlSetSort(this.value)">
-              <option value="wait">Longest waiting</option>
+              <option value="wait">Oldest first</option>
               <option value="prio">Priority first</option>
               <option value="recent">Most recent order</option>
             </select>
@@ -254,7 +254,6 @@ async function renderWorklistPage() {
               <span>Patient · MRN</span>
               <span>Exam</span>
               <span>Branch</span>
-              <span class="sortable act" onclick="wlSetSort('wait')">Waiting</span>
               <span>Status</span>
               <span style="text-align:right">Action</span>
             </div>
@@ -605,9 +604,6 @@ function wlStatus(it) {
 const WL_TABS = [['all', 'All', false], ['ordered', 'Ordered', false], ['received', 'Received', false],
   ['progress', 'In Progress', false], ['completed', 'Completed', false], ['reported', 'Reported', false],
   ['notdone', 'Not Done', false], ['urgent', 'Urgent', true]];
-// Waiting-age → gradient bucket (green < 1.5h, amber 1.5–4h, red ≥ 4h) + bar fill %.
-function wlWaitClass(h) { h = h || 0; return h >= 4 ? 'hi' : h >= 1.5 ? 'mid' : 'ok'; }
-function wlWaitPct(h) { return Math.min(100, Math.round((h || 0) / 8 * 100)); }
 // A DOM-safe, stable-per-order id for the expand Set + onclick (mirrors the old drill key).
 function wlRowUid(it) { return 'u' + String(wlRowKey(it) || ('m' + (it.mrno || ''))).replace(/[^A-Za-z0-9_-]/g, ''); }
 // Modality of a row, normalised to the coarse RIS bucket for filtering.
@@ -744,9 +740,6 @@ function wlRowHtml(it) {
   const st = it.__status || wlStatus(it);
   const stat = !!it.emergency;
   const enriching = wlState.enriching;
-  const age = wlAge(it.ageHours);
-  const wc = wlWaitClass(it.ageHours);
-  const wp = wlWaitPct(it.ageHours);
   const acc = it.accession || it.accessionNumber || '';
   const gender = it.gender ? String(it.gender).charAt(0).toUpperCase() : '';
   const ageg = [it.age, gender].filter((x) => x != null && x !== '').map((x) => escapeHtml(String(x))).join('');
@@ -766,17 +759,12 @@ function wlRowHtml(it) {
     <div class="pt">
       <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}</div>
       <div class="l2 tnum"><span>MRN ${escapeHtml(mrn)}</span>${ageg ? `<span>${ageg}</span>` : ''}${det && it.doctorName ? `<span>Dr ${escapeHtml(it.doctorName)}</span>` : ''}</div>
-      ${det ? `<div class="l2 rw-indline">${wlIndEl(it)}</div>` : ''}
     </div>
     <div class="exam">
       <div class="l1">${modBadges(it.modality) || ''}${examCell}</div>
       <div class="l2">${acc ? escapeHtml(String(acc)) : '<span style="color:var(--muted)">no accession</span>'}</div>
     </div>
     <div class="branch-cell">${escapeHtml(it.branch || '—')}${dept ? `<div class="dept">${escapeHtml(dept)}</div>` : ''}</div>
-    <div class="wait ${wc}">
-      <span class="val">${escapeHtml(age || '—')}</span>
-      <span class="bar"><i style="width:${wp}%"></i></span>
-    </div>
     <div><span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>${pillNote}${it.assignedTechName ? `<div class="prelim-note">🧑‍🔬 ${escapeHtml(String(it.assignedTechName))}</div>` : ''}</div>
     <div class="acts">
       ${primaryAct}
@@ -1162,9 +1150,10 @@ const _wlIndInflight = new Set();
 function wlAutoIndication() {
   const items = (wlState.data && wlState.data.items) || [];
   const seen = new Set(_wlIndQueue.map((x) => x.mr));
+  // On-demand: only fetch the clinical indication for an EXPANDED card, not the whole
+  // board — the per-MRN HIS lookup was what made the indication lag on the list.
   for (const it of items) {
-    const b = it.__bucket || wlRisStatus(it).bucket;
-    if (b === 'imaged' || b === 'reported') continue;   // done rows → skip (limit HIS load)
+    if (!wlState.openRows.has(wlRowUid(it))) continue;
     const mr = String(it.mrno || '');
     if (!mr || wlState.indCache.has(mr) || seen.has(mr) || _wlIndInflight.has(mr)) continue;
     seen.add(mr);
