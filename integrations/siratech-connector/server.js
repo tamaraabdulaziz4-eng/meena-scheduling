@@ -1746,7 +1746,18 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     const mrnos = [...new Set(items.map((it) => String(it.mrno)).filter(Boolean))];
     const nowTs = Date.now();
     const fresh = (m) => { const c = radStatusCache.get(m); return c && (nowTs - c.ts) <= RAD_STATUS_TTL; };
-    const need = mrnos.filter((m) => !fresh(m)).slice(0, RAD_STATUS_MAX_FETCH);
+    // "LIKE SIRATECH": FetchRISPanel already returns a PER-EXAM status for every order in
+    // ONE bulk call per site (that's why Siratech's own panel is instant), and the
+    // expansion above stamps it on each row as hisStatus. So on the FAST board we only fall
+    // back to the per-patient FetchRadiologyDetails for rows the panel left WITHOUT a status
+    // — usually none — instead of fanning out across every patient. The heavy ready/modality
+    // passes still refine EVERY row (exact per-exam accession/invId matching). This is the
+    // change that removes the "loading a lot / hanging" on the fast board: no per-patient
+    // HIS fan-out when the panel already covered the board.
+    const heavyPass = ready || modality;
+    const uncovered = new Set(items.filter((it) => !it.hisStatus).map((it) => String(it.mrno)).filter(Boolean));
+    const candidates = heavyPass ? mrnos : mrnos.filter((m) => uncovered.has(m));
+    const need = candidates.filter((m) => !fresh(m)).slice(0, RAD_STATUS_MAX_FETCH);
     const fetchOne = async (m) => {
       // Re-check freshness/in-flight at call time: a concurrent (possibly background)
       // sweep may have already filled this MRN, so we never double-hit the HIS for it.
