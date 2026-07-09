@@ -2872,7 +2872,7 @@ body.dark .cc .tab .n { background: var(--surface-2); }
    prototype's :root token blocks were intentionally dropped. Modality classes are
    LOWERCASE to match util.js modBadges() output (<span class="mod ct">…).
    ═══════════════════════════════════════════════════════════════════════════════ */
-.rw { max-width: 1320px; margin: 0 auto; padding: 18px 20px 120px;
+.rw { max-width: none; padding: 18px 24px 120px;
   --mono: "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace; }
 .rw .tnum { font-variant-numeric: tabular-nums; }
 
@@ -2953,7 +2953,7 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 /* ── List ── */
 .rw .rw-list { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
 .rw .rw-scroll { overflow-x: auto; }
-.rw .rw-colhead, .rw .rw-row { display: grid; grid-template-columns: 26px 2.5fr 2.3fr 1fr 1.15fr 1.35fr 116px; align-items: center; gap: 12px; padding: 0 14px; }
+.rw .rw-colhead, .rw .rw-row { display: grid; grid-template-columns: 26px 2.6fr 2.4fr 1.1fr 1.4fr 116px; align-items: center; gap: 12px; padding: 0 14px; }
 .rw .rw-colhead { height: 38px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted); background: var(--card-alt); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; min-width: 820px; }
 .rw .rw-colhead .sortable { cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
