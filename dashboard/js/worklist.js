@@ -13,7 +13,7 @@
 // No knobs, no banners — just the board.
 
 let wlState = { branches: [], site: '', data: null, loading: false, timer: null, liveTimer: null,
-                seenEmerg: null, from: wlTodayLocal(), to: wlTodayLocal(), filter: null, searchView: false,
+                seenEmerg: null, from: wlDefaultFrom(), to: wlTodayLocal(), filter: null, searchView: false,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
@@ -64,12 +64,16 @@ function wlRowKey(it) {
   return svc != null ? base + ':' + svc : base;
 }
 
-// Local (KSA) date as YYYY-MM-DD — the operator is in KSA so the browser's local
-// date IS the hospital's operational day.
+// The hospital's operational day in KSA (UTC+3, no DST) as YYYY-MM-DD — computed from UTC
+// so a device whose timezone isn't Asia/Riyadh still shows the correct KSA day (a
+// browser-local date would put the board on the wrong day and hide/duplicate orders).
 function wlTodayLocal() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const d = new Date(Date.now() + 3 * 3600 * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
+// Default board window starts the PRIOR day so an order placed late and still pending
+// across KSA midnight stays visible instead of silently dropping off at the rollover.
+function wlDefaultFrom() { return _wlAddDays(wlTodayLocal(), -1); }
 // The board shows a date RANGE [from, to], defaulting to today only. Widen it with
 // the From/To pickers, or step the whole window a day at a time.
 // Leaving a search: changing range/branch must drop any active on-board filter or
@@ -87,29 +91,29 @@ function _wlAddDays(iso, delta) {
 function wlShiftDay(delta) {   // step the whole [from,to] window by a day
   wlState.from = _wlAddDays(wlState.from, delta);
   wlState.to = _wlAddDays(wlState.to, delta);
-  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
 }
 function wlSetFrom(v) {
   if (!v) return;
   wlState.from = v;
   if (wlState.to < v) wlState.to = v;                       // keep from <= to
-  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
 }
 function wlSetTo(v) {
   if (!v) return;
   wlState.to = v;
   if (v < wlState.from) wlState.from = v;
-  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
 }
 function wlTodayRange() {
-  wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();
-  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlLoad(true);
+  wlState.from = wlDefaultFrom(); wlState.to = wlTodayLocal();
+  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
 }
 function wlSyncDayControls() {
   const f = document.getElementById('wl-from'); if (f) f.value = wlState.from;
   const t = document.getElementById('wl-to'); if (t) t.value = wlState.to;
   const btn = document.getElementById('wl-today-btn');
-  const isToday = wlState.from === wlTodayLocal() && wlState.to === wlTodayLocal();
+  const isToday = wlState.from === wlDefaultFrom() && wlState.to === wlTodayLocal();
   if (btn) btn.className = 'tbtn' + (isToday ? ' today' : '');
 }
 
@@ -164,7 +168,7 @@ async function renderWorklistPage() {
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState._paintedOnce = false;                        // entrance animation once per visit
   wlState.reconnecting = false; wlState.lastGood = Date.now();
-  wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
+  wlState.from = wlDefaultFrom(); wlState.to = wlTodayLocal();   // default: prior day + today (survive midnight)
   // Fresh redesign view state on every entry: default tab, compact rows, nothing
   // selected/expanded, no left-panel filters.
   wlState.tab = 'ordered'; wlState.density = 'compact';
@@ -330,7 +334,25 @@ function wlStartTimer() {
 
 // Changing the branch shows a different set — re-seed the emergency baseline so
 // switching scope never fires a false "new emergency" alarm.
-function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlExitSearch(); wlLoad(); }
+function wlOnBranch() { wlState.site = document.getElementById('wl-branch').value; wlState.seenEmerg = null; wlExitSearch(); wlSwitchReload(); }
+
+// Supersede any in-flight load and immediately fetch the new scope (branch/date). Without
+// this, wlLoad early-returns while a poll is in flight, so the switch is silently dropped
+// and the outstanding OLD-scope request repaints the previous branch until the next 12s
+// tick — the "changing branch lags / keeps showing the previous branch" symptom. Bumping
+// _loadGen neutralises the in-flight request's paint AND its lock release; clearing the
+// per-scope caches/ratchet/enrich-lock stops the previous branch's rows and enrichment
+// from lingering or starving the new branch.
+function wlSwitchReload() {
+  wlState._loadGen++;             // the in-flight load's gen is now stale → its paint is ignored
+  wlState.loading = false;        // …and it won't touch the lock, so the new load isn't dropped
+  _wlEnrichBusy = false;          // free the enrich lock so the new scope enriches immediately
+  wlState.statusRatchet.clear();  // forward-only status is per-scope — don't carry it across
+  wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear();
+  if (wlState.indCache) wlState.indCache.clear();
+  wlState.openRows.clear(); wlState.selMrns.clear();
+  wlLoad(true);                   // force nocache — fresh data for the new scope
+}
 
 async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
@@ -352,11 +374,17 @@ async function wlLoad(force, silent) {
   // background pass right after, and never block the first paint.
   const qs = new URLSearchParams();
   if (wlState.site) qs.set('sites', wlState.site);
-  qs.set('from', wlState.from); qs.set('to', wlState.to);   // explicit range (defaults to today only)
-  if (force) qs.set('nocache', '1');
+  qs.set('from', wlState.from); qs.set('to', wlState.to);   // explicit range (prior day + today)
+  // Silent polls are normally served from the connector's worklist cache, so a new/changed
+  // order (or a new emergency) could lag up to the cache TTL + poll interval. Force a fresh
+  // fetch on an explicit load AND at least every ~30s on the live timer, so HIS-side changes
+  // surface within roughly half a minute without nocache-ing every 12s tick.
+  const fresh = force || (Date.now() - (wlState.lastFresh || 0) > 30000);
+  if (fresh) qs.set('nocache', '1');
   try {
     const data = await API.get('/radiology/worklist?' + qs.toString());
     if (wlState._loadGen !== gen) return;         // superseded — the watchdog gave up, a newer load owns the board
+    if (fresh) wlState.lastFresh = Date.now();
     wlState.data = data;
     // Status is driven by the NATIVE Siratech status (it.hisStatus), which the connector
     // stamps on the fast pass — so rows land in the right status bucket on the FIRST paint
