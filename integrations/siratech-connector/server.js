@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'privileges-names-2026-07-09h';
+const CONNECTOR_BUILD = 'privileges-sites-2026-07-09i';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1134,11 +1134,22 @@ app.get('/user/:id/privileges', requireAuth, async (req, res) => {
     const sz = (x) => (x && Array.isArray(x.data)) ? x.data.length : (x && x.data && typeof x.data === 'object' ? Object.keys(x.data).length : 0);
     const sampleKeys = (x) => (x && Array.isArray(x.data) && x.data[0] && typeof x.data[0] === 'object') ? Object.keys(x.data[0])
       : (x && x.data && typeof x.data === 'object' && !Array.isArray(x.data) ? Object.keys(x.data).slice(0, 40) : []);
+    // All HIS sites (id → name) so the UI can show real branch names, and the set of sites the
+    // user actually has (parsed from each privilege's `hospitals` string like "[1],[3],[14]").
+    const siteList = await getSites().catch(() => []);
+    const granted = new Set();
+    if (Array.isArray(priv.data)) {
+      for (const p of priv.data) {
+        const h = p && (p.hospitals || p.hospitalIds || '');
+        for (const m of String(h).matchAll(/\[(\d+)\]/g)) granted.add(Number(m[1]));
+      }
+    }
+    const names = Array.isArray(priv.data) ? priv.data.map((p) => p && (p.privilages || p.privileges || p.privilegeName || p.name)).filter(Boolean) : [];
     return res.json({ ok: true, build: CONNECTOR_BUILD, userId: uid, hospitalId,
+      sites: siteList.map((s) => ({ id: s.siteId, name: s.shortName || s.name || ('Site ' + s.siteId) })),
+      grantedSites: [...granted].sort((a, b) => a - b),
       privilegesByUser: { status: priv.status, error: priv.error || null, count: sz(priv), keys: sampleKeys(priv),
-        // The full list of privilege KEYS (names) so we can catalogue exactly what each grants.
-        names: Array.isArray(priv.data) ? priv.data.map((p) => p && (p.privilages || p.privileges || p.privilegeName || p.name)).filter(Boolean) : [],
-        sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
+        names, sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
       modulePrivilege: { status: modPriv.status, error: modPriv.error || null, topLevel: sz(modPriv), leafCount: countTree(modPriv.data), keys: sampleKeys(modPriv) },
       modules: { status: modules.status, error: modules.error || null, count: sz(modules), keys: sampleKeys(modules) },
       menu: { status: menu.status, error: menu.error || null, topLevel: sz(menu), leafCount: countTree(menu.data), keys: sampleKeys(menu) },

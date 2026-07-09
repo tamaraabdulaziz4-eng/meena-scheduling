@@ -84,6 +84,8 @@ async function initApp() {
   document.getElementById('nav-branches').style.display    = showAdminTools ? 'flex' : 'none';
   document.getElementById('nav-shifts').style.display      = showAdminTools ? 'flex' : 'none';
   document.getElementById('nav-users').style.display       = showAdminTools ? 'flex' : 'none';
+  const hisNav = document.getElementById('nav-hisaccess');
+  if (hisNav) hisNav.style.display = showAdminTools ? 'flex' : 'none';
   document.getElementById('nav-audit').style.display       = showAdminTools ? 'flex' : 'none';
   const staffNav = document.getElementById('nav-staff');
   if (staffNav) staffNav.style.display = canSeeStaff ? 'flex' : 'none';
@@ -225,6 +227,7 @@ function resolvePage(page) {
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';
   if (page === 'users'    && role !== 'superadmin') return 'schedule';
+  if (page === 'hisaccess' && role !== 'superadmin') return 'schedule';
   return page;
 }
 
@@ -261,6 +264,7 @@ async function renderRoute(page) {
     case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
     case 'shifts':     try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}  renderShiftsPage(); break;
     case 'users':      try { await loadUsers(); } catch(e){}  renderUsersPage(); break;
+    case 'hisaccess':  renderHisAccessPage(); break;
     case 'audit':      await renderAuditPage(); break;
     default:
       document.getElementById('content').innerHTML = `<div class="empty"><p>Page not found</p></div>`;
