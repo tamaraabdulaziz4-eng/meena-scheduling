@@ -30,6 +30,9 @@ function modBadges(modality, { fallbackCls = '' } = {}) {
   return String(modality).split(',').map((m) => {
     const k = m.trim().toUpperCase(), info = MOD[k];
     if (info) return `<span class="mod ${info.cls}">${escapeHtml(info.label)}</span>`;
+    // HIS sends bone-density exams as a long free-text modality ("DEXA WHOLE BODY")
+    // with no clean code, so it slips past the MOD map — normalise it to a tidy badge.
+    if (/\bDEXA\b|\bDXA\b|\bBMD\b|BONE\s*DENSIT|DENSITOMET/.test(k)) return '<span class="mod bmd">BMD</span>';
     return `<span class="mod${fallbackCls ? ' ' + fallbackCls : ''}">${escapeHtml(k)}</span>`;
   }).join(' ');
 }
