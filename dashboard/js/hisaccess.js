@@ -100,7 +100,8 @@ function hisAccessRender(d) {
   const names = new Set(pv.names || []);
   const total = pv.count || (pv.names ? pv.names.length : 0);
   const sites = d.sites || [];
-  const granted = new Set(d.grantedSites || []);
+  // Site 0 is a "global/all" scope marker in the HIS, not a real branch — exclude it from the count.
+  const granted = new Set((d.grantedSites || []).filter((id) => Number(id) > 0));
 
   // Sites: every HIS site, granted (green) or missing (red).
   const siteChips = sites.length
