@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'flags-fetal-2026-07-09f';
+const CONNECTOR_BUILD = 'privileges-probe-2026-07-09g';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1095,6 +1095,51 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
       } catch (_e) { /* skip a note that fails to render; the others still show */ }
     }
     return res.json({ ok: true, build: CONNECTOR_BUILD, file, encounterId, notes, fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// ── HIS user privileges (READ-ONLY) ───────────────────────────────────────────
+// Siratech's Security Suite exposes a user's privileges/modules only for READING (there is
+// no assign/write API). This surfaces the count + shape so we can size the privilege catalog
+// and decide what a superadmin "view privileges" screen can show. Never writes.
+app.get('/user/:id/privileges', requireAuth, async (req, res) => {
+  const raw = String(req.params.id || '').trim();
+  if (!raw) return res.status(400).json({ ok: false, error: 'user id required' });
+  const uid = /^\d+$/.test(raw) ? raw.padStart(8, '0') : raw;   // HIS user ids are 8-digit
+  const hospitalId = String(req.query.hospitalId || '0');
+  try {
+    await getToken();
+    const G = (p) => hisFetch(p, { method: 'GET' })
+      .then((r) => ({ status: r.status, data: (r.json && (r.json.data !== undefined ? r.json.data : r.json)) }))
+      .catch((e) => ({ error: String(e && e.message) }));
+    const enc = encodeURIComponent(uid);
+    const [priv, modPriv, modules, menu] = await Promise.all([
+      G('/security-api/api/v1/Authentication/Privileges/ByUser/' + enc + '?HospitalId=' + encodeURIComponent(hospitalId)),
+      G('/security-api/api/v1/Authentication/GetModulePrivilege?UserId=' + enc),
+      G('/security-api/api/v1/Authentication/Modules/ByUser/' + enc),
+      G('/security-api/api/v1/Menu/List/' + enc + '/' + encodeURIComponent(hospitalId)),
+    ]);
+    // Recursively count leaf privilege nodes in a tree (module → children → privileges).
+    const countTree = (n) => {
+      if (Array.isArray(n)) return n.reduce((s, x) => s + countTree(x), 0);
+      if (n && typeof n === 'object') {
+        const kids = n.children || n.privileges || n.subMenus || n.menus || n.items || n.privilegeList;
+        if (Array.isArray(kids) && kids.length) return countTree(kids);
+        return 1;   // a leaf
+      }
+      return 0;
+    };
+    const sz = (x) => (x && Array.isArray(x.data)) ? x.data.length : (x && x.data && typeof x.data === 'object' ? Object.keys(x.data).length : 0);
+    const sampleKeys = (x) => (x && Array.isArray(x.data) && x.data[0] && typeof x.data[0] === 'object') ? Object.keys(x.data[0])
+      : (x && x.data && typeof x.data === 'object' && !Array.isArray(x.data) ? Object.keys(x.data).slice(0, 40) : []);
+    return res.json({ ok: true, build: CONNECTOR_BUILD, userId: uid, hospitalId,
+      privilegesByUser: { status: priv.status, error: priv.error || null, topLevel: sz(priv), leafCount: countTree(priv.data), keys: sampleKeys(priv), sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
+      modulePrivilege: { status: modPriv.status, error: modPriv.error || null, topLevel: sz(modPriv), leafCount: countTree(modPriv.data), keys: sampleKeys(modPriv) },
+      modules: { status: modules.status, error: modules.error || null, count: sz(modules), keys: sampleKeys(modules) },
+      menu: { status: menu.status, error: menu.error || null, topLevel: sz(menu), leafCount: countTree(menu.data), keys: sampleKeys(menu) },
+      fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
