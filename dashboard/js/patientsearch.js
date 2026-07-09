@@ -217,7 +217,8 @@ function renderPsDetail() {
       .map((x) => x.o);
     // Collapsible rows keep a long history scannable: only the most recent exam is
     // expanded by default; the rest show a one-line summary you can tap open.
-    examBlock = `<div class="ps-sec-l ps-examhead">Radiology exams · ${sorted.length}<span>newest first</span></div>` +
+    const notBilled = sorted.filter((o) => o.billingStatus !== 'Billed' && !/cancel/i.test(o.status || '') && !o.isCancel).length;
+    examBlock = `<div class="ps-sec-l ps-examhead">Radiology exams · ${sorted.length}${notBilled ? ` <span style="color:var(--danger-ink);font-weight:800">· ${notBilled} not billed</span>` : ''}<span>newest first</span></div>` +
       sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
   det.innerHTML = patCard + examBlock;
@@ -690,7 +691,11 @@ function psExamCard(o, open) {
   const chips = [
     o.isER ? `<span class="sc no" title="Emergency encounter">🚨 ER</span>` : '',
     o.encounter && !o.isER ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml(o.encounter)}</span>` : '',
-    o.billingStatus ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">${escapeHtml(o.billingStatus)}</span>` : '',
+    (o.billingStatus === 'Billed'
+      ? `<span class="sc ok" style="background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)">Billed</span>`
+      : (/cancel/i.test(o.status || '') || o.isCancel)
+        ? ''   // cancelled — the order-status field explains it; not a billing gap
+        : `<span class="sc no" title="Ordered by the doctor but NOT billed yet — it will not appear on the worklist board until billing processes it">⚠ Not billed</span>`),
     imaged ? ris('completed', 'Imaged') : ris('scheduled', 'Awaiting imaging'),
     o.hasReport ? ris('final', 'Report ready') : '',
     o.cpacsUrl ? `<a class="ghost" style="text-decoration:none" href="${escapeHtml(String(o.cpacsUrl))}" target="_blank" rel="noopener" title="Open the study in the PACS viewer" onclick="event.stopPropagation()">🖼 Images</a>` : '',
