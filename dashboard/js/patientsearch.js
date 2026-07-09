@@ -127,11 +127,6 @@ function psField(label, val, opts) {
   </div>`;
 }
 
-function psInitials(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '؟';
-  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
-}
 // A big, glanceable stat tile (height / weight / BMI / blood group) — Clinical Calm
 // .kpi card (accent variants: a=amber b=blue c=green d=violet).
 const PS_TILE_DOT = { a: 'var(--yellow,#FFBA49)', b: 'var(--blue,#3BA0FF)', c: 'var(--green,#00C896)', d: 'var(--accent,#6B4EFF)' };
@@ -165,7 +160,6 @@ function renderPsDetail() {
   const patCard = `
     <div class="card ps-pt-card">
       <div class="ps-head">
-        <div class="ps-avatar">${escapeHtml(psInitials(p.name || p.nameArabic))}</div>
         <div class="ps-id-main">
           <div class="ps-pt-name">${escapeHtml(p.name || '—')}</div>
           ${p.nameArabic ? `<div class="ps-pt-ar">${escapeHtml(p.nameArabic)}</div>` : ''}
@@ -404,18 +398,33 @@ async function psLoadRealLabs() {
       ${r.range ? `<span style="color:var(--muted);font-size:11px;min-width:90px;text-align:right">${escapeHtml(r.range)}</span>` : ''}
     </div>`;
   };
-  const panelHtml = (pan) => {
+  // Collapsible groups: click a panel's header to expand/collapse its tests. Panels
+  // with an abnormal/critical result open by default (so they can't be missed); the
+  // rest start collapsed to keep the card compact.
+  const panelHtml = (pan, idx) => {
     const nAbn = pan.tests.filter((t) => t.abnormal || t.critical).length;
+    const open = nAbn > 0;
+    const bodyId = 'ps-lab-p' + idx;
     return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:10px;background:var(--card,#fff)">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:var(--card-alt,#f4f4f8);border-bottom:1px solid var(--border)">
-        <span style="font-weight:700;font-size:12.5px">${escapeHtml(pan.name)}</span>
-        ${nAbn ? `<span style="font-size:10px;font-weight:800;color:#fff;background:#e2571f;border-radius:5px;padding:1px 6px">${nAbn} ▲</span>`
+      <button type="button" onclick="psTogglePanel(this,'${bodyId}')" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:var(--card-alt,#f4f4f8);border:0;border-bottom:1px solid var(--border);cursor:pointer;font:inherit;text-align:start">
+        <span style="font-weight:700;font-size:12.5px;display:flex;align-items:center;gap:8px"><span class="ps-lab-chev" style="display:inline-block;transition:transform .15s;color:var(--muted)${open ? ';transform:rotate(90deg)' : ''}">▸</span>${escapeHtml(pan.name)}</span>
+        ${nAbn ? `<span style="font-size:10px;font-weight:800;color:#fff;background:var(--warn-ink,#e2571f);border-radius:5px;padding:1px 6px">${nAbn} ▲</span>`
                : `<span style="font-size:11px;color:var(--muted)">${pan.tests.length} tests</span>`}
-      </div>
-      ${pan.tests.map(rowHtml).join('')}
+      </button>
+      <div id="${bodyId}"${open ? '' : ' style="display:none"'}>${pan.tests.map(rowHtml).join('')}</div>
     </div>`;
   };
   box.innerHTML = head + panels.map(panelHtml).join('');
+}
+
+// Expand/collapse one lab-results group (accordion in the patient card).
+function psTogglePanel(btn, bodyId) {
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  const chev = btn.querySelector('.ps-lab-chev');
+  if (chev) chev.style.transform = open ? '' : 'rotate(90deg)';
 }
 
 // Radiation-safety labs panel: for a female patient, auto-load her pregnancy / β-hCG
@@ -435,15 +444,15 @@ async function psLoadLabs() {
   const nm = r && r.testName ? escapeHtml(String(r.testName)) : 'pregnancy test';
   let html;
   if (!r || !r.found || !r.hasPregnancyTest) {
-    html = `<div class="ps-alert warn">🤰 <b>No recent pregnancy / β-hCG lab</b> on file — confirm status before imaging.</div>`;
+    html = `<div class="ps-alert warn">🤰 <b>Pregnancy / β-hCG — not ordered</b> · none on file. Confirm status before imaging.</div>`;
   } else if (r.verdict === 'positive') {
-    html = `<div class="ps-alert">🤰 <b>Pregnancy test POSITIVE</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Do NOT irradiate without physician review.</div>`;
+    html = `<div class="ps-alert">🤰 <b>Pregnancy — POSITIVE</b> · ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Do NOT irradiate without physician review.</div>`;
   } else if (r.verdict === 'negative') {
-    html = `<div class="ps-alert ok">🤰 <b>Pregnancy test negative</b> — ${nm}${dstr}.</div>`;
+    html = `<div class="ps-alert ok">🤰 <b>Pregnancy — negative</b> · ${nm}${dstr}.</div>`;
   } else if (r.resulted) {
-    html = `<div class="ps-alert neutral">🤰 <b>Pregnancy test resulted</b> — ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Read the value.</div>`;
+    html = `<div class="ps-alert neutral">🤰 <b>Pregnancy — resulted</b> · ${nm}${r.resultText ? ' = ' + escapeHtml(String(r.resultText)) : ''}${dstr}. Read the value.</div>`;
   } else {
-    html = `<div class="ps-alert warn">🤰 <b>Pregnancy test pending</b> — ${nm} ordered${dstr}, result not back yet.</div>`;
+    html = `<div class="ps-alert warn">🤰 <b>Pregnancy / β-hCG — ordered, result pending</b>${dstr}.</div>`;
   }
   box.innerHTML = html;
 }
