@@ -219,33 +219,23 @@ async function renderWorklistPage() {
       <nav class="rw-tabs" id="rw-tabs"></nav>
 
       <div class="rw-main">
-        <aside class="rw-filters" id="rw-filters">
-          <div class="fgroup">
-            <h4>Modality</h4>
-            <div class="chips" id="rw-modchips"></div>
-          </div>
-          <div class="fgroup">
-            <h4>Priority</h4>
-            <div class="frow">
-              <label class="fopt"><input type="radio" name="rw-prio" value="" checked onchange="wlSetPrio('')">All priorities</label>
-              <label class="fopt"><input type="radio" name="rw-prio" value="stat" onchange="wlSetPrio('stat')">STAT / emergency only</label>
-              <label class="fopt"><input type="radio" name="rw-prio" value="routine" onchange="wlSetPrio('routine')">Routine only</label>
+        <div class="rw-filterbar" id="rw-filters">
+          <div class="fgrp"><span class="fh4">Modality</span><div class="chips" id="rw-modchips"></div></div>
+          <div class="fgrp"><span class="fh4">Priority</span>
+            <div class="frow-h">
+              <label class="fopt"><input type="radio" name="rw-prio" value="" checked onchange="wlSetPrio('')">All</label>
+              <label class="fopt"><input type="radio" name="rw-prio" value="stat" onchange="wlSetPrio('stat')">STAT</label>
+              <label class="fopt"><input type="radio" name="rw-prio" value="routine" onchange="wlSetPrio('routine')">Routine</label>
             </div>
           </div>
-          <div class="fgroup">
-            <h4>Referring doctor</h4>
-            <select class="fsel" id="rw-docsel" onchange="wlSetDoc(this.value)"><option value="">All doctors</option></select>
-          </div>
-          <div class="fgroup">
-            <h4>Sort by</h4>
-            <select class="fsel" id="rw-sortsel" onchange="wlSetSort(this.value)">
-              <option value="wait">Oldest first</option>
-              <option value="prio">Priority first</option>
-              <option value="recent">Most recent order</option>
-            </select>
-          </div>
-          <button class="fclear" onclick="wlResetFilters()">Clear all filters</button>
-        </aside>
+          <div class="fgrp"><span class="fh4">Doctor</span><select class="fsel" id="rw-docsel" onchange="wlSetDoc(this.value)"><option value="">All doctors</option></select></div>
+          <div class="fgrp"><span class="fh4">Sort</span><select class="fsel" id="rw-sortsel" onchange="wlSetSort(this.value)">
+            <option value="wait">Oldest first</option>
+            <option value="prio">Priority first</option>
+            <option value="recent">Most recent order</option>
+          </select></div>
+          <button class="fclear" onclick="wlResetFilters()">Clear filters</button>
+        </div>
 
         <section class="rw-list">
           <div class="rw-scroll">
