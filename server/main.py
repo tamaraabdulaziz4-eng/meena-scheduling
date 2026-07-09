@@ -7072,13 +7072,20 @@ def _rad_reconcile_resolved(items):
     try:
         # Close ONLY orders the board was actively tracking that just dropped off:
         #   • stale >5 min (not on the last few boards) AND
-        #   • still recently tracked (updated within 24h) — so a pending order the strict
-        #     day-filter hides (a prior-day order not on today's board, hence never
-        #     refreshed) is NOT falsely closed as "filed elsewhere".
+        #   • still recently tracked (updated within 24h) AND
+        #   • a report was actually seen (reported_at IS NOT NULL).
+        # The reported_at guard fixes the KSA-midnight false-close: an order that is still
+        # genuinely awaiting imaging (state='ordered', reported_at NULL) drops off "today's"
+        # board at the date rollover for a NON-resolution reason (the client queries today
+        # only), yet its updated_at is minutes-fresh — squarely inside the 5min–24h window.
+        # Auto-closing it would silently vanish a pending (even STAT) order with no orphan
+        # flag. "Left the board == filed elsewhere" is only a safe inference once a report
+        # exists; a reported order closed here still surfaces on the orphan tab for review.
         q("""UPDATE scheduling.radiology_orders
                 SET state='filed', filed_source='external',
                     filed_at=COALESCE(filed_at, NOW()), updated_at=NOW()
               WHERE site = ANY(%s) AND state IN ('ordered','reported')
+                AND reported_at IS NOT NULL
                 AND updated_at < NOW() - INTERVAL '5 minutes'
                 AND updated_at > NOW() - INTERVAL '24 hours'""",
           (list(sites),), exec_only=True)
@@ -7502,11 +7509,14 @@ def _rad_seed_confirmed_stages(items):
     if not isinstance(items, list) or not items:
         return
     ids = []
+    gpb_rows = {}   # how many board rows carry each bill — a bundled bill has >1
     for it in items:
         try:
             g = it.get("genPatBillingId")
             if g:
-                ids.append(int(g))
+                g = int(g)
+                ids.append(g)
+                gpb_rows[g] = gpb_rows.get(g, 0) + 1
         except Exception:
             pass
     if not ids:
@@ -7522,7 +7532,12 @@ def _rad_seed_confirmed_stages(items):
                 g = int(it.get("genPatBillingId")) if it.get("genPatBillingId") else None
             except Exception:
                 g = None
-            if g in reported:
+            # The lifecycle store is keyed per BILL, not per exam, so a bundled bill's
+            # stored state='reported' reflects only one of its exams. Seeding it onto every
+            # sibling row would falsely show an un-reported exam as Final (and the forward
+            # ratchet would then block the correction). Only fast-seed when the bill maps to
+            # a single board row; bundled bills wait for the authoritative per-exam ready pass.
+            if g in reported and gpb_rows.get(g, 0) == 1:
                 it["stageConfirmed"] = "reported"
     except Exception:
         pass
