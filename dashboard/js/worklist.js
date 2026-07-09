@@ -188,7 +188,7 @@ async function renderWorklistPage() {
           <h1>Radiology Worklist</h1>
           <p>Live RIS board${branch ? ' · ' + escapeHtml(String(branch)) : ''} · ${escapeHtml(dateStr)}</p>
         </div>
-        <span class="live" id="wl-live"><i></i>Live · updated 0s ago</span>
+        <span class="live" id="wl-live"><i></i><b>LIVE</b><span class="live-ago">updated 0s ago</span></span>
         <div class="rw-spacer"></div>
         <label class="rw-search">
           ${icon('search')}
@@ -241,8 +241,8 @@ async function renderWorklistPage() {
             <div class="rw-colhead" id="rw-colhead">
               <span></span>
               <span>Patient · MRN</span>
-              <span>Exam</span>
-              <span>Branch</span>
+              <span>Exam · Accession</span>
+              <span>Branch · Clinic</span>
               <span>Status</span>
               <span style="text-align:right">Action</span>
             </div>
@@ -303,12 +303,12 @@ function wlPaintLive() {
   if (!el) return;
   if (wlState.reconnecting) {
     el.className = 'live recon';
-    el.innerHTML = '<i></i>Reconnecting…';
+    el.innerHTML = '<i></i><b>Reconnecting…</b>';
     return;
   }
   const secs = wlState.lastGood ? Math.max(0, Math.round((Date.now() - wlState.lastGood) / 1000)) : 0;
   el.className = 'live';
-  el.innerHTML = `<i></i>Live · updated ${secs}s ago`;
+  el.innerHTML = `<i></i><b>LIVE</b><span class="live-ago">updated ${secs}s ago</span>`;
 }
 function wlStartLiveTicker() {
   if (wlState.liveTimer) clearInterval(wlState.liveTimer);
@@ -737,13 +737,13 @@ function wlRowHtml(it) {
     <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
     <div class="pt">
       <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}</div>
-      <div class="l2 tnum"><span>MRN ${escapeHtml(mrn)}</span>${ageg ? `<span>${ageg}</span>` : ''}${det && it.doctorName ? `<span>Dr ${escapeHtml(it.doctorName)}</span>` : ''}</div>
+      <div class="l2 tnum"><span class="mrn-chip">MRN <b>${escapeHtml(mrn)}</b></span>${ageg ? `<span>${ageg}</span>` : ''}${det && it.doctorName ? `<span>Dr ${escapeHtml(it.doctorName)}</span>` : ''}</div>
     </div>
     <div class="exam">
       <div class="l1">${modBadges(it.modality) || ''}${examCell}</div>
       <div class="l2">${accCell}</div>
     </div>
-    <div class="branch-cell">${escapeHtml(it.branch || '—')}${clinic ? `<div class="dept" title="Referring clinic">${icon('clinic') || ''}${escapeHtml(clinic)}</div>` : ''}${det && it.doctorName ? `<div class="dept" style="opacity:.85">Dr ${escapeHtml(it.doctorName)}</div>` : ''}</div>
+    <div class="branch-cell"><span class="branch-name">${escapeHtml(it.branch || '—')}</span>${clinic ? `<div class="dept" title="Referring clinic">${icon('clinic') || ''}<span>${escapeHtml(clinic)}</span></div>` : '<div class="dept dept-none">No clinic</div>'}</div>
     <div><span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>${pillNote}${it.assignedTechName ? `<div class="prelim-note">🧑‍🔬 ${escapeHtml(String(it.assignedTechName))}</div>` : ''}</div>
     <div class="acts">
       ${primaryAct}
