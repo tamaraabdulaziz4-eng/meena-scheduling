@@ -264,7 +264,7 @@ async function exportPDF() {
   const style = document.createElement('style');
   style.textContent = `
     @media print {
-      body:not(.mode-report) #sidebar, body:not(.mode-report) .sidebar-toggle,
+      body:not(.mode-report) #topnav, body:not(.mode-report) .sidebar-toggle,
       body:not(.mode-report) #topbar-actions, body:not(.mode-report) .schedule-toolbar .btn,
       body:not(.mode-report) .legend, body:not(.mode-report) .stats-row,
       body:not(.mode-report) #shift-picker, body:not(.mode-report) #toast, body:not(.mode-report) #page-loader,

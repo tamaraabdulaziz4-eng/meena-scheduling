@@ -158,7 +158,7 @@ body {
 html { overscroll-behavior-y: none; background: var(--bg); }
 /* Don't let users accidentally select the navigation chrome / buttons, but keep
    real data in the content area copyable (accession numbers, phones, IDs…). */
-.sidebar,
+.topnav,
 .topbar,
 .nav-item,
 .seg,
@@ -183,155 +183,153 @@ button,
    Only applies when launched from the Home Screen, so normal browser tabs are
    untouched. viewport-fit=cover (in <head>) exposes the safe-area insets. */
 @media (display-mode: standalone) {
-  .topbar { padding-top: calc(14px + env(safe-area-inset-top)); }
+  .topnav { padding-top: calc(8px + env(safe-area-inset-top)); }
   .content { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
-  .sidebar { padding-top: env(safe-area-inset-top); }
-  .sidebar-bottom { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
-  .sidebar-toggle { top: calc(14px + env(safe-area-inset-top)) !important; }
+  .sidebar-toggle { top: calc(11px + env(safe-area-inset-top)) !important; }
   /* Bottom-pinned overlays clear the home indicator. */
   #toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
 }
 
-/* ── Layout ── */
+/* ── Layout — full-width column: top nav header, then the page below ── */
 .layout {
-  display: flex; height: 100vh; height: 100dvh; overflow: hidden;
-  gap: 16px; padding: 16px;
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh; overflow: hidden;
   background: var(--bg);
 }
 
-/* ── Sidebar — deep violet-navy ribbon ground (the brand chrome) ── */
-.sidebar {
-  width: 232px; flex-shrink: 0;
-  background: var(--sidebar-bg);
-  color: var(--sidebar-text);
-  display: flex; flex-direction: column;
-  height: calc(100vh - 32px);
-  border-radius: 20px;
-  overflow: hidden;
-  transition: width 0.25s, transform 0.25s;
-  box-shadow: var(--shadow-md);
-  border: 1px solid var(--sidebar-border);
-  position: relative;
+/* ── Top navigation bar (the brand chrome, spanning the full width) ── */
+.topnav {
+  display: flex; align-items: center; gap: 14px;
+  flex-shrink: 0; padding: 8px 18px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  position: sticky; top: 0; z-index: 60;
 }
-/* A soft ribbon flourish drifting behind the nav for dimensional depth. */
-.sidebar::before {
-  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
-  background:
-    radial-gradient(120% 60% at 100% 0%, rgba(131,88,253,.28), transparent 60%),
-    radial-gradient(90% 50% at 0% 100%, rgba(107,78,255,.20), transparent 55%);
-}
-.sidebar.collapsed { width: 0; overflow: hidden; padding: 0; border: none; }
-
-.sidebar-header {
-  padding: 20px 18px 16px;
-  border-bottom: 1px solid var(--sidebar-border);
-  position: relative; z-index: 2;
-}
-/* Seat the logo on a soft white chip so the violet-navy wordmark always reads
-   on the deep sidebar ground (light + dark). */
+.topnav-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+/* Logo on a bright chip so the violet-navy wordmark reads clearly. */
 .logo-box {
-  background: #fff; padding: 12px 14px; margin-bottom: 10px;
-  border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.22);
+  background: #fff; padding: 5px 9px; border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.10);
   display: flex; align-items: center; justify-content: center;
 }
-.logo-box img { max-width: 100%; height: auto; display: block; }
-.sidebar-header h1 { font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
-.sidebar-header p  { font-size: 10px; color: var(--sidebar-muted); margin-top: 2px; }
+.logo-box img { height: 26px; width: auto; max-width: 140px; display: block; }
+.brand-text h1 { font-size: 13px; font-weight: 800; color: var(--primary); letter-spacing: .2px; }
+.brand-text p  { font-size: 10.5px; color: var(--muted); margin-top: 1px; }
 
-/* Sidebar Nafath (ELM) patient search — searches national ID / Iqama / MRN /
-   phone / name and opens the patient (reuses openPatientLookup → the fixed
-   search). Branded Nafath so it's the identifiable identity-lookup entry point. */
-.sidebar-search { position: relative; z-index: 2; padding: 12px 14px 6px; }
-.sidebar-search-lbl {
-  display: flex; align-items: center; gap: 6px; margin: 0 2px 6px;
-  font-size: 10px; font-weight: 700; letter-spacing: .3px;
-  text-transform: uppercase; color: var(--sidebar-label);
+/* ── Primary nav — horizontal, scrolls when it overflows ── */
+.sidebar-nav {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 2px;
+  overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+  padding: 2px; scrollbar-width: thin;
 }
-.sidebar-search-lbl img { height: 15px; width: auto; display: block;
+.sidebar-nav::-webkit-scrollbar { height: 6px; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+/* Inline group divider/label between nav clusters. */
+.nav-section-label {
+  flex: 0 0 auto; align-self: center;
+  font-size: 9px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .8px; color: var(--muted); opacity: .75;
+  padding: 0 8px; margin-inline-start: 4px;
+  border-inline-start: 1px solid var(--border);
+}
+.nav-item {
+  display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto;
+  padding: 8px 11px; font-size: 12.5px; font-weight: 600;
+  color: var(--muted); cursor: pointer; border: none;
+  background: none; text-align: left; white-space: nowrap;
+  border-radius: 10px;
+  transition: color .18s, background .18s, transform .12s cubic-bezier(.34,1.5,.64,1);
+  position: relative; font-family: inherit;
+}
+.nav-item:hover { color: var(--accent); background: var(--violet-wash); }
+.nav-item:hover .nav-icon svg { transform: scale(1.1); }
+.nav-item:active { transform: scale(.97); }
+/* Active = lavender-wash pill with the accent colour. */
+.nav-item.active {
+  color: var(--accent); font-weight: 700;
+  background: var(--violet-wash);
+}
+.nav-item .nav-icon { width: 18px; height: 18px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+.nav-item .nav-icon svg { width: 17px; height: 17px; display: block; transition: transform .25s cubic-bezier(.34,1.5,.64,1); }
+
+/* ── Right cluster: Nafath search · notifications · user menu ── */
+.topnav-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+/* Nafath (ELM) identity lookup — compact for the header. */
+.sidebar-search { position: relative; display: flex; align-items: center; gap: 8px; }
+.sidebar-search-lbl {
+  display: none; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 700; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.sidebar-search-lbl img { height: 14px; width: auto; display: block;
   background: #fff; border-radius: 4px; padding: 1px 3px; }
 .sidebar-search-box { position: relative; }
 .sidebar-search-box svg {
-  position: absolute; inset-inline-start: 12px; top: 50%; transform: translateY(-50%);
-  width: 15px; height: 15px; color: var(--sidebar-muted); pointer-events: none;
+  position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--muted); pointer-events: none;
 }
 .sidebar-search-box input {
-  width: 100%; border: 1px solid var(--sidebar-border);
-  background: rgba(255,255,255,.08); color: var(--sidebar-text);
-  border-radius: var(--radius-pill); padding: 9px 12px 9px 34px;
+  width: 210px; max-width: 32vw; border: 1px solid var(--border);
+  background: var(--card-alt); color: var(--text);
+  border-radius: var(--radius-pill); padding: 8px 12px 8px 32px;
   font-family: inherit; font-size: 12.5px; outline: none;
-  transition: border-color .15s, background .15s;
+  transition: border-color .15s, box-shadow .15s;
 }
-.sidebar-search-box input::placeholder { color: var(--sidebar-muted); }
-.sidebar-search-box input:focus { border-color: var(--accent); background: rgba(255,255,255,.13); }
-.sidebar-search-box input::-webkit-search-cancel-button { filter: invert(.6); }
+.sidebar-search-box input::placeholder { color: var(--muted); }
+.sidebar-search-box input:focus { border-color: var(--accent); box-shadow: var(--ring); }
 
-.sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; position: relative; z-index: 2; }
-.nav-section-label {
-  padding: 14px 10px 6px;
-  font-size: 9px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 1px; color: var(--sidebar-label);
+/* ── User menu (dropdown holding change-password / theme / sign out) ── */
+.user-menu { position: relative; flex-shrink: 0; }
+.user-menu-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 10px; border: 1px solid var(--border); background: var(--card-alt);
+  border-radius: 10px; cursor: pointer; font-family: inherit;
+  color: var(--text); font-size: 12.5px; font-weight: 600; max-width: 190px;
+  transition: border-color .15s;
 }
-.nav-item {
-  display: flex; align-items: center; gap: 11px;
-  padding: 11px 14px; font-size: 13px; font-weight: 500;
-  color: var(--sidebar-text); cursor: pointer; border: none;
-  background: none; width: 100%; text-align: left;
-  border-radius: 12px;
-  transition: color .2s, background .2s, transform .15s cubic-bezier(.34,1.5,.64,1);
-  position: relative; font-family: inherit; margin-bottom: 2px;
-}
-.nav-item:hover { color: #fff; background: var(--sidebar-hover); }
-.nav-item:hover .nav-icon svg { transform: scale(1.12) rotate(-4deg); }
-.nav-item:active { transform: scale(.98); }
-/* Active = lavender-wash pill with a ribbon accent bar on the leading edge. */
-.nav-item.active {
-  color: var(--sidebar-active-text); font-weight: 600;
-  background: var(--sidebar-active-bg);
-}
-.nav-item.active::before {
-  content: ''; position: absolute; inset-inline-start: 0; top: 50%;
-  transform: translateY(-50%); width: 3px; height: 20px; border-radius: 3px;
-  background: var(--ribbon);
-}
-.nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
-.nav-item .nav-icon svg { width: 19px; height: 19px; display: block; margin: 0 auto; transition: transform .25s cubic-bezier(.34,1.5,.64,1); }
-
+.user-menu-btn:hover { border-color: var(--accent); }
+.user-menu-btn .um-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; }
+.user-menu-btn .um-caret { font-size: 10px; color: var(--muted); flex-shrink: 0; }
 .sidebar-bottom {
-  padding: 14px 18px;
-  border-top: 1px solid var(--sidebar-border);
-  position: relative; z-index: 2;
+  position: absolute; top: calc(100% + 8px); inset-inline-end: 0;
+  min-width: 210px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,.22);
+  padding: 8px; z-index: 1200; display: none;
 }
-.sidebar-bottom .nav-item { padding: 8px 0; }
+.user-menu.open .sidebar-bottom { display: block; }
+.sidebar-bottom .nav-item {
+  display: flex; width: 100%; padding: 9px 10px;
+  color: var(--text); font-size: 13px; font-weight: 600; border-radius: 8px;
+}
+.sidebar-bottom .nav-item:hover { background: var(--violet-wash); color: var(--accent); }
+.sidebar-bottom .nav-item .nav-icon { width: 18px; }
 
-/* ── Sidebar toggle ── */
+/* ── Mobile nav toggle (hamburger) — desktop hides it ── */
 .sidebar-toggle {
-  position: fixed; left: 0; top: 50%; transform: translateY(-50%);
-  z-index: 100;
-  background: linear-gradient(135deg, #8358FD, #6B4EFF);
-  color: white;
-  border: none; border-radius: 0 10px 10px 0;
-  width: 18px; height: 48px; cursor: pointer; font-size: 10px;
-  display: flex; align-items: center; justify-content: center;
-  transition: left 0.25s, transform 0.15s;
-  box-shadow: 3px 0 16px rgba(107,78,255,0.45);
+  display: none;
+  position: fixed; left: 12px; top: 11px; z-index: 1600;
+  background: var(--card-alt); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  width: 40px; height: 40px; cursor: pointer;
+  align-items: center; justify-content: center;
+  box-shadow: var(--shadow-sm);
 }
-.sidebar-toggle:hover { transform: translateY(-50%) scale(1.05); }
+.sidebar-toggle::before { content: "\2630"; font-size: 18px; }
 
-/* ── Main — detached floating panel ── */
+/* ── Main — full-width content region below the header ── */
 .main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: var(--card);
-  border-radius: 20px;
-  box-shadow: var(--shadow-md);
-  border: 1px solid var(--border);
-  height: calc(100vh - 32px);
+  background: var(--bg);
 }
 
 .topbar {
   background: var(--topbar-bg); border-bottom: 1px solid var(--border);
-  padding: 16px 24px 12px; display: flex; align-items: center;
+  padding: 12px 24px; display: flex; align-items: center;
   justify-content: space-between; gap: 16px; flex-shrink: 0;
-  border-radius: 20px 20px 0 0;
   backdrop-filter: saturate(140%) blur(10px);
   -webkit-backdrop-filter: saturate(140%) blur(10px);
   position: sticky; top: 0; z-index: 20;
@@ -1538,40 +1536,44 @@ body.dark .seg-chip.on { color: #fff; }
 #sidebar-backdrop.show { display: block; opacity: 1; }
 
 @media (max-width: 820px) {
-  .layout { padding: 0; gap: 0; }
-  .main { border-radius: 0; height: 100vh; height: 100dvh; }
-  .topbar { border-radius: 0; padding-left: 58px; }   /* room for the hamburger */
+  .main { height: auto; }
+  .topbar { padding: 12px 16px; }
   .content { padding: 16px 14px; }
 
-  /* Off-canvas drawer. 100dvh (not 100vh) so the bottom — Sign Out — isn't
-     hidden behind the mobile browser's address bar. */
-  .sidebar {
-    position: fixed; top: 0; left: 0;
-    height: 100vh; height: 100dvh;
-    width: 256px; max-width: 84vw; border-radius: 0;
-    z-index: 1500; transform: translateX(-100%);
-    transition: transform .25s ease;
-    display: flex; flex-direction: column;
+  /* The hamburger sits over the header brand; make room for it. */
+  .topnav { padding-left: 60px; }
+  .sidebar-toggle { display: flex; }
+
+  /* Primary nav collapses behind the hamburger as a drop-down drawer.
+     100dvh-aware so the last item isn't hidden behind the browser chrome. */
+  .sidebar-nav {
+    position: fixed; top: 58px; left: 8px; right: 8px;
+    flex-direction: column; align-items: stretch; flex-wrap: nowrap;
+    max-height: calc(100dvh - 70px);
+    overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.28);
+    padding: 8px; gap: 2px; z-index: 1500;
+    transform: translateY(-8px); opacity: 0; visibility: hidden;
+    transition: opacity .2s ease, transform .2s ease, visibility .2s ease;
   }
-  /* The nav list scrolls inside the drawer; Sign Out stays pinned at the bottom. */
-  .sidebar-nav { min-height: 0; -webkit-overflow-scrolling: touch; }
-  .sidebar-bottom { flex-shrink: 0; }
-  .sidebar.mobile-open { transform: translateX(0); box-shadow: 0 0 50px rgba(0,0,0,.4); }
-  .sidebar.collapsed { width: 256px; padding: inherit; }  /* ignore desktop collapse on mobile */
-  /* Lock the page behind the open drawer so touches scroll the drawer, not it. */
+  .sidebar-nav.mobile-open { transform: none; opacity: 1; visibility: visible; }
+  .nav-item { width: 100%; white-space: normal; }
+  .nav-section-label {
+    width: 100%; border-inline-start: none; margin-inline-start: 0;
+    padding: 8px 8px 2px;
+  }
+  /* Lock the page behind the open menu so touches scroll the menu, not it. */
   body.drawer-open { overflow: hidden; }
 
-  /* Toggle becomes a fixed hamburger in the top-left corner */
-  .sidebar-toggle {
-    top: 14px; transform: none; width: 38px; height: 38px; border-radius: 10px;
-    font-size: 0; z-index: 1600;
-  }
-  .sidebar-toggle::before { content: "☰"; font-size: 18px; }
-  .sidebar-toggle:hover { transform: scale(1.05); }
+  /* Compact the right cluster: the branded Nafath label is hidden already;
+     shrink the search so the bell + user menu still fit. */
+  .sidebar-search-box input { width: 150px; }
+  .user-menu-btn { max-width: 130px; }
 
   .topbar-title { font-size: 15px; }
   .modal { width: 94vw; max-width: 94vw; }
-  
+
   /* Comfortable tap targets (≥44px is the iOS/Android guideline) */
   .btn, .action-btn { min-height: 40px; }
   .sidebar-toggle { width: 44px; height: 44px; }
@@ -1806,7 +1808,7 @@ body.dark .seg-chip.on { color: #fff; }
   /* Print colours faithfully (shift cells, badges, brand). */
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   body { background: #fff !important; }
-  .sidebar,
+  #topnav,
 .topbar,
 .month-nav,
 .no-print,
@@ -2885,37 +2887,6 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 }
 .hm-qa-ic svg { width: 19px; height: 19px; }
 .hm-qa-lb { font-size: 13.5px; font-weight: 700; color: var(--primary); letter-spacing: -.01em; }
-
-/* ── Icon-rail toggle button (sidebar header) ─────────────────────────────── */
-.sidebar-header { position: relative; }
-.rail-toggle {
-  position: absolute; top: 12px; inset-inline-end: 10px; z-index: 3;
-  width: 26px; height: 26px; display: grid; place-items: center;
-  background: var(--sidebar-hover); border: 1px solid var(--sidebar-border);
-  border-radius: 8px; color: var(--sidebar-muted); cursor: pointer;
-  transition: color .15s, background .15s;
-}
-.rail-toggle:hover { color: #fff; background: rgba(255,255,255,.12); }
-.rail-toggle svg { width: 15px; height: 15px; }
-
-/* ── Icon-rail state: narrow, icons only ──────────────────────────────────── */
-.sidebar.rail { width: 76px; }
-.sidebar.rail .sidebar-header { padding: 16px 8px 12px; }
-.sidebar.rail .sidebar-header h1,
-.sidebar.rail .sidebar-header p { display: none; }
-.sidebar.rail .rail-toggle { position: static; margin: 0 auto 8px; }
-.sidebar.rail .logo-box { padding: 7px; margin-bottom: 0; }
-.sidebar.rail .logo-box img { max-width: 46px !important; }
-.sidebar.rail .nav-section-label { display: none; }
-.sidebar.rail .sidebar-nav { padding: 12px 8px; }
-.sidebar.rail .nav-item {
-  justify-content: center; gap: 0; font-size: 0; padding: 11px 0;
-}
-.sidebar.rail .nav-item .nav-icon { font-size: 16px; width: auto; }
-.sidebar.rail .nav-item.active::before { display: none; }
-.sidebar.rail .nav-item [id$="-badge"] { display: none !important; }
-.sidebar.rail .sidebar-bottom { padding: 12px 8px; }
-.sidebar.rail .sidebar-bottom .nav-item { justify-content: center; }
 
 /* ── Nafath (ELM) identity-verified chip ──────────────────────────────────── */
 .nafath-chip {
