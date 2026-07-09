@@ -463,10 +463,8 @@ async function psLoadLabs() {
 
 // Female detection (the non-pregnancy consent is female-specific) — accept English
 // and Arabic spellings; unknown gender → not auto-highlighted (staff can still open it).
-function psIsFemale(p) {
-  const g = String((p && p.gender) || '').toLowerCase();
-  return g.startsWith('f') || g.includes('female') || g.includes('انث') || g.includes('أنث') || g.includes('امرأ');
-}
+// Delegates to the shared isFemaleGender (util.js) so the card and worklist never drift.
+function psIsFemale(p) { return isFemaleGender(p && p.gender); }
 // Non-pregnancy consent + β-hCG are RADIATION-safety measures: they apply ONLY to a
 // female patient having an IONISING-radiation exam. Ultrasound (US) and MRI (MR) use no
 // ionising radiation, so they never need either — and a male never does. Mirrors the
