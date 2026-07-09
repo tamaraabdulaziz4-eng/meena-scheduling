@@ -74,15 +74,54 @@
   .foot{ text-align:center; color:var(--mut); font-size:11px; margin-top:16px; direction:ltr; }
   .formlbl{ font-size:13px; font-weight:800; color:var(--pri); margin-bottom:8px; }
   .formimg{ width:100%; height:auto; display:block; border:1px solid var(--line); border-radius:12px; }
+
+  /* ── Welcome splash (mirrors the app's post-login welcome screen) ── */
+  #splash{ position:fixed; inset:0; z-index:3000; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding:24px;
+    background:radial-gradient(ellipse at 30% 20%, #ffffff 0%, #f3f1fc 45%, #e9e5fa 100%); }
+  @media (prefers-color-scheme:dark){ #splash{
+    background:radial-gradient(ellipse at 30% 20%, #17152b 0%, #131127 45%, #0d0b1a 100%); } }
+  #splash.done{ animation:splashOut .6s ease forwards; }
+  @keyframes splashOut{ to{ opacity:0; visibility:hidden; transform:scale(1.04); } }
+  .sp-orb{ position:absolute; border-radius:50%; filter:blur(1px); pointer-events:none; }
+  .sp-orb.s1{ width:240px; height:240px; top:14%; inset-inline-start:12%; opacity:.30;
+    background:radial-gradient(circle at 30% 30%,#b9abf7,transparent 70%); animation:spFloat 14s ease-in-out infinite; }
+  .sp-orb.s2{ width:180px; height:180px; bottom:14%; inset-inline-end:14%; opacity:.28;
+    background:radial-gradient(circle at 60% 60%,#8f7bef,transparent 70%); animation:spFloat 16s ease-in-out infinite reverse; }
+  @keyframes spFloat{ 0%,100%{ transform:translate(0,0); } 50%{ transform:translate(14px,-18px); } }
+  .sp-logo{ width:96px; height:96px; background:#fff; border-radius:26px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 18px 40px rgba(38,30,79,.20); position:relative; z-index:2;
+    animation:spLogoIn 1s cubic-bezier(.16,1,.3,1) both, spBob 5s ease-in-out infinite 1s; }
+  .sp-logo img{ width:64px; height:64px; object-fit:contain; }
+  @keyframes spLogoIn{ from{ opacity:0; transform:translateY(30px) scale(.9); } to{ opacity:1; transform:translateY(0) scale(1); } }
+  @keyframes spBob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-8px); } }
+  .sp-greet{ margin-top:26px; font-size:26px; font-weight:800; color:var(--ink); position:relative; z-index:2;
+    animation:spGreetIn 1s cubic-bezier(.16,1,.3,1) .3s both; }
+  .sp-greet .nm{ color:var(--pri); }
+  @keyframes spGreetIn{ from{ opacity:0; transform:translateY(20px); } to{ opacity:1; transform:translateY(0); } }
+  .sp-status{ margin-top:8px; font-size:14px; color:var(--mut); direction:ltr; position:relative; z-index:2;
+    animation:spGreetIn 1s cubic-bezier(.16,1,.3,1) .5s both; }
+  .sp-dots{ margin-top:26px; display:flex; gap:8px; position:relative; z-index:2; }
+  .sp-dots i{ width:9px; height:9px; border-radius:50%; background:var(--pri); animation:spDot 1.2s ease-in-out infinite; }
+  .sp-dots i:nth-child(2){ animation-delay:.2s; } .sp-dots i:nth-child(3){ animation-delay:.4s; }
+  @keyframes spDot{ 0%,100%{ transform:scale(.6); opacity:.4; } 50%{ transform:scale(1); opacity:1; } }
 </style>
 </head>
 <body>
+<!-- Welcome splash — the first thing the patient sees when she opens the link -->
+<div id="splash">
+  <div class="sp-orb s1"></div><div class="sp-orb s2"></div>
+  <div class="sp-logo"><img src="/meena_logo.png" alt="Meena"></div>
+  <div class="sp-greet" id="sp-greet">أهلاً وسهلاً<span class="nm" id="sp-name"></span></div>
+  <div class="sp-status">Welcome · جارٍ تجهيز نموذج الموافقة…</div>
+  <div class="sp-dots"><i></i><i></i><i></i></div>
+</div>
+
 <div class="wrap">
   <div class="hero">
     <div class="orb o1"></div><div class="orb o2"></div>
     <div class="hero-in">
       <div class="mark"><img src="/meena_logo.png" alt="Meena"></div>
-      <div class="word">مينا</div>
       <div class="title">Meena RIS</div>
       <div class="sub">Radiology Information System · Subsidiary of Tawuniya</div>
       <div class="tag">نموذج إقرار بعدم وجود حمل <span class="en">· Non-Pregnancy Consent</span></div>
@@ -95,21 +134,33 @@
 <script>
 var TOKEN = new URLSearchParams(location.search).get('t') || '';
 var HAS_INK = false, DRAWING = false;
+var SPLASH_T0 = Date.now();
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+function firstName(n){ n=String(n||'').trim(); return n ? n.split(/\s+/)[0] : ''; }
+function hideSplash(){
+  var s=document.getElementById('splash'); if(!s || s._gone) return; s._gone=true;
+  s.classList.add('done'); setTimeout(function(){ s.style.display='none'; }, 620);
+}
+// Hold the welcome up for a graceful minimum so it never just flashes, then reveal the form.
+function revealAfterSplash(){ setTimeout(hideSplash, Math.max(0, 1700-(Date.now()-SPLASH_T0))); }
 
 function show(html){ document.getElementById('app').innerHTML = html; }
 
 function load(){
-  if(!TOKEN){ show('<div class="card err" style="text-align:center">الرابط غير صحيح · Invalid link</div>'); return; }
+  if(!TOKEN){ show('<div class="card err" style="text-align:center">الرابط غير صحيح · Invalid link</div>'); revealAfterSplash(); return; }
   fetch('/api/public/consent/'+encodeURIComponent(TOKEN)).then(function(r){
     if(!r.ok) return r.json().then(function(d){ throw new Error((d&&d.detail)||('HTTP '+r.status)); });
     return r.json();
   }).then(function(d){
-    if(d.signed){ return doneView(); }
-    render(d);
+    var nm=firstName(d.name), el=document.getElementById('sp-name');
+    if(nm && el){ el.textContent=' '+nm; }
+    if(d.signed){ doneView(); } else { render(d); }
+    revealAfterSplash();
   }).catch(function(e){
     show('<div class="card err" style="text-align:center">'+esc(e.message||'تعذّر فتح النموذج')+'</div>');
+    revealAfterSplash();
   });
 }
 
