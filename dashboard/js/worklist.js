@@ -713,9 +713,15 @@ function wlRowHtml(it) {
   const stat = !!it.emergency;
   const enriching = wlState.enriching;
   const acc = it.accession || it.accessionNumber || '';
+  // Ordered rows have no DICOM accession yet (it's assigned at imaging) — fall back to the
+  // HIS order/request number so every row carries a traceable identifier.
+  const accCell = acc ? escapeHtml(String(acc))
+    : (it.billNo ? '<span title="HIS order number (no accession until imaged)">Order #' + escapeHtml(String(it.billNo)) + '</span>'
+                 : '<span style="color:var(--muted)">no accession</span>');
   const gender = it.gender ? String(it.gender).charAt(0).toUpperCase() : '';
   const ageg = [it.age, gender].filter((x) => x != null && x !== '').map((x) => escapeHtml(String(x))).join('');
-  const dept = it.department || (it.doctorName ? 'Dr ' + it.doctorName : '');
+  // The referring clinic (Family Medicine, ENT, …) — its own line, distinct from the doctor.
+  const clinic = it.department || '';
   const consentChip = (wlNeedsRadSafety(it) && !it.consentOnFile) ? '<span class="consent-tag">CONSENT</span>' : '';
   const prelim = (st === 'completed' && it.stage === 'draft');
   const pillNote = prelim ? '<div class="prelim-note">Preliminary read</div>' : '';
@@ -734,9 +740,9 @@ function wlRowHtml(it) {
     </div>
     <div class="exam">
       <div class="l1">${modBadges(it.modality) || ''}${examCell}</div>
-      <div class="l2">${acc ? escapeHtml(String(acc)) : '<span style="color:var(--muted)">no accession</span>'}</div>
+      <div class="l2">${accCell}</div>
     </div>
-    <div class="branch-cell">${escapeHtml(it.branch || '—')}${dept ? `<div class="dept">${escapeHtml(dept)}</div>` : ''}</div>
+    <div class="branch-cell">${escapeHtml(it.branch || '—')}${clinic ? `<div class="dept" title="Referring clinic">${icon('clinic') || ''}${escapeHtml(clinic)}</div>` : ''}${det && it.doctorName ? `<div class="dept" style="opacity:.85">Dr ${escapeHtml(it.doctorName)}</div>` : ''}</div>
     <div><span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>${pillNote}${it.assignedTechName ? `<div class="prelim-note">🧑‍🔬 ${escapeHtml(String(it.assignedTechName))}</div>` : ''}</div>
     <div class="acts">
       ${primaryAct}
@@ -759,7 +765,7 @@ function wlExpandHtml(it, st) {
   const canReport = (st === 'completed' || st === 'reported');
   const needConsent = wlNeedsRadSafety(it) && !it.consentOnFile;
   const demo = [it.age != null ? escapeHtml(String(it.age)) + 'y' : '', genderFull].filter(Boolean).join(' · ');
-  const chips = [`MRN ${escapeHtml(mrn)}`, demo, it.branch ? escapeHtml(it.branch) : '', dept ? escapeHtml(dept) : '']
+  const chips = [`MRN ${escapeHtml(mrn)}`, demo, it.branch ? escapeHtml(it.branch) : '']
     .filter(Boolean).map((c) => `<span class="xchip">${c}</span>`).join('');
   const preg = wlPregEl(it);
   return `<div class="xcard" onclick="event.stopPropagation()">
@@ -777,8 +783,9 @@ function wlExpandHtml(it, st) {
     ${preg ? `<div class="rw-preg">${preg}</div>` : ''}
     <div class="xgrid">
       <div class="xf"><div class="k">Exam</div><div class="v">${it.modality ? escapeHtml(String(it.modality)) + ' · ' : ''}${it.exam ? escapeHtml(it.exam) : '<span style="color:var(--muted)">—</span>'}</div></div>
-      <div class="xf"><div class="k">Accession</div><div class="v tnum">${acc ? escapeHtml(String(acc)) : '—'}</div></div>
-      <div class="xf"><div class="k">Ordering doctor</div><div class="v">${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : '—'}${dept ? ' · ' + escapeHtml(dept) : ''}</div></div>
+      <div class="xf"><div class="k">${acc ? 'Accession' : 'Order no.'}</div><div class="v tnum">${acc ? escapeHtml(String(acc)) : (it.billNo ? escapeHtml(String(it.billNo)) : '—')}</div></div>
+      <div class="xf"><div class="k">Referring clinic</div><div class="v">${dept ? escapeHtml(dept) : '<span style="color:var(--muted)">—</span>'}</div></div>
+      <div class="xf"><div class="k">Ordering doctor</div><div class="v">${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : '—'}</div></div>
       <div class="xf"><div class="k">Ordered</div><div class="v tnum">${it.orderedDate ? escapeHtml(wlTrackFmt(it.orderedDate)) : (age ? age + ' ago' : '—')}</div></div>
       <div class="xf"><div class="k">Technologist</div><div class="v">${it.assignedTechName ? escapeHtml(String(it.assignedTechName)) : '<span style="color:var(--muted)">Unassigned</span>'}</div></div>
       <div class="xf"><div class="k">Priority</div><div class="v">${it.emergency ? '<span style="color:var(--danger-ink);font-weight:800">STAT / Emergency</span>' : 'Routine'}</div></div>

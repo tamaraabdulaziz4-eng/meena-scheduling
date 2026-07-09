@@ -126,6 +126,7 @@ function icon(name) {
     'chevron-down':'<polyline points="6 9 12 15 18 9"/>',
     calendar:      '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
     refresh:       '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    clinic:        '<path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M12 8v6"/><path d="M9 11h6"/>',
   };
   const p = P[name];
   if (!p) return '';
