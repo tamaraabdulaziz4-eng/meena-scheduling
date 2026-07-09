@@ -952,6 +952,58 @@ def init_schema():
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT;")
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS local_by INTEGER;")
             cur.execute("ALTER TABLE scheduling.radiology_orders ADD COLUMN IF NOT EXISTS local_updated_at TIMESTAMPTZ;")
+            # PER-EXAM lifecycle/filing state (#9). scheduling.radiology_orders is keyed per
+            # BILL (gen_pat_billing_id) and carries the operator overlay (received/started/…),
+            # which is correctly per-visit. But a bill bundles several exams, so the per-EXAM
+            # stage/report/study/accession there collapse last-wins — hiding a sibling's
+            # un-filed report from orphan detection and blurring per-exam TAT. This companion
+            # table holds one row per exam (bill + service_id) with the display fields
+            # denormalised, so the Orders history, orphan detection and the cold-open seed can
+            # read per exam. The parent table is left untouched (overlay/worklist unaffected).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_exam_state (
+                    gen_pat_billing_id BIGINT  NOT NULL,
+                    service_id     TEXT    NOT NULL DEFAULT '',
+                    site           INTEGER,
+                    mrno           TEXT,
+                    bill_no        TEXT,
+                    patient_name   TEXT,
+                    department     TEXT,
+                    doctor         TEXT,
+                    emergency      BOOLEAN DEFAULT FALSE,
+                    modality       TEXT,
+                    state          TEXT,           -- ordered | reported | filed
+                    ordered_at     TIMESTAMPTZ,
+                    reported_at    TIMESTAMPTZ,
+                    imaged_at      TIMESTAMPTZ,
+                    study_id       BIGINT,          -- matches radiology_orders.study_id (the bound DePACS study)
+                    accession      TEXT,
+                    accession_source TEXT,
+                    pacs_id        TEXT,
+                    cpacs_url      TEXT,
+                    filed_at       TIMESTAMPTZ,
+                    filed_by       INTEGER,
+                    filed_source   TEXT,
+                    updated_at     TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (gen_pat_billing_id, service_id)
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_exam_state_state ON scheduling.radiology_exam_state(state);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_exam_state_site ON scheduling.radiology_exam_state(site);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_exam_state_mrno ON scheduling.radiology_exam_state(mrno);")
+            # One-time backfill so the per-exam store carries the existing history (one row per
+            # bill to start; per-exam granularity accrues as the board re-upserts). ON CONFLICT
+            # DO NOTHING makes it a no-op on every subsequent startup.
+            cur.execute("""
+                INSERT INTO scheduling.radiology_exam_state
+                    (gen_pat_billing_id, service_id, site, mrno, bill_no, patient_name, department, doctor,
+                     emergency, modality, state, ordered_at, reported_at, imaged_at, study_id, accession,
+                     accession_source, pacs_id, cpacs_url, filed_at, filed_by, filed_source, updated_at)
+                SELECT gen_pat_billing_id, COALESCE(service_id, ''), site, mrno, bill_no, patient_name, department, doctor,
+                     emergency, modality, state, ordered_at, reported_at, imaged_at, study_id, accession,
+                     accession_source, pacs_id, cpacs_url, filed_at, filed_by, filed_source, updated_at
+                FROM scheduling.radiology_orders
+                WHERE gen_pat_billing_id IS NOT NULL
+                ON CONFLICT (gen_pat_billing_id, service_id) DO NOTHING;""")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -6996,6 +7048,72 @@ def _rad_upsert_orders(items):
             except Exception: pass
         return 0
 
+def _rad_upsert_exam_state(items):
+    """Per-EXAM companion to _rad_upsert_orders (#9): one row per (bill, service_id) into
+    scheduling.radiology_exam_state, so a bundled bill's sibling exams keep independent
+    stage/report/study/accession instead of collapsing last-wins in the per-bill store.
+    Denormalises the display fields so the Orders history / orphan reads can come straight
+    from here. Best-effort — a failure is swallowed and never affects the parent upsert."""
+    if not isinstance(items, list) or not items:
+        return 0
+    dedup = {}   # last-wins per (gpb, service_id) within a batch
+    for it in items:
+        try:
+            gpb = it.get("genPatBillingId")
+            if not gpb:
+                continue
+            gpb = int(gpb)
+        except Exception:
+            continue
+        svc = str(it.get("svcId") if it.get("svcId") is not None else "").strip()
+        ready = it.get("readyToFile") is True
+        imaged = ready or bool(it.get("scanned"))
+        acc = str(it.get("accession") or "").strip() or None
+        dedup[(gpb, svc)] = (gpb, svc, it.get("site"), str(it.get("mrno") or ""), it.get("billNo"),
+                             it.get("patientName"), it.get("department"), it.get("doctorName"),
+                             bool(it.get("emergency")), (it.get("modality") or None),
+                             "reported" if ready else "ordered", _rad_ts(it.get("orderedDate")),
+                             (datetime.now(timezone.utc) if ready else None),
+                             (datetime.now(timezone.utc) if imaged else None),
+                             acc, (str(it.get("accessionSource") or "").strip() or None) if acc else None)
+    rows = list(dedup.values())
+    if not rows:
+        return 0
+    pool = get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO scheduling.radiology_exam_state
+                    (gen_pat_billing_id, service_id, site, mrno, bill_no, patient_name, department, doctor,
+                     emergency, modality, state, ordered_at, reported_at, imaged_at, accession, accession_source)
+                VALUES %s
+                ON CONFLICT (gen_pat_billing_id, service_id) DO UPDATE SET
+                    site=EXCLUDED.site, mrno=EXCLUDED.mrno, bill_no=EXCLUDED.bill_no,
+                    patient_name=EXCLUDED.patient_name, department=EXCLUDED.department, doctor=EXCLUDED.doctor,
+                    emergency=EXCLUDED.emergency,
+                    modality=COALESCE(EXCLUDED.modality, scheduling.radiology_exam_state.modality),
+                    ordered_at=COALESCE(scheduling.radiology_exam_state.ordered_at, EXCLUDED.ordered_at),
+                    state=CASE WHEN scheduling.radiology_exam_state.state='filed' THEN 'filed'
+                               WHEN EXCLUDED.state='reported' THEN 'reported'
+                               ELSE scheduling.radiology_exam_state.state END,
+                    reported_at=COALESCE(scheduling.radiology_exam_state.reported_at, EXCLUDED.reported_at),
+                    imaged_at=COALESCE(scheduling.radiology_exam_state.imaged_at, EXCLUDED.imaged_at),
+                    accession=COALESCE(scheduling.radiology_exam_state.accession, EXCLUDED.accession),
+                    accession_source=COALESCE(scheduling.radiology_exam_state.accession_source, EXCLUDED.accession_source),
+                    updated_at=NOW()""", rows)
+        conn.commit()
+        pool.putconn(conn)
+        return len(rows)
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: pool.putconn(conn, close=True)
+        except Exception:
+            try: conn.close()
+            except Exception: pass
+        return 0
+
 def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
                     mrno=None, site=None, bill_no=None, patient_name=None,
                     accession=None, accession_source=None, pacs_id=None, cpacs_url=None,
@@ -7060,6 +7178,32 @@ def _rad_mark_filed(gen_pat_billing_id, study_id, service_id, user_id,
            study_id, svc, (rep_real.isoformat() if rep_real else None), user_id, acc, acc_src, pid, curl,
            (rep_real.isoformat() if rep_real else None)),
           exec_only=True)
+        # Mirror the filing onto the per-exam companion (#9), keyed by THIS exam's service so
+        # a bundled bill's other exams keep their own state (the per-bill row above can only
+        # hold one exam's study/accession). service_id '' when unknown.
+        q("""INSERT INTO scheduling.radiology_exam_state
+                 (gen_pat_billing_id, service_id, site, mrno, bill_no, patient_name,
+                  state, study_id, ordered_at, reported_at, filed_at, filed_by, filed_source,
+                  accession, accession_source, pacs_id, cpacs_url)
+             VALUES (%s,%s,%s,%s,%s,%s,'filed',%s,NOW(),GREATEST(COALESCE(%s::timestamptz, NOW()), NOW()),NOW(),%s,'meena',%s,%s,%s,%s)
+             ON CONFLICT (gen_pat_billing_id, service_id) DO UPDATE SET
+                 state='filed', filed_at=NOW(), filed_by=EXCLUDED.filed_by, filed_source='meena',
+                 study_id=COALESCE(EXCLUDED.study_id, scheduling.radiology_exam_state.study_id),
+                 site=COALESCE(scheduling.radiology_exam_state.site, EXCLUDED.site),
+                 bill_no=COALESCE(scheduling.radiology_exam_state.bill_no, EXCLUDED.bill_no),
+                 patient_name=COALESCE(scheduling.radiology_exam_state.patient_name, EXCLUDED.patient_name),
+                 reported_at=GREATEST(
+                     COALESCE(%s::timestamptz, scheduling.radiology_exam_state.reported_at, NOW()),
+                     COALESCE(scheduling.radiology_exam_state.ordered_at, NOW())),
+                 accession=COALESCE(scheduling.radiology_exam_state.accession, EXCLUDED.accession),
+                 accession_source=COALESCE(scheduling.radiology_exam_state.accession_source, EXCLUDED.accession_source),
+                 pacs_id=COALESCE(scheduling.radiology_exam_state.pacs_id, EXCLUDED.pacs_id),
+                 cpacs_url=COALESCE(scheduling.radiology_exam_state.cpacs_url, EXCLUDED.cpacs_url),
+                 updated_at=NOW()""",
+          (gpb, (svc or ''), st, mr, (str(bill_no) if bill_no is not None else None), patient_name,
+           study_id, (rep_real.isoformat() if rep_real else None), user_id, acc, acc_src, pid, curl,
+           (rep_real.isoformat() if rep_real else None)),
+          exec_only=True)
     except Exception:
         pass
 
@@ -7100,6 +7244,16 @@ def _rad_reconcile_resolved(items):
         # flag. "Left the board == filed elsewhere" is only a safe inference once a report
         # exists; a reported order closed here still surfaces on the orphan tab for review.
         q("""UPDATE scheduling.radiology_orders
+                SET state='filed', filed_source='external',
+                    filed_at=COALESCE(filed_at, NOW()), updated_at=NOW()
+              WHERE site = ANY(%s) AND state IN ('ordered','reported')
+                AND reported_at IS NOT NULL
+                AND updated_at < NOW() - INTERVAL '5 minutes'
+                AND updated_at > NOW() - INTERVAL '24 hours'""",
+          (list(sites),), exec_only=True)
+        # Same reconciliation on the per-exam companion (#9) so per-exam orphan detection
+        # sees the same "left the board == filed elsewhere" transition.
+        q("""UPDATE scheduling.radiology_exam_state
                 SET state='filed', filed_source='external',
                     filed_at=COALESCE(filed_at, NOW()), updated_at=NOW()
               WHERE site = ANY(%s) AND state IN ('ordered','reported')
@@ -7156,7 +7310,7 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
                         EXTRACT(EPOCH FROM (COALESCE(reported_at, NOW()) - ordered_at))/3600 AS tat_report_h,
                         EXTRACT(EPOCH FROM (filed_at - reported_at))/3600 AS tat_file_h,
                         EXTRACT(EPOCH FROM (COALESCE(filed_at, NOW()) - ordered_at))/3600 AS tat_total_h
-                 FROM scheduling.radiology_orders{where}
+                 FROM scheduling.radiology_exam_state{where}
                  ORDER BY (state='filed') ASC, emergency DESC, ordered_at DESC NULLS LAST
                  LIMIT 500""", tuple(params))
     def _iso(v):
@@ -7183,7 +7337,7 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
     if site_scope_sql:
         ocl.append(site_scope_sql); oparams.extend(site_scope_params)
     try:
-        oc = q("SELECT COUNT(*) AS n FROM scheduling.radiology_orders WHERE " + " AND ".join(ocl),
+        oc = q("SELECT COUNT(*) AS n FROM scheduling.radiology_exam_state WHERE " + " AND ".join(ocl),
                tuple(oparams), one=True)
         orphan_count = int(oc["n"]) if oc and oc.get("n") is not None else 0
     except Exception:
@@ -7242,14 +7396,14 @@ def radiology_throughput(
                modality, mrno, patient_name, bill_no, department,
                ordered_at, imaged_at, reported_at,
                (imaged_at IS NULL) AS used_reported
-          FROM scheduling.radiology_orders
+          FROM scheduling.radiology_exam_state
          WHERE COALESCE(imaged_at, reported_at) IS NOT NULL
            AND to_char(COALESCE(imaged_at, reported_at) {ksa}, 'YYYY-MM-DD') BETWEEN %s AND %s{site_sql}
          ORDER BY COALESCE(imaged_at, reported_at) ASC
          LIMIT 5000""", tuple([d_from, d_to] + site_params))
     noshow_rows = q(f"""
         SELECT to_char(ordered_at {ksa}, 'YYYY-MM-DD') AS day, modality
-          FROM scheduling.radiology_orders
+          FROM scheduling.radiology_exam_state
          WHERE ordered_at IS NOT NULL
            AND imaged_at IS NULL AND reported_at IS NULL AND state = 'ordered'
            AND to_char(ordered_at {ksa}, 'YYYY-MM-DD') BETWEEN %s AND %s{site_sql}
@@ -7527,29 +7681,29 @@ def _rad_seed_confirmed_stages(items):
     if not isinstance(items, list) or not items:
         return
     ids = []
-    gpb_rows = {}   # how many board rows carry each bill — a bundled bill has >1
     for it in items:
         try:
             g = it.get("genPatBillingId")
             if g:
-                g = int(g)
-                ids.append(g)
-                gpb_rows[g] = gpb_rows.get(g, 0) + 1
+                ids.append(int(g))
         except Exception:
             pass
     if not ids:
         return
     try:
-        # Don't seed 'reported' when an operator acted on the order AFTER the report was
-        # recorded (local_updated_at > reported_at): the durable HIS 'reported' is sticky
-        # forever, and re-seeding it on every cold open would silently mask a more-recent
-        # operator local_status (received / in progress / completed) as Final. When the
-        # report is the latest word (no later operator action), seed it as before.
-        rows = q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
-                    WHERE gen_pat_billing_id = ANY(%s) AND state='reported'
-                      AND NOT (local_updated_at IS NOT NULL AND reported_at IS NOT NULL
-                               AND local_updated_at > reported_at)""", (ids,)) or []
-        reported = {r["gen_pat_billing_id"] for r in rows}
+        # Read PER-EXAM from the companion store (#9), so each exam of a bundled bill is
+        # seeded from its OWN verified report — no more collapsing one exam's 'reported' onto
+        # its siblings. Still honour the reported-vs-overlay recency guard (#19): don't seed
+        # 'reported' when the operator acted on the bill AFTER the report was recorded
+        # (the operator overlay's local_updated_at lives on the per-bill parent).
+        rows = q("""SELECT e.gen_pat_billing_id AS gpb, e.service_id AS svc
+                    FROM scheduling.radiology_exam_state e
+                    LEFT JOIN scheduling.radiology_orders o
+                           ON o.gen_pat_billing_id = e.gen_pat_billing_id
+                    WHERE e.gen_pat_billing_id = ANY(%s) AND e.state='reported'
+                      AND NOT (o.local_updated_at IS NOT NULL AND e.reported_at IS NOT NULL
+                               AND o.local_updated_at > e.reported_at)""", (ids,)) or []
+        reported = {(r["gpb"], r["svc"] or "") for r in rows}
         if not reported:
             return
         for it in items:
@@ -7557,12 +7711,10 @@ def _rad_seed_confirmed_stages(items):
                 g = int(it.get("genPatBillingId")) if it.get("genPatBillingId") else None
             except Exception:
                 g = None
-            # The lifecycle store is keyed per BILL, not per exam, so a bundled bill's
-            # stored state='reported' reflects only one of its exams. Seeding it onto every
-            # sibling row would falsely show an un-reported exam as Final (and the forward
-            # ratchet would then block the correction). Only fast-seed when the bill maps to
-            # a single board row; bundled bills wait for the authoritative per-exam ready pass.
-            if g in reported and gpb_rows.get(g, 0) == 1:
+            if g is None:
+                continue
+            svc = str(it.get("svcId") if it.get("svcId") is not None else "").strip()
+            if (g, svc) in reported:
                 it["stageConfirmed"] = "reported"
     except Exception:
         pass
@@ -7611,6 +7763,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             if not heavy:
                 _rad_seed_confirmed_stages(data.get("items"))
             _rad_upsert_orders(data.get("items"))
+            _rad_upsert_exam_state(data.get("items"))   # per-exam companion store (#9)
             _rad_reconcile_resolved(data.get("items"))
             _annotate_worklist_consent(data.get("items"))
             _annotate_worklist_overlay(data.get("items"))
