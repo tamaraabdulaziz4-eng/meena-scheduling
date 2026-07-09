@@ -1995,45 +1995,109 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 @media (max-width:560px){ .ho-grid{ grid-template-columns:1fr; } }
 
 /* ── Patient / exam lookup ── */
-.ps-pt-card { border-width:2px; }
-.ps-id { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-.ps-avatar { width:56px; height:56px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center;
-  justify-content:center; font-size:20px; font-weight:800; color:#fff;
-  background:linear-gradient(135deg,var(--primary),var(--accent)); }
+/* All .ps-* rules are GLOBAL (unscoped) so the card renders identically on the .cc
+   lookup page AND inside the (non-.cc) worklist slide-over modal. Anything that reuses
+   a .cc-scoped app component (.kpi/.mod/.ris/.sc/.exline/.proc/.acc) gets a
+   .ps-pt-card / .ps-exam-scoped fallback below so it stays styled in the modal too. */
+.ps-pt-card { padding:0; overflow:hidden; box-shadow:var(--shadow-md); }
+.ps-body { padding:16px 18px 18px; }
+
+/* Header masthead — tinted band that reads as the card's identity strip */
+.ps-head { display:flex; align-items:center; gap:15px; flex-wrap:wrap; padding:18px;
+  background:linear-gradient(180deg,var(--violet-wash),transparent); border-bottom:1px solid var(--border); }
+.ps-avatar { width:60px; height:60px; border-radius:18px; flex:0 0 auto; display:flex; align-items:center;
+  justify-content:center; font-size:22px; font-weight:800; color:#fff; letter-spacing:.5px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2)); box-shadow:var(--shadow-sm); }
 .ps-id-main { flex:1; min-width:180px; }
-.ps-id-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
-.ps-chip { font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px; background:var(--card-alt); border:1px solid var(--border); color:var(--text); }
-.ps-chip-strong { background:var(--primary); color:#fff; border-color:var(--primary); }
-.ps-id-mrn { text-align:center; padding:8px 16px; border-radius:12px; background:var(--card-alt); border:1.5px solid var(--border); }
-.ps-id-mrn-l { font-size:10px; font-weight:800; letter-spacing:1px; color:var(--muted); }
-.ps-id-mrn-v { font-size:22px; font-weight:800; color:var(--primary); font-variant-numeric:tabular-nums; letter-spacing:.5px; }
-.ps-alert { margin-top:12px; padding:10px 14px; border-radius:12px; font-size:13.5px; font-weight:600;
-  background:rgba(220,60,60,.10); border:1.5px solid rgba(220,60,60,.45); color:#c0392b; }
-
-.ps-idgrid { margin-top:14px; }
-
-.ps-pt-name { font-size:18px; font-weight:800; color:var(--primary); }
+.ps-pt-name { font-size:19px; font-weight:800; color:var(--text); letter-spacing:-.01em; line-height:1.2; }
 .ps-pt-ar { font-size:14px; color:var(--muted); margin-top:2px; }
+.ps-id-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; }
+.ps-chip { font-size:12px; font-weight:700; padding:3px 10px; border-radius:var(--radius-pill);
+  background:var(--card); border:1px solid var(--border); color:var(--text); }
+.ps-chip-strong { background:var(--accent); color:#fff; border-color:var(--accent); }
+.ps-id-mrn { text-align:center; padding:9px 16px; border-radius:14px; background:var(--card);
+  border:1px solid var(--border); box-shadow:var(--shadow-sm); }
+.ps-id-mrn-l { font-size:10px; font-weight:800; letter-spacing:1px; color:var(--muted); }
+.ps-id-mrn-v { font-size:22px; font-weight:800; color:var(--accent); font-variant-numeric:tabular-nums; letter-spacing:.5px; margin-top:1px; }
 
-.ps-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
+/* Safety zone — allergy / pregnancy / infection alerts, impossible to miss */
+.ps-safety { display:flex; flex-direction:column; gap:8px; }
+.ps-safety:empty { display:none; }
+.ps-alert { display:block; padding:10px 13px; border-radius:12px; font-size:13px; font-weight:600; line-height:1.45;
+  background:var(--danger-wash); border:1px solid var(--danger); color:var(--danger-ink); }
+.ps-alert b { font-weight:800; }
+.ps-alert.warn    { background:var(--warn-wash);    border-color:var(--warn);    color:var(--warn-ink); }
+.ps-alert.ok      { background:var(--success-wash); border-color:var(--success); color:var(--success-ink); }
+.ps-alert.info    { background:var(--info-wash);    border-color:var(--info);    color:var(--info-ink); }
+.ps-alert.neutral { background:var(--surface-2);    border-color:var(--border);  color:var(--muted); }
+
+/* Sections + demographic grid */
+.ps-sec { margin-top:16px; }
+.ps-sec-l { font-size:11px; font-weight:800; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin:0 0 9px; }
+.ps-idgrid { margin-top:0; }
+.ps-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 18px; }
 @media (max-width:560px){ .ps-grid{ grid-template-columns:1fr; } }
-.ps-field-l { font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.2px; text-transform:uppercase; }
-.ps-field-v { font-size:13.5px; color:var(--text); margin-top:1px; word-break:break-word; }
+.ps-field-l { font-size:10.5px; font-weight:800; color:var(--muted); letter-spacing:.05em; text-transform:uppercase; }
+.ps-field-v { font-size:13.5px; font-weight:600; color:var(--text); margin-top:2px; word-break:break-word; }
+
+/* Divider grouping: each async section reads as its own block, not one dense column */
+.ps-safety:not(:empty) { margin-bottom:4px; }
+.ps-pt-card #ps-clinical:not(:empty),
+.ps-pt-card #ps-labresults:not(:empty),
+.ps-pt-card #ps-visits:not(:empty),
+.ps-pt-card #ps-appts:not(:empty),
+.ps-pt-card .ps-consent { margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+
+/* KPI stat tiles — mirror the app .kpi so they're styled inside the modal too */
+.ps-pt-card .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:10px; margin-top:14px; }
+.ps-pt-card .kpi { position:relative; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px 13px; overflow:hidden; }
+.ps-pt-card .kpi::after { content:''; position:absolute; inset:0 auto 0 0; width:4px; background:var(--accent); }
+.ps-pt-card .kpi.a::after{ background:var(--yellow); } .ps-pt-card .kpi.b::after{ background:var(--blue); }
+.ps-pt-card .kpi.c::after{ background:var(--green); }  .ps-pt-card .kpi.d::after{ background:var(--accent); }
+.ps-pt-card .kpi .kl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:800; display:flex; align-items:center; gap:6px; }
+.ps-pt-card .kpi .kl .kd { width:7px; height:7px; border-radius:3px; flex:0 0 auto; }
+.ps-pt-card .kpi .kv { font-size:24px; font-weight:700; letter-spacing:-.02em; margin-top:7px; line-height:1; color:var(--text); }
+.ps-pt-card .kpi .kv small { font-size:12px; color:var(--muted); font-weight:600; margin-left:2px; }
+
+/* Consent / upload footer */
+.ps-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.ps-consent-list { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+
+/* Exam accordion cards */
+.ps-examhead { margin:18px 0 9px; }
+.ps-examhead span { color:var(--muted); font-weight:600; text-transform:none; letter-spacing:0; margin-inline-start:6px; }
 .ps-exam { margin-bottom:10px; padding:0; overflow:hidden; }
+.ps-exam.expanded { box-shadow:var(--shadow-md); border-color:var(--accent); }
 .ps-exam-summary { display:flex; align-items:center; gap:11px; width:100%; text-align:start;
   background:none; border:none; cursor:pointer; padding:14px 16px; color:inherit; font:inherit; }
 .ps-exam-summary:hover { background:var(--card-alt); }
 .ps-exam-caret { flex:0 0 auto; color:var(--muted); font-size:12px; transition:transform .15s ease; }
 .ps-exam.expanded .ps-exam-caret { transform:rotate(90deg); }
-.ps-exam-sum-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
-
-.ps-exam-date { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
-.ps-exam-badges { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
-.ps-exam-body { display:none; padding:0 16px 15px; }
+.ps-exam-sum-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.ps-exam-date { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.ps-exam-badges { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; align-items:center; }
+.ps-exam-body { display:none; padding:2px 16px 15px; border-top:1px solid var(--border); }
 .ps-exam.expanded .ps-exam-body { display:block; }
-.ps-sec-l { font-size:11px; font-weight:800; color:var(--accent); letter-spacing:.3px; text-transform:uppercase; margin:12px 0 7px; border-top:1px dashed var(--border); padding-top:9px; }
-.ps-exam-body .ps-sec-l:first-of-type { border-top:none; padding-top:2px; margin-top:2px; }
+.ps-exam-body .ps-sec-l { color:var(--accent); margin:14px 0 8px; padding-top:12px; border-top:1px dashed var(--border); }
+.ps-exam-body .ps-sec-l:first-of-type { border-top:none; padding-top:10px; margin-top:2px; }
 @media (max-width:560px){ .ps-exam-badges{ justify-content:flex-start; } }
+
+/* Fallbacks so app components stay styled inside the non-.cc worklist modal */
+.ps-exam .exline { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap; }
+.ps-exam .proc { font-size:14px; font-weight:700; color:var(--text); white-space:normal; }
+.ps-exam .acc { font-size:12px; color:var(--muted); font-weight:600; }
+.ps-exam .mod { display:inline-flex; align-items:center; font-size:10.5px; font-weight:800; letter-spacing:.03em;
+  color:#fff; background:var(--accent); padding:3px 7px; border-radius:6px; }
+.ps-exam .mod.ct{ background:#6B4EFF; } .ps-exam .mod.mri{ background:#3BA0FF; } .ps-exam .mod.us{ background:#00C896; }
+.ps-exam .mod.xr{ background:#8358FD; } .ps-exam .mod.mm{ background:#E4739B; }
+.ps-exam .ris { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; padding:3px 9px; border-radius:var(--radius-pill); }
+.ps-exam .ris .rd { width:6px; height:6px; border-radius:50%; flex:0 0 auto; }
+.ps-exam .ris.scheduled { background:var(--surface-2);    color:var(--muted); }        .ps-exam .ris.scheduled .rd{ background:var(--muted); }
+.ps-exam .ris.completed { background:var(--violet-wash);  color:var(--accent); }        .ps-exam .ris.completed .rd{ background:var(--accent); }
+.ps-exam .ris.final     { background:var(--success-wash); color:var(--success-ink); }   .ps-exam .ris.final .rd{ background:var(--success); }
+.ps-exam .sc { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; padding:3px 9px; border-radius:var(--radius-pill); border:none; }
+.ps-exam .sc.ok { background:var(--violet-wash); color:var(--accent); }
+.ps-exam .sc.no { background:var(--danger-wash); color:var(--danger-ink); }
 .ho-patient-name { font-size:17px; font-weight:800; color:var(--primary); }
 .ho-patient-meta { display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:12.5px; align-items:center; margin-top:3px; }
 .ho-de-box { padding:12px 14px; border-radius:14px; border:1.5px solid var(--border); background:var(--card-alt); }
@@ -2421,10 +2485,8 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 .cn-ok { color:#0a7c42; font-weight:700; }
 .cn-err { color:#c0392b; font-weight:600; }
 .cn-foot { display:flex; justify-content:space-between; gap:10px; padding:14px 20px; border-top:1px solid var(--border); background:var(--card-alt); }
-/* Consent bits on the patient-lookup card */
-.ps-consent { margin-top:14px; border-top:1px dashed var(--border); padding-top:12px; }
-.ps-consent-btn.female { box-shadow:0 0 0 3px rgba(220,60,140,.18); }
-.ps-consent-list { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+/* Consent bits on the patient-lookup card (.ps-consent / .ps-consent-list live in the
+   main patient-card block above; .ps-consent-row is the individual filed-doc row) */
 .ps-consent-row { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12.5px;
   padding:7px 10px; border:1px solid var(--border); border-radius:10px; }
 .cn-poll { margin-top:16px; font-size:13.5px; font-weight:700; color:var(--muted); }
