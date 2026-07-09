@@ -107,6 +107,10 @@ let loginInFlight = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Bump on every deploy-relevant change so the running version can be read straight from the
+// clinical response — no VPS shell needed to confirm which code is actually live.
+const CONNECTOR_BUILD = 'note-safe-probe-2026-07-09b';
+
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
     headless: true,
@@ -880,7 +884,7 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       // The vital NAMES (labels, not PHI values) so the name→field mapping can be verified.
       reportNames: _vnvNames(_asVitalRows(vitalReport)),
     };
-    return res.json({ ok: true, file, diagnoses, allergies, vitals, flags, vitalsDebug,
+    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, flags, vitalsDebug,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -1109,6 +1113,8 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
     // EmrHtmlPreview 404s for every template, so no note ever renders. When nothing came back,
     // probe candidate render endpoints against the real doctor row (no query param needed — the
     // Meena route doesn't forward one) and report which returns data, so we can lock in the winner.
+    // SAFE: all candidates run in PARALLEL, each hard-capped at 5s, each wrapped so a bad path can
+    // never hang or crash the connector (an earlier sequential version stalled it in production).
     if (!notes.length && noteRows.length) {
       const row = noteRows.find((r) => /doctor|assessment|physician|progress/i.test(r.templateName || '')) || noteRows[0] || {};
       const b = {
@@ -1122,28 +1128,24 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
       const cands = [
         '/emr-api/api/v1/EMRCore/EmrNoteLogPreview',
         '/emr-api/api/v1/EMRCore/GetEmrNoteLogPreview',
-        '/emr-api/api/v1/EMRCore/EmrNoteLogHtmlPreview',
         '/emr-api/api/v1/EMRCore/GetEmrHtmlPreview',
         '/emr-api/api/v1/EMRCore/EmrPreview',
         '/emr-api/api/v1/EMR/EmrHtmlPreview',
-        '/emr-api/api/v1/EMR/EmrNoteLogPreview',
-        '/emr-api/api/v1/EMRCore/EmrTemplateHtmlPreview',
-        '/emr-api/api/v1/EMRCore/PreviewEmrNote',
         '/emr-api/api/v1/EMRCore/EmrNotePreview',
       ];
-      noteDebug.probeRow = { tpl: row.templateName || null };
-      noteDebug.probe = [];
-      for (const path of cands) {
-        try {
-          const r = await hisFetch(path, { body: b });
+      const probeCap = (path) => Promise.race([
+        hisFetch(path, { body: b }).then((r) => {
           const d = r.json && r.json.data;
-          noteDebug.probe.push({ path: path.replace('/emr-api/api/v1', ''), status: r.status,
+          return { path: path.replace('/emr-api/api/v1', ''), status: r.status,
             dataShape: Array.isArray(d) ? `array(${d.length})` : (d && typeof d === 'object' ? `object[${Object.keys(d).join(',')}]` : (d == null ? 'null' : typeof d)),
-            textHint: (r.text || '').slice(0, 80).replace(/\s+/g, ' ') });
-        } catch (e) { noteDebug.probe.push({ path: path.replace('/emr-api/api/v1', ''), error: String(e && e.message || e) }); }
-      }
+            textHint: (r.text || '').slice(0, 80).replace(/\s+/g, ' ') };
+        }).catch((e) => ({ path: path.replace('/emr-api/api/v1', ''), error: String(e && e.message || e) })),
+        sleep(5000).then(() => ({ path: path.replace('/emr-api/api/v1', ''), status: 'timeout>5s' })),
+      ]);
+      noteDebug.probeRow = { tpl: row.templateName || null };
+      noteDebug.probe = await Promise.all(cands.map(probeCap));
     }
-    return res.json({ ok: true, file, encounterId, notes, noteDebug, fetchedAt: new Date().toISOString() });
+    return res.json({ ok: true, build: CONNECTOR_BUILD, file, encounterId, notes, noteDebug, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
