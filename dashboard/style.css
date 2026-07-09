@@ -3030,7 +3030,8 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 .rw .mod.mm { background: #E4739B; }
 
 .rw .branch-cell { font-size: 12.5px; color: var(--text); font-weight: 600; }
-.rw .branch-cell .dept { font-size: 11px; color: var(--muted); font-weight: 400; }
+.rw .branch-cell .dept { font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; display: flex; align-items: center; gap: 4px; }
+.rw .branch-cell .dept .mi-ico { width: 12px; height: 12px; opacity: .8; }
 
 /* waiting */
 .rw .wait { display: flex; flex-direction: column; gap: 4px; }
