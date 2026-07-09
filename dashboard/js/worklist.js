@@ -20,6 +20,8 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 modCache: new Map(), stageCache: new Map(), pregCache: new Map(),
                 // Per-MRN clinical-indication index cache (bug #2 — inline row indication).
                 indCache: new Map(),
+                // Per-MRN vitals cache (auto-loaded when an order row is expanded).
+                vitalsCache: new Map(),
                 // Live-pill + watchdog bookkeeping (bug #3): the timestamp of the last
                 // good load, a "reconnecting" flag, and a monotonic load generation so a
                 // hung request that the watchdog gave up on can never paint stale data.
@@ -708,7 +710,7 @@ function wlRender() {
       ? wlRowsHtml(match)
       : `<div class="empty"><div class="ei">🔍</div><p>No patient on this board starts with “${escapeHtml(f)}”.${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
     wlRenderTabs(items);
-    wlAutoPreg(); wlAutoIndication(); wlSyncActionbar();
+    wlAutoPreg(); wlAutoIndication(); wlAutoVitals(); wlSyncActionbar();
     return;
   }
 
@@ -745,6 +747,7 @@ function wlRender() {
   // row HTML, so they survive every 12s repaint with no separate restore pass.
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
   wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
+  wlAutoVitals();         // auto-fetch vitals for any EXPANDED order row (throttled, cached)
   wlSyncActionbar();      // reflect the current checkbox selection in the sticky action bar
 }
 
@@ -881,6 +884,8 @@ function wlExpandHtml(it, st) {
     </div>
     <div class="xsec-title">Clinical indication</div>
     <div class="rw-xind">${wlIndEl(it)}</div>
+    <div class="xsec-title">Vital signs</div>
+    <div class="rw-xvitals xchips">${wlVitalsEl(it)}</div>
     <div class="xsec-title">Exam history</div>
     <div class="hist"><div class="hist-muted">History opens in the full patient card.</div></div>
     <div class="xbtns">
@@ -1256,6 +1261,62 @@ function wlIndPump() {
       .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlIndSet(mr); })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })
       .finally(() => { _wlIndBusy--; _wlIndInflight.delete(mr); wlIndPump(); });
+  }
+}
+
+// ── Vitals in the expanded order card (auto-loaded on expand) ──────────────────
+// Mirrors the clinical-indication pattern: when a row is open, fetch the patient's
+// vitals once (cached per MRN, throttled) and fill every matching cell in place —
+// never a full re-render, so expanded rows don't collapse mid-fetch.
+const _wlVitalsQueue = [];
+const _wlVitalsInflight = new Set();
+let _wlVitalsBusy = 0;
+const _WL_VITALS_MAX = 3;
+function wlVitalsChips(v) {
+  if (!v) return '<span style="color:var(--muted);font-size:12px">No vitals on file</span>';
+  const chip = (label, val, unit) => (val != null && String(val).trim() !== '')
+    ? `<span class="xchip">${escapeHtml(label)} <b>${escapeHtml(String(val))}${unit || ''}</b></span>` : '';
+  const bp = (v.systolic && v.diastolic)
+    ? `<span class="xchip">BP <b>${escapeHtml(String(v.systolic))}/${escapeHtml(String(v.diastolic))}</b></span>` : '';
+  const chips = [
+    chip('Ht', v.height, v.height && Number(v.height) > 3 ? 'cm' : ''),
+    chip('Wt', v.weight, 'kg'), chip('BMI', v.bmi, ''), bp,
+    chip('Pulse', v.pulse, ''), chip('Temp', v.temperature, '°'), chip('SpO₂', v.spo2, '%'),
+  ].filter(Boolean).join('');
+  return chips || '<span style="color:var(--muted);font-size:12px">No vitals on file</span>';
+}
+function wlVitalsEl(it) {
+  const mr = String(it.mrno || '');
+  if (!mr) return '';
+  const attr = ` class="wl-vitalscell" data-mr="${escapeHtml(mr)}"`;
+  if (wlState.vitalsCache.has(mr)) return `<div${attr}>${wlVitalsChips(wlState.vitalsCache.get(mr))}</div>`;
+  return `<div${attr}><span class="wl-shimmer" style="width:180px"></span></div>`;
+}
+function wlVitalsSet(mr) {
+  const sel = '.wl-vitalscell[data-mr="' + String(mr).replace(/["\\]/g, '\\$&') + '"]';
+  document.querySelectorAll(sel).forEach((el) => { el.innerHTML = wlVitalsChips(wlState.vitalsCache.get(mr)); });
+}
+function wlAutoVitals() {
+  const items = (wlState.data && wlState.data.items) || [];
+  const seen = new Set(_wlVitalsQueue.map((x) => x.mr));
+  for (const it of items) {
+    if (!wlState.openRows.has(wlRowUid(it))) continue;   // only expanded rows
+    const mr = String(it.mrno || '');
+    if (!mr || wlState.vitalsCache.has(mr) || seen.has(mr) || _wlVitalsInflight.has(mr)) continue;
+    seen.add(mr);
+    _wlVitalsQueue.push({ mr });
+  }
+  wlVitalsPump();
+}
+function wlVitalsPump() {
+  while (_wlVitalsBusy < _WL_VITALS_MAX && _wlVitalsQueue.length) {
+    const { mr } = _wlVitalsQueue.shift();
+    if (wlState.vitalsCache.has(mr) || _wlVitalsInflight.has(mr)) continue;
+    _wlVitalsBusy++; _wlVitalsInflight.add(mr);
+    API.get('/radiology/patient/' + encodeURIComponent(mr) + '/clinical')
+      .then((d) => { wlState.vitalsCache.set(mr, (d && d.vitals) || null); wlVitalsSet(mr); })
+      .catch(() => { /* leave the shimmer; a later expand retries */ })
+      .finally(() => { _wlVitalsBusy--; _wlVitalsInflight.delete(mr); wlVitalsPump(); });
   }
 }
 

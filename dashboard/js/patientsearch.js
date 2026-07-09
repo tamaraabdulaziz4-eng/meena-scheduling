@@ -224,11 +224,35 @@ function renderPsDetail() {
   psLoadConsents();
   psLoadDocuments();
   psLoadLabs();
-  psLoadClinical();                            // problem list · allergies · vitals (from Siratech)
-  psLoadRealLabs();                            // lab results — test · value · range (from Siratech)
-  psLoadVisits();                              // recent clinic visits (encounter history)
-  psLoadAppointments();                        // appointment history
+  psLoadClinical();                            // problem list · allergies · vitals (from Siratech) — auto (kept open)
+  // The heavy history sections each hit Siratech; loading all three on open made the card slow.
+  // Render them as collapsed headers that fetch only when tapped — vitals (above) stay auto.
+  psLazyStub('ps-labresults', 'Lab results');
+  psLazyStub('ps-visits', 'Recent clinic visits');
+  psLazyStub('ps-appts', 'Appointment history');
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
+}
+
+// A collapsed, tap-to-load section header. The real loader (psLoadRealLabs / psLoadVisits /
+// psLoadAppointments) renders into the same container, replacing this stub, only when opened —
+// so the card paints fast and each Siratech call happens on demand.
+function psLazyStub(id, title) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  box.dataset.psLoaded = '';
+  box.innerHTML = `<div class="ps-sec" style="cursor:pointer" onclick="psLazyOpen('${id}')">
+    <div class="ps-sec-l" style="display:flex;align-items:center;gap:7px;margin:0">
+      <span class="ps-lazy-chev" style="color:var(--muted)">▸</span>${escapeHtml(title)}
+      <span style="color:var(--muted);font-weight:500;font-size:11px">· tap to load</span>
+    </div></div>`;
+}
+function psLazyOpen(id) {
+  const box = document.getElementById(id);
+  if (!box || box.dataset.psLoaded) return;
+  box.dataset.psLoaded = '1';
+  box.innerHTML = `<div class="ps-sec"><div class="ps-sec-l" style="color:var(--muted);margin:0">Loading…</div></div>`;
+  const fn = { 'ps-labresults': psLoadRealLabs, 'ps-visits': psLoadVisits, 'ps-appts': psLoadAppointments }[id];
+  if (fn) fn();
 }
 
 // Patient clinical context — problem list (ICD diagnoses), allergies / clinical
