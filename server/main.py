@@ -8314,7 +8314,7 @@ def file_consent(consent_id: int, request: Request, user=Depends(require_radiolo
     if not rec:
         raise HTTPException(404, "Consent not found")
     file_no = (request.query_params.get("file") or "").strip()
-    if file_no and file_no != str(rec.get("file_no")):
+    if not file_no or file_no != str(rec.get("file_no")):
         raise HTTPException(403, "Provide the matching patient file number to file this consent")
     if not rec.get("pdf"):
         raise HTTPException(409, "This consent has not been signed yet")
@@ -8365,7 +8365,7 @@ def consent_pdf(consent_id: int, request: Request, user=Depends(require_radiolog
 
 # ---- QR / remote signing: patient signs on her own phone ---------------------
 @app.post("/api/consent/link")
-async def create_consent_link(request: Request, user=Depends(require_admin)):
+async def create_consent_link(request: Request, user=Depends(require_radiology)):
     """Create a pending consent + a one-time link/QR the patient opens on her own
     phone to read & sign. Her data is pre-registered now; the PDF is filled when she
     signs. Returns the URL and an inline-SVG QR."""
@@ -8409,7 +8409,7 @@ async def create_consent_link(request: Request, user=Depends(require_admin)):
     return {"ok": True, "id": row["id"], "url": url, "qr": qr}
 
 @app.get("/api/consent/status/{consent_id}")
-def consent_status(consent_id: int, user=Depends(require_admin)):
+def consent_status(consent_id: int, user=Depends(require_radiology)):
     """Poll whether a QR consent has been signed yet."""
     r = q("SELECT status, signed_at FROM scheduling.consents WHERE id=%s", (consent_id,), one=True)
     if not r:

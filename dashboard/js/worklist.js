@@ -199,7 +199,6 @@ async function renderWorklistPage() {
           <button id="rw-dCompact" class="on" onclick="wlSetDensity('compact')">Compact</button>
           <button id="rw-dDetailed" onclick="wlSetDensity('detailed')">Detailed</button>
         </div>
-        <button class="ctrl mobfilter" onclick="wlToggleMobFilters()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Filters</button>
         <button class="ctrl tbtn today" id="wl-today-btn" onclick="wlTodayRange()">Today</button>
         <button class="ctrl" onclick="wlToggleDate()">${icon('calendar')}Date</button>
         <select id="wl-branch" class="ctrl wl-branchsel" onchange="wlOnBranch()">
@@ -219,7 +218,7 @@ async function renderWorklistPage() {
       <nav class="rw-tabs" id="rw-tabs"></nav>
 
       <div class="rw-main">
-        <div class="rw-filterbar" id="rw-filters">
+        <div class="rw-fbar" id="rw-filters">
           <div class="fgrp"><span class="fh4">Modality</span><div class="chips" id="rw-modchips"></div></div>
           <div class="fgrp"><span class="fh4">Priority</span>
             <div class="frow-h">
@@ -536,29 +535,8 @@ function wlMergeEnrich(d, isReady) {
 //   imaged   — a study exists in DePACS/PACS (scan done), not yet reported
 //   reported — the DePACS study is VERIFIED (signed) → auto-file files it and it
 //              then drops off this board on its own.
-// The full radiology exam-status lifecycle, the way a real RIS (Epic Radiant, Sectra,
-// Merge) models it, mapped onto the signals Meena has:
-//   Scheduled/Ordered → Arrived → In progress → Completed(imaged) → Preliminary(draft)
-//   → Final(reported)
-// Returns { bucket, label, cls, icon, state } — bucket drives the status tabs,
-// `state` the Clinical Calm `.ris` pill; cls/icon kept for legacy references.
-function wlRisStatus(it) {
-  if (it.stage === 'reported')
-    return { bucket: 'reported', label: 'Final report', cls: 'wl-st-final', icon: '', state: 'final' };
-  if (it.stage === 'draft')
-    return { bucket: 'reporting', label: 'Preliminary', cls: 'wl-st-prelim', icon: '', state: 'prelim' };
-  if (it.stage === 'imaged' || it.scanned || wlPrelimStage(it) === 'imaged')
-    // `pending` = placed in Imaged from the preliminary HIS stage alone (no hard scan
-    // signal, DePACS not yet confirmed) → the badge shows a "confirming with PACS" dot
-    // that clears in place once the ready pass sets it.stage. Never blocks the paint.
-    return { bucket: 'imaged', label: 'Imaged', cls: 'wl-st-done', icon: '', state: 'completed',
-             pending: !it.stage && !it.scanned };
-  if (it.examStartAt)
-    return { bucket: 'waiting', label: 'In progress', cls: 'wl-st-prog', icon: '', state: 'progress' };
-  if (it.arrivedAt)
-    return { bucket: 'waiting', label: 'Arrived', cls: 'wl-st-arr', icon: '', state: 'arrived' };
-  return { bucket: 'waiting', label: 'Scheduled', cls: 'wl-st-sched', icon: '', state: 'scheduled' };
-}
+// (The legacy wlRisStatus() lane-badge mapper was removed — the unified status model
+// below is the single source of truth for the board; it.stage still drives that model.)
 // ── Unified status model (worklist UI v2) ──────────────────────────────────────
 // One vocabulary for the whole board: ordered → received → progress → completed →
 // reported. `wlStatusRaw` reads the freshest signal; `wlStatus` RATCHETS it forward
@@ -598,10 +576,14 @@ const WL_TABS = [['all', 'All', false], ['ordered', 'Ordered', false], ['receive
 function wlRowUid(it) { return 'u' + String(wlRowKey(it) || ('m' + (it.mrno || ''))).replace(/[^A-Za-z0-9_-]/g, ''); }
 // Modality of a row, normalised to the coarse RIS bucket for filtering.
 function wlRowMod(it) {
+  // Word-boundary matching (a plain substring wrongly read "SINUS" as US, hiding the
+  // consent/pregnancy safety prompt on a radiation exam). Kept in step with psModBucket.
   const raw = String(it.modality || it.exam || '').toUpperCase();
-  for (const k of ['CT', 'MR', 'US', 'XR', 'MG']) if (raw.includes(k)) return k;
-  if (/MRI/.test(raw)) return 'MR'; if (/X.?RAY|XR|CR|DR\b/.test(raw)) return 'XR';
-  if (/ULTRA|SONO|US\b/.test(raw)) return 'US'; if (/MAMMO|MG\b/.test(raw)) return 'MG';
+  if (/\bMRI?\b|MAGNET/.test(raw)) return 'MR';
+  if (/ULTRA|SONO|\bUS\b|DOPPLER/.test(raw)) return 'US';
+  if (/\bCT\b|COMPUTED|TOMOGRAPH/.test(raw)) return 'CT';
+  if (/MAMMO|\bMG\b/.test(raw)) return 'MG';
+  if (/X.?RAY|\bXR\b|\bCR\b|\bDX\b|\bDR\b|RADIOGRAPH/.test(raw)) return 'XR';
   return null;
 }
 
@@ -808,7 +790,7 @@ function wlExpandHtml(it, st) {
     <div class="xbtns">
       ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
-      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
+      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
       ${wlWorkflowBtns(it, st)}
     </div>
   </div>`;
@@ -863,7 +845,6 @@ function wlResetFilters() {
 function wlToggleRow(uid, e) { if (e) e.stopPropagation(); if (wlState.openRows.has(uid)) wlState.openRows.delete(uid); else wlState.openRows.add(uid); wlRender(); }
 function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRender(); }
 function wlClearSel() { wlState.selMrns.clear(); wlRender(); }
-function wlToggleMobFilters() { const f = document.getElementById('rw-filters'); if (f) f.classList.toggle('open'); }
 
 // ── Phase-2 workflow actions (Meena-owned local overlay) ──────────────────────
 // receive / start / complete / assign / note / cancel — POST to the order endpoint,
@@ -1084,11 +1065,14 @@ function wlPregBadge(r) {
   }
   return `<span class="sc warn" title="${nm} ordered but result still pending">${icon('droplet')} Test pending${dstr}</span>`;
 }
-function wlConsent(mrno, name, exam, doctor, branch) {
+function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
+  // Keys must match the /consent/link backend: physician (not referring_doctor),
+  // plus bill_no/site so the signed PDF auto-files against the right radiology order.
   const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: name, procedure: exam,
-                    referring_doctor: doctor || '', branch: branch || '' };
+                    physician: doctor || '', branch: branch || '',
+                    bill_no: bill || '', site: (Number(site) || null) };
   if (typeof openConsentQR === 'function') { openConsentQR(prefill, () => wlLoad(true)); return; }
   if (typeof openConsent === 'function') { openConsent(prefill, () => wlLoad(true)); return; }
   if (typeof toast === 'function') toast('Consent module unavailable', 'err');
