@@ -494,7 +494,12 @@ function wlCurRank(it) {
 // Merge one enrichment pass onto the visible rows and repaint IMMEDIATELY — the
 // sibling pass may still be running, but whatever this one filled shows now.
 function wlMergeEnrich(d, isReady) {
-  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); wlState.statusRatchet.clear(); }
+  // Prune the enrichment caches when they get large. The statusRatchet is deliberately NOT
+  // cleared here: clearing it lets a row whose momentary fast-pass status is ambiguous
+  // recompute backward (e.g. Completed → Ordered) and jump tabs. It carries the forward-only
+  // guarantee, so prune it only on its own far-higher watermark as a last-resort memory cap.
+  if (wlState.modCache.size > 3000) { wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear(); }
+  if (wlState.statusRatchet.size > 8000) wlState.statusRatchet.clear();
   const enr = new Map();
   for (const it of ((d && d.items) || [])) {
     const k = wlRowKey(it);
@@ -550,13 +555,27 @@ function wlStatusRaw(it) {
   // A Meena "Not Done" (locally cancelled) order is terminal and off the progress ladder.
   if (it.localStatus === 'cancelled') return 'notdone';
   const s = String(it.hisStatus || '').toLowerCase();
+  // A NEGATED HIS status ("Not Started", "Not Done", "Incomplete") must not trip the
+  // positive substring tests below (which would read "started"/"done"/"complet") — those
+  // wrongly advance a fresh order and the forward ratchet then locks it there. The reliable
+  // overlay/stage signals stay authoritative regardless.
+  const neg = /\bnot\b|incomplete/.test(s);
   if (it.hisReported || it.stage === 'reported' || it.readyToFile) return 'reported';
   // Operator overlay actions (completedAt/startedAt/receivedAt) advance the row alongside
   // the HIS signals, so a manually-driven exam moves even before Siratech reflects it.
-  if (it.completedAt || /scan\s*done|complet|\bdone\b|acquir|imaged/.test(s) || it.scanned || it.stage === 'imaged' || it.examEndAt || it.stage === 'draft') return 'completed';
-  if (it.startedAt || /in\s*progress|scanning|ongoing|started/.test(s) || it.examStartAt) return 'progress';
-  if (it.receivedAt || it.arrivedAt || /arrived/.test(s)) return 'received';
+  if (it.completedAt || it.scanned || it.stage === 'imaged' || it.examEndAt || it.stage === 'draft'
+      || (!neg && /scan\s*done|complet|\bdone\b|acquir|imaged/.test(s))) return 'completed';
+  if (it.startedAt || it.examStartAt || (!neg && /in\s*progress|scanning|ongoing|started/.test(s))) return 'progress';
+  if (it.receivedAt || it.arrivedAt || (!neg && /arrived/.test(s))) return 'received';
   return 'ordered';
+}
+// True only when a real study exists to open. An operator's overlay "Complete" advances the
+// lane but does NOT mean PACS has a study — without this a Report/Images button on an
+// un-imaged 'completed' row fires openStudyViewer with an empty accession and surfaces the
+// wrong exam (or a dead end) for a multi-exam patient. Mirrors the orders.js study predicate.
+function wlHasStudy(it) {
+  return !!(it.accession || it.accessionNumber || it.invPatTestResultId || it.imagedAt || it.scanned
+            || it.stage === 'imaged' || it.stage === 'draft' || it.stage === 'reported');
 }
 function wlStatus(it) {
   const raw = wlStatusRaw(it);
@@ -729,7 +748,7 @@ function wlRowHtml(it) {
   const examCell = it.exam
     ? `<span class="ename">${escapeHtml(it.exam)}</span>`
     : (enriching ? '<span class="wl-shimmer" style="width:120px"></span>' : '<span class="ename" style="color:var(--muted)">—</span>');
-  const canReport = (st === 'completed' || st === 'reported');
+  const canReport = (st === 'completed' || st === 'reported') && wlHasStudy(it);
   const primaryAct = canReport
     ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
     : `<button class="iconbtn" title="Handoff" onclick="event.stopPropagation();wlOpenHandoff('${jsAttr(mrn)}')">${icon('inbox')}</button>`;
@@ -763,7 +782,7 @@ function wlExpandHtml(it, st) {
   const dept = it.department || '';
   const acc = it.accession || it.accessionNumber || '';
   const age = wlAge(it.ageHours);
-  const canReport = (st === 'completed' || st === 'reported');
+  const canReport = (st === 'completed' || st === 'reported') && wlHasStudy(it);
   const needConsent = wlNeedsRadSafety(it) && !it.consentOnFile;
   const demo = [it.age != null ? escapeHtml(String(it.age)) + 'y' : '', genderFull].filter(Boolean).join(' · ');
   const chips = [`MRN ${escapeHtml(mrn)}`, demo, it.branch ? escapeHtml(it.branch) : '']
@@ -817,7 +836,7 @@ function wlSyncActionbar() {
   const it = single ? items.find((x) => String(x.mrno) === sel[0]) : null;
   const name = single ? (it ? (it.patientName || ('MRN ' + sel[0])) : ('MRN ' + sel[0])) : (sel.length + ' patients selected');
   const sub = (single && it) ? `MRN ${escapeHtml(it.mrno || '')}${it.exam ? ' · ' + escapeHtml(it.exam) : ''}` : '';
-  const canReport = single && it && (it.__status === 'completed' || it.__status === 'reported');
+  const canReport = single && it && (it.__status === 'completed' || it.__status === 'reported') && wlHasStudy(it);
   const acc = it ? (it.accession || it.accessionNumber || '') : '';
   const real = [
     single ? `<button class="btn" onclick="wlOpenPatientCard('${jsAttr(sel[0])}')">${icon('user')}Patient card</button>` : '',
@@ -987,9 +1006,13 @@ function wlAge(h) { return h == null ? '' : (h < 24 ? `${h}h` : `${Math.floor(h 
 
 // A female patient needs a signed non-pregnancy consent BEFORE imaging. Detect
 // female from the HIS gender and surface the consent state right on the row.
-function wlIsFemale(g) {
-  const s = String(g || '').trim().toLowerCase();
-  return s.startsWith('f') || /أنث|انث/.test(s);
+// Delegates to the shared isFemaleGender (util.js) so the board and patient card never drift.
+function wlIsFemale(g) { return isFemaleGender(g); }
+// Patient age in years from whatever the row carries (explicit age, else ageHours), or null.
+function wlAgeYears(it) {
+  if (it.age != null && String(it.age).trim() !== '') { const n = parseInt(it.age, 10); if (!isNaN(n)) return n; }
+  if (it.ageHours != null && it.ageHours !== '') { const n = Number(it.ageHours); if (!isNaN(n)) return Math.floor(n / 8760); }
+  return null;
 }
 // Non-pregnancy consent + β-hCG check are RADIATION-safety measures: they apply
 // only to a female patient having an IONISING-radiation exam. Ultrasound (US)
@@ -998,7 +1021,13 @@ function wlIsFemale(g) {
 // a safety prompt when unsure.
 const WL_NONRAD_MODS = new Set(['US', 'MR']);
 function wlNeedsRadSafety(it) {
-  return wlIsFemale(it.gender) && !WL_NONRAD_MODS.has(wlRowMod(it));
+  if (!wlIsFemale(it.gender)) return false;
+  if (WL_NONRAD_MODS.has(wlRowMod(it))) return false;
+  // Childbearing-age band: a paediatric or post-menopausal female needs neither the
+  // non-pregnancy consent nor a β-hCG check. Unknown age stays safe-side (still prompt).
+  const yrs = wlAgeYears(it);
+  if (yrs != null && (yrs < 12 || yrs > 55)) return false;
+  return true;
 }
 // Radiation-safety decision support: for a female patient of child-bearing age,
 // let the tech check β-hCG / pregnancy lab status BEFORE imaging — on demand, per

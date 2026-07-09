@@ -39,6 +39,16 @@ function modBadges(modality, { fallbackCls = '' } = {}) {
 // Modality → chart colour (shared by rad stats + rad report).
 const MOD_COLOR = { CT: 'var(--accent,#6b4eff)', MRI: '#0ea5e9', 'X-Ray': '#22c55e', Ultrasound: '#f59e0b', Mammography: '#ec4899', 'DEXA / Bone Density': '#14b8a6', Fluoroscopy: '#8b5cf6', Other: '#94a3b8' };
 
+// Female-gender detection — the SINGLE source of truth for radiation-safety gating
+// (non-pregnancy consent + β-hCG), shared by the worklist and the patient card so the two
+// screens can never disagree. Covers Latin ("F", "Female") and the Arabic spellings the HIS
+// records: أنثى / انثى (female) and امرأة (woman).
+function isFemaleGender(g) {
+  const s = String(g == null ? '' : g).trim().toLowerCase();
+  if (!s) return false;
+  return s.startsWith('f') || s.includes('female') || /أنث|انث|امرأ/.test(s);
+}
+
 // ── Radiology study viewer ────────────────────────────────────────────────────
 // Opens a modal with the radiology report TEXT + status + a button to the cloud
 // image viewer — all live from Siratech (FetchRadiologyReport / FetchRadiologyImage
