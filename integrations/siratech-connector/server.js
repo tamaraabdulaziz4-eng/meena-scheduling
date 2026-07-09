@@ -685,6 +685,19 @@ const _VITAL_MAP = [
   ['spo2', ['spo2', 'spO2', 'oxygenSaturation', 'saturation']],
   ['respiratoryRate', ['respiratoryRate', 'respRate', 'rr']],
 ];
+// The vitals endpoints return in different shapes (a bare array, or an object wrapping the
+// rows, or a single object of values) — normalise any of them to an array of rows.
+function _asVitalRows(x) {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  if (typeof x === 'object') {
+    for (const k of ['rows', 'vitals', 'list', 'items', 'data', 'result', 'vitalSigns']) {
+      if (Array.isArray(x[k])) return x[k];
+    }
+    return [x];
+  }
+  return [];
+}
 function _clinVitals(list) {
   const rows = Array.isArray(list) ? list : [];
   if (!rows.length) return null;
@@ -705,10 +718,18 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     await getToken();
     const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
     const G = (path) => hisFetch(path, { method: 'GET' }).then((r) => (r.json && r.json.data)).catch(() => null);
-    const [dx, allergyD, vitalList, patData] = await Promise.all([
+    // Vitals come from these EMR endpoints (mrno + fromDate/toDate). VitalSign/List was the
+    // old (empty) source; Clinicalreport/Vitals and VitalSign/Summary are the ones the HIS
+    // actually populates — query all and use whichever returns rows.
+    const vFrom = new Date(Date.now() - 730 * 864e5).toISOString();   // ~2 years back
+    const vTo = new Date(Date.now() + 864e5).toISOString();
+    const vBody = { mrno: file, fromDate: vFrom, toDate: vTo };
+    const [dx, allergyD, vitalList, vitalReport, vitalSummary, patData] = await Promise.all([
       H('/emr-api/api/v1/Diagnosis/PatientProblemlist', { mrno: file }),
       H('/emr-api/api/v1/EMR/Allergies/ClinicalWarnings', { mrno: file }),
       H('/emr-api/api/v1/VitalSign/List', { mrno: file }),
+      H('/emr-api/api/v1/Clinicalreport/Vitals', vBody),
+      H('/emr-api/api/v1/VitalSign/Summary', vBody),
       G('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0'),
     ]);
     // Radiology-relevant patient flags: infection status (isolation / contrast &
@@ -741,7 +762,12 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     // Height/weight/BMI often live on the patient RECORD (PatientData), not the per-visit
     // VitalSign list — merge those in as a fallback so the card can show them even when the
     // clinic didn't file a vitals row. Same broad aliases as normalizePatient.
-    let vitals = _clinVitals(vitalList);
+    // First vitals source that yields any value wins (report → summary → old list).
+    let vitals = null;
+    for (const src of [vitalReport, vitalSummary, vitalList]) {
+      const v = _clinVitals(_asVitalRows(src));
+      if (v) { vitals = v; break; }
+    }
     const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
     const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
     let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
@@ -763,10 +789,16 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     // vital can be mapped from the connector log without a live debugger.
     if (!_clinKeysLogged) {
       _clinKeysLogged = true;
-      try {
-        console.log('[clinical] PatientData keys:', Object.keys(pd || {}).join(','));
-        console.log('[clinical] VitalSign[0] keys:', Object.keys((Array.isArray(vitalList) ? vitalList[0] : {}) || {}).join(','));
-      } catch (e) { /* ignore */ }
+      const kdump = (label, x) => {
+        try {
+          const rows = _asVitalRows(x);
+          console.log(`[clinical] ${label} rows=${rows.length} keys=`, Object.keys(rows[0] || (x && typeof x === 'object' ? x : {}) || {}).join(','));
+        } catch (e) { /* ignore */ }
+      };
+      kdump('Clinicalreport/Vitals', vitalReport);
+      kdump('VitalSign/Summary', vitalSummary);
+      kdump('VitalSign/List', vitalList);
+      try { console.log('[clinical] PatientData keys:', Object.keys(pd || {}).join(',')); } catch (e) { /* ignore */ }
     }
     return res.json({ ok: true, file, diagnoses, allergies, vitals, flags,
       fetchedAt: new Date().toISOString() });
