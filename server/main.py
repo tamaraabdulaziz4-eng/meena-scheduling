@@ -6809,6 +6809,16 @@ def radiology_his_user_privileges(user_id: str, request: Request, user=Depends(r
     return _bridge_request("/his/user/" + urllib.parse.quote(user_id)
                            + "/privileges?hospitalId=" + urllib.parse.quote(hosp) + raw, timeout=90)
 
+@app.get("/api/radiology/his-user/{user_id}/umgr-probe")
+def radiology_his_user_umgr_probe(user_id: str, user=Depends(require_superadmin)):
+    """READ-ONLY reachability check for the user-management privilege API (superadmin)."""
+    import urllib.parse
+    user_id = (user_id or "").strip()
+    if not user_id:
+        raise HTTPException(400, "Enter a HIS user id")
+    return _bridge_request("/his/user/" + urllib.parse.quote(user_id) + "/umgr-probe", timeout=90)
+
+
 @app.get("/api/radiology/patient/{file_no}/labs")
 def radiology_patient_labs(file_no: str, user=Depends(require_radiology)):
     """The patient's lab results — test · value · reference range · normal/abnormal,
