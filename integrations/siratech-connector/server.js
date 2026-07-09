@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'privileges-probe-2026-07-09g';
+const CONNECTOR_BUILD = 'privileges-names-2026-07-09h';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1135,7 +1135,10 @@ app.get('/user/:id/privileges', requireAuth, async (req, res) => {
     const sampleKeys = (x) => (x && Array.isArray(x.data) && x.data[0] && typeof x.data[0] === 'object') ? Object.keys(x.data[0])
       : (x && x.data && typeof x.data === 'object' && !Array.isArray(x.data) ? Object.keys(x.data).slice(0, 40) : []);
     return res.json({ ok: true, build: CONNECTOR_BUILD, userId: uid, hospitalId,
-      privilegesByUser: { status: priv.status, error: priv.error || null, topLevel: sz(priv), leafCount: countTree(priv.data), keys: sampleKeys(priv), sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
+      privilegesByUser: { status: priv.status, error: priv.error || null, count: sz(priv), keys: sampleKeys(priv),
+        // The full list of privilege KEYS (names) so we can catalogue exactly what each grants.
+        names: Array.isArray(priv.data) ? priv.data.map((p) => p && (p.privilages || p.privileges || p.privilegeName || p.name)).filter(Boolean) : [],
+        sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
       modulePrivilege: { status: modPriv.status, error: modPriv.error || null, topLevel: sz(modPriv), leafCount: countTree(modPriv.data), keys: sampleKeys(modPriv) },
       modules: { status: modules.status, error: modules.error || null, count: sz(modules), keys: sampleKeys(modules) },
       menu: { status: menu.status, error: menu.error || null, topLevel: sz(menu), leafCount: countTree(menu.data), keys: sampleKeys(menu) },
