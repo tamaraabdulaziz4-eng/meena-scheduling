@@ -398,18 +398,16 @@ function _sidebarBackdrop() {
   return el;
 }
 
+// Top-nav world: the "sidebar" is the horizontal primary nav (#sidebar). On
+// phones it collapses behind the hamburger as a drop-down menu — toggleSidebar
+// opens/closes that menu with a tap-to-close backdrop. On desktop the nav is
+// always visible, so this is effectively a mobile-only affordance.
 function toggleSidebar() {
   const sb = document.getElementById('sidebar');
-  const btn = document.getElementById('sidebar-toggle');
-  if (_isMobile()) {
-    // Off-canvas drawer: slide in over the content with a tap-to-close backdrop.
-    const open = sb.classList.toggle('mobile-open');
-    _sidebarBackdrop().classList.toggle('show', open);
-    document.body.classList.toggle('drawer-open', open);
-  } else {
-    sb.classList.toggle('collapsed');
-    if (btn) btn.innerHTML = sb.classList.contains('collapsed') ? '&#10095;' : '&#10094;';
-  }
+  if (!sb) return;
+  const open = sb.classList.toggle('mobile-open');
+  _sidebarBackdrop().classList.toggle('show', open);
+  document.body.classList.toggle('drawer-open', open);
 }
 
 function closeSidebarMobile() {
@@ -421,21 +419,23 @@ function closeSidebarMobile() {
   document.body.classList.remove('drawer-open');
 }
 
-// ── Icon-rail: collapse the sidebar to an icons-only rail (persisted) ─────────
-// A distinct desktop affordance from the full off-canvas collapse — frees space
-// on dense boards while keeping every nav destination one click away.
-function applyRailState() {
-  const sb = document.getElementById('sidebar');
-  if (!sb) return;
-  sb.classList.toggle('rail', localStorage.getItem('sidebar-rail') === '1');
+// ── User menu (top-nav account dropdown) ──────────────────────────────────────
+// Holds change-password / theme toggle / sign-out. Opens on click, closes on an
+// outside click.
+function toggleUserMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('user-menu');
+  if (m) m.classList.toggle('open');
 }
-function toggleRail() {
-  const sb = document.getElementById('sidebar');
-  if (!sb || _isMobile()) return;                 // rail is a desktop mode only
-  const on = sb.classList.toggle('rail');
-  try { localStorage.setItem('sidebar-rail', on ? '1' : '0'); } catch (e) {}
-}
-document.addEventListener('DOMContentLoaded', applyRailState);
+document.addEventListener('click', (e) => {
+  const m = document.getElementById('user-menu');
+  if (m && m.classList.contains('open') && !m.contains(e.target)) m.classList.remove('open');
+});
+
+// ── Icon-rail: retired with the move to a top navigation bar. Kept as safe
+// no-ops so any stale caller / inline handler doesn't throw.
+function applyRailState() { /* no-op */ }
+function toggleRail() { /* no-op */ }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 const MONTHS = ['January','February','March','April','May','June',

@@ -28,7 +28,7 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 // A single status vocabulary per order, ratcheted forward; the active tab;
                 // row density; the checkbox selection (by MRN) and expanded rows (by row uid);
                 // and the left-panel filters (modality set / priority / doctor / sort).
-                tab: 'all', density: 'compact',
+                tab: 'ordered', density: 'compact',
                 selMrns: new Set(), openRows: new Set(),
                 fMods: new Set(), fPrio: '', fDoc: '', fSort: 'wait',
                 _docSig: null, mobFilters: false,
@@ -167,7 +167,7 @@ async function renderWorklistPage() {
   wlState.from = wlTodayLocal(); wlState.to = wlTodayLocal();   // default: today only
   // Fresh redesign view state on every entry: default tab, compact rows, nothing
   // selected/expanded, no left-panel filters.
-  wlState.tab = 'all'; wlState.density = 'compact';
+  wlState.tab = 'ordered'; wlState.density = 'compact';
   wlState.selMrns.clear(); wlState.openRows.clear();
   wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = ''; wlState.fSort = 'wait';
   wlState._docSig = null; wlState.mobFilters = false;
