@@ -485,10 +485,22 @@ async function wlEnrich(silent) {
   // single combined request made the Exam/Type columns shimmer until the SLOWEST
   // work finished; now each pass merges + repaints the moment it lands.
   try {
-    // Modality/exam enrichment only. The pipeline STAGE now comes from the native
-    // Siratech status (hisStatus) already on the fast pass, so the slow per-patient
-    // DePACS "ready" pass is no longer fetched for the board (it drove the old glitch).
-    await API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d, false)).catch(() => {});
+    const passes = [];
+    // Modality/exam enrichment — fast HIS work, runs on every enrich.
+    passes.push(API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d, false)).catch(() => {}));
+    // Pipeline STAGE — the slow per-patient DePACS "ready" pass. It NO LONGER withholds the
+    // first paint (the fast pass already placed rows by native hisStatus, and the stage
+    // ratchet in wlMergeEnrich keeps it flicker-free), so the old "everyone waits then jumps"
+    // glitch can't return. But it must run, throttled, because it's the ONLY signal that
+    // advances the Meena ledger to state='reported'/reported_at on the server — which powers
+    // orphan detection (a verified report that never reached the patient file), TAT stats,
+    // and the cold-open Final seed. Run it on an explicit load, and at most every ~3 min on
+    // the live timer so it stays light on the connector.
+    if (!silent || (Date.now() - (wlState.lastReady || 0) > 180000)) {
+      passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
+        .then((d) => { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); }).catch(() => {}));
+    }
+    await Promise.all(passes);
     wlState.lastEnrich = Date.now();
   } finally {
     clearTimeout(enrichWatch);
