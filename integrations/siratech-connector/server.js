@@ -1067,6 +1067,42 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
       mrno: file, fromDate: from, toDate: to, hospitalId: null, groupByValue: String(encounterId),
       searchText: '', searchType: 0, groupBy: 0, limit: 20, offset: 0, empcat: '1,2,3' } });
     const noteRows = (dg.json && dg.json.data) || [];
+    // One-shot endpoint DISCOVERY (?probe=1): EmrHtmlPreview 404s, so try candidate note-render
+    // paths against the real doctor row and report which returns data — then we lock in the winner.
+    if (req.query.probe) {
+      const row = noteRows.find((r) => /doctor|assessment|physician|progress/i.test(r.templateName || '')) || noteRows[0] || {};
+      const b = {
+        emrPatMastChecklistId: 0, emrProviderVisitId: Number(row.emrProviderVisitId) || 0,
+        templateId: row.emrTemplateId || 0, emrTemplateId: Number(row.emrTemplateId) || 0,
+        mrno: file, providerId: String(providerId), gender, age,
+        patFinEncounterId: Number(encounterId) || 0, patFinEncounterID: Number(encounterId) || 0,
+        emrPatTemplateId: Number(row.emrPatTemplateId) || 0, emrNoteType: row.emrNoteType, isValid: 1, editStatus: 0,
+        isEmrNoteLog: 1, emrProviderVisitID: Number(row.emrProviderVisitId) || 0,
+      };
+      const cands = [
+        ['POST', '/emr-api/api/v1/EMRCore/EmrNoteLogPreview', b],
+        ['POST', '/emr-api/api/v1/EMRCore/GetEmrNoteLogPreview', b],
+        ['POST', '/emr-api/api/v1/EMRCore/EmrNoteLogHtmlPreview', b],
+        ['POST', '/emr-api/api/v1/EMRCore/GetEmrHtmlPreview', b],
+        ['POST', '/emr-api/api/v1/EMRCore/EmrPreview', b],
+        ['POST', '/emr-api/api/v1/EMR/EmrHtmlPreview', b],
+        ['POST', '/emr-api/api/v1/EMR/EmrNoteLogPreview', b],
+        ['POST', '/emr-api/api/v1/EMRCore/EmrTemplateHtmlPreview', b],
+        ['POST', '/emr-api/api/v1/EMRCore/PreviewEmrNote', b],
+        ['POST', '/emr-api/api/v1/EMRCore/EmrNotePreview', b],
+      ];
+      const probe = [];
+      for (const [m, path, body] of cands) {
+        try {
+          const r = await hisFetch(path, { method: m, body });
+          const d = r.json && r.json.data;
+          probe.push({ path, status: r.status,
+            dataShape: Array.isArray(d) ? `array(${d.length})` : (d && typeof d === 'object' ? `object[${Object.keys(d).join(',')}]` : (d == null ? 'null' : typeof d)),
+            textHint: (r.text || '').slice(0, 90).replace(/\s+/g, ' ') });
+        } catch (e) { probe.push({ path, error: String(e && e.message || e) }); }
+      }
+      return res.json({ ok: true, file, encounterId, probeRow: { tpl: row.templateName, keys: Object.keys(row) }, probe });
+    }
     // Diagnostic (NO PHI values — only shapes, counts and template LABELS) so we can see
     // exactly where the note fetch yields nothing: an empty DetailsByGroup, an empty preview,
     // or all-blank sections. Surfaced in the response for one-query inspection.
