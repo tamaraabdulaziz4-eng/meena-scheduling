@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'note-emrcore-base-2026-07-09d';
+const CONNECTOR_BUILD = 'flags-fetal-probe-2026-07-09e';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -884,7 +884,18 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       // The vital NAMES (labels, not PHI values) so the name→field mapping can be verified.
       reportNames: _vnvNames(_asVitalRows(vitalReport)),
     };
-    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, flags, vitalsDebug,
+    // TEMP read-only discovery (shapes/keys only, NO PHI values) — verify the correct endpoint for
+    // the blank `flags` (PatientData 404s under /emr-api; patient-api is the candidate) and for
+    // fetal/birth notes, BEFORE wiring them. Sequential + 5s-capped + wrapped, so it stays light on
+    // the 2GB box and can never hang. Removed once the mapping is confirmed.
+    const cap5 = (p) => Promise.race([p, sleep(5000).then(() => ({ status: 'timeout', json: null }))]);
+    const shape = (r) => { const d = r && r.json && (r.json.data !== undefined ? r.json.data : r.json); const rows = Array.isArray(d) ? d : (d ? [d] : []); return { status: (r && r.status) || null, rows: Array.isArray(d) ? d.length : (d ? 1 : 0), keys: Object.keys(rows[0] || {}).slice(0, 60) }; };
+    const _probe = {};
+    try { _probe.patientData_patientApi = shape(await cap5(hisFetch('/patient-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0', { method: 'GET' }))); } catch (e) { _probe.patientData_patientApi = { error: String(e && e.message) }; }
+    try { _probe.patientBannerInfo = shape(await cap5(hisFetch('/patient-api/api/v1/Patient/PatientBannerInfo', { body: { mrno: file, hospitalId: 0 } }))); } catch (e) { _probe.patientBannerInfo = { error: String(e && e.message) }; }
+    try { _probe.birthNoteList = shape(await cap5(hisFetch('/emr-api/api/v1/EMR/BirthNote/List', { body: { mrno: file } }))); } catch (e) { _probe.birthNoteList = { error: String(e && e.message) }; }
+    try { _probe.birthMother = shape(await cap5(hisFetch('/emr-api/api/v1/EMR/FetchBirthNoteMotherDetails?Mrno=' + encodeURIComponent(file), { method: 'GET' }))); } catch (e) { _probe.birthMother = { error: String(e && e.message) }; }
+    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, flags, vitalsDebug, _probe,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
