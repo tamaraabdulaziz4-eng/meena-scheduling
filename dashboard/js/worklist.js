@@ -467,6 +467,10 @@ async function wlEnrich(silent) {
   // only ever fill in progress, never cause flicker.
   if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 30000)) return;
   _wlEnrichBusy = true;
+  // Tie this enrich to the load generation that started it: if the operator switches
+  // branch/date mid-flight (which bumps _loadGen), a late old-scope enrich response must
+  // NOT merge onto the new scope's board.
+  const enrichGen = wlState._loadGen;
   // WATCHDOG (bug #3): never let a hung enrichment pass wedge the busy lock forever —
   // release it after ~120s so a later refresh can retry the pipeline-stage lookups.
   const enrichWatch = setTimeout(() => { _wlEnrichBusy = false; }, 120000);
@@ -487,7 +491,7 @@ async function wlEnrich(silent) {
   try {
     const passes = [];
     // Modality/exam enrichment — fast HIS work, runs on every enrich.
-    passes.push(API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => wlMergeEnrich(d, false)).catch(() => {}));
+    passes.push(API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => { if (wlState._loadGen === enrichGen) wlMergeEnrich(d, false); }).catch(() => {}));
     // Pipeline STAGE — the slow per-patient DePACS "ready" pass. It NO LONGER withholds the
     // first paint (the fast pass already placed rows by native hisStatus, and the stage
     // ratchet in wlMergeEnrich keeps it flicker-free), so the old "everyone waits then jumps"
@@ -498,7 +502,7 @@ async function wlEnrich(silent) {
     // the live timer so it stays light on the connector.
     if (!silent || (Date.now() - (wlState.lastReady || 0) > 180000)) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
-        .then((d) => { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); }).catch(() => {}));
+        .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
     }
     await Promise.all(passes);
     wlState.lastEnrich = Date.now();
