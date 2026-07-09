@@ -214,7 +214,7 @@ function orderedDateToISO(s) {
 
 // One-time diagnostics: log the real HIS field names once per process so the
 // order-id + indication spellings can be confirmed from a live response.
-let _enrichKeysLogged = false, _enrichDetailKeysLogged = false, _lookupOrderKeysLogged = false;
+let _enrichKeysLogged = false, _enrichDetailKeysLogged = false, _lookupOrderKeysLogged = false, _clinKeysLogged = false;
 
 // Enrich an order from the RIS panel (which carries the internal order id,
 // billing status and encounter/ER) and then GetEmrOrderDetails (the clinical
@@ -738,7 +738,37 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       warnings: _clinAllergyList(A.clinicalWarning),
     };
     allergies.any = allergies.drug.length + allergies.other.length + allergies.warnings.length;
-    return res.json({ ok: true, file, diagnoses, allergies, vitals: _clinVitals(vitalList), flags,
+    // Height/weight/BMI often live on the patient RECORD (PatientData), not the per-visit
+    // VitalSign list — merge those in as a fallback so the card can show them even when the
+    // clinic didn't file a vitals row. Same broad aliases as normalizePatient.
+    let vitals = _clinVitals(vitalList);
+    const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
+    const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
+    let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
+    const hN = Number(pdH), wN = Number(pdW);
+    if (pdB == null && Number.isFinite(hN) && hN > 0 && Number.isFinite(wN) && wN > 0) {
+      const m = hN > 3 ? hN / 100 : hN;
+      pdB = Math.round((wN / (m * m)) * 10) / 10;
+    }
+    const pdVit = { height: pdH, weight: pdW, bmi: pdB };
+    if (Object.values(pdVit).some((v) => v != null && String(v).trim() !== '')) {
+      vitals = vitals || {};
+      for (const k of ['height', 'weight', 'bmi']) {
+        if ((vitals[k] == null || String(vitals[k]).trim() === '') && pdVit[k] != null && String(pdVit[k]).trim() !== '') {
+          vitals[k] = String(pdVit[k]).trim();
+        }
+      }
+    }
+    // One-time key-name diagnostic (NO PHI values) so the real HIS field for a missing
+    // vital can be mapped from the connector log without a live debugger.
+    if (!_clinKeysLogged) {
+      _clinKeysLogged = true;
+      try {
+        console.log('[clinical] PatientData keys:', Object.keys(pd || {}).join(','));
+        console.log('[clinical] VitalSign[0] keys:', Object.keys((Array.isArray(vitalList) ? vitalList[0] : {}) || {}).join(','));
+      } catch (e) { /* ignore */ }
+    }
+    return res.json({ ok: true, file, diagnoses, allergies, vitals, flags,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
