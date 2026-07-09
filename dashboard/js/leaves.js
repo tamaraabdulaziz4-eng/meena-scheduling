@@ -173,7 +173,7 @@ async function setLeaveRangeStatus(ids, status) {
 // once and approved deliberately.
 async function approveAllPendingLeaves() {
   const isReviewer = ['manager','superadmin'].includes(currentUser?.role);
-  const canEdit = ['admin','manager','superadmin'].includes(currentUser?.role);
+  const canEdit = ADMIN_ROLES.includes(currentUser?.role);
   const actionable = groupLeaveRanges(allLeaves).filter(g =>
     (g.status === 'pending' && canEdit) || (g.status === 'lead_approved' && isReviewer));
   if (!actionable.length) { toast('Nothing is awaiting your approval'); return; }

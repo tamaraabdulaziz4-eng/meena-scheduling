@@ -71,7 +71,7 @@ async function initApp() {
 
   // Home dashboard — reviewers and team leads (staff get My Schedule instead).
   const homeNav = document.getElementById('nav-home');
-  const canSeeHome = ['admin', 'manager', 'superadmin'].includes(role);
+  const canSeeHome = ADMIN_ROLES.includes(role);
   if (homeNav) homeNav.style.display = canSeeHome ? 'flex' : 'none';
   // Staff self-service nav item.
   const mySchedNav = document.getElementById('nav-myschedule');
@@ -92,17 +92,17 @@ async function initApp() {
   if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
   // Reports for team leads + managers (a lead sees their own branch).
   const reportsNav = document.getElementById('nav-reports');
-  if (reportsNav) reportsNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  if (reportsNav) reportsNav.style.display = ADMIN_ROLES.includes(role) ? 'flex' : 'none';
   const messagesNav = document.getElementById('nav-messages');
-  if (messagesNav) messagesNav.style.display = ['admin','manager','superadmin'].includes(role) ? 'flex' : 'none';
+  if (messagesNav) messagesNav.style.display = ADMIN_ROLES.includes(role) ? 'flex' : 'none';
   // Radiology WORKFLOW pages (worklist, handoff, patient lookup, CD transfers).
   // Team leads / managers / full admins have them by role; a plain staff member only
   // when granted the per-user radiology privilege (so access goes to certain people,
   // not every staff account). Rad Stats stays team-lead-and-up; Orders (order history)
   // follows the worklist grant.
   const staffHasRad = role === 'staff' && !!(currentUser.can_use_radiology || currentUser.can_file_radiology);
-  const canRad = ['admin','manager','superadmin'].includes(role) || staffHasRad;
-  const canRadMgmt = ['admin','manager','superadmin'].includes(role);
+  const canRad = ADMIN_ROLES.includes(role) || staffHasRad;
+  const canRadMgmt = ADMIN_ROLES.includes(role);
   // Radiology handoff.
   const handoffNav = document.getElementById('nav-handoff');
   if (handoffNav) handoffNav.style.display = canRad ? 'flex' : 'none';
@@ -198,18 +198,18 @@ async function initApp() {
 // recursively called showPage → double transition).
 function resolvePage(page) {
   const role = currentUser?.role;
-  if (page === 'home' && !['admin','manager','superadmin'].includes(role))
+  if (page === 'home' && !ADMIN_ROLES.includes(role))
     return role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'schedule'   && role === 'staff')  return 'myschedule';
   if (page === 'swaps' && role === 'viewer') return 'schedule';
   // Branches, shift types, and the audit log are full-admin (superadmin) tools —
   // the backend rejects everyone else, so the route guard must match (a team lead
   // reaching them via a stale link would otherwise see a page that then 403s).
-  if (page === 'reports' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
-  if (page === 'messages' && !['admin','manager','superadmin'].includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'reports' && !ADMIN_ROLES.includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
+  if (page === 'messages' && !ADMIN_ROLES.includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
   // Radiology workflow pages: team leads/managers/admins by role; a staff member
   // only with the granted radiology privilege.
-  const canRadRoute = ['admin','manager','superadmin'].includes(role)
+  const canRadRoute = ADMIN_ROLES.includes(role)
     || (role === 'staff' && !!(currentUser?.can_use_radiology || currentUser?.can_file_radiology));
   const radElse = role === 'staff' ? 'myschedule' : 'schedule';
   if (page === 'handoff' && !canRadRoute) return radElse;
@@ -219,7 +219,7 @@ function resolvePage(page) {
   // Radiology management/analytics: Rad Stats stays team-lead-and-up. Orders (the order
   // history / turnaround view) is gated the same as the worklist — a privileged staff
   // operator who works the board can also see where their reports ended up.
-  if (page === 'radstats' && !['admin','manager','superadmin'].includes(role)) return canRadRoute ? 'worklist' : radElse;
+  if (page === 'radstats' && !ADMIN_ROLES.includes(role)) return canRadRoute ? 'worklist' : radElse;
   if (page === 'orders' && !canRadRoute) return radElse;
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';

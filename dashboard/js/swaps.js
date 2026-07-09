@@ -84,7 +84,7 @@ function swapActionsFor(s) {
   const myStaff = currentUser?.staff_id;
   const isSuper = role === 'superadmin';
   const isReviewer = ['manager','superadmin'].includes(role);
-  const hasBranch = ['admin','manager','superadmin'].includes(role); // branch enforced server-side
+  const hasBranch = ADMIN_ROLES.includes(role); // branch enforced server-side
   let primary = null;  // {label}
   if (s.status === 'pending_peer'    && ((role === 'staff' && myStaff === s.staff_b) || isSuper)) primary = 'Accept';
   else if (s.status === 'pending_lead'    && hasBranch) primary = 'Approve';

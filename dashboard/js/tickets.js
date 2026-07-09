@@ -47,7 +47,7 @@ function ticketStatusPill(s) {
 }
 
 function renderTicketsPage() {
-  const isManager = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
+  const isManager = ADMIN_ROLES.includes(currentUser?.role);
   setTopbar('Support', 'Raise and track tickets',
     `<button class="btn btn-sm" onclick="openCreateTicketModal()">+ New Ticket</button>`);
   const c = document.getElementById('content');
@@ -120,7 +120,7 @@ function renderTicketsList() {
       <button class="open pri" style="width:auto;margin-top:12px" onclick="openCreateTicketModal()">+ Raise a ticket</button></div></div>`;
     return;
   }
-  const isManager = ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
+  const isManager = ADMIN_ROLES.includes(currentUser?.role);
   list.innerHTML = `<div class="listcard">${ticketsData.map(t => {
     const cat = TICKET_CATEGORY_META[t.category] || TICKET_CATEGORY_META.other;
     const hi = t.priority === 'high' ? '<span class="sc no">High</span>' : '';

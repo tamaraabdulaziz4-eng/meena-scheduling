@@ -114,7 +114,7 @@ async function renderHomePage() {
   // branches (auto-refreshing) + the manager's approval queue. On-duty, equipment
   // checks, and Employee-of-the-Month moved to their own pages (Schedule / Maintenance
   // / Staff); expiring-credentials and the duplicate count-chips were removed.
-  if (['admin', 'manager', 'superadmin'].includes(currentUser?.role)) {
+  if (ADMIN_ROLES.includes(currentUser?.role)) {
     renderHomeRadstats();
     // Full radiology statistics embedded right in Home (by branch / modality /
     // department / doctor / payer / trend), reusing the Radiology-stats view.

@@ -6,7 +6,7 @@
 let announcementsData = [];
 
 function annCanPost() {
-  return ['admin', 'manager', 'superadmin'].includes(currentUser?.role);
+  return ADMIN_ROLES.includes(currentUser?.role);
 }
 
 // Swap {name}/{الاسم} for the viewer's own name when showing a circular (the

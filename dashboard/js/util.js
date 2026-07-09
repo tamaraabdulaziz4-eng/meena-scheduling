@@ -1,10 +1,13 @@
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Management roles: team lead (admin), manager, and full admin (superadmin). Shared
+// so the role gate isn't a bare literal repeated across ~20 sites.
+const ADMIN_ROLES = ['admin', 'manager', 'superadmin'];
 // Can the current user FILE a radiology result into the HIS? Team leads / managers /
 // full admins always can; a plain staff member only if granted the per-user privilege.
 function canFileRadiology() {
   if (typeof currentUser === 'undefined' || !currentUser) return false;
-  if (['admin', 'manager', 'superadmin'].includes(currentUser.role)) return true;
+  if (ADMIN_ROLES.includes(currentUser.role)) return true;
   return currentUser.role === 'staff' && !!currentUser.can_file_radiology;
 }
 
