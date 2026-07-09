@@ -3,67 +3,91 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#4D3C82">
+<meta name="theme-color" content="#6B4EFF">
 <title>إقرار عدم الحمل · Non-Pregnancy Consent</title>
 <style>
-  :root{ --pri:#6B4EFF; --acc:#8358FD; --ink:#1a1730; --mut:#6b6785; --line:#e7e3f5; --bg:#f5f3fb; --card:#fff; }
-  @media (prefers-color-scheme:dark){ :root{ --ink:#e9e7f5; --mut:#9b98c0; --line:#262340; --card:#17152b; --bg:#0d0b1a; } }
+  :root{
+    --pri:#6B4EFF; --acc:#8358FD; --lav:#D9D4F5; --lav2:#C3BCEF;
+    --ribbon:linear-gradient(135deg,#6B4EFF 0%,#8358FD 55%,#D9D4F5 130%);
+    --ink:#1f1940; --mut:#7c7a99; --line:#ECE9F5; --line2:#E0DCEF;
+    --bg:#f6f5fb; --card:#fff; --wash:#F0EDFF; --field:#fff;
+    --shadow:0 10px 30px rgba(38,30,79,.10), 0 2px 8px rgba(38,30,79,.05);
+    --ok:#0E9F6E; --err:#e25555;
+  }
+  @media (prefers-color-scheme:dark){ :root{
+    --ink:#e9e7f5; --mut:#9b98c0; --line:#262340; --line2:#322e52;
+    --bg:#0d0b1a; --card:#17152b; --wash:#1e1b3a; --field:#1b1934;
+    --shadow:0 12px 32px rgba(0,0,0,.5), 0 3px 10px rgba(0,0,0,.32);
+  } }
   *{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
-  body{ font-family:-apple-system,"Segoe UI",Tahoma,Arial,sans-serif; background:var(--bg); color:var(--ink);
-    line-height:1.7; padding:0 0 40px; }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;
+    background:var(--bg); color:var(--ink); line-height:1.7; padding:0 0 40px; }
   .wrap{ max-width:560px; margin:0 auto; }
-  header{ background:linear-gradient(135deg,var(--pri),var(--acc)); color:#fff; padding:20px 18px; text-align:center; }
-  header .t{ font-size:20px; font-weight:800; }
-  header .s{ font-size:12.5px; opacity:.92; margin-top:3px; direction:ltr; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; margin:14px; padding:16px; }
-  .sum{ display:grid; grid-template-columns:auto 1fr; gap:8px 14px; }
-  .sum .k{ color:var(--mut); font-size:12.5px; font-weight:700; white-space:nowrap; }
-  .sum .v{ font-weight:700; font-size:14px; word-break:break-word; }
-  .sum .v.ltr{ direction:ltr; text-align:right; }
+
+  /* ── Welcoming brand hero (mirrors the app's login side panel) ── */
+  .hero{ position:relative; overflow:hidden; background:var(--ribbon); color:#fff;
+    padding:30px 20px 26px; text-align:center; border-radius:0 0 26px 26px; box-shadow:var(--shadow); }
+  .hero .orb{ position:absolute; border-radius:50%; filter:blur(8px); opacity:.55; pointer-events:none; }
+  .hero .orb.o1{ width:150px; height:150px; background:radial-gradient(circle at 30% 30%,#fff,transparent 70%);
+    top:-56px; inset-inline-start:-40px; opacity:.28; }
+  .hero .orb.o2{ width:120px; height:120px; background:radial-gradient(circle at 60% 60%,#D9D4F5,transparent 70%);
+    bottom:-46px; inset-inline-end:-30px; opacity:.4; }
+  .hero-in{ position:relative; z-index:1; }
+  .hero .mark{ width:66px; height:66px; margin:0 auto 12px; background:#fff; border-radius:20px;
+    display:flex; align-items:center; justify-content:center; box-shadow:0 8px 22px rgba(38,30,79,.28); }
+  .hero .mark img{ width:46px; height:46px; object-fit:contain; }
+  .hero .word{ font-size:26px; font-weight:800; letter-spacing:.5px; line-height:1; }
+  .hero .title{ font-size:15px; font-weight:700; margin-top:8px; direction:ltr; opacity:.98; }
+  .hero .sub{ font-size:12px; font-weight:500; margin-top:2px; direction:ltr; opacity:.82; }
+  .hero .tag{ display:inline-block; margin-top:12px; font-size:12px; font-weight:700; direction:rtl;
+    background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.25); padding:6px 14px; border-radius:999px; }
+  .hero .tag .en{ direction:ltr; font-weight:500; opacity:.85; font-size:11px; }
+
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:18px; margin:14px; padding:16px;
+    box-shadow:var(--shadow); }
   h2{ font-size:15px; font-weight:800; margin:2px 0 10px; }
-  .bi{ display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
-  .bi .en{ direction:ltr; color:var(--mut); font-size:12px; font-weight:500; }
-  .decl{ background:#f2efff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-weight:700; font-size:15px; }
+  .decl{ background:var(--wash); border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-weight:700; font-size:14px; }
   .decl .en{ display:block; direction:ltr; color:var(--mut); font-weight:500; font-size:12.5px; margin-top:3px; }
-  label.opt{ display:flex; align-items:center; gap:10px; padding:11px 12px; border:1.5px solid var(--line);
-    border-radius:12px; margin-top:9px; font-size:14.5px; font-weight:600; cursor:pointer; }
-  label.opt.sel{ border-color:var(--pri); background:#f2efff; }
+  label.opt{ display:flex; align-items:center; gap:10px; padding:12px 13px; border:1.5px solid var(--line2);
+    border-radius:13px; margin-top:9px; font-size:14.5px; font-weight:600; cursor:pointer; transition:border-color .12s, background .12s; }
+  label.opt.sel{ border-color:var(--pri); background:var(--wash); }
   label.opt input{ width:20px; height:20px; accent-color:var(--pri); flex:0 0 auto; }
   label.opt .en{ direction:ltr; color:var(--mut); font-size:12px; font-weight:500; margin-inline-start:auto; }
-  .lmp{ margin-top:9px; display:none; }
-  .lmp.show{ display:block; }
-  .lmp input, .field input{ width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:12px;
-    font-size:15px; font-family:inherit; background:#fff; }
-  .field{ margin-top:10px; }
-  .field .lab{ font-size:12.5px; font-weight:700; color:var(--mut); margin-bottom:5px; }
-  .vitals{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .risk{ background:#fff6e6; border:1px solid #f0d69a; border-radius:12px; padding:12px 14px; font-size:13px;
-    color:#7a5600; font-weight:600; }
-  .risk .en{ display:block; direction:ltr; margin-top:4px; font-weight:500; }
-  .sigbox{ position:relative; border:2px dashed var(--line); border-radius:14px; background:#fff; height:210px; margin-top:8px; }
+  .lmp{ margin-top:9px; display:none; } .lmp.show{ display:block; }
+  .lmp input, .field input{ width:100%; padding:12px; border:1.5px solid var(--line2); border-radius:12px;
+    font-size:15px; font-family:inherit; background:var(--field); color:var(--ink); }
+  .lmp input:focus, .field input:focus{ outline:none; border-color:var(--pri); box-shadow:0 0 0 3px rgba(107,78,255,.14); }
+  .field{ margin-top:10px; } .field .lab{ font-size:12.5px; font-weight:700; color:var(--mut); margin-bottom:5px; }
+  .sigbox{ position:relative; border:2px dashed var(--line2); border-radius:14px; background:var(--field); height:210px; margin-top:8px; }
   canvas#sig{ width:100%; height:100%; display:block; touch-action:none; border-radius:12px; }
-  .sigclear{ position:absolute; top:8px; inset-inline-start:8px; font-size:12px; padding:5px 11px; border:1px solid var(--line);
-    background:var(--bg); border-radius:9px; font-weight:700; }
+  .sigclear{ position:absolute; top:8px; inset-inline-start:8px; font-size:12px; padding:6px 12px; border:1px solid var(--line2);
+    background:var(--bg); color:var(--ink); border-radius:9px; font-weight:700; cursor:pointer; }
   .hint{ font-size:12px; color:var(--mut); margin-top:6px; text-align:center; }
-  .btn{ width:100%; padding:15px; border:none; border-radius:14px; background:var(--pri); color:#fff; font-size:16px;
-    font-weight:800; font-family:inherit; margin-top:6px; }
-  .btn:disabled{ opacity:.6; }
+  .btn{ width:100%; padding:15px; border:none; border-radius:14px; background:var(--ribbon); color:#fff; font-size:16px;
+    font-weight:800; font-family:inherit; margin-top:10px; cursor:pointer; box-shadow:0 8px 22px rgba(107,78,255,.32); }
+  .btn:active{ transform:translateY(1px); } .btn:disabled{ opacity:.6; box-shadow:none; }
   .msg{ text-align:center; margin:12px 14px; font-size:14px; font-weight:700; min-height:20px; }
-  .ok{ color:#0a7c42; } .err{ color:#c0392b; }
+  .ok{ color:var(--ok); } .err{ color:var(--err); }
   .done{ text-align:center; padding:50px 20px; }
   .done .big{ font-size:56px; } .done .t{ font-size:20px; font-weight:800; margin-top:8px; }
   .done .s{ color:var(--mut); margin-top:6px; direction:ltr; }
   .foot{ text-align:center; color:var(--mut); font-size:11px; margin-top:16px; direction:ltr; }
   .formlbl{ font-size:13px; font-weight:800; color:var(--pri); margin-bottom:8px; }
-  .formimg{ width:100%; height:auto; display:block; border:1px solid var(--line); border-radius:10px; }
+  .formimg{ width:100%; height:auto; display:block; border:1px solid var(--line); border-radius:12px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <div class="t">نموذج إقرار بعدم وجود حمل</div>
-    <div class="s">Declaration of Non-Pregnancy · Radiology</div>
-  </header>
+  <div class="hero">
+    <div class="orb o1"></div><div class="orb o2"></div>
+    <div class="hero-in">
+      <div class="mark"><img src="/meena_logo.png" alt="Meena"></div>
+      <div class="word">مينا</div>
+      <div class="title">Meena RIS</div>
+      <div class="sub">Radiology Information System · Subsidiary of Tawuniya</div>
+      <div class="tag">نموذج إقرار بعدم وجود حمل <span class="en">· Non-Pregnancy Consent</span></div>
+    </div>
+  </div>
   <div id="app"><div class="card" id="loading">جارٍ التحميل… · Loading…</div></div>
   <div class="foot">Meena Health · Radiology Department</div>
 </div>
