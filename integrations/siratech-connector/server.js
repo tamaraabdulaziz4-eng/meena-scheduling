@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'privileges-sites-2026-07-09i';
+const CONNECTOR_BUILD = 'privileges-raw-2026-07-09j';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1153,6 +1153,9 @@ app.get('/user/:id/privileges', requireAuth, async (req, res) => {
       modulePrivilege: { status: modPriv.status, error: modPriv.error || null, topLevel: sz(modPriv), leafCount: countTree(modPriv.data), keys: sampleKeys(modPriv) },
       modules: { status: modules.status, error: modules.error || null, count: sz(modules), keys: sampleKeys(modules) },
       menu: { status: menu.status, error: menu.error || null, topLevel: sz(menu), leafCount: countTree(menu.data), keys: sampleKeys(menu) },
+      // ?raw=1 → the full modules + menu trees so we can find the name→id mapping (genPrivilegeId).
+      raw: req.query.raw ? { modules: modules.data, modulePrivilege: modPriv.data, menu: menu.data,
+        privSample: Array.isArray(priv.data) ? priv.data.slice(0, 2) : priv.data } : undefined,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });

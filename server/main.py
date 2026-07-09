@@ -6805,8 +6805,9 @@ def radiology_his_user_privileges(user_id: str, request: Request, user=Depends(r
     if not user_id:
         raise HTTPException(400, "Enter a HIS user id")
     hosp = (request.query_params.get("hospitalId") or "0").strip()
+    raw = "&raw=1" if request.query_params.get("raw") else ""
     return _bridge_request("/his/user/" + urllib.parse.quote(user_id)
-                           + "/privileges?hospitalId=" + urllib.parse.quote(hosp), timeout=90)
+                           + "/privileges?hospitalId=" + urllib.parse.quote(hosp) + raw, timeout=90)
 
 @app.get("/api/radiology/patient/{file_no}/labs")
 def radiology_patient_labs(file_no: str, user=Depends(require_radiology)):
