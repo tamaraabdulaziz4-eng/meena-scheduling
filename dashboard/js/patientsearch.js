@@ -196,7 +196,7 @@ function renderPsDetail() {
         <div id="ps-appts"></div>
         <div class="ps-consent">
           <div class="ps-actions">
-            ${psIsFemale(p)
+            ${psNeedsRadSafety()
               ? `<button class="btn btn-primary" onclick="psStartConsent()">🖊️ Non-pregnancy consent · إقرار عدم الحمل</button>`
               : ''}
             <button class="btn btn-ghost" onclick="psUploadDocument()">📎 Upload document</button>
@@ -438,7 +438,7 @@ async function psLoadLabs() {
   const box = document.getElementById('ps-labs');
   if (!box) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
-  if (!p.mrno || !psIsFemale(p)) { box.innerHTML = ''; return; }
+  if (!p.mrno || !psNeedsRadSafety()) { box.innerHTML = ''; return; }   // female + ionising-radiation exam only
   box.innerHTML = '<span style="color:var(--muted);font-size:12px">🤰 Checking pregnancy status…</span>';
   let r;
   try { r = await API.get(`/radiology/labs/pregnancy?mrno=${encodeURIComponent(p.mrno)}`); }
@@ -466,6 +466,29 @@ async function psLoadLabs() {
 function psIsFemale(p) {
   const g = String((p && p.gender) || '').toLowerCase();
   return g.startsWith('f') || g.includes('female') || g.includes('انث') || g.includes('أنث') || g.includes('امرأ');
+}
+// Non-pregnancy consent + β-hCG are RADIATION-safety measures: they apply ONLY to a
+// female patient having an IONISING-radiation exam. Ultrasound (US) and MRI (MR) use no
+// ionising radiation, so they never need either — and a male never does. Mirrors the
+// worklist's wlNeedsRadSafety so the two screens agree.
+const PS_NONRAD_MODS = new Set(['US', 'MR']);
+function psModBucket(o) {
+  const raw = String((o && (o.modality || o.service)) || '').toUpperCase();
+  if (/\bMRI?\b|MAGNET/.test(raw)) return 'MR';
+  if (/ULTRA|SONO|\bUS\b|DOPPLER/.test(raw)) return 'US';
+  if (/\bCT\b|COMPUTED|TOMOGRAPH/.test(raw)) return 'CT';
+  if (/MAMMO|\bMG\b/.test(raw)) return 'MG';
+  if (/X.?RAY|\bXR\b|\bCR\b|\bDX\b|\bDR\b|RADIOGRAPH/.test(raw)) return 'XR';
+  return '';   // unknown modality
+}
+function psNeedsRadSafety() {
+  const d = psState.lookup || {};
+  if (!psIsFemale(d.patient || {})) return false;             // male → never
+  const orders = d.orders || [];
+  if (!orders.length) return true;                            // exams unknown → fail-open (never hide a safety prompt when unsure)
+  // Show only when at least one exam uses ionising radiation (i.e. is NOT purely US/MRI);
+  // an unknown modality counts as radiation (fail-open).
+  return orders.some((o) => !PS_NONRAD_MODS.has(psModBucket(o)));
 }
 // Launch the consent with ALL the patient's data pre-registered on it — she only
 // reads, picks the reason, and signs. Procedure/type/physician come from the most
