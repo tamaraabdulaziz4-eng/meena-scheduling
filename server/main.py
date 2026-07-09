@@ -6796,6 +6796,18 @@ def radiology_patient_visits(file_no: str, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/visits", timeout=90)
 
+@app.get("/api/radiology/his-user/{user_id}/privileges")
+def radiology_his_user_privileges(user_id: str, request: Request, user=Depends(require_superadmin)):
+    """Read a Siratech HIS user's privileges / modules / menu (counts + shape) — superadmin
+    only, READ-ONLY. Siratech exposes no privilege-WRITE API, so this is view/audit only."""
+    import urllib.parse
+    user_id = (user_id or "").strip()
+    if not user_id:
+        raise HTTPException(400, "Enter a HIS user id")
+    hosp = (request.query_params.get("hospitalId") or "0").strip()
+    return _bridge_request("/his/user/" + urllib.parse.quote(user_id)
+                           + "/privileges?hospitalId=" + urllib.parse.quote(hosp), timeout=90)
+
 @app.get("/api/radiology/patient/{file_no}/labs")
 def radiology_patient_labs(file_no: str, user=Depends(require_radiology)):
     """The patient's lab results — test · value · reference range · normal/abnormal,
