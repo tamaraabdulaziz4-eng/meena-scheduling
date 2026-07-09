@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'privileges-raw-2026-07-09j';
+const CONNECTOR_BUILD = 'umgr-probe-2026-07-09k';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1157,6 +1157,31 @@ app.get('/user/:id/privileges', requireAuth, async (req, res) => {
       raw: req.query.raw ? { modules: modules.data, modulePrivilege: modPriv.data, menu: menu.data,
         privSample: Array.isArray(priv.data) ? priv.data.slice(0, 2) : priv.data } : undefined,
       fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// ── User-management API reachability probe (READ-ONLY) ─────────────────────────
+// Privilege WRITES live on user-management-api (Group/GetAllSelectedGroupsAndPrivilegesV1 +
+// User/GenUserCreation), a service the connector has never called. Before any restore we must
+// know if the connector's token can even reach it. This ONLY reads (catalog size + a user's
+// current privileges); it writes NOTHING.
+app.get('/user/:id/umgr-probe', requireAuth, async (req, res) => {
+  const raw = String(req.params.id || '').trim();
+  const uid = /^\d+$/.test(raw) ? raw.padStart(8, '0') : raw;
+  try {
+    await getToken();
+    const extra = { 'X-App-Client': 'his.meena-health.com', 'X-App-Mode': 'ENCV0',
+      'GENERAL-API-ACCESS': 'GENERAL-API-ACCESS', 'API-LICENSE-ACCESS': 'API-FREE-LICENSE' };
+    const G = (p) => hisFetch(p, { method: 'GET', headers: extra })
+      .then((r) => { let d = null; try { d = r.json && r.json.data && r.json.data.selectedGroupsAndPrivilegesV1ResponseDTOList; } catch (e) {}
+        return { status: r.status, rows: Array.isArray(d) ? d.length : null, sampleKeys: Array.isArray(d) && d[0] ? Object.keys(d[0]) : [], hint: (r.text || '').slice(0, 120).replace(/\s+/g, ' ') }; })
+      .catch((e) => ({ error: String(e && e.message) }));
+    const catalog = await G('/user-management-api/api/v1/Group/GetAllSelectedGroupsAndPrivilegesV1?GroupId=1262&UserId=1');
+    const userPrv = await G('/user-management-api/api/v1/Group/GetAllSelectedGroupsAndPrivilegesV1?GroupId=0&UserId=' + encodeURIComponent(uid));
+    return res.json({ ok: true, build: CONNECTOR_BUILD, userId: uid,
+      reachable: catalog.status === 200, catalog, userPrivileges: userPrv, fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
