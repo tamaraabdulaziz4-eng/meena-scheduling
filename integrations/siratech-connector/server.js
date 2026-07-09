@@ -803,12 +803,19 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     const allVitalRows = [].concat(_asVitalRows(vitalReport), _asVitalRows(vitalSummary), _asVitalRows(vitalList));
     const patVit = _vitalsByPattern(allVitalRows);
     if (patVit) vitals = Object.assign({}, patVit, vitals || {});   // explicit wins, pattern fills gaps
-    // Log the raw field names + row counts (NO PHI values) so `journalctl | grep -i vital`
-    // reveals the exact HIS vital keys to map. One line per clinical request.
+    // Log the SHAPE of each vitals response (NO PHI values) so `journalctl | grep vital`
+    // tells us whether it's structured data (array/keys), rendered HTML, or an image —
+    // which decides whether we extract fields or just display the report.
     try {
-      const kz = (x) => { const r = _asVitalRows(x); return `rows=${r.length} keys=[${Object.keys(r[0] || {}).join(',')}]`; };
-      console.log(`[vitals] Clinicalreport/Vitals ${kz(vitalReport)} | VitalSign/Summary ${kz(vitalSummary)} | VitalSign/List ${kz(vitalList)} | PatientData keys=[${Object.keys(pd || {}).join(',')}] | extracted=${JSON.stringify(vitals || {})}`);
-    } catch (e) { /* ignore */ }
+      const shape = (x) => {
+        if (x == null) return 'null';
+        if (typeof x === 'string') { const h = x.slice(0, 30).replace(/\s+/g, ' '); return `string(len=${x.length}) starts="${h}"`; }
+        if (Array.isArray(x)) { const r = _asVitalRows(x); return `array(${x.length}) keys=[${Object.keys(r[0] || {}).join(',')}]`; }
+        if (typeof x === 'object') { const r = _asVitalRows(x); return `object keys=[${Object.keys(x).join(',')}] rowKeys=[${Object.keys(r[0] || {}).join(',')}]`; }
+        return typeof x;
+      };
+      console.log(`[vitals] report=${shape(vitalReport)} || summary=${shape(vitalSummary)} || list=${shape(vitalList)} || pdKeys=[${Object.keys(pd || {}).join(',')}] || extracted=${JSON.stringify(vitals || {})}`);
+    } catch (e) { console.log('[vitals] log-error', String(e && e.message)); }
     const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
     const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
     let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
