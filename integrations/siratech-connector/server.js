@@ -1506,6 +1506,10 @@ const RAD_STATUS_TTL = Number(process.env.RAD_STATUS_TTL_MS || 90000);
 // full cold sweep is paid once per window, then instant).
 const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 400);   // cap new lookups per load
 const radStatusCache = new Map();   // mrno -> { ts, byKey: Map(key -> {status,cpoe,reported,imaged,invId,acc}) }
+// MRNs whose per-mrno status lookup is currently in flight. On a cold open the fast pass
+// kicks this sweep in the BACKGROUND (see buildWorklist), so two overlapping fast builds
+// must not both fire FetchRadiologyDetails for the same patient — this de-dupes them.
+const _radStatusInflight = new Set();
 
 // HIS timestamps come as NAIVE local KSA strings ("2026-07-05T09:06:00", no offset).
 // Date.parse would read that as UTC (the VPS's zone), skewing every age by 3h and
@@ -1725,16 +1729,40 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // ── Native per-exam status (cpoeStatusDescription: Pending / Scan In Progress /
   // Scan Done + the report flag) — the ONLY source of Siratech's real status text.
   // Fetched per DISTINCT mrno (cached ~90s, concurrency-bounded), stamped onto every
-  // row so the board's stage lanes are correct on the FIRST paint with NO DePACS wait
-  // (kills the "everything sits in Waiting, then jumps" glitch). Best-effort: an
+  // row so the board's stage lanes are correct with NO DePACS wait. Best-effort: an
   // unresolved row keeps its coarse lane and fills on the next refresh.
+  //
+  // FIRST-OPEN COST: on a cold open radStatusCache is empty, so this sweep is up to
+  // RAD_STATUS_MAX_FETCH FetchRadiologyDetails calls. Awaiting it BLOCKED the very first
+  // paint for ~10-20s — the "heavy on first open" symptom. So on the FAST pass we do NOT
+  // block on the fetch: rows already carry a preliminary status from the RIS panel
+  // (hisStatus, set during expansion above), so lanes are placed immediately, and this
+  // sweep runs in the BACKGROUND to warm radStatusCache — the exact cpoe refinement then
+  // lands on the next refresh (~12s) instead of holding up the first board. The heavy
+  // ready/modality passes (already throttled + 60s-cached, never on the first-paint path)
+  // still AWAIT it so their response carries the refined status.
   try {
     const keyOf = (bill, svc) => `${bill || ''}|${String(svc || '').trim().toLowerCase()}`;
     const mrnos = [...new Set(items.map((it) => String(it.mrno)).filter(Boolean))];
     const nowTs = Date.now();
     const fresh = (m) => { const c = radStatusCache.get(m); return c && (nowTs - c.ts) <= RAD_STATUS_TTL; };
-    const need = mrnos.filter((m) => !fresh(m)).slice(0, RAD_STATUS_MAX_FETCH);
-    await pool(need, STATS_SITE_CONCURRENCY, async (m) => {
+    // "LIKE SIRATECH": FetchRISPanel already returns a PER-EXAM status for every order in
+    // ONE bulk call per site (that's why Siratech's own panel is instant), and the
+    // expansion above stamps it on each row as hisStatus. So on the FAST board we only fall
+    // back to the per-patient FetchRadiologyDetails for rows the panel left WITHOUT a status
+    // — usually none — instead of fanning out across every patient. The heavy ready/modality
+    // passes still refine EVERY row (exact per-exam accession/invId matching). This is the
+    // change that removes the "loading a lot / hanging" on the fast board: no per-patient
+    // HIS fan-out when the panel already covered the board.
+    const heavyPass = ready || modality;
+    const uncovered = new Set(items.filter((it) => !it.hisStatus).map((it) => String(it.mrno)).filter(Boolean));
+    const candidates = heavyPass ? mrnos : mrnos.filter((m) => uncovered.has(m));
+    const need = candidates.filter((m) => !fresh(m)).slice(0, RAD_STATUS_MAX_FETCH);
+    const fetchOne = async (m) => {
+      // Re-check freshness/in-flight at call time: a concurrent (possibly background)
+      // sweep may have already filled this MRN, so we never double-hit the HIS for it.
+      if (fresh(m) || _radStatusInflight.has(m)) return;
+      _radStatusInflight.add(m);
       try {
         const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: m } });
         const rows = (r.json && r.json.data) || [];
@@ -1757,7 +1785,13 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         }
         radStatusCache.set(m, { ts: Date.now(), byKey });
       } catch (_e) { /* leave uncached — row keeps its coarse lane */ }
-    });
+      finally { _radStatusInflight.delete(m); }
+    };
+    const sweep = pool(need, STATS_SITE_CONCURRENCY, fetchOne);
+    // Heavy pass → block so the response carries refined status; fast pass → warm the
+    // cache in the background so the first paint isn't held up by the per-mrno fan-out.
+    if (ready || modality) await sweep;
+    else sweep.catch(() => {});
     for (const it of items) {
       const c = radStatusCache.get(String(it.mrno));
       if (!c) continue;
