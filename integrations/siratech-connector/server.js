@@ -698,6 +698,34 @@ function _asVitalRows(x) {
   }
   return [];
 }
+// Pattern fallback: scan EVERY key of the vital rows so an unexpected HIS field name is
+// still caught without knowing it in advance (label keys like *Unit/*Date are skipped).
+const _VITAL_PAT = [
+  ['height', /height|(^|[^a-z])ht([^a-z]|$)/i],
+  ['weight', /weight|bodyweight|(^|[^a-z])wt([^a-z]|$)/i],
+  ['bmi', /bmi|bodymass/i],
+  ['systolic', /systolic|sbp|bpsys/i],
+  ['diastolic', /diastolic|dbp|bpdia/i],
+  ['pulse', /pulse|heartrate|(^|[^a-z])hr([^a-z]|$)/i],
+  ['temperature', /temperature|(^|[^a-z])temp/i],
+  ['spo2', /spo2|oxygensat|saturation|o2sat/i],
+  ['respiratoryRate', /respiratory|resprate|(^|[^a-z])rr([^a-z]|$)/i],
+];
+function _vitalsByPattern(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const out = {};
+  for (const [key, re] of _VITAL_PAT) {
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      for (const [k, v] of Object.entries(r)) {
+        if (v == null || String(v).trim() === '' || String(v).trim() === '0') continue;
+        if (re.test(k) && !/date|time|id$|name|unit|note|type|method|remark/i.test(k)) { out[key] = String(v).trim(); break; }
+      }
+      if (out[key] != null) break;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
 function _clinVitals(list) {
   const rows = Array.isArray(list) ? list : [];
   if (!rows.length) return null;
@@ -724,12 +752,15 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     const vFrom = new Date(Date.now() - 730 * 864e5).toISOString();   // ~2 years back
     const vTo = new Date(Date.now() + 864e5).toISOString();
     const vBody = { mrno: file, fromDate: vFrom, toDate: vTo };
+    // Cap the vitals calls so a slow/invalid endpoint can never hang the card (the whole HIS
+    // timeout is 30s; the card must not wait that long for a non-critical section).
+    const cap = (p) => Promise.race([p, sleep(8000).then(() => null)]);
     const [dx, allergyD, vitalList, vitalReport, vitalSummary, patData] = await Promise.all([
       H('/emr-api/api/v1/Diagnosis/PatientProblemlist', { mrno: file }),
       H('/emr-api/api/v1/EMR/Allergies/ClinicalWarnings', { mrno: file }),
-      H('/emr-api/api/v1/VitalSign/List', { mrno: file }),
-      H('/emr-api/api/v1/Clinicalreport/Vitals', vBody),
-      H('/emr-api/api/v1/VitalSign/Summary', vBody),
+      cap(H('/emr-api/api/v1/VitalSign/List', { mrno: file })),
+      cap(H('/emr-api/api/v1/Clinicalreport/Vitals', vBody)),
+      cap(H('/emr-api/api/v1/VitalSign/Summary', vBody)),
       G('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0'),
     ]);
     // Radiology-relevant patient flags: infection status (isolation / contrast &
@@ -762,12 +793,16 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     // Height/weight/BMI often live on the patient RECORD (PatientData), not the per-visit
     // VitalSign list — merge those in as a fallback so the card can show them even when the
     // clinic didn't file a vitals row. Same broad aliases as normalizePatient.
-    // First vitals source that yields any value wins (report → summary → old list).
+    // First vitals source that yields any value wins (report → summary → old list),
+    // then a pattern scan across ALL sources fills any field the alias map missed.
     let vitals = null;
     for (const src of [vitalReport, vitalSummary, vitalList]) {
       const v = _clinVitals(_asVitalRows(src));
       if (v) { vitals = v; break; }
     }
+    const allVitalRows = [].concat(_asVitalRows(vitalReport), _asVitalRows(vitalSummary), _asVitalRows(vitalList));
+    const patVit = _vitalsByPattern(allVitalRows);
+    if (patVit) vitals = Object.assign({}, patVit, vitals || {});   // explicit wins, pattern fills gaps
     const pdH = firstOf(pd, ['height', 'patientHeight', 'heightCm', 'height_cm', 'vitalHeight']);
     const pdW = firstOf(pd, ['weight', 'patientWeight', 'weightKg', 'weight_kg', 'vitalWeight']);
     let pdB = firstOf(pd, ['bmi', 'BMI', 'bodyMassIndex']);
@@ -787,20 +822,14 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     }
     // One-time key-name diagnostic (NO PHI values) so the real HIS field for a missing
     // vital can be mapped from the connector log without a live debugger.
-    if (!_clinKeysLogged) {
-      _clinKeysLogged = true;
-      const kdump = (label, x) => {
-        try {
-          const rows = _asVitalRows(x);
-          console.log(`[clinical] ${label} rows=${rows.length} keys=`, Object.keys(rows[0] || (x && typeof x === 'object' ? x : {}) || {}).join(','));
-        } catch (e) { /* ignore */ }
-      };
-      kdump('Clinicalreport/Vitals', vitalReport);
-      kdump('VitalSign/Summary', vitalSummary);
-      kdump('VitalSign/List', vitalList);
-      try { console.log('[clinical] PatientData keys:', Object.keys(pd || {}).join(',')); } catch (e) { /* ignore */ }
-    }
-    return res.json({ ok: true, file, diagnoses, allergies, vitals, flags,
+    // Surface the raw field names IN THE RESPONSE (no PHI values, just keys + row counts) so
+    // the exact HIS vital field can be read from the browser Network tab — no VPS log needed.
+    const keysOf = (x) => { try { const r = _asVitalRows(x); return { rows: r.length, keys: Object.keys(r[0] || {}) }; } catch (e) { return { rows: 0, keys: [] }; } };
+    const vitalsDebug = {
+      report: keysOf(vitalReport), summary: keysOf(vitalSummary), list: keysOf(vitalList),
+      patientData: Object.keys(pd || {}),
+    };
+    return res.json({ ok: true, file, diagnoses, allergies, vitals, flags, vitalsDebug,
       fetchedAt: new Date().toISOString() });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
