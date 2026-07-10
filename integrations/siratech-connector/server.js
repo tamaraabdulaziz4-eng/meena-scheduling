@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'drill-list-2026-07-10e';
+const CONNECTOR_BUILD = 'rev-robust-2026-07-10f';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2817,6 +2817,23 @@ const dayOf = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/
 function tallyPush(map, key, name) { const k = key == null || key === '' ? 'Unknown' : String(key); const e = map.get(k) || { key: k, name: name || k, count: 0 }; e.count += 1; map.set(k, e); }
 function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.count - x.count); return top ? a.slice(0, top) : a; }
 
+// Read one bill's line items (GetDueBillDetailsByID) with a single retry. On the
+// 2GB VPS a bill read can time out or come back non-2xx; without a retry that read
+// contributes 0 revenue and the total silently undercounts (the "600k→300k"
+// symptom). Returns { ok, items }: ok=false ONLY when both attempts failed (so the
+// caller can count it as a missed read), distinct from a genuinely empty bill.
+async function readBillItems(gpbId) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(gpbId), { method: 'GET' });
+      if (d && d.json != null && !(d.status && d.status >= 400)) {
+        return { ok: true, items: (d.json.data || d.json.Data) || [] };
+      }
+    } catch (_e) { /* fall through to retry / failure */ }
+  }
+  return { ok: false, items: [] };
+}
+
 const STATS_LIST_CAP = Number(process.env.STATS_LIST_CAP || 1500);
 // How many unique bills we read to fill in exam names for the drill-down list.
 // Bounds latency on a wide date range; today's per-branch volume is well under this.
@@ -2923,9 +2940,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // catalog also tells us its modality. This gives exam count, modality mix,
     // revenue and payer split accurately from a single call.
     const catalog = await getRadCatalog().catch(() => new Map());
+    let billsFailed = 0;
     const bills = await pool(sample, STATS_MODALITY_CONCURRENCY, async ({ r, site }) => {
-      const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(r.genPatBillingId), { method: 'GET' });
-      return { site, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
+      const res = await readBillItems(r.genPatBillingId);
+      if (!res.ok) billsFailed += 1;   // both attempts failed → this bill's revenue is missing
+      return { site, items: res.items };
     });
     const byModCount = new Map(), revByBranch = new Map(), revByMod = new Map();
     let exams = 0, revenue = 0, patient = 0, sponsor = 0, items = 0;
@@ -2967,7 +2986,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // from "the radiology catalog failed to load, so every line item was skipped
     // and everything reads 0" — otherwise a transient catalog outage looks like a
     // real zero day.
-    const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length, catalogLoaded: catalog.size > 0 };
+    // billsFailed = bills whose read failed BOTH attempts → their revenue is missing
+    // from the totals. billsRead = bills that came back (empty or not). The dashboard
+    // uses these to warn "estimate — N bills couldn't be read" instead of presenting a
+    // silently-halved figure as final.
+    const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length, catalogLoaded: catalog.size > 0, billsFailed, billsRead: sample.length - billsFailed };
     if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
     if (withFinance) financial = {
       ...meta, items, requests: reqWithRad, exams,
@@ -3024,8 +3047,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     if (uniqueBills.length) {
       const catalog = await getRadCatalog().catch(() => new Map());
       const bills = await pool(uniqueBills, STATS_MODALITY_CONCURRENCY, async (gpbId) => {
-        const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(gpbId), { method: 'GET' });
-        return { gpbId, items: (d && d.json && (d.json.data || d.json.Data)) || [] };
+        const res = await readBillItems(gpbId);
+        return { gpbId, items: res.items };
       });
       const examByBill = new Map();
       for (const b of bills) {

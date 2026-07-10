@@ -948,7 +948,13 @@ function rsFinancialInner() {
     { label: 'Insurance', count: Math.round(f.sponsor || 0), color: 'var(--accent,#6b4eff)' },
     { label: 'Cash / copay', count: Math.round(f.patient || 0), color: '#22c55e' },
   ], { centerVal: Math.round(f.revenue || 0), centerLabel: 'SAR' });
+  // If some bill reads failed (VPS timeouts), the revenue is an UNDERCOUNT — say so
+  // loudly with a one-tap retry, instead of showing a silently-halved figure as final.
+  const missWarn = (f.billsFailed > 0)
+    ? `<div class="rs-fin-warn">⚠ Estimate — ${rsNum(f.billsFailed)} of ${rsNum((f.billsRead || 0) + f.billsFailed)} bills couldn't be read, so revenue below is undercounted. <button class="ghost" onclick="rsLoad(false, true)">Retry read</button></div>`
+    : '';
   return `<div class="rs-fin">
+    ${missWarn}
     <div class="rs-fin-head">
       <div class="rs-fin-total"><div class="rs-fin-n">${rsNum(f.requests)}</div><div class="rs-fin-l">radiology requests priced</div></div>
       <div class="rs-fin-total"><div class="rs-fin-n">${rsSAR(f.revenue)}</div><div class="rs-fin-l">total revenue (billed)</div></div>
