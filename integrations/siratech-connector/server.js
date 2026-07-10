@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'unpaid-probe4-2026-07-10m';
+const CONNECTOR_BUILD = 'unpaid-probe5-2026-07-10n';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2080,18 +2080,25 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
     const EMR = '/emr-api/api/v1';
     // EMR order-layer bodies (pre-billing) — guessed from the RadiologySearch shape.
     const emrBody = (site, extra) => ({ mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseInvCategoryId: 2, baseCategoryId: 2, ...extra });
+    const BILL = '/billing-api/api/v1';
     const candidates = (site) => ([
       { name: 'RS current (baseline)', path: RS, body: base({ hospitalId: site }) },
       // The winner from v3 — returns an OBJECT (its lists are now unpacked by shapeOf).
       { name: 'EMR/FetchServiceDueList', path: EMR + '/EMR/FetchServiceDueList', body: emrBody(site) },
-      // Radiology-only variant of the due list (baseInvCategoryId already 2, but also pin
-      // a serviceType/category in case a blank returns everything or nothing).
-      { name: 'EMR/FetchServiceDueList (rad)', path: EMR + '/EMR/FetchServiceDueList', body: emrBody(site, { serviceType: 2, baseCatgeory: 2 }) },
       { name: 'EMR/FetchEmrOrders', path: EMR + '/EMR/FetchEmrOrders', body: emrBody(site) },
       { name: 'EMR/FetchBundleDueList', path: EMR + '/EMR/FetchBundleDueList', body: emrBody(site) },
+      // Patient-scoped billing sources — only useful with an mrno (payment/settlement layer).
+      ...(mrno ? [
+        { name: 'Billing/DueSettlementBills', path: BILL + '/DueSettlement/GetDueSettlementBills', body: emrBody(site, { patientType: 0, visitMode: 0 }) },
+        { name: 'Billing/ServicePanelData', path: BILL + '/ServicePanel/GetServicePanelData', body: emrBody(site, { serviceType: 0 }) },
+        { name: 'Billing/GetAvailedServices', path: BILL + '/AvailedServiceInfo/GetAvailedServices', body: emrBody(site) },
+      ] : []),
     ]);
+    // With an mrno, the patient can be at ANY branch — try hospitalId 0 (any) first, then a
+    // couple of real sites. Without an mrno, sweep the first 2 branches (branch-wide reads).
+    const probeSites = mrno ? [0, ...wantSites.slice(0, 3)] : wantSites.slice(0, 2);
     const out = [];
-    for (const site of wantSites.slice(0, 2)) {   // cap sites so the probe stays quick
+    for (const site of probeSites) {
       for (const c of candidates(site)) {
         try {
           const r = await hisFetch(c.path, { method: 'POST', body: c.body });
@@ -2112,7 +2119,7 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
       else { const ba = bestArray(sh); rows = ba ? `obj→${ba.field}[${ba.count}]` : (sh.objectKeys ? 'obj(no-array)' : '0'); }
       return `site ${r.site} · ${r.endpoint} · HTTP ${r.status != null ? r.status : 'ERR'} · rows=${rows}`;
     });
-    return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; compare rows= across endpoints — the one with MORE rows than "RS current" includes unpaid orders', range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: wantSites.slice(0, 2), summary, results: out });
+    return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; compare rows= across endpoints', mrno: mrno || null, range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: probeSites, summary, results: out });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
