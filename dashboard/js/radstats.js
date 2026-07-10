@@ -571,6 +571,53 @@ function rsKpi(accent, dot, val, label, sub) {
   </div>`;
 }
 
+// Peak hours — orders by hour of day. Hidden gracefully if the HIS timestamps are date-only.
+function rsHourly(byHour, hasTime) {
+  const arr = Array.isArray(byHour) ? byHour : [];
+  if (!hasTime || !arr.some((v) => v > 0)) {
+    return `<div class="rs-empty">Order timestamps don't carry a time-of-day in this data, so peak-hours can't be shown. It fills in automatically if order times become available.</div>`;
+  }
+  const max = Math.max(1, ...arr);
+  const peak = arr.indexOf(Math.max(...arr));
+  const fmtH = (h) => { const ap = h < 12 ? 'a' : 'p'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ap; };
+  const bars = arr.map((v, h) => {
+    const pct = Math.max(3, Math.round((v / max) * 100));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0" title="${fmtH(h)} — ${v} orders">
+      <div style="width:100%;display:flex;align-items:flex-end;height:92px"><div style="width:76%;margin:0 auto;height:${pct}%;border-radius:4px 4px 0 0;background:${h === peak ? 'var(--danger,#E25555)' : 'var(--accent,#6B4EFF)'}"></div></div>
+      <div style="font-size:9px;color:var(--muted)">${h % 3 === 0 ? fmtH(h) : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div style="display:flex;gap:2px;align-items:flex-end;padding-top:6px">${bars}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Busiest hour: <b>${fmtH(peak)}</b> (${max} orders) — staff to the peak.</div>`;
+}
+
+// Busiest weekdays — average orders per weekday across the range (KSA week: Sun–Thu).
+// Uses the per-day average so a range with more Mondays doesn't skew "busiest".
+function rsWeekday(daily) {
+  const arr = Array.isArray(daily) ? daily : [];
+  if (arr.length < 3) return `<div class="rs-empty">Pick a wider date range (a week+) to see the weekday pattern.</div>`;
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const tot = new Array(7).fill(0), cnt = new Array(7).fill(0);
+  for (const row of arr) {
+    const m = String(row.date || '').match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) continue;
+    const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+    tot[dow] += (row.count || 0); cnt[dow] += 1;
+  }
+  const avg = tot.map((t, i) => cnt[i] ? t / cnt[i] : 0);
+  const max = Math.max(1, ...avg);
+  const peak = avg.indexOf(Math.max(...avg));
+  const bars = names.map((nm, i) => {
+    const pct = Math.max(3, Math.round((avg[i] / max) * 100));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px" title="${nm} — avg ${avg[i].toFixed(1)}/day">
+      <div style="width:100%;display:flex;align-items:flex-end;height:88px"><div style="width:64%;margin:0 auto;height:${pct}%;border-radius:5px 5px 0 0;background:${i === peak ? 'var(--danger,#E25555)' : 'var(--accent2,#8358fd)'}"></div></div>
+      <div style="font-size:11px;color:var(--muted)">${nm}</div>
+    </div>`;
+  }).join('');
+  return `<div style="display:flex;gap:5px;align-items:flex-end;padding-top:6px">${bars}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Busiest weekday: <b>${names[peak]}</b> (avg ${avg[peak].toFixed(0)}/day) — roster more staff.</div>`;
+}
+
 function rsRenderBody() {
   const body = document.getElementById('rs-body');
   const banner = document.getElementById('rs-billing-banner');
@@ -695,6 +742,8 @@ function rsRenderBody() {
       ${rsPanel('Daily trend', rsArea(d.daily || []), `${dayCount} day${dayCount === 1 ? '' : 's'} in range`)}
       ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order')}
     </div>
+    ${rsPanel('⏰ Peak hours — when orders come in', rsHourly(d.byHour, d.hourHasTime), 'orders by hour of day · staff to the peak', 'rs-wide')}
+    ${dayCount >= 3 ? rsPanel('📅 Busiest weekdays', rsWeekday(d.daily || []), 'avg orders per weekday · roster to demand', 'rs-wide') : ''}
 
     ${rsSection('Financial — revenue &amp; payer')}
     ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;

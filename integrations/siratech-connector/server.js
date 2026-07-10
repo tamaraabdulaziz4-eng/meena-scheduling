@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'his-groups-2026-07-10a';
+const CONNECTOR_BUILD = 'peak-hours-2026-07-10b';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2854,6 +2854,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const byBranch = new Map(), byDept = new Map(), byDoctor = new Map();
   const patientSet = new Set();
   const daily = new Map();
+  const hourly = new Array(24).fill(0);   // peak-hours: orders per hour-of-day (0..23)
+  let nonMidnight = 0;                     // >0 means the timestamps actually carry a time (not date-only)
   const aging = { '<1d': 0, '1-3d': 0, '3-7d': 0, '>7d': 0 };
   let total = 0, emergency = 0, routine = 0;
   const now = Date.now();
@@ -2876,6 +2878,10 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       if (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) emergency += 1; else routine += 1;
       const d = dayOf(r.billDate || r.visitDate);
       if (d) daily.set(d, (daily.get(d) || 0) + 1);
+      // Peak-hours: read the hour straight from the timestamp string (no timezone shift).
+      // If the order timestamps are date-only, `nonMidnight` stays 0 and the UI hides the chart.
+      const hm = String(r.billDate || r.visitDate || '').match(/[T ](\d{2}):(\d{2})/);
+      if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
       const t = Date.parse(r.billDate || r.visitDate || '');
       if (Number.isFinite(t)) {
         const days = (now - t) / 864e5;
@@ -3053,6 +3059,8 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     priority: { emergency, routine },
     aging,
     daily: [...daily.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([date, count]) => ({ date, count })),
+    byHour: hourly,                 // 24 buckets — orders per hour-of-day (peak-hours chart)
+    hourHasTime: nonMidnight > 0,   // false → order timestamps are date-only, hide the chart
     generatedAt: new Date().toISOString(),
     note: 'Requests = billed radiology orders in the RIS worklist (awaiting result). Paid/unpaid collection split is added from the billing report.',
   };
