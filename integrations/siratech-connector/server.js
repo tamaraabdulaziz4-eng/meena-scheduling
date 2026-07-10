@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'dl-frontend-2026-07-10t';
+const CONNECTOR_BUILD = 'dl-frontend2-2026-07-10u';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -551,19 +551,35 @@ async function discoverEndpoints(opts = {}) {
   // file harvest API paths AND referenced *.js chunk names, fetch those too, repeat.
   const API_RE = /([A-Za-z][\w-]*-api\/api\/v\d+\/[A-Za-z0-9_./-]+)/g;
   const CHUNK_RE = /["'`]([A-Za-z0-9_\-./]+\.js)["'`]/g;
+  // Angular/webpack build lazy-chunk filenames at RUNTIME as `id + "." + hash + ".js"`,
+  // so they never appear as a literal "*.js" string — that's why a plain scan misses the
+  // radiology/EMR/billing feature chunks. The chunk HASH MAP is a dense object literal
+  // `{179:"a1b2c3d4e5f6...",234:"..."}`; extract every id→hash pair and synthesise the
+  // chunk URLs so we actually pull EVERY chunk, not just the eager bundles.
+  const CHUNKMAP_RE = /(\d{1,5}):"([0-9a-f]{16,32})"/g;
   const toUrl = (f) => { if (/^https?:\/\//.test(f)) return f.startsWith(HIS_BASE) ? f : null;
     return HIS_BASE + '/' + f.replace(/^\.?\//, ''); };
-  const fromCode = new Set(); const seen = new Set(); const queue = [...jsUrls]; const CAP = 500;
-  while (queue.length && seen.size < CAP) {
-    const u = queue.shift(); if (!u || seen.has(u)) continue; seen.add(u);
-    try {
-      const res = await fetch(u, { headers: { Accept: '*/*' }, signal: AbortSignal.timeout(30000) });
-      if (!res.ok) continue;
-      const txt = await res.text(); let m;
-      if (collectRaw) rawParts.push(`\n/* ===================== ${u} ===================== */\n${txt}`);
-      while ((m = API_RE.exec(txt)) !== null) { const p = m[1].replace(/['"`,);]+$/, ''); if (p.length >= 8 && p.length <= 160) fromCode.add(p); }
-      let c; while ((c = CHUNK_RE.exec(txt)) !== null) { const url = toUrl(c[1]); if (url && /\.js$/i.test(url) && !seen.has(url) && queue.length + seen.size < CAP) queue.push(url); }
-    } catch (_e) { /* skip a bundle that won't fetch */ }
+  const fromCode = new Set(); const seen = new Set(); const CAP = 2500;
+  let frontier = [...new Set(jsUrls)];
+  // Fetch each wave of chunks in PARALLEL (serial over 2500 chunks would take many
+  // minutes); each fetched file reveals the next wave (more chunk refs / hash-map ids).
+  while (frontier.length && seen.size < CAP) {
+    const batch = frontier.filter((u) => u && !seen.has(u)).slice(0, CAP - seen.size);
+    if (!batch.length) break;
+    batch.forEach((u) => seen.add(u));
+    const next = new Set();
+    await pool(batch, 16, async (u) => {
+      try {
+        const res = await fetch(u, { headers: { Accept: '*/*' }, signal: AbortSignal.timeout(15000) });
+        if (!res.ok) return;
+        const txt = await res.text(); let m;
+        if (collectRaw) rawParts.push(`\n/* ===================== ${u} ===================== */\n${txt}`);
+        while ((m = API_RE.exec(txt)) !== null) { const p = m[1].replace(/['"`,);]+$/, ''); if (p.length >= 8 && p.length <= 160) fromCode.add(p); }
+        let c; while ((c = CHUNK_RE.exec(txt)) !== null) { const url = toUrl(c[1]); if (url && /\.js$/i.test(url) && !seen.has(url)) next.add(url); }
+        let k; while ((k = CHUNKMAP_RE.exec(txt)) !== null) { const url = `${HIS_BASE}/${k[1]}.${k[2]}.js`; if (!seen.has(url)) next.add(url); }
+      } catch (_e) { /* skip a bundle that won't fetch */ }
+    });
+    frontier = [...next];
   }
   const fetched = seen.size;
   const all = [...new Set([...liveApi, ...fromCode])].sort();
