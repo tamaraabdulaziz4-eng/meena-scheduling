@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'unpaid-probe2-2026-07-10k';
+const CONNECTOR_BUILD = 'unpaid-probe3-2026-07-10l';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2063,17 +2063,22 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
     const RS = '/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch';
     const base = (extra) => results.radiologySearchBody({ mrno: '', hospitalId: 0, empId, filterResult: '0', fromDate: fromISO, toDate: toISO, ...extra });
     const withRaw = (extra, raw) => { const b = base(extra); Object.assign(b, raw); return b; };
+    const EMR = '/emr-api/api/v1';
+    // EMR order-layer bodies (pre-billing) — guessed from the RadiologySearch shape.
+    const emrBody = (site, extra) => ({ mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseInvCategoryId: 2, baseCategoryId: 2, ...extra });
     const candidates = (site) => ([
       { name: 'RS current (filterResult 0, isbilled 0)', path: RS, body: base({ hospitalId: site }) },
       { name: 'RS isbilled 1', path: RS, body: withRaw({ hospitalId: site }, { isbilled: 1 }) },
       { name: 'RS filterResult blank', path: RS, body: base({ hospitalId: site, filterResult: '' }) },
-      { name: 'RS filterResult 1', path: RS, body: base({ hospitalId: site, filterResult: '1' }) },
       { name: 'RS isCreditWithoutBilling 1', path: RS, body: withRaw({ hospitalId: site }, { isCreditWithoutBilling: 1 }) },
-      { name: 'RS mode 0 + cpoeStatus blank', path: RS, body: withRaw({ hospitalId: site }, { mode: 0, cpoeStatus: '' }) },
-      { name: 'RS selectionType 0', path: RS, body: base({ hospitalId: site, selectionType: 0 }) },
+      // Order layer BEFORE billing — the strongest candidates for unpaid/unbilled orders.
+      { name: 'EMR/FetchServiceDueList', path: EMR + '/EMR/FetchServiceDueList', body: emrBody(site) },
+      { name: 'EMR/FetchEmrOrders', path: EMR + '/EMR/FetchEmrOrders', body: emrBody(site) },
+      { name: 'EMR/FetchEmrOrdersCategory', path: EMR + '/EMR/FetchEmrOrdersCategory', body: emrBody(site) },
+      { name: 'EMR/FetchBundleDueList', path: EMR + '/EMR/FetchBundleDueList', body: emrBody(site) },
     ]);
     const out = [];
-    for (const site of wantSites.slice(0, 3)) {   // cap sites so the probe stays quick
+    for (const site of wantSites.slice(0, 2)) {   // cap sites so the probe stays quick
       for (const c of candidates(site)) {
         try {
           const r = await hisFetch(c.path, { method: 'POST', body: c.body });
@@ -2084,7 +2089,9 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
         }
       }
     }
-    return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; find which endpoint returns unpaid radiology orders', range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: wantSites.slice(0, 3), results: out });
+    // Compact one-line-per-candidate summary so the counts are readable without truncation.
+    const summary = out.map((r) => `site ${r.site} · ${r.endpoint} · HTTP ${r.status != null ? r.status : 'ERR'} · rows=${(r.shape && (r.shape.rowCount != null ? r.shape.rowCount : (r.shape.objectKeys ? 'object' : '?'))) || (r.error ? 'error' : 0)}`);
+    return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; compare rows= across endpoints — the one with MORE rows than "RS current" includes unpaid orders', range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: wantSites.slice(0, 2), summary, results: out });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
