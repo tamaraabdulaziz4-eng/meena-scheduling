@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'note-prefetch-2026-07-10c';
+const CONNECTOR_BUILD = 'perf-stats-worklist-2026-07-10d';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1788,6 +1788,11 @@ const RAD_STATUS_TTL = Number(process.env.RAD_STATUS_TTL_MS || 90000);
 // resurfaced; 400 gives headroom (lookups are 90s-cached + concurrency-bounded, so a
 // full cold sweep is paid once per window, then instant).
 const RAD_STATUS_MAX_FETCH = Number(process.env.RAD_STATUS_MAX_FETCH || 400);   // cap new lookups per load
+// Concurrency for the ready=1 DePACS per-patient stage refinement (the heaviest
+// background pass on a busy board). Was a bare 8 — lower than the 12 used elsewhere,
+// which throttled the pass on boards with many distinct patients. Results are 60s-cached
+// so a slightly wider fan-out is cheap; env-overridable if the HIS box needs it dialled.
+const DEPACS_STAGE_CONCURRENCY = Number(process.env.DEPACS_STAGE_CONCURRENCY || 14);
 const radStatusCache = new Map();   // mrno -> { ts, byKey: Map(key -> {status,cpoe,reported,imaged,invId,acc}) }
 // MRNs whose per-mrno status lookup is currently in flight. On a cold open the fast pass
 // kicks this sweep in the BACKGROUND (see buildWorklist), so two overlapping fast builds
@@ -2135,7 +2140,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     // manual force-refresh (noCache) bypasses the cache for truly-fresh status. ONE
     // lookup per patient — no extra EMR round-trip (the matched study already carries
     // the accession we display, so a second per-patient HIS call would just re-add lag).
-    await pool(mrns, 8, async (m) => {
+    await pool(mrns, DEPACS_STAGE_CONCURRENCY, async (m) => {
       try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
     });
     const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
