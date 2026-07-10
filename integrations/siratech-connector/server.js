@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'order-trace-2026-07-10p';
+const CONNECTOR_BUILD = 'order-trace2-2026-07-10q';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2218,18 +2218,25 @@ app.get('/diag/order-trace', requireAuth, async (req, res) => {
     const today = new Date();
     const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
     const fromISO = `${new Date(today.getTime() - 120 * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
-    // Placed orders (doctor CPOE layer) — walk the nested response and keep radiology leaves.
-    const eo = await hisFetch('/emr-api/api/v1/EMR/FetchEmrOrders', { body: { mrno, hospitalId: 0, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseCategoryId: 2, baseInvCategoryId: 2 } }).catch(() => null);
+    // Placed orders (doctor CPOE layer). FetchEmrOrders needs a REAL hospitalId (0 returns
+    // nothing), so try each branch until the patient's orders come back.
     const placed = [];
     const walk = (o) => {
       if (!o || typeof o !== 'object') return;
       if (Array.isArray(o)) { o.forEach(walk); return; }
       if (o.invMastServiceName && /radiolog/i.test(String(o.invCategoryName || ''))) {
-        placed.push({ invMastServiceId: o.invMastServiceId, name: o.invMastServiceName, billedStatus: o.billedStatus, isbilled: o.isbilled, adminStatus: o.adminStatus, status: o.status, serviceOrderId: o.serviceOrderId, proposedDate: o.proposedDate });
+        placed.push({ invMastServiceId: o.invMastServiceId, name: o.invMastServiceName, billedStatus: o.billedStatus, isbilled: o.isbilled, adminStatus: o.adminStatus, status: o.status, serviceOrderId: o.serviceOrderId, proposedDate: o.proposedDate, hospitalId: o.hospitalId });
       }
       for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
     };
-    walk(eo && eo.json);
+    const sitesToTry = (await getSites().catch(() => [])).map((s) => s.siteId);
+    let placedFoundAtSite = null;
+    for (const s of sitesToTry) {
+      const eo = await hisFetch('/emr-api/api/v1/EMR/FetchEmrOrders', { body: { mrno, hospitalId: s, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseCategoryId: 2, baseInvCategoryId: 2 } }).catch(() => null);
+      const before = placed.length;
+      walk(eo && eo.json);
+      if (placed.length > before && placedFoundAtSite == null) placedFoundAtSite = s;
+    }
     // What the worklist source shows for this patient (pending + resulted).
     const rsRows = async (extra) => {
       const r = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', { body: results.radiologySearchBody({ mrno, hospitalId: 0, empId, fromDate: fromISO, toDate: toISO, ...extra }) }).catch(() => null);
@@ -2247,7 +2254,7 @@ app.get('/diag/order-trace', requireAuth, async (req, res) => {
     }));
     const missing = trace.filter((t) => !t.inWorklistPending && !t.inWorklistResulted);
     return res.json({
-      ok: true, build: CONNECTOR_BUILD, mrno,
+      ok: true, build: CONNECTOR_BUILD, mrno, placedFoundAtSite,
       verdict: placed.length === 0 ? 'no radiology orders found for this patient'
         : missing.length ? `${missing.length}/${placed.length} placed radiology orders are MISSING from the worklist source — must pull from EMR orders`
         : 'all placed radiology orders appear in the worklist source — just mark unpaid',
