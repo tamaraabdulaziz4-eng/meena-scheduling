@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'umgr-probe-2026-07-09k';
+const CONNECTOR_BUILD = 'his-groups-2026-07-10a';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1145,9 +1145,35 @@ app.get('/user/:id/privileges', requireAuth, async (req, res) => {
       }
     }
     const names = Array.isArray(priv.data) ? priv.data.map((p) => p && (p.privilages || p.privileges || p.privilegeName || p.name)).filter(Boolean) : [];
+    // Groups are the real unit of access in Siratech (a save assigns groups, not loose
+    // privileges), so surface the user's groups + the full group catalogue for naming.
+    // READ-ONLY: GetGenUserGroups (this user) and GetAllGenGroups (catalogue). Never writes.
+    const umgrHeaders = { 'X-App-Client': 'his.meena-health.com', 'X-App-Mode': 'ENCV0',
+      'GENERAL-API-ACCESS': 'GENERAL-API-ACCESS', 'API-LICENSE-ACCESS': 'API-FREE-LICENSE' };
+    const Gum = (p) => hisFetch(p, { method: 'GET', headers: umgrHeaders })
+      .then((r) => ({ status: r.status, data: (r.json && (r.json.data !== undefined ? r.json.data : r.json)) }))
+      .catch((e) => ({ error: String(e && e.message) }));
+    const [userGroups, allGroups] = await Promise.all([
+      Gum('/user-management-api/api/v1/Group/GetGenUserGroups?UserId=' + enc),
+      Gum('/user-management-api/api/v1/Group/GetAllGenGroups?ParentGroupId=0'),
+    ]);
+    // Normalise a group row (field names vary across endpoints) to {id, name}.
+    const gId = (g) => g && (g.genGroupID ?? g.genGroupId ?? g.groupId ?? g.groupid ?? g.id);
+    const gName = (g) => g && (g.groupName ?? g.groupname ?? g.name ?? g.groupDescription ?? '');
+    const catalogArr = Array.isArray(allGroups.data) ? allGroups.data
+      : (allGroups.data && Array.isArray(allGroups.data.genGroups) ? allGroups.data.genGroups : []);
+    const nameById = {};
+    for (const g of catalogArr) { const id = gId(g); if (id != null) nameById[id] = gName(g) || ('Group ' + id); }
+    const userGroupArr = Array.isArray(userGroups.data) ? userGroups.data
+      : (userGroups.data && Array.isArray(userGroups.data.genGroups) ? userGroups.data.genGroups : []);
+    const groups = userGroupArr.map((g) => { const id = gId(g); return { id, name: gName(g) || nameById[id] || ('Group ' + id) }; })
+      .filter((g) => g.id != null);
     return res.json({ ok: true, build: CONNECTOR_BUILD, userId: uid, hospitalId,
       sites: siteList.map((s) => ({ id: s.siteId, name: s.shortName || s.name || ('Site ' + s.siteId) })),
       grantedSites: [...granted].sort((a, b) => a - b),
+      groups, groupCount: groups.length,
+      groupCatalog: { status: allGroups.status, count: catalogArr.length,
+        items: catalogArr.map((g) => ({ id: gId(g), name: gName(g) })).filter((g) => g.id != null) },
       privilegesByUser: { status: priv.status, error: priv.error || null, count: sz(priv), keys: sampleKeys(priv),
         names, sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
       modulePrivilege: { status: modPriv.status, error: modPriv.error || null, topLevel: sz(modPriv), leafCount: countTree(modPriv.data), keys: sampleKeys(modPriv) },
