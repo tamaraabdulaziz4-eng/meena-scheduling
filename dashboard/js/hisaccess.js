@@ -117,6 +117,7 @@ function hisAccessRender() {
     <div class="board">
       <div class="bhead"><div class="bhrow">
         <div class="btitle">All privileges <span>${catalog.length}</span></div>
+        <button class="btn btn-sm" style="width:auto" onclick="hisExportCatalog()">⬇︎ Download all (CSV)</button>
       </div></div>
       <div style="padding:14px 18px">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
@@ -131,6 +132,25 @@ function hisAccessRender() {
 }
 
 function hisPrivSearch(v) { _hisFilter = String(v || '').trim().toUpperCase(); hisAccessRenderList(); }
+
+// Export the full privilege catalogue as a categorised CSV (category = module prefix),
+// with a column flagging whether the looked-up user holds each one.
+function hisExportCatalog() {
+  const keys = (_hisCatalog || []).slice().sort();
+  if (!keys.length) { toast('No privileges loaded — look up a user first', 'err'); return; }
+  const esc = (s) => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+  const rows = [['category', 'privilege', 'held_by_looked_up_user']];
+  for (const k of keys) rows.push([String(k).split('_')[0] || '?', k, _hisGranted.has(k) ? 'yes' : 'no']);
+  const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `siratech-privileges-${(_hisData && _hisData.userId) || 'catalog'}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  const cats = new Set(keys.map((k) => String(k).split('_')[0] || '?'));
+  toast(`Exported ${keys.length} privileges across ${cats.size} categories`);
+}
 
 function hisAccessRenderList() {
   const host = document.getElementById('his-priv-list');
