@@ -618,6 +618,23 @@ function rsWeekday(daily) {
     <div style="font-size:12px;color:var(--muted);margin-top:8px">Busiest weekday: <b>${names[peak]}</b> (avg ${avg[peak].toFixed(0)}/day) — roster more staff.</div>`;
 }
 
+// Busiest specific dates in the range — the top days by order volume.
+function rsBusyDates(daily) {
+  const arr = (Array.isArray(daily) ? daily : []).filter((r) => r && r.date);
+  if (arr.length < 2) return `<div class="rs-empty">Not enough days in range.</div>`;
+  const max = Math.max(1, ...arr.map((r) => r.count || 0));
+  const top = arr.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 8);
+  const fmt = (d) => { const m = String(d).match(/(\d{4})-(\d{2})-(\d{2})/); if (!m) return d; return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
+  return top.map((r) => {
+    const pct = Math.max(4, Math.round(((r.count || 0) / max) * 100));
+    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+      <div style="width:140px;font-size:12px;flex-shrink:0">${escapeHtml(fmt(r.date))}</div>
+      <div style="flex:1;background:var(--border);border-radius:5px;height:16px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--accent,#6B4EFF)"></div></div>
+      <div style="width:36px;text-align:right;font-size:12px;font-weight:700">${r.count || 0}</div>
+    </div>`;
+  }).join('');
+}
+
 function rsRenderBody() {
   const body = document.getElementById('rs-body');
   const banner = document.getElementById('rs-billing-banner');
@@ -744,6 +761,7 @@ function rsRenderBody() {
     </div>
     ${rsPanel('⏰ Peak hours — when orders come in', rsHourly(d.byHour, d.hourHasTime), 'orders by hour of day · staff to the peak', 'rs-wide')}
     ${dayCount >= 3 ? rsPanel('📅 Busiest weekdays', rsWeekday(d.daily || []), 'avg orders per weekday · roster to demand', 'rs-wide') : ''}
+    ${dayCount >= 5 ? rsPanel('🗓️ Busiest dates', rsBusyDates(d.daily || []), 'top days by volume in the range', 'rs-wide') : ''}
 
     ${rsSection('Financial — revenue &amp; payer')}
     ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
