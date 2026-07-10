@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'note-clean-2026-07-10b';
+const CONNECTOR_BUILD = 'note-prefetch-2026-07-10c';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1268,7 +1268,9 @@ function _parseNoteFields(text, heading) {
   for (const seg of segs) {
     const m = seg.match(/^([^:]{2,60}?):\s*([\s\S]*)$/);
     if (m) {
-      const label = m[1].trim(); const value = m[2].trim();
+      const label = m[1].trim();
+      // strip a leading colon/whitespace the HIS sometimes doubles ("Diastolic: : 73")
+      const value = m[2].replace(/^[:\s]+/, '').trim();
       if (!value || _scaffoldOnly(value)) continue;   // empty field → drop
       fields.push({ label, value });
     } else {

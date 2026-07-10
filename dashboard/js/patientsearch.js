@@ -5,6 +5,10 @@
 // billing and imaging/report status) into one screen. Read-only.
 
 let psState = { q: '', patients: null, loading: false, sel: null, lookup: null, reqSeq: 0 };
+// Client-side cache of fetched visit notes, keyed by `${mrno}|${encounterId}`, so an
+// expand is INSTANT once prefetched in the background. Value is the notes[] array (or
+// null = fetched-but-empty). Reset per patient lookup so it never leaks across patients.
+let psNoteCache = new Map();
 let psPendingQuery = '';   // set by openPatientLookup() so the page auto-searches on open
 
 // Deep-link into this page for a specific file/MRN (e.g. from the Home drill-down).
@@ -116,6 +120,7 @@ async function psOpen(i) {
     if (seq !== psState.reqSeq) return;
     // Keep the search-row patient as a fallback when the lookup's own patient block is thin.
     psState.lookup = { ...d, patient: d.patient || p };
+    psNoteCache = new Map();   // fresh patient → drop any prefetched notes from the last one
     renderPsDetail();
   } catch (e) {
     if (seq !== psState.reqSeq) return;
@@ -370,25 +375,51 @@ async function psLoadVisits() {
     </div>`;
   }).join('');
   box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div>${rows}</div>`;
+  // Warm the notes in the BACKGROUND so expanding a visit is instant (no spinner).
+  psPrefetchVisitNotes(p.mrno, visits.slice(0, 12).map((v) => v.encounterId).filter((e) => e != null));
 }
 
-// Expand a visit row to show the doctor's clinical note(s) for that encounter,
-// fetched on demand from Siratech (Visits/DetailsByGroup → EmrHtmlPreview). Read-only.
-async function psToggleVisitNote(encounterId, elId, caretRow) {
-  const box = document.getElementById(elId);
-  if (!box) return;
-  const caret = document.getElementById(elId + '-c');
-  if (box.style.display !== 'none') { box.style.display = 'none'; if (caret) caret.textContent = '▸'; return; }
-  box.style.display = ''; if (caret) caret.textContent = '▾';
-  if (box.dataset.loaded) return;
-  const p = (psState.lookup && psState.lookup.patient) || {};
-  box.innerHTML = '<span style="color:var(--muted);font-size:12px">Loading note from Siratech…</span>';
-  let d;
-  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/visit-note?encounterId=${encodeURIComponent(encounterId)}`); }
-  catch (e) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">Could not load the note.</span>`; return; }
+// Fetch a single visit's notes, memoised in psNoteCache. Returns notes[] (possibly
+// empty) or throws on network error. Shared by the on-demand expand and the prefetch.
+async function psFetchVisitNote(mrno, encounterId) {
+  const key = `${mrno}|${encounterId}`;
+  if (psNoteCache.has(key)) return psNoteCache.get(key);
+  const d = await API.get(`/radiology/patient/${encodeURIComponent(mrno)}/visit-note?encounterId=${encodeURIComponent(encounterId)}`);
   const notes = (d && d.notes) || [];
-  if (!notes.length) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">No readable note on this visit.</span>`; box.dataset.loaded = '1'; return; }
+  psNoteCache.set(key, notes);
+  return notes;
+}
+
+// Quietly pre-load the notes for the visible visits, low-concurrency so the 2 GB HIS
+// box isn't hammered. Populates psNoteCache; if a row is already expanded and waiting,
+// fill it the moment its note lands. Best-effort — a failed prefetch just falls back
+// to the on-demand fetch when the user actually expands that row.
+async function psPrefetchVisitNotes(mrno, encounterIds) {
+  if (!mrno || !encounterIds || !encounterIds.length) return;
+  let i = 0;
+  const worker = async () => {
+    while (i < encounterIds.length) {
+      const enc = encounterIds[i]; i += 1;
+      const key = `${mrno}|${enc}`;
+      if (psNoteCache.has(key)) continue;
+      // bail if the user navigated to a different patient mid-prefetch
+      const cur = (psState.lookup && psState.lookup.patient) || {};
+      if (String(cur.mrno) !== String(mrno)) return;
+      try { await psFetchVisitNote(mrno, enc); } catch (e) { continue; }
+      // if a row for this encounter is open and showing the loader, render it now
+      document.querySelectorAll(`[data-note-enc="${enc}"]`).forEach((box) => {
+        if (box.style.display !== 'none' && !box.dataset.loaded) psRenderVisitNote(box, psNoteCache.get(key));
+      });
+    }
+  };
+  await Promise.all([worker(), worker()]);   // concurrency 2
+}
+
+// Render a note box from a notes[] array — clean label/value cards, empties dropped.
+function psRenderVisitNote(box, notes) {
+  if (!box) return;
   box.dataset.loaded = '1';
+  if (!notes || !notes.length) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">No readable note on this visit.</span>`; return; }
   const fieldRow = (f) => f.label
     ? `<div class="ps-nf"><span class="ps-nf-k">${escapeHtml(f.label)}</span><span class="ps-nf-v">${escapeHtml(f.value)}</span></div>`
     : `<div class="ps-nf ps-nf-solo">${escapeHtml(f.value)}</div>`;
@@ -417,6 +448,26 @@ async function psToggleVisitNote(encounterId, elId, caretRow) {
       ${secs || '<div class="ps-note-empty">No readable content in this note.</div>'}
     </div>`;
   }).join('');
+}
+
+// Expand a visit row to show the doctor's clinical note(s) for that encounter. Uses the
+// background-prefetched cache when available (instant); otherwise fetches on demand.
+async function psToggleVisitNote(encounterId, elId, caretRow) {
+  const box = document.getElementById(elId);
+  if (!box) return;
+  const caret = document.getElementById(elId + '-c');
+  if (box.style.display !== 'none') { box.style.display = 'none'; if (caret) caret.textContent = '▸'; return; }
+  box.style.display = ''; if (caret) caret.textContent = '▾';
+  if (box.dataset.loaded) return;
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  const key = `${p.mrno}|${encounterId}`;
+  box.dataset.noteEnc = encounterId; box.setAttribute('data-note-enc', encounterId);
+  if (psNoteCache.has(key)) { psRenderVisitNote(box, psNoteCache.get(key)); return; }  // instant
+  box.innerHTML = '<span style="color:var(--muted);font-size:12px">Loading note from Siratech…</span>';
+  let notes;
+  try { notes = await psFetchVisitNote(p.mrno, encounterId); }
+  catch (e) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">Could not load the note.</span>`; return; }
+  psRenderVisitNote(box, notes);
 }
 
 // The patient's appointment history — date · speciality · doctor · status. Read-only.
