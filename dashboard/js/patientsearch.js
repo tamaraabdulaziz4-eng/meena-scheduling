@@ -221,8 +221,7 @@ function renderPsDetail() {
     examBlock = `<div class="ps-sec-l ps-examhead">Radiology exams · ${sorted.length}${notBilled ? ` <span style="color:var(--danger-ink);font-weight:800">· ${notBilled} not billed</span>` : ''}<span>newest first</span></div>` +
       sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
-  det.innerHTML = patCard + `<div id="ps-allorders"></div>` + examBlock;
-  psLoadAllOrders(p.mrno);
+  det.innerHTML = patCard + examBlock;
   psLoadConsents();
   psLoadDocuments();
   psLoadLabs();
@@ -235,57 +234,6 @@ function renderPsDetail() {
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
 }
 
-// ALL radiology orders the doctor placed for this patient — including the ones that never
-// reach the worklist because they're not performed yet (billed-awaiting-payment or unbilled).
-// This is the only way to see unpaid/pending orders: Siratech is per-patient (proved from its
-// own code — every order/billing endpoint needs an mrno), exactly how their reception works.
-// Badge by BILLING status only — we do NOT claim payment (FetchEmrOrders' "Billed" means a
-// bill exists, not that it's unpaid; adminStatus is unreliable/stale). Orders already in the
-// worklist/DePACS are performed — we exclude them so a done exam is never shown as pending.
-const PS_STATE = {
-  billed_pending: { label: 'مفوتر · لم يصل الطابور بعد', cls: 'ps-ord-unbilled' },
-  unbilled:       { label: 'غير مفوتر بعد', cls: 'ps-ord-unpaid' },
-};
-async function psLoadAllOrders(mrno) {
-  const box = document.getElementById('ps-allorders');
-  if (!box || !mrno) return;
-  box.innerHTML = `<div class="ps-sec"><div class="ps-sec-l">Orders not yet in the worklist · طلبات لم تصل الطابور</div>
-    <div style="padding:8px 2px;color:var(--muted);font-size:12.5px"><span class="mini-spin"></span> جاري التحميل…</div></div>`;
-  let d;
-  try { d = await API.get(`/radiology/patient/${encodeURIComponent(mrno)}/radiology-orders`); }
-  catch (e) { box.innerHTML = ''; return; }              // best-effort — never break the card
-  const orders = (d && d.orders) || [];
-  const sar = (n) => Math.round(Number(n) || 0).toLocaleString() + ' ﷼';
-  // The worklist/DePACS exams (already shown below) are the TRUTH for "performed" — used to
-  // avoid mislabeling a done exam as "pending". But UNPAID (o.unpaid, from the patient's due
-  // bill) is shown regardless of performed status: a scan can be done yet the patient still owes.
-  const norm = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
-  const inQueue = new Set(((psState.lookup && psState.lookup.orders) || [])
-    .map((o) => norm(o.service || o.exam || o.serviceName)).filter(Boolean));
-  // Show: anything the patient still OWES for (real, from the bill), plus orders not yet in
-  // the queue. A performed + paid order isn't shown here (it's in the exams list below).
-  const show = orders.filter((o) => o.unpaid || (o.state !== 'performed' && !inQueue.has(norm(o.exam))));
-  if (!show.length) { box.innerHTML = ''; return; }
-  const unpaidN = show.filter((o) => o.unpaid).length;
-  const rows = show.map((o) => {
-    const when = o.orderedDate ? (String(o.orderedDate).slice(0, 10)) : '';
-    let cls, badge;
-    if (o.unpaid) { cls = 'ps-ord-unpaid'; badge = `غير مدفوع${o.patientDue ? ' · ' + sar(o.patientDue) : ''}`; }
-    else { const st = PS_STATE[o.state] || PS_STATE.billed_pending; cls = st.cls; badge = st.label; }
-    return `<div class="ps-ord ${cls}">
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:13.5px">${escapeHtml(o.exam || '—')}${o.modality ? ` <span style="color:var(--muted);font-weight:500">· ${escapeHtml(o.modality)}</span>` : ''}</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-top:2px">${when ? escapeHtml(when) + ' · ' : ''}${o.doctorName ? 'د. ' + escapeHtml(o.doctorName) : ''}${o.branch ? ' · ' + escapeHtml(o.branch) : ''}</div>
-        ${o.clinicalIndication ? `<div style="font-size:11.5px;margin-top:2px">${escapeHtml(o.clinicalIndication)}</div>` : ''}
-      </div>
-      <span class="ps-ord-badge">${badge}</span>
-    </div>`;
-  }).join('');
-  const dueTotal = (d && d.dueTotal) || 0;
-  box.innerHTML = `<div class="ps-sec">
-    <div class="ps-sec-l ps-examhead">طلبات الأشعة · غير مدفوعة/معلّقة · ${show.length}${unpaidN ? ` <span style="color:var(--danger-ink);font-weight:800">· ${unpaidN} غير مدفوع${dueTotal ? ' (' + sar(dueTotal) + ')' : ''}</span>` : ''}<span>من فواتير المريض</span></div>
-    ${rows}</div>`;
-}
 
 // A collapsed, tap-to-load section header. The real loader (psLoadRealLabs / psLoadVisits /
 // psLoadAppointments) renders into the same container, replacing this stub, only when opened —
