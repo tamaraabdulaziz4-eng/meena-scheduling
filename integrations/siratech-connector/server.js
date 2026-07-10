@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'unpaid-probe-2026-07-10j';
+const CONNECTOR_BUILD = 'unpaid-probe2-2026-07-10k';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2054,15 +2054,23 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
       if (j && typeof j === 'object') return { objectKeys: Object.keys(j).slice(0, 40) };
       return { raw: typeof j };
     };
-    // Candidate billing/order-search endpoints + payload variants (modelled on the known
-    // RadiologySearch body). All are *search/list* reads.
+    // RadiologySearch IS branch-wide (no mrno needed). The default board uses
+    // filterResult:'0' + isbilled:0, which only returns paid+performed orders awaiting a
+    // result. Unpaid orders may surface under a DIFFERENT flag combination — so probe the
+    // branch-wide search across filterResult / isbilled / mode / cpoeStatus variants and
+    // compare row counts. All are read-only searches. (The patient-scoped billing endpoints
+    // returned empty on a blank mrno, so they're dropped from the branch-wide probe.)
+    const RS = '/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch';
+    const base = (extra) => results.radiologySearchBody({ mrno: '', hospitalId: 0, empId, filterResult: '0', fromDate: fromISO, toDate: toISO, ...extra });
+    const withRaw = (extra, raw) => { const b = base(extra); Object.assign(b, raw); return b; };
     const candidates = (site) => ([
-      { name: 'DueSettlement/GetDueSettlementBills v1', path: '/billing-api/api/v1/DueSettlement/GetDueSettlementBills',
-        body: { mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, visitMode: 0, patientType: 0 } },
-      { name: 'DueSettlement/GetDueSettlementBills v2', path: '/billing-api/api/v1/DueSettlement/GetDueSettlementBills',
-        body: { mrno, hospitalId: site, userId: uid, fromDate: fromISO, toDate: toISO } },
-      { name: 'ServicePanel/GetServicePanelData', path: '/billing-api/api/v1/ServicePanel/GetServicePanelData',
-        body: { mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, serviceType: 0 } },
+      { name: 'RS current (filterResult 0, isbilled 0)', path: RS, body: base({ hospitalId: site }) },
+      { name: 'RS isbilled 1', path: RS, body: withRaw({ hospitalId: site }, { isbilled: 1 }) },
+      { name: 'RS filterResult blank', path: RS, body: base({ hospitalId: site, filterResult: '' }) },
+      { name: 'RS filterResult 1', path: RS, body: base({ hospitalId: site, filterResult: '1' }) },
+      { name: 'RS isCreditWithoutBilling 1', path: RS, body: withRaw({ hospitalId: site }, { isCreditWithoutBilling: 1 }) },
+      { name: 'RS mode 0 + cpoeStatus blank', path: RS, body: withRaw({ hospitalId: site }, { mode: 0, cpoeStatus: '' }) },
+      { name: 'RS selectionType 0', path: RS, body: base({ hospitalId: site, selectionType: 0 }) },
     ]);
     const out = [];
     for (const site of wantSites.slice(0, 3)) {   // cap sites so the probe stays quick
