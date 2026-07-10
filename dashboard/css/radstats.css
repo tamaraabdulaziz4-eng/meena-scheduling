@@ -155,6 +155,19 @@
 .rs-clock-dot { width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 0 rgba(34,197,94,.5); animation:rsPulse 1.6s ease-out infinite; }
 @keyframes rsPulse { 0% { box-shadow:0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow:0 0 0 7px rgba(34,197,94,0); } 100% { box-shadow:0 0 0 0 rgba(34,197,94,0); } }
 
+/* Chart bars: grow-in on first paint (staggered via inline animation-delay), the peak
+   bar keeps a gentle pulse. On a silent auto-refresh the .cc-still root suppresses the
+   grow so it doesn't flicker; the peak keeps pulsing. Bars are clickable (drill). */
+@keyframes rsGrow { from { transform:scaleY(.02); } to { transform:scaleY(1); } }
+@keyframes rsPeak { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.28); } }
+.rs-cbar { transform-origin:bottom center; animation:rsGrow .5s cubic-bezier(.2,.8,.2,1) both; }
+.rs-cbar.peak { animation:rsGrow .5s cubic-bezier(.2,.8,.2,1) both, rsPeak 1.9s ease-in-out .5s infinite; }
+.cc-still .rs-cbar { animation:none; }
+.cc-still .rs-cbar.peak { animation:rsPeak 1.9s ease-in-out infinite; }
+.rs-cbar-wrap { cursor:pointer; border-radius:7px; transition:background .15s; }
+.rs-cbar-wrap:hover { background:rgba(107,78,255,.08); }
+.rs-cbar-wrap:hover .rs-cbar { filter:brightness(1.12); }
+
 /* Premium in-page loader (matches the app boot splash) */
 .rs-boot { position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:center; gap:12px;
   padding:34px 16px 30px; margin-bottom:14px; border-radius:18px;

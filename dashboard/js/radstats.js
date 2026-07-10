@@ -579,16 +579,36 @@ function rsHourly(byHour, hasTime) {
   }
   const max = Math.max(1, ...arr);
   const peak = arr.indexOf(Math.max(...arr));
-  const fmtH = (h) => { const ap = h < 12 ? 'a' : 'p'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ap; };
+  const total = arr.reduce((a, b) => a + b, 0) || 1;
+  const fmtH = (h) => { const ap = h < 12 ? 'AM' : 'PM'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ap; };
   const bars = arr.map((v, h) => {
-    const pct = Math.max(3, Math.round((v / max) * 100));
-    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0" title="${fmtH(h)} — ${v} orders">
-      <div style="width:100%;display:flex;align-items:flex-end;height:92px"><div style="width:76%;margin:0 auto;height:${pct}%;border-radius:4px 4px 0 0;background:${h === peak ? 'var(--danger,#E25555)' : 'var(--accent,#6B4EFF)'}"></div></div>
-      <div style="font-size:9px;color:var(--muted)">${h % 3 === 0 ? fmtH(h) : ''}</div>
+    const pct = Math.max(2, Math.round((v / max) * 100));
+    const isPeak = h === peak;
+    return `<div class="rs-cbar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;padding:2px 0"
+                 title="${fmtH(h)} · ${v} order${v === 1 ? '' : 's'} · ${Math.round((v / total) * 100)}% of the day"
+                 onclick="rsDrillHour(${h},${v})">
+      <div style="font-size:9px;line-height:1;height:10px;color:var(--danger,#E25555);font-weight:800">${isPeak ? v : ''}</div>
+      <div style="width:100%;display:flex;align-items:flex-end;height:112px">
+        <div class="rs-cbar${isPeak ? ' peak' : ''}" style="width:72%;margin:0 auto;height:${pct}%;border-radius:5px 5px 0 0;animation-delay:${h * 18}ms;background:${isPeak ? 'var(--danger,#E25555)' : 'linear-gradient(180deg,var(--accent2,#8358fd),var(--accent,#6B4EFF))'}"></div>
+      </div>
+      <div style="font-size:9.5px;color:var(--muted);height:12px">${h % 4 === 0 ? fmtH(h).replace(':00', '') : ''}</div>
     </div>`;
   }).join('');
-  return `<div style="display:flex;gap:2px;align-items:flex-end;padding-top:6px">${bars}</div>
-    <div style="font-size:12px;color:var(--muted);margin-top:8px">Busiest hour: <b>${fmtH(peak)}</b> (${max} orders) — staff to the peak.</div>`;
+  return `<div style="display:flex;gap:2px;align-items:flex-end;padding-top:4px">${bars}</div>
+    <div style="font-size:12.5px;color:var(--muted);margin-top:12px;display:flex;gap:14px;flex-wrap:wrap">
+      <span>🔴 Busiest: <b style="color:var(--ink)">${fmtH(peak)}</b> (${max} orders)</span>
+      <span style="opacity:.8">Evening peak — staff to it · tap a bar for detail</span>
+    </div>`;
+}
+
+// Tap an hour bar → quick detail (full order-list drill is the next build).
+function rsDrillHour(h, v) {
+  const fmtH = (x) => { const ap = x < 12 ? 'AM' : 'PM'; const hh = x % 12 === 0 ? 12 : x % 12; return hh + ap; };
+  const d = radstats.data || {};
+  const arr = d.byHour || [];
+  const total = arr.reduce((a, b) => a + b, 0) || 1;
+  const rank = arr.slice().sort((a, b) => b - a).indexOf(v) + 1;
+  toast(`${fmtH(h)} — ${v} orders · ${Math.round((v / total) * 100)}% of the day · #${rank} busiest hour`);
 }
 
 // Busiest weekdays — average orders per weekday across the range (KSA week: Sun–Thu).
@@ -620,8 +640,10 @@ function rsWeekday(daily) {
   const peak = avg.indexOf(Math.max(...avg));
   const bars = names.map((nm, i) => {
     const pct = Math.max(3, Math.round((avg[i] / max) * 100));
-    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px" title="${nm} — avg ${avg[i].toFixed(1)}/day">
-      <div style="width:100%;display:flex;align-items:flex-end;height:88px"><div style="width:64%;margin:0 auto;height:${pct}%;border-radius:5px 5px 0 0;background:${i === peak ? 'var(--danger,#E25555)' : 'var(--accent2,#8358fd)'}"></div></div>
+    const isPeak = i === peak;
+    return `<div class="rs-cbar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px 0" title="${nm} — avg ${avg[i].toFixed(1)}/day" onclick="toast('${nm}: avg ${avg[i].toFixed(1)} orders/day')">
+      <div style="font-size:10px;line-height:1;height:11px;color:var(--danger,#E25555);font-weight:800">${isPeak ? Math.round(avg[i]) : ''}</div>
+      <div style="width:100%;display:flex;align-items:flex-end;height:84px"><div class="rs-cbar${isPeak ? ' peak' : ''}" style="width:60%;margin:0 auto;height:${pct}%;border-radius:5px 5px 0 0;animation-delay:${i * 45}ms;background:${isPeak ? 'var(--danger,#E25555)' : 'linear-gradient(180deg,var(--accent,#6B4EFF),var(--accent2,#8358fd))'}"></div></div>
       <div style="font-size:11px;color:var(--muted)">${nm}</div>
     </div>`;
   }).join('');
