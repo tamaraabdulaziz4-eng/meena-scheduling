@@ -330,6 +330,7 @@ function rsSelectBranch(v) {
 function rsAllBranches() { radstats.sel = null; rsRenderControls(); rsLoad(); }
 
 function rsSetPreset(id) {
+  radstats.dayFocus = null;              // picking a range exits single-day focus
   radstats.preset = id;
   const r = rsPresetRange(id);
   radstats.from = r.from; radstats.to = r.to;
@@ -337,6 +338,7 @@ function rsSetPreset(id) {
   rsLoad();
 }
 function rsSetCustom() {
+  radstats.dayFocus = null;              // picking a range exits single-day focus
   const f = document.getElementById('rs-from'), t = document.getElementById('rs-to');
   radstats.from = (f && f.value) || radstats.from;
   radstats.to = (t && t.value) || radstats.to;
@@ -448,7 +450,7 @@ function rsBarRows(items, color, max0, opts) {
   const drill = opts && opts.drill;
   const total = items.reduce((a, i) => a + i.count, 0);
   const max = max0 || Math.max(1, ...items.map((i) => i.count));
-  return `<div class="rs-bars">` + items.map((i) => {
+  return `<div class="rs-bars">` + items.map((i, idx) => {
     const label = escapeHtml(String(i.label == null || i.label === '' ? 'Unknown' : i.label));
     const pct = Math.round((i.count / max) * 100);
     const col = typeof color === 'function' ? color(i) : (color || 'var(--accent)');
@@ -459,7 +461,7 @@ function rsBarRows(items, color, max0, opts) {
       : ` class="rs-bar"`;
     return `<div${attrs} data-tip="${escapeHtml(tip)}">
       <div class="rs-bar-label" title="${label}">${label}${clickable ? '<span class="rs-bar-go">›</span>' : ''}</div>
-      <div class="rs-bar-track"><div class="rs-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+      <div class="rs-bar-track"><div class="rs-bar-fill rs-hbar" style="width:${pct}%;background:${col};animation-delay:${idx * 40}ms"></div></div>
       <div class="rs-bar-val">${rsNum(i.count)}<span class="rs-bar-share">${rsPct(i.count, total)}%</span></div>
     </div>`;
   }).join('') + `</div>`;
@@ -658,14 +660,34 @@ function rsBusyDates(daily) {
   const max = Math.max(1, ...arr.map((r) => r.count || 0));
   const top = arr.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 8);
   const fmt = (d) => { const m = String(d).match(/(\d{4})-(\d{2})-(\d{2})/); if (!m) return d; return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
-  return top.map((r) => {
+  return top.map((r, idx) => {
     const pct = Math.max(4, Math.round(((r.count || 0) / max) * 100));
-    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+    return `<div class="rs-cbar-wrap" style="display:flex;align-items:center;gap:8px;padding:5px 6px" title="Open ${escapeHtml(r.date)} — its full stats" onclick="rsDrillDate('${jsAttr(r.date)}')">
       <div style="width:140px;font-size:12px;flex-shrink:0">${escapeHtml(fmt(r.date))}</div>
-      <div style="flex:1;background:var(--border);border-radius:5px;height:16px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--accent,#6B4EFF)"></div></div>
+      <div style="flex:1;background:var(--border);border-radius:5px;height:16px;overflow:hidden"><div class="rs-hbar" style="width:${pct}%;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent2,#8358fd),var(--accent,#6B4EFF));animation-delay:${idx * 50}ms"></div></div>
       <div style="width:36px;text-align:right;font-size:12px;font-weight:700">${r.count || 0}</div>
     </div>`;
   }).join('');
+}
+
+// Select a day (from busiest-dates / daily trend) → focus the whole dashboard on that day.
+// Toggle off to restore the previous range. Any preset/custom pick also clears the focus.
+function rsDrillDate(dateStr) {
+  const m = String(dateStr || '').match(/\d{4}-\d{2}-\d{2}/);
+  if (!m) return;
+  const day = m[0];
+  if (radstats.dayFocus && radstats.dayFocus.date === day) { rsClearDayFocus(); return; }
+  if (!radstats.dayFocus) radstats.dayFocus = { prevFrom: radstats.from, prevTo: radstats.to, prevPreset: radstats.preset };
+  radstats.dayFocus.date = day;
+  radstats.from = day; radstats.to = day; radstats.preset = 'custom';
+  rsRenderControls(); rsLoad();
+  const b = document.getElementById('rs-body'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function rsClearDayFocus() {
+  const f = radstats.dayFocus; if (!f) return;
+  radstats.dayFocus = null;
+  radstats.from = f.prevFrom; radstats.to = f.prevTo; radstats.preset = f.prevPreset || 'custom';
+  rsRenderControls(); rsLoad();
 }
 
 // Gender split.
@@ -777,6 +799,13 @@ function rsRenderBody() {
       <span class="rs-focus-dot"></span>Focused on <b>${escapeHtml(nm)}</b>
       <button class="rs-focus-clear" onclick="rsAllBranches()">✕ Show all branches</button>
     </div>`;
+  }
+  // Single-day focus (selected a date from busiest-dates / daily trend).
+  if (radstats.dayFocus && radstats.dayFocus.date) {
+    const dd = radstats.dayFocus.date;
+    const label = (() => { const m = dd.match(/(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : dd; })();
+    focusNote += `<div class="rs-focus"><span class="rs-focus-dot"></span>Showing <b>${escapeHtml(label)}</b>
+      <button class="rs-focus-clear" onclick="rsClearDayFocus()">✕ Back to range</button></div>`;
   }
 
   // Layout — everything below is straight from Siratech HIS, grouped by theme:
