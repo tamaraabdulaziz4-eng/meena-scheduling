@@ -37,11 +37,12 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 statusRatchet: new Map() };
 
 // Live board: refresh on a timer so a newly-arrived order (or a just-filed one
-// dropping off) shows without the operator touching anything. ~12s to feel like a live
-// HIS terminal — the fast pass is light and shares one connector-cached fetch across all
-// viewers (fast TTL ~12s), and the flicker-free repaint makes each tick seamless. Hidden
-// tabs don't poll (see wlStartTimer), and the heavy DePACS pass stays throttled.
-const WL_REFRESH_MS = 12000;
+// dropping off) shows without the operator touching anything. ~20s still feels live for a
+// pending-orders board while roughly halving the poll load vs the old 12s — the fast pass
+// shares one connector-cached fetch across all viewers, and the html-exact repaint guard
+// (wlRender) makes an unchanged tick a no-op. Hidden tabs don't poll (see wlStartTimer),
+// and the heavy DePACS pass stays throttled (~3 min on the silent timer).
+const WL_REFRESH_MS = 20000;
 
 // Org-wide roles (superadmin/manager) can point the board at any branch; a branch
 // team lead is server-scoped to their own branch, so the picker is locked for them.
@@ -399,7 +400,7 @@ async function wlLoad(force, silent) {
       wlState.reconnecting = true; wlPaintLive();
     }
   }, 120000);
-  if (!silent && !wlState.filter) body.innerHTML = LOADING_HTML;
+  if (!silent && !wlState.filter) { body.innerHTML = LOADING_HTML; wlState._lastBodyHtml = null; }
   // FAST load: no ready/modality — just the pending list, so the board paints in one
   // round-trip. The pipeline stage + exam/modality (per-order HIS work) come in a
   // background pass right after, and never block the first paint.
@@ -438,6 +439,7 @@ async function wlLoad(force, silent) {
         body.innerHTML = `<div class="empty" style="padding:24px"><div class="empty-icon">${icon('alert')}</div>
           <p>${escapeHtml(e.message || 'Failed to load the worklist')}</p>
           <button class="btn btn-sm" onclick="wlLoad(true)">Retry</button></div>`;
+        wlState._lastBodyHtml = null;
       }
     }
   } finally {
@@ -752,6 +754,7 @@ function wlRender() {
     body.innerHTML = banner + (match.length
       ? wlRowsHtml(match)
       : `<div class="empty"><div class="ei">🔍</div><p>No patient on this board starts with “${escapeHtml(f)}”.${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
+    wlState._lastBodyHtml = null;   // typeahead view — next full-board render must repaint
     wlRenderTabs(items);
     wlAutoPreg(); wlAutoIndication(); wlAutoVitals(); wlSyncActionbar();
     return;
@@ -761,6 +764,7 @@ function wlRender() {
   wlRenderFilters(items);
   if (!items.length) {
     body.innerHTML = `<div class="empty"><div class="ei">🗂️</div><p>No orders awaiting a result.</p></div>`;
+    wlState._lastBodyHtml = null;
     wlSyncActionbar(); return;
   }
 
@@ -782,12 +786,22 @@ function wlRender() {
   else if (wlState.fSort === 'recent') rows.sort((a, b) => (a.ageHours || 0) - (b.ageHours || 0));
   else rows.sort((a, b) => (Number(!!b.emergency) - Number(!!a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
 
-  body.innerHTML = rows.length
+  const html = rows.length
     ? wlRowsHtml(rows)
     : `<div class="empty"><div class="ei">🗂️</div><p>No orders match this view.</p><div class="hint">Try clearing a filter or switching tabs.</div></div>`;
+  // Skip the DOM teardown when the board is byte-identical to what's already painted. On a
+  // steady board the silent poll produces the same HTML every tick, and rebuilding hundreds
+  // of rows each time is the visible flicker/scroll-jump. Any real change (new order, stage
+  // promotion, tab/filter/selection) alters the HTML and repaints normally; skipping the
+  // no-op assignment also PRESERVES async-injected cell content (vitals/indication) instead
+  // of wiping and re-fetching it every tick.
+  if (html !== wlState._lastBodyHtml || !body.firstChild) {
+    body.innerHTML = html;
+    wlState._lastBodyHtml = html;
+  }
 
   // Selection + expanded state are re-derived from the wlState Sets while building the
-  // row HTML, so they survive every 12s repaint with no separate restore pass.
+  // row HTML, so they survive every repaint with no separate restore pass.
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
   wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
   wlAutoVitals();         // auto-fetch vitals for any EXPANDED order row (throttled, cached)
@@ -1544,4 +1558,5 @@ function wlShowMatches(pts) {
   }).join('');
   body.innerHTML = `<div class="rw-filterbar"><span>${pts.length} found on other branches — pick the patient</span>
     <button class="btn" onclick="wlClearFilter()">← Back to worklist</button></div>${rows}`;
+  wlState._lastBodyHtml = null;   // cross-branch match view — next full-board render must repaint
 }
