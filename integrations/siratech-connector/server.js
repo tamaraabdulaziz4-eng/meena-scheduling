@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'frontend-find-2026-07-10v';
+const CONNECTOR_BUILD = 'pat-radorders-2026-07-10w';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -645,6 +645,62 @@ app.get('/diag/frontend-find', requireAuth, async (req, res) => {
       found[t] = { count, samples };
     }
     return res.json({ ok: true, rawSizeMB: Math.round(raw.length / 1e6 * 10) / 10, found });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// Every radiology order a doctor PLACED for this patient — including the ones that never
+// reach RadiologySearch (billed/unbilled, not yet performed). This is the per-patient
+// "all orders + payment status" view (proved to be the only way: Siratech has no branch-
+// wide placed-orders list; its own reception is per-patient too). Source: FetchEmrOrders,
+// which needs a real hospitalId, so we try each branch and keep radiology leaves.
+app.get('/patient/:file/radiology-orders', requireAuth, async (req, res) => {
+  const mrno = String(req.params.file || '').trim();
+  if (!mrno) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  try {
+    await getToken();
+    const empId = currentEmpId() || '0';
+    const uid = String(HIS_USER).padStart(8, '0');
+    const today = new Date();
+    const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
+    const fromISO = `${new Date(today.getTime() - 180 * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const siteList = await getSites().catch(() => []);
+    const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+    const seen = new Set(); const orders = [];
+    const walk = (o, site) => {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach((x) => walk(x, site)); return; }
+      if (o.invMastServiceName && /radiolog/i.test(String(o.invCategoryName || ''))) {
+        const key = String(o.serviceOrderId != null ? o.serviceOrderId : o.invMastServiceName + '|' + (o.proposedDate || ''));
+        if (!seen.has(key)) {
+          seen.add(key);
+          const admin = String(o.adminStatus || '').toLowerCase();
+          const performed = admin === 'completed' || admin === 'performed';
+          orders.push({
+            exam: o.invMastServiceName, modality: results.normMod(o.invMastServiceName || o.subCategoryName || '') || null,
+            subCategory: o.subCategoryName || null,
+            clinicalIndication: (o.clinicalIndication || '').trim() || null,
+            doctorName: (o.providerName || '').trim() || null,
+            orderedDate: o.proposedDate || null,
+            billedStatus: o.billedStatus || null, isBilled: Number(o.isbilled) === 1,
+            adminStatus: o.adminStatus || null, performed,
+            // Not in the result queue yet AND billed → the classic "billed, awaiting payment/
+            // arrival" state the worklist can't show. Unbilled → not even priced yet.
+            state: performed ? 'performed' : (Number(o.isbilled) === 1 ? 'billed_pending' : 'unbilled'),
+            serviceOrderId: o.serviceOrderId != null ? o.serviceOrderId : null,
+            patFinEncounterId: o.patFinEncounterId != null ? o.patFinEncounterId : null,
+            site, branch: nameOf.get(site) || `Branch ${site}`,
+          });
+        }
+      }
+      for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v, site);
+    };
+    for (const s of siteList.map((x) => x.siteId)) {
+      const eo = await hisFetch('/emr-api/api/v1/EMR/FetchEmrOrders', { body: { mrno, hospitalId: s, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseCategoryId: 2, baseInvCategoryId: 2 } }).catch(() => null);
+      walk(eo && eo.json, s);
+    }
+    orders.sort((a, b) => Date.parse(b.orderedDate || 0) - Date.parse(a.orderedDate || 0));
+    return res.json({ ok: true, mrno, count: orders.length,
+      pending: orders.filter((o) => o.state !== 'performed').length, orders });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 

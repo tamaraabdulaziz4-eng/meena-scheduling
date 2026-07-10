@@ -6947,6 +6947,18 @@ def radiology_patient_visits(file_no: str, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/visits", timeout=90)
 
+@app.get("/api/radiology/patient/{file_no}/radiology-orders")
+def radiology_patient_radiology_orders(file_no: str, user=Depends(require_radiology)):
+    """EVERY radiology order the doctor placed for this patient — including the ones that
+    never reach the worklist (billed/unbilled, not yet performed), with payment status.
+    This is the only way to see unpaid/pending orders (Siratech has no branch-wide list).
+    Read-only."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/radiology-orders", timeout=120)
+
 @app.get("/api/radiology/his-user/{user_id}/privileges")
 def radiology_his_user_privileges(user_id: str, request: Request, user=Depends(require_superadmin)):
     """Read a Siratech HIS user's privileges / modules / menu (counts + shape) — superadmin
