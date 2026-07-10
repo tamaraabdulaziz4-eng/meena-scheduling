@@ -372,19 +372,23 @@ async function rsLoad(silent, force) {
   if (!silent) rsRenderControls();
   const bodyEl = document.getElementById('rs-body');
   if (bodyEl && radstats.data) bodyEl.classList.add('rs-refreshing');   // keep data visible, show it's updating
+  // A non-silent load = the selection changed (branch / preset / dates / first open).
+  // The old modality+revenue belong to the PREVIOUS selection, so drop them — they'll
+  // reload in the background for the new selection below.
+  if (!silent) { radstats.modData = null; radstats.finData = null; radstats.modError = ''; radstats.finError = ''; }
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
-  q.set('full', '1');                  // ONE call returns everything (requests + modality + revenue)
+  // NO full=1 — that forced the ~2,400-bill revenue read BEFORE anything could paint.
+  // The base call (requests / priority / branch / dept / daily / hourly / demographics)
+  // is cheap (RadiologySearch only), so the headline KPIs appear instantly; the heavy
+  // modality + revenue passes then fill in behind them (rsLoadModality/rsLoadFinancial).
   if (force) q.set('nocache', '1');    // Refresh button → skip cache, pull truly live now
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
     if (myReq !== radstats._reqSeq) return;   // superseded by a newer selection — drop this stale result
     radstats.data = d;
-    radstats.modData = d.modality || null;   // arrives together — no separate/late panels
-    radstats.finData = d.financial || null;
-    radstats.modError = ''; radstats.finError = '';
   } catch (e) {
     if (myReq !== radstats._reqSeq) return;
     radstats.lastError = (e && e.message) || 'Could not load statistics';
@@ -392,52 +396,68 @@ async function rsLoad(silent, force) {
     if (myReq === radstats._reqSeq) {   // only the latest request owns the UI state
       radstats.loading = false;
       if (!radstats.lastError) radstats.lastLoaded = Date.now();   // for the "updated Xs ago" ticker
-      rsHideOverlay();                  // everything in → dismiss the full-screen loader
+      rsHideOverlay();                  // base data in → dismiss the full-screen loader, paint KPIs NOW
       rsRenderControls();
       rsRenderBody();
+      // Instant paint done. Fill the heavy enrichment in the BACKGROUND — only when it's
+      // missing (first open / selection change) or the user forced a live refresh; a
+      // silent auto-refresh keeps the existing numbers (they're within the cache window).
+      if (!radstats.lastError) {
+        if (force || !radstats.modData) rsLoadModality({ seq: myReq, force });
+        if (force || !radstats.finData) rsLoadFinancial({ seq: myReq, force });
+      }
     }
   }
 }
 
-// Exact modality mix is slower (per-order detail calls), so it loads on demand.
-async function rsLoadModality() {
-  if (radstats.modLoading) return;
+// Exact modality mix is slower (per-order detail calls), so it loads in the background
+// after the KPIs paint. seq gates the write so a stale response can't clobber a newer
+// selection; force propagates the live-refresh nocache.
+async function rsLoadModality(opts) {
+  opts = opts || {};
+  const myReq = (opts.seq != null) ? opts.seq : radstats._reqSeq;
   radstats.modLoading = true; radstats.modError = '';
-  rsRenderBody();
+  if (!radstats.modData) rsRenderBody();   // show the panel's own spinner only when empty
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
   q.set('modality', '1');
+  if (opts.force) q.set('nocache', '1');
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
+    if (myReq !== radstats._reqSeq) return;   // superseded — don't overwrite the newer view
     radstats.modData = d.modality || { mix: [], sampled: 0, ofTotal: 0 };
   } catch (e) {
+    if (myReq !== radstats._reqSeq) return;
     radstats.modError = (e && e.message) || 'Could not load modality mix';
   } finally {
-    radstats.modLoading = false;
-    rsRenderBody();
+    if (myReq === radstats._reqSeq) { radstats.modLoading = false; rsRenderBody(); }
   }
 }
 
-// Revenue & payer split is slower (per-order bill reads), so it loads on demand.
-async function rsLoadFinancial() {
-  if (radstats.finLoading) return;
+// Revenue & payer split is the slowest pass (per-order bill reads), so it loads in the
+// background after the KPIs paint. Same seq/force handling as rsLoadModality.
+async function rsLoadFinancial(opts) {
+  opts = opts || {};
+  const myReq = (opts.seq != null) ? opts.seq : radstats._reqSeq;
   radstats.finLoading = true; radstats.finError = '';
-  rsRenderBody();
+  if (!radstats.finData) rsRenderBody();   // show the panel's own spinner only when empty
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
   const _s = rsSitesParam(); if (_s) q.set('sites', _s);
   q.set('financial', '1');
+  if (opts.force) q.set('nocache', '1');
   try {
     const d = await API.get('/radiology/stats?' + q.toString());
+    if (myReq !== radstats._reqSeq) return;   // superseded — don't overwrite the newer view
     radstats.finData = d.financial || { revenue: 0, patient: 0, sponsor: 0, sampled: 0, ofTotal: 0 };
   } catch (e) {
+    if (myReq !== radstats._reqSeq) return;
     radstats.finError = (e && e.message) || 'Could not load revenue';
   } finally {
-    radstats.finLoading = false;
-    rsRenderBody();
+    if (myReq === radstats._reqSeq) { radstats.finLoading = false; rsRenderBody(); }
   }
 }
 
