@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'schema-dump-2026-07-10o';
+const CONNECTOR_BUILD = 'order-trace-2026-07-10p';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2199,6 +2199,61 @@ app.get('/diag/schema-dump', requireAuth, async (req, res) => {
     }
     const summary = dump.map((d) => `${d.status != null ? 'HTTP ' + d.status : 'ERR'} · ${d.name} · ${d.schema ? (d.schema.kind === 'array' ? d.schema.count + ' rows' : d.schema.kind === 'object' ? 'obj{' + (d.schema.arrays || []).map((a) => a.field + '[' + a.count + ']').join(',') + '}' : d.schema.kind) : 'error'}`);
     return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'Siratech data schema reference — field names + one redacted sample per endpoint', mrno: mrno || null, seededBillId: gpb || null, seededEncounterId: enc || null, summary, dump });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Order trace (read-only) — does a doctor's order reach the worklist? ────────
+// THE decisive test: for one patient, list every radiology order the doctor placed
+// (FetchEmrOrders — with billed/admin status), then check which of them actually appear
+// in the worklist's source (RadiologySearch, pending + resulted). If a billed-but-pending
+// order is MISSING from RadiologySearch, that proves the worklist can't show it and we
+// must pull placed orders from the EMR layer. If it's PRESENT, we just mark it unpaid.
+app.get('/diag/order-trace', requireAuth, async (req, res) => {
+  try {
+    const mrno = String(req.query.mrno || '').trim();
+    if (!mrno) return res.status(400).json({ ok: false, error: 'mrno required' });
+    await getToken();
+    const uid = String(HIS_USER).padStart(8, '0');
+    const empId = currentEmpId() || '0';
+    const today = new Date();
+    const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
+    const fromISO = `${new Date(today.getTime() - 120 * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    // Placed orders (doctor CPOE layer) — walk the nested response and keep radiology leaves.
+    const eo = await hisFetch('/emr-api/api/v1/EMR/FetchEmrOrders', { body: { mrno, hospitalId: 0, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseCategoryId: 2, baseInvCategoryId: 2 } }).catch(() => null);
+    const placed = [];
+    const walk = (o) => {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach(walk); return; }
+      if (o.invMastServiceName && /radiolog/i.test(String(o.invCategoryName || ''))) {
+        placed.push({ invMastServiceId: o.invMastServiceId, name: o.invMastServiceName, billedStatus: o.billedStatus, isbilled: o.isbilled, adminStatus: o.adminStatus, status: o.status, serviceOrderId: o.serviceOrderId, proposedDate: o.proposedDate });
+      }
+      for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
+    };
+    walk(eo && eo.json);
+    // What the worklist source shows for this patient (pending + resulted).
+    const rsRows = async (extra) => {
+      const r = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', { body: results.radiologySearchBody({ mrno, hospitalId: 0, empId, fromDate: fromISO, toDate: toISO, ...extra }) }).catch(() => null);
+      return ((r && r.json && r.json.data) || []).map((x) => ({ invMastserviceId: x.invMastserviceId, serviceName: x.serviceName, genPatBillingId: x.genPatBillingId, billNo: x.billNo, resultEntry: x.resultEntry }));
+    };
+    const pending = await rsRows({ filterResult: '0' });
+    const resulted = await rsRows({ filterResult: '2', selectionType: 2, isFrequent: 1 });
+    const idsIn = (arr) => new Set(arr.map((x) => String(x.invMastserviceId)));
+    const inPend = idsIn(pending), inRes = idsIn(resulted);
+    // Cross-reference each placed order against the worklist source.
+    const trace = placed.map((p) => ({
+      ...p,
+      inWorklistPending: inPend.has(String(p.invMastServiceId)),
+      inWorklistResulted: inRes.has(String(p.invMastServiceId)),
+    }));
+    const missing = trace.filter((t) => !t.inWorklistPending && !t.inWorklistResulted);
+    return res.json({
+      ok: true, build: CONNECTOR_BUILD, mrno,
+      verdict: placed.length === 0 ? 'no radiology orders found for this patient'
+        : missing.length ? `${missing.length}/${placed.length} placed radiology orders are MISSING from the worklist source — must pull from EMR orders`
+        : 'all placed radiology orders appear in the worklist source — just mark unpaid',
+      placedCount: placed.length, pendingCount: pending.length, resultedCount: resulted.length,
+      trace, missingFromWorklist: missing,
+    });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
