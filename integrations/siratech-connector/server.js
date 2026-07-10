@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'wl-pay-line-2026-07-10i';
+const CONNECTOR_BUILD = 'unpaid-probe-2026-07-10j';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2013,6 +2013,70 @@ app.get('/worklist', requireAuth, async (req, res) => {
     const pay = String(req.query.pay || '') === '1';
     const noCache = String(req.query.nocache || '') === '1';
     return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache })) });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Unpaid-orders PROBE (read-only diagnostic) ────────────────────────────────
+// Unpaid radiology orders never reach ResultEntryRadiology/RadiologySearch (that's the
+// post-payment result queue), so to surface them we must read the BILLING layer. The
+// exact request bodies for those endpoints aren't documented (the HIS builds them at
+// runtime), so this probe tries several candidate search endpoints + payload shapes
+// per branch and reports, for each, the HTTP status and the RAW RESPONSE SHAPE (row
+// count + field names + a PHI-redacted sample row). Nothing is written — only *search*
+// endpoints are called (never Save*). Use it to discover which endpoint lists unpaid
+// radiology orders and what its rows look like, then wire the real merge precisely.
+app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
+  try {
+    await getToken();
+    const uid = String(HIS_USER).padStart(8, '0');
+    const empId = currentEmpId() || '0';
+    const mrno = String(req.query.mrno || '').trim();     // optional: probe one patient
+    const days = Math.max(1, Math.min(31, Number(req.query.days) || 7));
+    const siteList = await getSites().catch(() => []);
+    const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => n > 0);
+    const wantSites = sites.length ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);
+    const today = new Date();
+    const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
+    const fromISO = `${new Date(today.getTime() - days * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    // PHI guard: never echo identifying fields — keep only ids, amounts, dates, flags.
+    const redact = (row) => {
+      if (!row || typeof row !== 'object') return row;
+      const out = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (/name|mobile|phone|iqama|nationalid|national_id|passport|dob|birth|address|email/i.test(k)) out[k] = '‹redacted›';
+        else out[k] = v;
+      }
+      return out;
+    };
+    const shapeOf = (j) => {
+      const rows = (j && (j.data || j.Data)) || (Array.isArray(j) ? j : null);
+      if (Array.isArray(rows)) return { rowCount: rows.length, firstRowKeys: rows.length ? Object.keys(rows[0]) : [], sample: rows.length ? redact(rows[0]) : null };
+      if (j && typeof j === 'object') return { objectKeys: Object.keys(j).slice(0, 40) };
+      return { raw: typeof j };
+    };
+    // Candidate billing/order-search endpoints + payload variants (modelled on the known
+    // RadiologySearch body). All are *search/list* reads.
+    const candidates = (site) => ([
+      { name: 'DueSettlement/GetDueSettlementBills v1', path: '/billing-api/api/v1/DueSettlement/GetDueSettlementBills',
+        body: { mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, visitMode: 0, patientType: 0 } },
+      { name: 'DueSettlement/GetDueSettlementBills v2', path: '/billing-api/api/v1/DueSettlement/GetDueSettlementBills',
+        body: { mrno, hospitalId: site, userId: uid, fromDate: fromISO, toDate: toISO } },
+      { name: 'ServicePanel/GetServicePanelData', path: '/billing-api/api/v1/ServicePanel/GetServicePanelData',
+        body: { mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, serviceType: 0 } },
+    ]);
+    const out = [];
+    for (const site of wantSites.slice(0, 3)) {   // cap sites so the probe stays quick
+      for (const c of candidates(site)) {
+        try {
+          const r = await hisFetch(c.path, { method: 'POST', body: c.body });
+          out.push({ site, endpoint: c.name, status: r.status, ok: !(r.status >= 400) && r.json != null,
+            shape: r.json != null ? shapeOf(r.json) : { nonJson: String(r.text || '').slice(0, 160) } });
+        } catch (e) {
+          out.push({ site, endpoint: c.name, error: String(e.message || e) });
+        }
+      }
+    }
+    return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; find which endpoint returns unpaid radiology orders', range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: wantSites.slice(0, 3), results: out });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
