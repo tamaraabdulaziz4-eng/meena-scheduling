@@ -2068,6 +2068,14 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 /* Exam accordion cards */
 .ps-examhead { margin:18px 0 9px; }
 .ps-examhead span { color:var(--muted); font-weight:600; text-transform:none; letter-spacing:0; margin-inline-start:6px; }
+/* All-orders rows (incl. unpaid / not-yet-performed) */
+.ps-ord { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:11px; margin-bottom:8px; background:var(--surface); }
+.ps-ord-badge { flex:none; font-size:10.5px; font-weight:800; padding:3px 9px; border-radius:8px; white-space:nowrap; align-self:center; }
+.ps-ord-unpaid { border-color:#f0a3a3; background:#fff5f5; }
+.ps-ord-unpaid .ps-ord-badge { color:#fff; background:#d1453b; }
+.ps-ord-unbilled { border-color:#fcd9a3; background:#fffaf2; }
+.ps-ord-unbilled .ps-ord-badge { color:#7a4b00; background:#ffe1b0; }
+.ps-ord-done .ps-ord-badge { color:var(--ok-ink,#0a7d38); background:var(--ok-wash,#e6f6ec); }
 .ps-exam { margin-bottom:10px; padding:0; overflow:hidden; }
 .ps-exam.expanded { box-shadow:var(--shadow-md); border-color:var(--accent); }
 .ps-exam-summary { display:flex; align-items:center; gap:11px; width:100%; text-align:start;
