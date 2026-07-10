@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'bugfix-2026-07-10d';
+const CONNECTOR_BUILD = 'drill-list-2026-07-10e';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3012,6 +3012,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       branch: branchLabel(site), site,
       priority: (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) ? 'emergency' : 'routine',
       date: dayOf(r.billDate || r.visitDate),
+      hour: (() => { const hm = String(r.billDate || r.visitDate || '').match(/[T ](\d{2}):/); return hm ? Number(hm[1]) : null; })(),
       billNo: r.billNo || null,
       gpbId: r.genPatBillingId != null ? String(r.genPatBillingId) : '',
     }));
