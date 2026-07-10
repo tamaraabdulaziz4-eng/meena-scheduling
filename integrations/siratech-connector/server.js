@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'wl-pay-2026-07-10h';
+const CONNECTOR_BUILD = 'wl-pay-line-2026-07-10i';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1939,7 +1939,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // (stamped on every row of the bill), bounded + retrying, radiology-only (labs/drugs on
   // the same visit don't count). billItemKeys is echoed once as a diagnostic so the exact
   // outstanding-vs-responsibility field can be confirmed against the live payload.
-  let billItemKeys = null;
+  let billItemKeys = null, payDiagSample = null;
   if (pay && items.length) {
     const catalog = await getRadCatalog().catch(() => new Map());
     const byBill = new Map();
@@ -1952,15 +1952,22 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     await pool(uniq, STATS_MODALITY_CONCURRENCY, async (gpb) => {
       const res = await readBillItems(gpb);
       if (!billItemKeys && Array.isArray(res.items) && res.items.length) billItemKeys = Object.keys(res.items[0]);
-      let pat = 0, spo = 0, net = 0, radItems = 0;
+      let due = 0, spo = 0, net = 0, radItems = 0, paidAny = false, dueSrc = null;
       for (const it of res.items) {
-        if (!catalog.get(normName(it.itemName))) continue;   // radiology line items only
+        if (!catalog.get(normName(it.itemName))) continue;   // radiology line items ONLY (labs on the same bill are ignored)
         radItems += 1;
-        pat += Number(it.patient) || 0;
+        const od = linePatientDue(it);   // what the PATIENT still owes on THIS radiology line
+        if (od.src && !dueSrc) dueSrc = od.src;
+        if (od.paidSeen) paidAny = true;
+        due += od.due;
         spo += Number(it.sponsor) || 0;
         net += Number(it.netAmount) || 0;
+        // One redacted numeric sample of a radiology line — confirms which field is the
+        // real "outstanding" vs "responsibility" against the live payload (no PHI: item
+        // name + amounts only).
+        if (!payDiagSample) { payDiagSample = {}; for (const [k, v] of Object.entries(it)) { if (typeof v === 'number' || (typeof v === 'string' && /amount|paid|due|balance|patient|sponsor|net|discount|receipt|settle|pending/i.test(k))) payDiagSample[k] = v; } payDiagSample.itemName = it.itemName; }
       }
-      dueByBill.set(gpb, { pat, spo, net, radItems, ok: res.ok });
+      dueByBill.set(gpb, { due, spo, net, radItems, ok: res.ok, dueSrc, paidAny });
     });
     const r2 = (n) => Math.round(n * 100) / 100;
     for (const it of items) {
@@ -1969,11 +1976,12 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
       // the UI shows nothing (never a false "unpaid") in that case.
       if (!d || !d.ok || d.radItems === 0) { it.paymentKnown = false; continue; }
       it.paymentKnown = true;
-      it.patientDue = r2(d.pat);
+      it.patientDue = r2(d.due);
       it.sponsorAmt = r2(d.spo);
       it.billed = r2(d.net);
-      it.unpaid = d.pat > 0;                       // patient still owes a portion
-      if (!it.payer) it.payer = d.spo > 0 ? (d.pat > 0 ? 'Insurance + copay' : 'Insurance') : (d.pat > 0 ? 'Cash / self-pay' : null);
+      it.unpaid = d.due > 0;                        // patient still owes a portion ON THE RADIOLOGY
+      it.dueSource = d.dueSrc || 'patientShare';    // which field the "owes" figure came from
+      if (!it.payer) it.payer = d.spo > 0 ? (d.due > 0 ? 'Insurance + copay' : 'Insurance') : (d.due > 0 ? 'Cash / self-pay' : null);
     }
   }
 
@@ -1986,6 +1994,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     modalityChecked: modality ? Math.min(WORKLIST_MODALITY_CAP, items.length) : 0,
     paymentChecked: pay ? Math.min(WORKLIST_PAY_CAP, new Set(items.map((i) => i.genPatBillingId).filter((x) => x != null)).size) : 0,
     billItemKeys,   // diagnostic: raw bill line-item field names (confirm the true "outstanding" field)
+    payDiagSample,  // diagnostic: one radiology line's amount fields (redacted) to lock the unpaid rule
     items, generatedAt: new Date().toISOString(),
   };
   worklistCache.set(key, { data, ts: Date.now() });
@@ -2889,6 +2898,24 @@ async function readBillItems(gpbId) {
     } catch (_e) { /* fall through to retry / failure */ }
   }
   return { ok: false, items: [] };
+}
+
+// What the PATIENT still owes on ONE bill line item. Siratech spells this differently
+// across builds, so probe in priority order: (1) an explicit patient-outstanding/due
+// field; (2) the patient share minus any recorded patient-paid amount; (3) the raw
+// patient share as a last resort. Returns { due, src, paidSeen } — src records which
+// path produced the number so the UI/diagnostics can show how "unpaid" was derived.
+const _num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+function linePatientDue(it) {
+  for (const k of ['patientDueAmount', 'patientDue', 'dueFromPatient', 'patientBalance',
+                   'patientBalanceAmount', 'patientOutstanding', 'patientPendingAmount', 'patientPending']) {
+    if (it[k] != null && it[k] !== '') return { due: Math.max(0, _num(it[k])), src: k, paidSeen: false };
+  }
+  const share = _num(it.patient);
+  for (const k of ['patientPaidAmount', 'patientPaid', 'patientReceived', 'patientReceiptAmount', 'patientSettledAmount']) {
+    if (it[k] != null && it[k] !== '') return { due: Math.max(0, share - _num(it[k])), src: 'patient−' + k, paidSeen: true };
+  }
+  return { due: share, src: 'patientShare', paidSeen: false };
 }
 
 const STATS_LIST_CAP = Number(process.env.STATS_LIST_CAP || 1500);

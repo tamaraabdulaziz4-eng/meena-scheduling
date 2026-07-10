@@ -556,6 +556,7 @@ async function wlEnrich(silent, force) {
         .then((d) => {
           if (wlState._loadGen !== enrichGen) return;
           wlMergePay(d); wlState.lastPay = Date.now(); wlState.paidOnce = true;
+          if (d && (d.billItemKeys || d.payDiagSample)) { wlState.payDiag = { keys: d.billItemKeys, sample: d.payDiagSample }; }
           if (d && d.billItemKeys && !wlState._billKeysLogged) { wlState._billKeysLogged = true; console.log('[worklist] bill item keys:', (d.billItemKeys || []).join(',')); }
         }).catch(() => {}));
     }
@@ -897,7 +898,16 @@ function wlPayHtml(it) {
   const v = it.unpaid
     ? `<span style="color:var(--danger-ink);font-weight:800">Patient owes ${wlSAR(it.patientDue)}</span>`
     : `<span style="color:var(--ok-ink,#0a7d38);font-weight:700">✓ No patient balance</span>`;
-  return `<div class="xf"><div class="k">Payment</div><div class="v">${v}${meta ? `<div class="dept" style="margin-top:2px">${meta}</div>` : ''}</div></div>`;
+  // Superadmin-only diagnostic: how "owes" was derived + one bill line's amount fields.
+  // Lets us confirm on-device whether the figure is the true outstanding vs the total share.
+  let diag = '';
+  if (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'superadmin') {
+    const parts = [];
+    if (it.dueSource) parts.push('src: ' + escapeHtml(String(it.dueSource)));
+    if (wlState.payDiag && wlState.payDiag.sample) parts.push('bill fields: ' + escapeHtml(JSON.stringify(wlState.payDiag.sample)));
+    if (parts.length) diag = `<div class="dept" style="margin-top:3px;opacity:.7;font-size:10px;word-break:break-all">${parts.join(' · ')}</div>`;
+  }
+  return `<div class="xf"><div class="k">Payment</div><div class="v">${v}${meta ? `<div class="dept" style="margin-top:2px">${meta}</div>` : ''}${diag}</div></div>`;
 }
 
 function wlRowsHtml(rows) { return rows.map(wlRowHtml).join(''); }
