@@ -18,6 +18,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
 const zlib = require('zlib');
 const puppeteer = require('puppeteer');
 const results = require('./results');
@@ -109,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'pat-radorders-2026-07-10w';
+const CONNECTOR_BUILD = 'find-fullfile-2026-07-10x';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -621,6 +622,10 @@ app.get('/download/frontend', async (req, res) => {
 // and returns only small snippets. Raw harvest cached ~10 min so repeat queries are instant.
 let _frontendRaw = null;
 async function getFrontendRaw() {
+  // The headless harvest is non-deterministic (sometimes only a few chunks load). If a
+  // COMPLETE dump was already downloaded to /tmp/sira.js (via /download/frontend), grep
+  // THAT — it's the whole app. Falls back to a live harvest only if the file is absent.
+  try { const st = fs.statSync('/tmp/sira.js'); if (st.size > 5e6) return fs.readFileSync('/tmp/sira.js', 'utf8'); } catch (_e) { /* no file → harvest */ }
   if (_frontendRaw && Date.now() - _frontendRaw.ts < 600000) return _frontendRaw.raw;
   const out = await discoverEndpoints({ collectRaw: true });
   _frontendRaw = { raw: out.raw || '', ts: Date.now() };
