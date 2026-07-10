@@ -389,11 +389,34 @@ async function psToggleVisitNote(encounterId, elId, caretRow) {
   const notes = (d && d.notes) || [];
   if (!notes.length) { box.innerHTML = `<span style="color:var(--muted);font-size:12px">No readable note on this visit.</span>`; box.dataset.loaded = '1'; return; }
   box.dataset.loaded = '1';
-  box.innerHTML = notes.map((n) => `
-    <div style="border-left:2px solid var(--border);padding:2px 0 2px 10px;margin-bottom:8px">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${escapeHtml(n.templateName || 'Note')}${n.by ? ' · ' + escapeHtml(n.by) : ''}${n.date ? ' · ' + escapeHtml(String(n.date).slice(0, 10)) : ''}</div>
-      ${(Array.isArray(n.sections) ? n.sections : []).map((s) => `<div style="font-size:12.5px;line-height:1.5;margin-bottom:2px;white-space:pre-line">${s.label ? `<b>${escapeHtml(s.label)}:</b> ` : ''}${escapeHtml(s.text)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No readable content in this note.</div>'}
-    </div>`).join('');
+  const fieldRow = (f) => f.label
+    ? `<div class="ps-nf"><span class="ps-nf-k">${escapeHtml(f.label)}</span><span class="ps-nf-v">${escapeHtml(f.value)}</span></div>`
+    : `<div class="ps-nf ps-nf-solo">${escapeHtml(f.value)}</div>`;
+  const sectionCard = (s) => {
+    const fields = Array.isArray(s.fields) && s.fields.length
+      ? s.fields
+      // fallback for the old API shape: split the text blob into label:value lines
+      : String(s.text || '').split('\n').map((ln) => {
+          const m = ln.match(/^([^:]{2,60}?):\s*([\s\S]*)$/);
+          return m ? { label: m[1].trim(), value: m[2].trim() } : { label: null, value: ln.trim() };
+        }).filter((f) => f.value);
+    if (!fields.length) return '';
+    return `<div class="ps-note-sec">
+      ${s.label ? `<div class="ps-note-sec-h">${escapeHtml(s.label)}</div>` : ''}
+      <div class="ps-note-fields">${fields.map(fieldRow).join('')}</div>
+    </div>`;
+  };
+  box.innerHTML = notes.map((n) => {
+    const meta = [n.by, n.date ? String(n.date).slice(0, 10) : ''].filter(Boolean).map(escapeHtml).join(' · ');
+    const secs = (Array.isArray(n.sections) ? n.sections : []).map(sectionCard).filter(Boolean).join('');
+    return `<div class="ps-note-card">
+      <div class="ps-note-head">
+        <span class="ps-note-title">${escapeHtml(n.templateName || 'Note')}</span>
+        ${meta ? `<span class="ps-note-meta">${meta}</span>` : ''}
+      </div>
+      ${secs || '<div class="ps-note-empty">No readable content in this note.</div>'}
+    </div>`;
+  }).join('');
 }
 
 // The patient's appointment history — date · speciality · doctor · status. Read-only.

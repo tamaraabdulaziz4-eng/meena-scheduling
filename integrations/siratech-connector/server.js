@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'worklist-parallel-2026-07-10a';
+const CONNECTOR_BUILD = 'note-clean-2026-07-10b';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1237,8 +1237,49 @@ app.get('/patient/:file/appointments', requireAuth, async (req, res) => {
 // emrPrintFormats down to label/text sections (chief complaint, findings, plan,
 // diagnosis). On-demand (drill-in from a visit row). Read-only.
 function _stripHtml(s) {
-  return String(s || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ')
+  return String(s || '')
+    // Siratech's EMR templates glue fields together with LITERAL empty angle-bracket
+    // tokens (`<>`) that the general tag-strip below misses (it needs ≥1 char inside).
+    // Turn them into a real field separator so the note parses into clean fields.
+    .replace(/<\s*>/g, ' ␞ ')
+    .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/\s+/g, ' ').trim();
+}
+
+// A note-field's VALUE is "empty" when the doctor filled nothing — the HIS still
+// emits the field's sub-label scaffolding (`- Residence: - Smoking status: …`).
+// Strip every `Label:` token and bullet/dash punctuation; if <3 real chars remain,
+// there's no actual answer and the field is pure noise we should drop.
+function _scaffoldOnly(v) {
+  const cleaned = String(v || '')
+    .replace(/[A-Za-z][\w /()&.\-]*?:/g, ' ')  // "Label:" (non-greedy to first colon)
+    .replace(/[-–—•*.,;]/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length < 3;
+}
+
+// Parse one EMR section's stripped text into clean {label, value} fields, dropping
+// the empty placeholder fields the doctor never filled. Returns [] when nothing has
+// real content (caller then omits the section entirely). `heading` is the section's
+// own title, used to drop a duplicated title line inside the body.
+function _parseNoteFields(text, heading) {
+  const segs = String(text || '').split(/[␞\n]+/).map((s) => s.trim()).filter(Boolean);
+  const hn = String(heading || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const fields = [];
+  for (const seg of segs) {
+    const m = seg.match(/^([^:]{2,60}?):\s*([\s\S]*)$/);
+    if (m) {
+      const label = m[1].trim(); const value = m[2].trim();
+      if (!value || _scaffoldOnly(value)) continue;   // empty field → drop
+      fields.push({ label, value });
+    } else {
+      // a label-less line: a free-text answer or a sub-heading. Drop it if it merely
+      // repeats the section title; otherwise keep as a standalone line (label null).
+      if (seg.toLowerCase().replace(/\s+/g, ' ').trim() === hn) continue;
+      if (_scaffoldOnly(seg)) continue;
+      fields.push({ label: null, value: seg });
+    }
+  }
+  return fields;
 }
 app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
@@ -1285,7 +1326,16 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
             if (text) lines.push(text);
           }
           const label = _stripHtml(fmt.mainHeading) || null;
-          if (lines.length) sections.push({ label, text: lines.join('\n') });
+          if (!lines.length) continue;
+          // Parse the section body into clean {label, value} fields, dropping the
+          // empty placeholder fields; skip the whole section if nothing has content.
+          const fields = _parseNoteFields(lines.join('\n'), label);
+          if (!fields.length) continue;
+          sections.push({
+            label, fields,
+            // human-readable fallback for any client that ignores `fields`
+            text: fields.map((f) => (f.label ? `${f.label}: ${f.value}` : f.value)).join('\n'),
+          });
         }
         if (sections.length) notes.push({
           templateName: (row.templateName || '').trim() || 'Note',
