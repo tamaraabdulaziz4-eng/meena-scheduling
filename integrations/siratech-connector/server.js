@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'unpaid-probe5-2026-07-10n';
+const CONNECTOR_BUILD = 'schema-dump-2026-07-10o';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2120,6 +2120,85 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
       return `site ${r.site} · ${r.endpoint} · HTTP ${r.status != null ? r.status : 'ERR'} · rows=${rows}`;
     });
     return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; compare rows= across endpoints', mrno: mrno || null, range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: probeSites, summary, results: out });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Siratech SCHEMA reference (read-only) ─────────────────────────────────────
+// One-shot reference: hits the key READ endpoints across the services whose base
+// path we know, and returns — for each — the RESPONSE SCHEMA (field names + types)
+// plus one PHI-redacted sample. This is the "what can we pull from Siratech" map, so
+// features aren't rebuilt for data that already exists. It reads STRUCTURE, not bulk
+// data (one sample row per endpoint, identifiers masked). Pass ?mrno= for the patient-
+// scoped endpoints (a real MRN makes those sections populate). Only Get*/Search reads.
+app.get('/diag/schema-dump', requireAuth, async (req, res) => {
+  try {
+    await getToken();
+    const uid = String(HIS_USER).padStart(8, '0');
+    const empId = currentEmpId() || '0';
+    const mrno = String(req.query.mrno || '').trim();
+    const siteList = await getSites().catch(() => []);
+    const site = (siteList[0] && siteList[0].siteId) || 1;
+    const today = new Date();
+    const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
+    const fromISO = `${new Date(today.getTime() - 90 * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const redact = (row) => {
+      if (!row || typeof row !== 'object') return row;
+      const out = {};
+      for (const [k, v] of Object.entries(row)) out[k] = /name|mobile|phone|iqama|nationalid|national_id|passport|dob|birth|address|email|contact/i.test(k) ? '‹redacted›' : v;
+      return out;
+    };
+    // Reduce any response to { fields, sample, arrays } — the schema, not the data.
+    const schemaOf = (j) => {
+      const arr = (j && (j.data || j.Data)) || (Array.isArray(j) ? j : null);
+      if (Array.isArray(arr)) return { kind: 'array', count: arr.length, fields: arr.length ? Object.keys(arr[0]) : [], sample: arr.length ? redact(arr[0]) : null };
+      if (j && typeof j === 'object') {
+        const arrays = [];
+        const scan = (o, pre, d) => { if (!o || typeof o !== 'object' || d > 2) return; for (const [k, v] of Object.entries(o)) { if (Array.isArray(v)) arrays.push({ field: pre + k, count: v.length, fields: v.length ? Object.keys(v[0] || {}) : [], sample: v.length ? redact(v[0]) : null }); else if (v && typeof v === 'object') scan(v, pre + k + '.', d + 1); } };
+        scan(j, '', 0);
+        return { kind: 'object', objectKeys: Object.keys(j).slice(0, 40), arrays };
+      }
+      return { kind: typeof j };
+    };
+    const hit = async (name, method, path, body) => {
+      try {
+        const r = await hisFetch(path, { method, body });
+        return { name, method, path: path.split('?')[0], status: r.status, schema: r.json != null ? schemaOf(r.json) : { nonJson: String(r.text || '').slice(0, 120) } };
+      } catch (e) { return { name, method, path: path.split('?')[0], error: String(e.message || e) }; }
+    };
+    // Seed a real bill id + encounter id from the patient's radiology, so the bill /
+    // encounter endpoints populate instead of returning empty.
+    let gpb = '', enc = '';
+    if (mrno) {
+      const rs = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', { body: results.radiologySearchBody({ mrno, hospitalId: 0, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }) }).catch(() => null);
+      const row = ((rs && rs.json && rs.json.data) || [])[0] || {};
+      gpb = row.genPatBillingId != null ? String(row.genPatBillingId) : '';
+      enc = row.patfinencounterid != null ? String(row.patfinencounterid) : '';
+    }
+    const P = '/patient-api/api/v1', I = '/investigation-api/api/v1', E = '/emr-api/api/v1', B = '/billing-api/api/v1';
+    const pbody = (extra) => ({ mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, ...extra });
+    const dump = [];
+    // Branch-wide (no mrno needed)
+    dump.push(await hit('Radiology worklist (branch)', 'POST', I + '/ResultEntryRadiology/RadiologySearch', results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO })));
+    dump.push(await hit('Branches (by user)', 'GET', '/security-api/api/v1/Authentication/Sites/ByUser?userId=' + encodeURIComponent(uid)));
+    // Patient-scoped (need mrno)
+    if (mrno) {
+      dump.push(await hit('Patient search', 'POST', P + '/Patient/Search', { mrNo: mrno }));
+      dump.push(await hit('Patient data', 'GET', P + '/Patient/PatientData?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=0&mode=0'));
+      dump.push(await hit('Patient insurance scheme', 'GET', P + '/Patient/GetPatientScheme?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site));
+      dump.push(await hit('RIS panel (per patient)', 'POST', E + '/EMR/FetchRISPanel', { mrno, fromDate: fromISO.slice(0, 10) + 'T00:00:00', toDate: toISO.slice(0, 10) + 'T23:59:59', invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '', serviceCategoryId: 0, emrPatRisPanelId: 0, userId: uid, hospitalId: site }));
+      dump.push(await hit('Radiology details (per patient)', 'POST', E + '/EMR/FetchRadiologyDetails', { mrno }));
+      dump.push(await hit('Service due list', 'POST', E + '/EMR/FetchServiceDueList', pbody({ baseInvCategoryId: 2 })));
+      dump.push(await hit('EMR orders', 'POST', E + '/EMR/FetchEmrOrders', pbody({ baseCategoryId: 2 })));
+      dump.push(await hit('Visits list', 'POST', E + '/Visits/List', pbody({})));
+      dump.push(await hit('Problem list', 'POST', E + '/Diagnosis/PatientProblemlist', pbody({})));
+      dump.push(await hit('Due settlement bills', 'POST', B + '/DueSettlement/GetDueSettlementBills', pbody({ patientType: 0, visitMode: 0 })));
+      dump.push(await hit('Availed services', 'POST', B + '/AvailedServiceInfo/GetAvailedServices', pbody({})));
+      dump.push(await hit('Service panel', 'POST', B + '/ServicePanel/GetServicePanelData', pbody({ serviceType: 0 })));
+      if (gpb) dump.push(await hit('Bill line items', 'GET', B + '/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(gpb)));
+      if (enc) dump.push(await hit('Billed services (encounter)', 'GET', B + '/Billing/BilledServices?PatFinEncounterId=' + encodeURIComponent(enc) + '&ServiceType=2'));
+    }
+    const summary = dump.map((d) => `${d.status != null ? 'HTTP ' + d.status : 'ERR'} · ${d.name} · ${d.schema ? (d.schema.kind === 'array' ? d.schema.count + ' rows' : d.schema.kind === 'object' ? 'obj{' + (d.schema.arrays || []).map((a) => a.field + '[' + a.count + ']').join(',') + '}' : d.schema.kind) : 'error'}`);
+    return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'Siratech data schema reference — field names + one redacted sample per endpoint', mrno: mrno || null, seededBillId: gpb || null, seededEncounterId: enc || null, summary, dump });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
