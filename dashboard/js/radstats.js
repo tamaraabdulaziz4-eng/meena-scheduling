@@ -852,30 +852,29 @@ function rsRenderBody() {
       <button class="rs-focus-clear" onclick="rsClearDayFocus()">✕ Back to range</button></div>`;
   }
 
-  // Layout — everything below is straight from Siratech HIS, grouped by theme:
-  //   Overview (headline counts) → Composition (what kind of work) →
-  //   Where the work is (branch · department · doctor) → Timing (trend · pending age)
-  //   → Financial (billed revenue · payer). Default range is TODAY.
+  // Layout — everything below is straight from Siratech HIS. Best practice for a
+  // busy dashboard is to group, not stack: a manager sees 5–10 headline numbers,
+  // then drills into a themed tab. Tabs: Overview (headline + what kind of work) ·
+  // Operations (where the work is + timing/peaks) · Financial (revenue + payer).
   const dayCount = (d.daily || []).length;
-  const layout = `
-    ${focusNote}
+
+  const tabOverview = `
     ${rsSection('Overview')}
     ${kpis}
-
     ${rsSection('Composition')}
     <div class="rs-grid2">
       ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
     </div>
-    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'by order — a patient can have several', 'rs-wide') : ''}
+    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'by order — a patient can have several', 'rs-wide') : ''}`;
 
+  const tabOps = `
     ${rsSection('Where the work is')}
     <div class="rs-grid2">
       ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
       ${rsPanel('By ordering department', rsBarRows(deptItems, 'var(--accent2,#8358fd)'), `${deptItems.length} departments`)}
     </div>
     ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15', 'rs-wide')}
-
     ${rsSection('Timing')}
     <div class="rs-grid2">
       ${rsPanel('Daily trend', rsArea(d.daily || []), `${dayCount} day${dayCount === 1 ? '' : 's'} in range`)}
@@ -883,15 +882,35 @@ function rsRenderBody() {
     </div>
     ${rsPanel('⏰ Peak hours — when orders come in', rsHourly(d.byHour, d.hourHasTime), 'orders by hour of day · staff to the peak', 'rs-wide')}
     ${dayCount >= 3 ? rsPanel('📅 Busiest weekdays', rsWeekday(d.daily || []), 'avg orders per weekday · roster to demand', 'rs-wide') : ''}
-    ${dayCount >= 5 ? rsPanel('🗓️ Busiest dates', rsBusyDates(d.daily || []), 'top days by volume in the range', 'rs-wide') : ''}
+    ${dayCount >= 5 ? rsPanel('🗓️ Busiest dates', rsBusyDates(d.daily || []), 'top days by volume in the range', 'rs-wide') : ''}`;
 
+  const tabFinancial = `
     ${rsSection('Financial — revenue &amp; payer')}
     ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
+
+  const TABS = [
+    ['overview', 'Overview', tabOverview],
+    ['operations', 'Operations', tabOps],
+    ['financial', 'Financial', tabFinancial],
+  ];
+  if (!radstats.tab || !TABS.some((t) => t[0] === radstats.tab)) radstats.tab = 'overview';
+  const active = TABS.find((t) => t[0] === radstats.tab) || TABS[0];
+  const tabBar = `<div class="rs-tabs">${TABS.map(([k, label]) =>
+    `<button class="rs-tab ${radstats.tab === k ? 'on' : ''}" onclick="rsSetTab('${k}')">${label}</button>`).join('')}</div>`;
 
   const foot = `<div class="rs-foot">Range ${escapeHtml((d.range && d.range.from) || '')} → ${escapeHtml((d.range && d.range.to) || '')}
     · straight from Siratech HIS · updated ${escapeHtml(timeAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
-  body.innerHTML = layout + foot;
+  body.innerHTML = focusNote + tabBar + `<div class="rs-tabpane">${active[2]}</div>` + foot;
+}
+
+// Switch dashboard tab. Reset the paint pin so the new pane animates in (feels
+// alive), then repaint. Financial data loads lazily the first time that tab opens.
+function rsSetTab(name) {
+  radstats.tab = name;
+  radstats._paintedOnce = false;
+  if (name === 'financial' && !radstats.finData && !radstats.finLoading) rsLoadFinancial();
+  rsRenderBody();
 }
 
 function rsSection(title) { return `<div class="rs-section">${title}</div>`; }
