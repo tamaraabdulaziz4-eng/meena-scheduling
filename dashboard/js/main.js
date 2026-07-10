@@ -175,6 +175,11 @@ async function initApp() {
   // staff member granted the privilege) opens straight onto the Worklist. A staff
   // member WITHOUT radiology lands on their schedule; other roles on the schedule.
   window._defaultPage = canRad ? 'worklist' : (isStaff ? 'myschedule' : 'schedule');
+  // Kick the landing page's lazy chunk NOW so it downloads in parallel with the login
+  // data fetches below — by the time showPage() runs it's already in hand (no-op for an
+  // eager landing page). This keeps the radiology operator's cold open fast.
+  const _dp = new URLSearchParams(location.search).get('p') || pageFromHash() || window._defaultPage;
+  prefetchPageAssets(_dp);
 
   // Load global data. Staff don't need the full roster up front (only the swap
   // modal does, and it lazy-loads it) — so don't make them wait on it before the
@@ -231,7 +236,69 @@ function resolvePage(page) {
   return page;
 }
 
+// ── On-demand page modules (lazy-load) ────────────────────────────────────────
+// The core (api/auth/util/main + the login-time badge/push/notif modules + shared
+// helpers like consent) ships eagerly in index.html. The big page modules below are
+// NOT in that eager set — they're fetched the first time their page is opened, so a
+// user only downloads the pages they actually use (e.g. a radiology operator gets the
+// worklist chunk, never the schedule chunk). Value = the /js files a page needs; a
+// page whose module calls another lazy module lists both (home embeds the rad-stats
+// widget via a typeof-guarded call, so it pulls radstats too).
+// NOTE: schedule.js and leaves.js stay EAGER — schedule is coupled to review.js/export.js
+// (eager) via shared globals, and portal.js's "Request Leave" button calls leaves.js's
+// openLeaveModal; radstats.js and radreport.js are mutually coupled, so radstats always
+// pulls radreport, and home (which embeds the rad-stats widget) pulls both.
+const PAGE_ASSETS = {
+  worklist:      ['/js/worklist.js'],
+  patientsearch: ['/js/patientsearch.js'],
+  handoff:       ['/js/handoff.js'],
+  reports:       ['/js/reports.js'],
+  radstats:      ['/js/radstats.js', '/js/radreport.js'],
+  home:          ['/js/home.js', '/js/radstats.js', '/js/radreport.js'],
+};
+// Cache-buster for injected chunks: the server stamps the content-hash BUILD_ID into
+// <meta name="meena-build"> and rewrites every ?v= in index.html to it, and stamps the
+// SW cache name to match — so reusing it here makes lazy chunks bust + cache exactly
+// like the eager scripts, per deploy. Falls back to 'dev' when unstamped (local file).
+const _ASSET_VER = (document.querySelector('meta[name="meena-build"]') || {}).content || 'dev';
+const _loadedAssets = new Set();
+const _loadingAssets = new Map();   // url -> Promise (dedup concurrent/hover-prefetch loads)
+function _loadScriptOnce(url) {
+  if (_loadedAssets.has(url)) return Promise.resolve();
+  if (_loadingAssets.has(url)) return _loadingAssets.get(url);
+  const p = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url + '?v=' + _ASSET_VER;
+    s.async = false;   // preserve execution order when several are injected together
+    s.onload = () => { _loadedAssets.add(url); _loadingAssets.delete(url); resolve(); };
+    s.onerror = () => { _loadingAssets.delete(url); reject(new Error('Failed to load ' + url)); };
+    document.head.appendChild(s);
+  });
+  _loadingAssets.set(url, p);
+  return p;
+}
+// Ensure a page's module(s) are loaded before we render it. Eager pages (not in the map)
+// resolve instantly. Rejects if a chunk fails to load → showPage shows its retry card.
+async function loadPageAssets(page) {
+  const assets = PAGE_ASSETS[page];
+  if (!assets || !assets.length) return;
+  const t0 = performance.now();
+  await Promise.all(assets.map(_loadScriptOnce));
+  try {
+    const ms = Math.round(performance.now() - t0);
+    if (ms > 1 && window.__perf) window.__perf.record({ path: 'chunk:' + page, ms, ok: true, bytes: null, at: Date.now() });
+  } catch (_) {}
+}
+// Prefetch a page's chunk on nav-hover so the click paints instantly (no-op once loaded).
+function prefetchPageAssets(page) {
+  const assets = PAGE_ASSETS[page];
+  if (assets) assets.forEach((u) => { if (!_loadedAssets.has(u)) _loadScriptOnce(u).catch(() => {}); });
+}
+
 async function renderRoute(page) {
+  // Lazy pages: fetch the module before dispatching. showPage already shows the top-bar
+  // loading state and awaits this, so there's no extra placeholder to manage.
+  await loadPageAssets(page);
   // showPage already paints the animated shimmer skeleton before we get here,
   // so fetch-first pages keep that during their load — no extra placeholder.
   switch (page) {
@@ -294,6 +361,13 @@ window.addEventListener('hashchange', () => {
   // itself, and that echo is ignored because it already matches currentPage.
   if (p && p !== currentPage) showPage(p);
 });
+// Warm a page's lazy chunk the instant the operator hovers/focuses its nav item, so the
+// actual click renders with the module already in hand. Delegated so it survives the
+// radiology-section reorder in initApp. Cheap and idempotent (dedup in _loadScriptOnce).
+document.addEventListener('pointerover', (e) => {
+  const item = e.target.closest && e.target.closest('.nav-item[id^="nav-"]');
+  if (item) prefetchPageAssets(item.id.slice(4));
+}, { passive: true });
 
 async function showPage(requested) {
   const page = resolvePage(requested);
