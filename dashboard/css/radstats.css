@@ -167,6 +167,10 @@
 .rs-cbar-wrap { cursor:pointer; border-radius:7px; transition:background .15s; }
 .rs-cbar-wrap:hover { background:rgba(107,78,255,.08); }
 .rs-cbar-wrap:hover .rs-cbar { filter:brightness(1.12); }
+/* Horizontal bars (dates, branch, department, doctor) grow their width on first paint. */
+@keyframes rsGrowX { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+.rs-hbar { transform-origin:left center; animation:rsGrowX .55s cubic-bezier(.2,.8,.2,1) both; }
+.cc-still .rs-hbar { animation:none; }
 
 /* Premium in-page loader (matches the app boot splash) */
 .rs-boot { position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:center; gap:12px;
