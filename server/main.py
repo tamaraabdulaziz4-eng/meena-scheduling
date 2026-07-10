@@ -1785,13 +1785,24 @@ def send_sms(to, message, *, sync=False):
             url = url + ("&" if "?" in url else "?") + qs
             method = "GET"
         elif ct == "form":
-            body_str = (tpl.replace("{to}", num).replace("{message}", message).replace("{sender}", c["sender"])
-                        if tpl else urllib.parse.urlencode({"to": num, "message": message, **({"sender": c["sender"]} if c["sender"] else {})}))
+            # x-www-form-urlencoded: every value must be percent-encoded, else a message
+            # with &/=/space/newline (consent links, OTP text) corrupts the body. Substitute
+            # {message} LAST so a message that contains a literal placeholder isn't re-expanded.
+            if tpl:
+                body_str = (tpl.replace("{to}", urllib.parse.quote_plus(num))
+                               .replace("{sender}", urllib.parse.quote_plus(c["sender"]))
+                               .replace("{message}", urllib.parse.quote_plus(message)))
+            else:
+                body_str = urllib.parse.urlencode({"to": num, "message": message, **({"sender": c["sender"]} if c["sender"] else {})})
             data = body_str.encode(); headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
         else:  # json
             base_tpl = tpl or '{"to":"{to}","message":"{message}"}'
-            safe_msg = _json.dumps(message)[1:-1]      # JSON-escape without the surrounding quotes
-            body_str = base_tpl.replace("{to}", num).replace("{message}", safe_msg).replace("{sender}", c["sender"])
+            esc = lambda s: _json.dumps(str(s))[1:-1]   # JSON-escape without the surrounding quotes
+            # Escape EVERY value (a sender with a quote/backslash otherwise breaks the JSON),
+            # and substitute {message} last so a message containing a placeholder isn't re-expanded.
+            body_str = (base_tpl.replace("{to}", esc(num))
+                                .replace("{sender}", esc(c["sender"]))
+                                .replace("{message}", esc(message)))
             data = body_str.encode(); headers.setdefault("Content-Type", "application/json")
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
@@ -8311,9 +8322,15 @@ async def radiology_critical_flag(request: Request, user=Depends(require_radiolo
     if not finding:
         raise HTTPException(400, "The critical finding is required")
     severity = "urgent" if str(b.get("severity") or "").lower() == "urgent" else "critical"
-    site = b.get("site")
-    try: site = int(site) if site not in (None, "") else _rad_scope_site(user)
-    except Exception: site = _rad_scope_site(user)
+    # Branch isolation: a branch-locked user's flag is ALWAYS attributed to their own site —
+    # never trust a client-supplied site (would let them mis-file to another branch). Only
+    # org-wide users (scope None) may specify the site.
+    scope = _rad_scope_site(user)
+    if scope is not None:
+        site = scope
+    else:
+        try: site = int(b.get("site")) if b.get("site") not in (None, "") else None
+        except Exception: site = None
     gpb = b.get("gpb")
     try: gpb = int(gpb) if gpb not in (None, "") else None
     except Exception: gpb = None
@@ -8333,7 +8350,8 @@ async def radiology_critical_flag(request: Request, user=Depends(require_radiolo
         msg = f"🚨 {'CRITICAL' if severity=='critical' else 'Urgent'} result flagged: {pname} — {finding[:120]}. Needs acknowledgement."
         targets = q("""SELECT id FROM scheduling.users
                        WHERE role IN ('superadmin','manager','admin')
-                          OR COALESCE(can_use_radiology,false)""", ()) or []
+                          OR COALESCE(can_use_radiology,false)
+                          OR COALESCE(can_file_radiology,false)""", ()) or []
         for t in targets:
             if t.get("id") and t["id"] != user.get("id"):
                 notify(t["id"], msg, link="#/critical", ntype="alert")
@@ -8352,13 +8370,26 @@ async def radiology_critical_ack(cid: int, request: Request, user=Depends(requir
     if not note:
         raise HTTPException(400, "Document how the result was communicated (who was told + read-back)")
     notify_to = str(b.get("notifyTo") or "").strip() or None
-    row = q("""UPDATE scheduling.critical_results
+    # Only close a loop that is still OPEN (don't overwrite who/when on an already-acked one),
+    # and a branch-locked user can only close criticals for their own site.
+    scope = _rad_scope_site(user)
+    where = "id=%s AND status='open'"
+    params = [user.get("id"), user.get("username"), note[:2000], notify_to, cid]
+    if scope is not None:
+        where += " AND (site=%s OR site IS NULL)"
+        params.append(scope)
+    row = q(f"""UPDATE scheduling.critical_results
                SET status='acknowledged', acked_by=%s, acked_by_name=%s, acked_at=NOW(),
                    ack_note=%s, notify_to=COALESCE(%s, notify_to)
-               WHERE id=%s RETURNING *""",
-            (user.get("id"), user.get("username"), note[:2000], notify_to, cid), one=True)
+               WHERE {where} RETURNING *""",
+            tuple(params), one=True)
     if not row:
-        raise HTTPException(404, "Critical result not found")
+        exists = q("SELECT status FROM scheduling.critical_results WHERE id=%s", (cid,), one=True)
+        if not exists:
+            raise HTTPException(404, "Critical result not found")
+        if exists.get("status") != "open":
+            raise HTTPException(409, "This critical result is already acknowledged")
+        raise HTTPException(403, "This critical result belongs to another branch")
     insert_audit(user, "RADIOLOGY_CRITICAL_ACK", str(row.get("mrno") or cid),
                  json.dumps({"id": cid}))
     return {"ok": True, "item": _critical_row(row)}

@@ -120,7 +120,18 @@ async function initApp() {
   // Critical results — closed-loop communication (anyone who works radiology).
   const criticalNav = document.getElementById('nav-critical');
   if (criticalNav) criticalNav.style.display = canRad ? 'flex' : 'none';
-  if (canRad && typeof crRefreshBadge === 'function') { try { crRefreshBadge(); } catch (e) {} }
+  // Populate the open-criticals badge on login. criticalresults.js is lazy-loaded, so
+  // crRefreshBadge isn't defined yet here — fetch the count inline instead of relying on it,
+  // otherwise the patient-safety badge never shows until the operator flags/acks one.
+  if (canRad) {
+    API.get('/radiology/critical/count').then((d) => {
+      const el = document.getElementById('nav-critical-badge');
+      if (!el) return;
+      const n = (d && d.open) || 0;
+      el.textContent = n ? String(n) : '';
+      el.style.display = n ? 'inline-flex' : 'none';
+    }).catch(() => {});
+  }
   // "Radiology" section label — visible whenever any radiology item is.
   const radSection = document.getElementById('nav-section-radiology');
   if (radSection) radSection.style.display = canRad ? 'block' : 'none';

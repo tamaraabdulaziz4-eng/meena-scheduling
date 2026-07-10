@@ -38,11 +38,11 @@ function renderConsentQR(ov, r) {
       ${r.qr ? `<img src="${escapeHtml(r.qr)}" alt="QR" style="width:230px;max-width:70vw;height:auto;border:1px solid var(--border);border-radius:14px;padding:8px;background:#fff">` : ''}
       <div style="margin-top:14px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
         <input class="input" readonly value="${escapeHtml(r.url || '')}" style="flex:1;font-size:12px" onclick="this.select()">
-        <button class="btn btn-sm" onclick="consentCopyLink(this,'${escapeHtml(r.url || '')}')">Copy</button>
+        <button class="btn btn-sm" onclick="consentCopyLink(this,'${jsAttr(r.url || '')}')">Copy</button>
       </div>
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
         <input id="cn-sms-phone" class="input" value="${escapeHtml(p.phone || '')}" placeholder="جوال المريضة · patient mobile e.g. 05xxxxxxxx" style="flex:1;font-size:13px">
-        <button class="btn btn-sm btn-primary" onclick="consentSendSms(this,'${escapeHtml(r.url || '')}')">📱 Send SMS</button>
+        <button class="btn btn-sm btn-primary" onclick="consentSendSms(this,'${jsAttr(r.url || '')}')">📱 Send SMS</button>
       </div>
       <div id="cn-sms-msg" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
       <div id="cn-poll" class="cn-poll">⏳ بانتظار توقيع المريضة… · waiting for signature…</div>

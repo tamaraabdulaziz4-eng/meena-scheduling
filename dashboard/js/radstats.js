@@ -597,14 +597,25 @@ function rsWeekday(daily) {
   const arr = Array.isArray(daily) ? daily : [];
   if (arr.length < 3) return `<div class="rs-empty">Pick a wider date range (a week+) to see the weekday pattern.</div>`;
   const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const tot = new Array(7).fill(0), cnt = new Array(7).fill(0);
+  const tot = new Array(7).fill(0), occ = new Array(7).fill(0);
+  // Orders per weekday (only days with orders appear in `daily`).
   for (const row of arr) {
     const m = String(row.date || '').match(/(\d{4})-(\d{2})-(\d{2})/);
     if (!m) continue;
-    const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
-    tot[dow] += (row.count || 0); cnt[dow] += 1;
+    tot[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()] += (row.count || 0);
   }
-  const avg = tot.map((t, i) => cnt[i] ? t / cnt[i] : 0);
+  // Denominator = how many times each weekday actually OCCURS in the selected range,
+  // including zero-order days (which never appear in `daily`). Counting only days-with-orders
+  // inflated the average for low-volume weekdays. Falls back to present-days if range unknown.
+  const parseD = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; };
+  let a = parseD(radstats.from), b = parseD(radstats.to);
+  if (a == null || b == null) {
+    for (const row of arr) { const m = String(row.date || '').match(/(\d{4})-(\d{2})-(\d{2})/); if (m) occ[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()] += 1; }
+  } else {
+    if (a > b) { const t = a; a = b; b = t; }
+    for (let day = a; day <= b; day += 864e5) occ[new Date(day).getUTCDay()] += 1;
+  }
+  const avg = tot.map((t, i) => occ[i] ? t / occ[i] : 0);
   const max = Math.max(1, ...avg);
   const peak = avg.indexOf(Math.max(...avg));
   const bars = names.map((nm, i) => {
@@ -633,27 +644,6 @@ function rsBusyDates(daily) {
       <div style="width:36px;text-align:right;font-size:12px;font-weight:700">${r.count || 0}</div>
     </div>`;
   }).join('');
-}
-
-// Radiology funnel — ordered → imaged → reported, with the drop-off at each stage.
-function rsFunnel(f) {
-  if (!f || !f.ordered) return '';
-  const max = Math.max(1, f.ordered);
-  const stages = [
-    { label: 'Ordered', v: f.ordered, color: 'var(--accent,#6B4EFF)' },
-    { label: 'Imaged', v: f.imaged, color: 'var(--blue,#3BA0FF)' },
-    { label: 'Reported', v: f.reported, color: 'var(--green,#00C896)' },
-  ];
-  const rows = stages.map((s) => {
-    const pct = Math.round((s.v / max) * 100);
-    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0">
-      <div style="width:74px;font-size:12.5px;font-weight:600">${s.label}</div>
-      <div style="flex:1;background:var(--border);border-radius:6px;height:22px;overflow:hidden"><div style="width:${Math.max(2, pct)}%;height:100%;background:${s.color};border-radius:6px"></div></div>
-      <div style="width:84px;text-align:right;font-size:12.5px"><b>${rsNum(s.v)}</b> <span style="color:var(--muted)">${pct}%</span></div>
-    </div>`;
-  }).join('');
-  const unimaged = Math.max(0, f.ordered - f.imaged), unreported = Math.max(0, f.imaged - f.reported);
-  return rows + `<div style="font-size:12px;color:var(--muted);margin-top:8px">⚠️ <b>${rsNum(unimaged)}</b> ordered but not imaged · <b>${rsNum(unreported)}</b> imaged but not reported</div>`;
 }
 
 // Gender split.
@@ -782,8 +772,7 @@ function rsRenderBody() {
       ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
     </div>
-    ${d.funnel ? rsPanel('🔻 Pipeline — ordered → imaged → reported', rsFunnel(d.funnel), 'where studies drop off', 'rs-wide') : ''}
-    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'patients by gender', 'rs-wide') : ''}
+    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'by order — a patient can have several', 'rs-wide') : ''}
 
     ${rsSection('Where the work is')}
     <div class="rs-grid2">

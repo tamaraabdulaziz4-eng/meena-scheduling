@@ -187,6 +187,6 @@ async function crRefreshBadge() {
     const n = (d && d.open) || 0;
     el.textContent = n ? String(n) : '';
     el.style.display = n ? 'inline-flex' : 'none';
-    if (d && d.overdue) el.classList.add('badge-danger');
+    el.classList.toggle('badge-danger', !!(d && d.overdue));   // toggle, not add — else it stays red after clearing
   } catch (e) { /* best-effort */ }
 }
