@@ -14,7 +14,7 @@ let radstats = {
   data: null, loading: false,
   modData: null, modLoading: false, modError: '',
   finData: null, finLoading: false, finError: '',
-  auto: false, timer: null, clockTimer: null, lastError: '',
+  auto: true, timer: null, clockTimer: null, lastError: '', lastLoaded: 0,
 };
 
 const RS_PRESETS = [
@@ -84,6 +84,7 @@ async function renderRadStatsPage(opts) {
   else if (!embed) rsShowOverlay();    // first load → full-screen branded loader (page only, not embedded)
   if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
   await rsLoad();
+  if (radstats.auto) rsStartAuto();    // live board on by default — poll every 30s
 }
 
 // ── Full-screen loader (login-style): cycling status + a progress bar ─────────
@@ -133,12 +134,21 @@ function rsClockNow() {
   try { return new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Riyadh', hour12: false }); }
   catch (e) { return new Date().toLocaleTimeString(); }
 }
+function rsAgoText() {
+  if (!radstats.lastLoaded) return '';
+  const s = Math.max(0, Math.round((Date.now() - radstats.lastLoaded) / 1000));
+  if (s < 60) return `updated ${s}s ago`;
+  const m = Math.floor(s / 60);
+  return `updated ${m}m ago`;
+}
 function rsStartClock() {
   if (radstats.clockTimer) clearInterval(radstats.clockTimer);
   radstats.clockTimer = setInterval(() => {
     const el = document.getElementById('rs-clock-t');
     if (!el) { clearInterval(radstats.clockTimer); radstats.clockTimer = null; return; }
     el.textContent = rsClockNow();
+    const up = document.getElementById('rs-updated');
+    if (up) up.textContent = rsAgoText();
   }, 1000);
 }
 
@@ -282,7 +292,8 @@ function rsRenderControls() {
         </div>
         <div class="rs-ctl-actions">
           <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
-          <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
+          <span id="rs-updated" style="font-size:11.5px;color:var(--muted);white-space:nowrap">${rsAgoText()}</span>
+          <label class="rs-auto" title="Auto-refresh every 30s"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> ${radstats.auto ? '🟢 Live' : 'Live'}</label>
           <button class="ghost" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">${icon('bar-chart')} Monthly report</button>
           <button class="open pri" style="width:auto" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
         </div>
@@ -344,7 +355,7 @@ function rsStartAuto() {
     if (!document.getElementById('rs-body')) { rsStopAuto(); return; }
     if (document.hidden) return;               // don't poll a backgrounded tab
     rsLoad(true);
-  }, 60000);
+  }, 30000);   // live board — refresh every 30s
 }
 function rsStopAuto() { if (radstats.timer) { clearInterval(radstats.timer); radstats.timer = null; } }
 
@@ -378,6 +389,7 @@ async function rsLoad(silent, force) {
   } finally {
     if (myReq === radstats._reqSeq) {   // only the latest request owns the UI state
       radstats.loading = false;
+      if (!radstats.lastError) radstats.lastLoaded = Date.now();   // for the "updated Xs ago" ticker
       rsHideOverlay();                  // everything in → dismiss the full-screen loader
       rsRenderControls();
       rsRenderBody();
