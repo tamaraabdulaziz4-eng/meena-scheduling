@@ -239,24 +239,32 @@ function renderPsDetail() {
 // reach the worklist because they're not performed yet (billed-awaiting-payment or unbilled).
 // This is the only way to see unpaid/pending orders: Siratech is per-patient (proved from its
 // own code — every order/billing endpoint needs an mrno), exactly how their reception works.
+// Badge by BILLING status only — we do NOT claim payment (FetchEmrOrders' "Billed" means a
+// bill exists, not that it's unpaid; adminStatus is unreliable/stale). Orders already in the
+// worklist/DePACS are performed — we exclude them so a done exam is never shown as pending.
 const PS_STATE = {
-  billed_pending: { label: 'غير مدفوع / بانتظار الدفع', en: 'Awaiting payment', cls: 'ps-ord-unpaid' },
-  unbilled:       { label: 'غير مفوتر — لم يُسعّر بعد', en: 'Not billed yet',   cls: 'ps-ord-unbilled' },
-  performed:      { label: 'منفّذ', en: 'Performed', cls: 'ps-ord-done' },
+  billed_pending: { label: 'مفوتر · لم يصل الطابور بعد', cls: 'ps-ord-unbilled' },
+  unbilled:       { label: 'غير مفوتر بعد', cls: 'ps-ord-unpaid' },
 };
 async function psLoadAllOrders(mrno) {
   const box = document.getElementById('ps-allorders');
   if (!box || !mrno) return;
-  box.innerHTML = `<div class="ps-sec"><div class="ps-sec-l">All radiology orders · طلبات الأشعة كاملة</div>
-    <div style="padding:8px 2px;color:var(--muted);font-size:12.5px"><span class="mini-spin"></span> Loading every order (incl. unpaid)…</div></div>`;
+  box.innerHTML = `<div class="ps-sec"><div class="ps-sec-l">Orders not yet in the worklist · طلبات لم تصل الطابور</div>
+    <div style="padding:8px 2px;color:var(--muted);font-size:12.5px"><span class="mini-spin"></span> جاري التحميل…</div></div>`;
   let d;
   try { d = await API.get(`/radiology/patient/${encodeURIComponent(mrno)}/radiology-orders`); }
   catch (e) { box.innerHTML = ''; return; }              // best-effort — never break the card
   const orders = (d && d.orders) || [];
-  if (!orders.length) { box.innerHTML = ''; return; }     // nothing to add
-  const pending = orders.filter((o) => o.state !== 'performed');
-  const rows = orders.map((o) => {
-    const st = PS_STATE[o.state] || PS_STATE.performed;
+  // The worklist/DePACS exams (already shown below) are the TRUTH for "performed". Exclude any
+  // order whose exam matches one of them — FetchEmrOrders' status is stale, so a reported study
+  // could otherwise show here as "pending". Only genuinely not-in-queue orders remain.
+  const norm = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const inQueue = new Set(((psState.lookup && psState.lookup.orders) || [])
+    .map((o) => norm(o.service || o.exam || o.serviceName)).filter(Boolean));
+  const pend = orders.filter((o) => o.state !== 'performed' && !inQueue.has(norm(o.exam)));
+  if (!pend.length) { box.innerHTML = ''; return; }       // nothing not-in-queue → show nothing
+  const rows = pend.map((o) => {
+    const st = PS_STATE[o.state] || PS_STATE.billed_pending;
     const when = o.orderedDate ? (String(o.orderedDate).slice(0, 10)) : '';
     return `<div class="ps-ord ${st.cls}">
       <div style="flex:1;min-width:0">
@@ -268,7 +276,7 @@ async function psLoadAllOrders(mrno) {
     </div>`;
   }).join('');
   box.innerHTML = `<div class="ps-sec">
-    <div class="ps-sec-l ps-examhead">طلبات الأشعة كاملة · ${orders.length}${pending.length ? ` <span style="color:var(--danger-ink);font-weight:800">· ${pending.length} غير مدفوع/معلّق</span>` : ''}<span>من طلبات الطبيب</span></div>
+    <div class="ps-sec-l ps-examhead">طلبات لم تصل الطابور · ${pend.length}<span>طلبها الطبيب ولم تُنفَّذ بعد</span></div>
     ${rows}</div>`;
 }
 
