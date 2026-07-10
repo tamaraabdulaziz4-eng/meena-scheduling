@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'dl-frontend2-2026-07-10u';
+const CONNECTOR_BUILD = 'frontend-find-2026-07-10v';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -614,6 +614,40 @@ app.get('/download/frontend', async (req, res) => {
     return res.send(header + (out.raw || ''));
   } catch (e) { return res.status(502).send('Error: ' + String(e.message || e)); }
 });
+
+// Search the harvested frontend for terms and return the surrounding code (the request
+// PAYLOAD lives right next to each route name). Lets us mine the 45 MB app for exactly the
+// calls we care about WITHOUT shipping the whole file — the connector greps it server-side
+// and returns only small snippets. Raw harvest cached ~10 min so repeat queries are instant.
+let _frontendRaw = null;
+async function getFrontendRaw() {
+  if (_frontendRaw && Date.now() - _frontendRaw.ts < 600000) return _frontendRaw.raw;
+  const out = await discoverEndpoints({ collectRaw: true });
+  _frontendRaw = { raw: out.raw || '', ts: Date.now() };
+  return _frontendRaw.raw;
+}
+app.get('/diag/frontend-find', requireAuth, async (req, res) => {
+  try {
+    const terms = String(req.query.q || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 25);
+    const ctx = Math.max(60, Math.min(600, Number(req.query.ctx) || 220));
+    const raw = await getFrontendRaw();
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const found = {};
+    for (const t of terms) {
+      const re = new RegExp(esc(t), 'gi');
+      let m, count = 0; const samples = [];
+      while ((m = re.exec(raw)) !== null) {
+        count += 1;
+        if (samples.length < 5) samples.push(raw.slice(Math.max(0, m.index - 45), Math.min(raw.length, m.index + ctx)).replace(/\s+/g, ' '));
+        re.lastIndex = m.index + t.length;
+        if (count > 5000) break;
+      }
+      found[t] = { count, samples };
+    }
+    return res.json({ ok: true, rawSizeMB: Math.round(raw.length / 1e6 * 10) / 10, found });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 app.get('/discover/endpoints', requireAuth, async (_req, res) => {
   try {
     if (!_discoverInFlight) _discoverInFlight = discoverEndpoints().finally(() => { _discoverInFlight = null; });
