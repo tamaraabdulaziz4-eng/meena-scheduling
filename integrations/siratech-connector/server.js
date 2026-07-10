@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'dl-schema-2026-07-10s';
+const CONNECTOR_BUILD = 'dl-frontend-2026-07-10t';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -498,7 +498,9 @@ app.get('/radiology/study', requireAuth, async (req, res) => {
 // two browsers on the small VPS.
 const INS_RE = /nphies|eligib|insur|coverage|\bpolicy\b|policyno|member(ship)?|beneficiar|sponsor|payer|\btpa\b|scheme|approval|preauth|pre-auth|deductib|copay|co-pay|benefit|claim|cchi/i;
 let _discoverInFlight = null;
-async function discoverEndpoints() {
+async function discoverEndpoints(opts = {}) {
+  const collectRaw = !!opts.collectRaw;
+  const rawParts = [];
   const browser = await puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
@@ -558,6 +560,7 @@ async function discoverEndpoints() {
       const res = await fetch(u, { headers: { Accept: '*/*' }, signal: AbortSignal.timeout(30000) });
       if (!res.ok) continue;
       const txt = await res.text(); let m;
+      if (collectRaw) rawParts.push(`\n/* ===================== ${u} ===================== */\n${txt}`);
       while ((m = API_RE.exec(txt)) !== null) { const p = m[1].replace(/['"`,);]+$/, ''); if (p.length >= 8 && p.length <= 160) fromCode.add(p); }
       let c; while ((c = CHUNK_RE.exec(txt)) !== null) { const url = toUrl(c[1]); if (url && /\.js$/i.test(url) && !seen.has(url) && queue.length + seen.size < CAP) queue.push(url); }
     } catch (_e) { /* skip a bundle that won't fetch */ }
@@ -573,8 +576,28 @@ async function discoverEndpoints() {
     insuranceEndpoints,                       // ← the answer: empty = no Nphies module exposed to the SPA
     byModuleCounts: Object.fromEntries(Object.entries(byModule).map(([m, a]) => [m, a.length])),
     allEndpoints: all,
+    raw: collectRaw ? rawParts.join('\n') : undefined,   // full concatenated frontend JS (all payloads live here)
   };
 }
+
+// Download the ENTIRE Siratech frontend JS (all bundles + lazy chunks) as one file —
+// this is the raw source that contains every endpoint AND its request payload. Token in
+// the URL so it opens from a phone browser. Heavy (headless login + BFS of up to 500
+// chunks); give it a minute.
+app.get('/download/frontend', async (req, res) => {
+  try {
+    const tok = String(req.query.token || '');
+    if (API_TOKEN) {
+      const a = Buffer.from(tok), b = Buffer.from(API_TOKEN);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).send('Unauthorized — bad or missing ?token=');
+    }
+    const out = await discoverEndpoints({ collectRaw: true });
+    const header = `/* Siratech frontend — ${out.jsFetched} JS bundles from ${out.base}\n   ${out.totalEndpoints} endpoints across modules: ${(out.modules || []).join(', ')}\n   Every API call + payload is in the code below. */\n`;
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="siratech-frontend-all.js"');
+    return res.send(header + (out.raw || ''));
+  } catch (e) { return res.status(502).send('Error: ' + String(e.message || e)); }
+});
 app.get('/discover/endpoints', requireAuth, async (_req, res) => {
   try {
     if (!_discoverInFlight) _discoverInFlight = discoverEndpoints().finally(() => { _discoverInFlight = null; });
