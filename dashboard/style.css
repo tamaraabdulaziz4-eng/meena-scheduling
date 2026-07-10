@@ -2090,6 +2090,23 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 .ps-res-chev svg { width:18px; height:18px; }
 .ps-rescard:hover .ps-res-chev, .ps-rescard.on .ps-res-chev { color:var(--accent); opacity:1; }
 [dir="rtl"] .ps-res-chev svg { transform:scaleX(-1); }
+/* Tap-to-load history cards (labs / visits / appointments) */
+.ps-lazy { display:flex; align-items:center; gap:13px; width:100%; text-align:start; margin:10px 0 0;
+  padding:14px 15px; border:1px solid var(--border); border-radius:14px; background:var(--surface,#fff);
+  cursor:pointer; transition:border-color .14s, box-shadow .14s, background .14s; font:inherit; }
+.ps-lazy:hover { border-color:var(--accent); box-shadow:var(--shadow-sm,0 2px 8px rgba(0,0,0,.06)); background:var(--surface-2,#faf9ff); }
+.ps-lazy-ic { flex:none; width:40px; height:40px; border-radius:11px; display:grid; place-items:center;
+  color:var(--accent,#6b4eff); background:var(--violet-wash,#f0edff); }
+.ps-lazy-ic svg { width:20px; height:20px; }
+.ps-lazy-txt { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ps-lazy-t { font-size:14.5px; font-weight:800; color:var(--text,#111); }
+.ps-lazy-s { font-size:11.5px; font-weight:600; color:var(--muted); }
+.ps-lazy-chev { flex:none; color:var(--muted); opacity:.55; display:grid; place-items:center; }
+.ps-lazy-chev svg { width:18px; height:18px; }
+.ps-lazy:hover .ps-lazy-chev { color:var(--accent); opacity:1; }
+[dir="rtl"] .ps-lazy-chev svg { transform:scaleX(-1); }
+.ps-lazy-loading { display:flex; align-items:center; gap:9px; margin:10px 0 0; padding:16px 15px;
+  border:1px solid var(--border); border-radius:14px; color:var(--muted); font-size:13px; font-weight:600; }
 /* All-orders rows (incl. unpaid / not-yet-performed) */
 .ps-ord { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:11px; margin-bottom:8px; background:var(--surface); }
 .ps-ord-badge { flex:none; font-size:10.5px; font-weight:800; padding:3px 9px; border-radius:8px; white-space:nowrap; align-self:center; }
