@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'unpaid-probe3-2026-07-10l';
+const CONNECTOR_BUILD = 'unpaid-probe4-2026-07-10m';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2051,7 +2051,21 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
     const shapeOf = (j) => {
       const rows = (j && (j.data || j.Data)) || (Array.isArray(j) ? j : null);
       if (Array.isArray(rows)) return { rowCount: rows.length, firstRowKeys: rows.length ? Object.keys(rows[0]) : [], sample: rows.length ? redact(rows[0]) : null };
-      if (j && typeof j === 'object') return { objectKeys: Object.keys(j).slice(0, 40) };
+      if (j && typeof j === 'object') {
+        // Response is an OBJECT (e.g. FetchServiceDueList wraps its lists). Walk up to 2
+        // levels deep and report every ARRAY-valued field with its length + row schema +
+        // a redacted sample — that's where the actual due/unpaid orders live.
+        const arrays = [];
+        const scan = (obj, prefix, depth) => {
+          if (!obj || typeof obj !== 'object' || depth > 2) return;
+          for (const [k, v] of Object.entries(obj)) {
+            if (Array.isArray(v)) arrays.push({ field: (prefix + k) || '(root)', count: v.length, firstRowKeys: v.length ? Object.keys(v[0] || {}) : [], sample: v.length ? redact(v[0]) : null });
+            else if (v && typeof v === 'object') scan(v, prefix + k + '.', depth + 1);
+          }
+        };
+        scan(j, '', 0);
+        return { objectKeys: Object.keys(j).slice(0, 40), arrays };
+      }
       return { raw: typeof j };
     };
     // RadiologySearch IS branch-wide (no mrno needed). The default board uses
@@ -2067,14 +2081,13 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
     // EMR order-layer bodies (pre-billing) — guessed from the RadiologySearch shape.
     const emrBody = (site, extra) => ({ mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseInvCategoryId: 2, baseCategoryId: 2, ...extra });
     const candidates = (site) => ([
-      { name: 'RS current (filterResult 0, isbilled 0)', path: RS, body: base({ hospitalId: site }) },
-      { name: 'RS isbilled 1', path: RS, body: withRaw({ hospitalId: site }, { isbilled: 1 }) },
-      { name: 'RS filterResult blank', path: RS, body: base({ hospitalId: site, filterResult: '' }) },
-      { name: 'RS isCreditWithoutBilling 1', path: RS, body: withRaw({ hospitalId: site }, { isCreditWithoutBilling: 1 }) },
-      // Order layer BEFORE billing — the strongest candidates for unpaid/unbilled orders.
+      { name: 'RS current (baseline)', path: RS, body: base({ hospitalId: site }) },
+      // The winner from v3 — returns an OBJECT (its lists are now unpacked by shapeOf).
       { name: 'EMR/FetchServiceDueList', path: EMR + '/EMR/FetchServiceDueList', body: emrBody(site) },
+      // Radiology-only variant of the due list (baseInvCategoryId already 2, but also pin
+      // a serviceType/category in case a blank returns everything or nothing).
+      { name: 'EMR/FetchServiceDueList (rad)', path: EMR + '/EMR/FetchServiceDueList', body: emrBody(site, { serviceType: 2, baseCatgeory: 2 }) },
       { name: 'EMR/FetchEmrOrders', path: EMR + '/EMR/FetchEmrOrders', body: emrBody(site) },
-      { name: 'EMR/FetchEmrOrdersCategory', path: EMR + '/EMR/FetchEmrOrdersCategory', body: emrBody(site) },
       { name: 'EMR/FetchBundleDueList', path: EMR + '/EMR/FetchBundleDueList', body: emrBody(site) },
     ]);
     const out = [];
@@ -2090,7 +2103,15 @@ app.get('/diag/unpaid-probe', requireAuth, async (req, res) => {
       }
     }
     // Compact one-line-per-candidate summary so the counts are readable without truncation.
-    const summary = out.map((r) => `site ${r.site} · ${r.endpoint} · HTTP ${r.status != null ? r.status : 'ERR'} · rows=${(r.shape && (r.shape.rowCount != null ? r.shape.rowCount : (r.shape.objectKeys ? 'object' : '?'))) || (r.error ? 'error' : 0)}`);
+    const bestArray = (sh) => (sh && Array.isArray(sh.arrays) && sh.arrays.length) ? sh.arrays.reduce((a, b) => b.count > a.count ? b : a) : null;
+    const summary = out.map((r) => {
+      const sh = r.shape || {};
+      let rows;
+      if (sh.rowCount != null) rows = String(sh.rowCount);
+      else if (r.error) rows = 'error';
+      else { const ba = bestArray(sh); rows = ba ? `obj→${ba.field}[${ba.count}]` : (sh.objectKeys ? 'obj(no-array)' : '0'); }
+      return `site ${r.site} · ${r.endpoint} · HTTP ${r.status != null ? r.status : 'ERR'} · rows=${rows}`;
+    });
     return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'read-only probe; compare rows= across endpoints — the one with MORE rows than "RS current" includes unpaid orders', range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) }, sitesTried: wantSites.slice(0, 2), summary, results: out });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
