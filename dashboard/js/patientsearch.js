@@ -79,20 +79,28 @@ function renderPsResults() {
     return;
   }
   if (pts.length === 1) { box.innerHTML = ''; return; }   // single match auto-opens; no picker
-  box.innerHTML = `<div class="ho-lbl" style="margin:0 0 6px">${pts.length} matches — pick the patient</div>
-    <div class="listcard">` +
+  const ICON_ID = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="8" cy="12" r="2.2"/><path d="M13 10.5h5M13 14h3.2"/></svg>';
+  const ICON_PHONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v2.9a2 2 0 0 1-2.2 2 19.6 19.6 0 0 1-8.5-3 19.3 19.3 0 0 1-6-6 19.6 19.6 0 0 1-3-8.6A2 2 0 0 1 4.1 2H7a2 2 0 0 1 2 1.7c.1.9.3 1.7.6 2.5a2 2 0 0 1-.5 2.1L7.9 9.5a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.4c.8.3 1.6.5 2.5.6A2 2 0 0 1 22 16.9z"/></svg>';
+  const ICON_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
+  const initials = (nm) => String(nm || '').trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '؟';
+  const chip = (ic, val) => val ? `<span class="ps-res-chip">${ic}<span>${escapeHtml(String(val))}</span></span>` : '';
+  box.innerHTML = `<div class="ps-res-head">${pts.length} matches · اختر المريض</div>
+    <div class="ps-reslist">` +
     pts.map((p, i) => `
-      <div class="lrow" role="button" tabindex="0" onclick="psOpen(${i})"
-           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psOpen(${i})}"
-           style="cursor:pointer${i === psState.sel ? ';background:var(--violet-wash,#F0EDFF)' : ''}">
-        <div class="pt" style="flex:1;min-width:0">
-          <div class="pname">${escapeHtml(p.name || '—')}${p.nameArabic ? ' <span style="font-weight:500;color:var(--muted)">· ' + escapeHtml(p.nameArabic) + '</span>' : ''} ${psElmChip(p)}</div>
-          <div class="pmeta"><span>🆔 ${escapeHtml(p.mrno || '—')}</span>${p.nationalId ? '<i></i><span>' + escapeHtml(p.nationalId) + '</span>' : ''}${p.phone ? '<i></i><span>📞 ' + escapeHtml(p.phone) + '</span>' : ''}${p.age ? '<i></i><span>' + escapeHtml(p.age) + '</span>' : ''}</div>
-        </div>
-        ${i === psState.sel
-          ? '<span class="ris arrived"><span class="rd"></span>Selected</span>'
-          : '<button class="ghost" tabindex="-1" onclick="event.stopPropagation();psOpen(' + i + ')">Open →</button>'}
-      </div>`).join('') + '</div>';
+      <button class="ps-rescard${i === psState.sel ? ' on' : ''}" onclick="psOpen(${i})"
+              onkeydown="if(event.key==='Enter'){psOpen(${i})}">
+        <span class="ps-res-av">${escapeHtml(initials(p.name || p.nameArabic))}</span>
+        <span class="ps-res-main">
+          <span class="ps-res-name">${escapeHtml(p.name || p.nameArabic || '—')}${psElmChip(p)}</span>
+          ${p.nameArabic && p.name ? `<span class="ps-res-ar">${escapeHtml(p.nameArabic)}</span>` : ''}
+          <span class="ps-res-chips">
+            ${chip(ICON_ID, 'MRN ' + (p.mrno || '—'))}
+            ${chip(ICON_PHONE, p.phone)}
+            ${p.age ? `<span class="ps-res-chip"><span>${escapeHtml(String(p.age))}</span></span>` : ''}
+          </span>
+        </span>
+        <span class="ps-res-chev">${ICON_CHEV}</span>
+      </button>`).join('') + '</div>';
 }
 
 async function psOpen(i) {
