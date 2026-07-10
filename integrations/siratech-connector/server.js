@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'rev-robust-2026-07-10f';
+const CONNECTOR_BUILD = 'rev-full-2026-07-10g';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2721,7 +2721,12 @@ function statsCacheSet(key, data) {
 // not the imaging modality), so an exact mix needs a per-order RadiologyDetails
 // call. That's opt-in (?modality=1) and bounded — we sample the most recent N
 // orders so the manager gets a real, labelled mix without hammering the HIS.
-const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 2000);
+// Read EVERY bill in a normal range so revenue/modality are exact, not a sample.
+// The all-branch 30-day window is ~2.4k unique bills; 5000 covers that with headroom
+// (and a full quarter for a single branch) while still bounding a pathological
+// multi-year pull. Beyond the cap the financial totals are extrapolated to the full
+// population (flagged `estimated`) so the headline is never silently undercounted.
+const STATS_MODALITY_CAP = Number(process.env.STATS_MODALITY_CAP || 5000);
 const STATS_MODALITY_CONCURRENCY = Number(process.env.STATS_MODALITY_CONCURRENCY || 28);
 const MOD_LABEL = { XR: 'X-Ray', US: 'Ultrasound', CT: 'CT', MR: 'MRI', MG: 'Mammography' };
 // Friendly modality label for an exam category/service. Reuse results.normMod
@@ -2991,9 +2996,17 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // uses these to warn "estimate — N bills couldn't be read" instead of presenting a
     // silently-halved figure as final.
     const meta = { sampled: sample.length, ofTotal: deduped.length, truncated: deduped.length > sample.length, catalogLoaded: catalog.size > 0, billsFailed, billsRead: sample.length - billsFailed };
+    // Extrapolation — only when the bill population EXCEEDS the cap (a pathologically
+    // wide range). With the cap at 5000 the normal all-branch 30-day window (~2.4k
+    // bills) is read in FULL, so scale=1 and revenue is exact. Beyond the cap we
+    // project the sampled sum across the whole population (flagged `estimated`) rather
+    // than showing a silently-undercounted total. billsFailed is handled separately by
+    // the "N bills couldn't be read" banner, so it isn't folded into the scale here.
+    const scale = deduped.length > sample.length ? deduped.length / sample.length : 1;
+    const rScaled = (n) => r2(n * scale);
     if (withModality) modality = { ...meta, exams, mix: [...byModCount.values()].sort((a, b) => b.count - a.count) };
     if (withFinance) financial = {
-      ...meta, items, requests: reqWithRad, exams,
+      ...meta, items, requests: reqWithRad, exams, estimated: scale > 1,
       byPayer: [
         { type: 'Insurance', count: reqInsurance },
         { type: 'Cash / self-pay', count: reqCash },
@@ -3005,9 +3018,9 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
         { type: 'Cash / self-pay', count: exCash },
         { type: 'Insurance + copay', count: exCopay },
       ].concat(exFree ? [{ type: 'Zero-charge', count: exFree }] : []),
-      revenue: r2(revenue), patient: r2(patient), sponsor: r2(sponsor),
-      byBranch: [...revByBranch.values()].map((e) => ({ site: e.site, name: e.name, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
-      byModality: [...revByMod.values()].map((e) => ({ modality: e.modality, revenue: r2(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
+      revenue: rScaled(revenue), patient: rScaled(patient), sponsor: rScaled(sponsor),
+      byBranch: [...revByBranch.values()].map((e) => ({ site: e.site, name: e.name, revenue: rScaled(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
+      byModality: [...revByMod.values()].map((e) => ({ modality: e.modality, revenue: rScaled(e.revenue) })).sort((a, b) => b.revenue - a.revenue),
     };
   }
 

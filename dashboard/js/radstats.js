@@ -945,7 +945,7 @@ const rsSAR = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionD
 function rsFinancialSub() {
   const f = radstats.finData;
   if (!f) return 'insurance vs cash — click to load';
-  return f.truncated ? `sample of ${rsNum(f.sampled)}/${rsNum(f.ofTotal)} orders` : `${rsNum(f.items || 0)} items`;
+  return f.truncated ? `≈ estimate · read ${rsNum(f.sampled)} of ${rsNum(f.ofTotal)} bills` : `all ${rsNum(f.ofTotal || 0)} bills read · exact`;
 }
 function rsFinancialInner() {
   if (radstats.finLoading) return `<div class="rs-empty"><span class="mini-spin"></span> Reading bills…</div>`;
@@ -976,7 +976,7 @@ function rsFinancialInner() {
     ${missWarn}
     <div class="rs-fin-head">
       <div class="rs-fin-total"><div class="rs-fin-n">${rsNum(f.requests)}</div><div class="rs-fin-l">radiology requests priced</div></div>
-      <div class="rs-fin-total"><div class="rs-fin-n">${rsSAR(f.revenue)}</div><div class="rs-fin-l">total revenue (billed)</div></div>
+      <div class="rs-fin-total"><div class="rs-fin-n">${f.estimated ? '≈ ' : ''}${rsSAR(f.revenue)}</div><div class="rs-fin-l">total revenue (billed)${f.estimated ? ' · estimated' : ''}</div></div>
     </div>
     <div class="rs-grid2" style="margin:0">
       <div><div class="rs-subhead">Requests by payer (count)</div>${payerDonut}</div>
