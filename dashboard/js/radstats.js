@@ -603,14 +603,10 @@ function rsHourly(byHour, hasTime) {
     </div>`;
 }
 
-// Tap an hour bar → quick detail (full order-list drill is the next build).
+// Tap an hour bar → open the actual orders placed in that hour.
 function rsDrillHour(h, v) {
   const fmtH = (x) => { const ap = x < 12 ? 'AM' : 'PM'; const hh = x % 12 === 0 ? 12 : x % 12; return hh + ap; };
-  const d = radstats.data || {};
-  const arr = d.byHour || [];
-  const total = arr.reduce((a, b) => a + b, 0) || 1;
-  const rank = arr.slice().sort((a, b) => b - a).indexOf(v) + 1;
-  toast(`${fmtH(h)} — ${v} orders · ${Math.round((v / total) * 100)}% of the day · #${rank} busiest hour`);
+  rsShowOrders(`Orders at ${fmtH(h)}–${fmtH((h + 1) % 24)}`, (o) => o.hour === h);
 }
 
 // Busiest weekdays — average orders per weekday across the range (KSA week: Sun–Thu).
@@ -643,7 +639,7 @@ function rsWeekday(daily) {
   const bars = names.map((nm, i) => {
     const pct = Math.max(3, Math.round((avg[i] / max) * 100));
     const isPeak = i === peak;
-    return `<div class="rs-cbar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px 0" title="${nm} — avg ${avg[i].toFixed(1)}/day" onclick="toast('${nm}: avg ${avg[i].toFixed(1)} orders/day')">
+    return `<div class="rs-cbar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px 0" title="${nm} — avg ${avg[i].toFixed(1)}/day · tap for orders" onclick="rsShowOrders('${nm} — all orders', (o) => rsWeekdayName(o.date) === ${i})">
       <div style="font-size:10px;line-height:1;height:11px;color:var(--danger,#E25555);font-weight:800">${isPeak ? Math.round(avg[i]) : ''}</div>
       <div style="width:100%;display:flex;align-items:flex-end;height:84px"><div class="rs-cbar${isPeak ? ' peak' : ''}" style="width:60%;margin:0 auto;height:${pct}%;border-radius:5px 5px 0 0;animation-delay:${i * 45}ms;background:${isPeak ? 'var(--danger,#E25555)' : 'linear-gradient(180deg,var(--accent,#6B4EFF),var(--accent2,#8358fd))'}"></div></div>
       <div style="font-size:11px;color:var(--muted)">${nm}</div>
@@ -689,6 +685,54 @@ function rsClearDayFocus() {
   radstats.from = f.prevFrom; radstats.to = f.prevTo; radstats.preset = f.prevPreset || 'custom';
   rsRenderControls(); rsLoad();
 }
+
+// ── Click-to-detail: open the actual order list behind any chart slice ──────────
+// Fetches the underlying order rows once (list=1) for the current range/scope, caches
+// them, and filters client-side to whatever slice was clicked (hour, weekday, doctor…).
+async function rsFetchList() {
+  const key = `${radstats.from}|${radstats.to}|${rsSitesParam() || ''}`;
+  if (radstats.listData && radstats.listKey === key) return radstats.listData;
+  const q = new URLSearchParams();
+  if (radstats.from) q.set('from', radstats.from);
+  if (radstats.to) q.set('to', radstats.to);
+  const s = rsSitesParam(); if (s) q.set('sites', s);
+  q.set('list', '1');
+  const d = await API.get('/radiology/stats?' + q.toString());
+  radstats.listData = (d && d.requests) || [];
+  radstats.listKey = key;
+  radstats.listTruncated = (d && d.requestsTruncated) || 0;
+  return radstats.listData;
+}
+
+function rsOrderRow(o) {
+  const fmtH = (h) => h == null ? '' : ((h % 12 === 0 ? 12 : h % 12) + (h < 12 ? 'AM' : 'PM'));
+  return `<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;font-size:13px">${escapeHtml(o.name || o.mrno || '—')} ${o.priority === 'emergency' ? '🚨' : ''}</div>
+      <div style="font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(o.exam || o.category || '—')} · ${escapeHtml(o.doctor || '—')} · ${escapeHtml(o.branch || '')}</div>
+    </div>
+    <div style="text-align:right;font-size:11px;color:var(--muted);white-space:nowrap">${escapeHtml(o.date || '')}${o.hour != null ? ' · ' + fmtH(o.hour) : ''}<br>MRN ${escapeHtml(o.mrno || '')}</div>
+  </div>`;
+}
+
+async function rsShowOrders(title, pred) {
+  showModal('rs-orders-modal', `<div style="font-weight:800;font-size:16px;margin-bottom:8px">${escapeHtml(title)}</div><div class="mini-spin"></div><div style="color:var(--muted);margin-top:8px">Loading orders…</div>`);
+  let rows;
+  try { rows = await rsFetchList(); }
+  catch (e) { showModal('rs-orders-modal', `<div style="color:var(--danger-ink)">${escapeHtml((e && e.message) || 'Could not load')}</div><div style="margin-top:12px"><button class="btn btn-ghost" style="width:auto" onclick="closeModal('rs-orders-modal')">Close</button></div>`); return; }
+  const list = rows.filter(pred);
+  const shown = list.slice(0, 400);
+  const body = shown.length ? shown.map(rsOrderRow).join('') : '<div style="color:var(--muted);padding:18px 0;text-align:center">No orders in this slice</div>';
+  showModal('rs-orders-modal', `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div style="font-weight:800;font-size:16px">${escapeHtml(title)}</div>
+      <button onclick="closeModal('rs-orders-modal')" style="border:none;background:none;font-size:20px;cursor:pointer;color:var(--muted)">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${list.length} order${list.length === 1 ? '' : 's'}${list.length > shown.length ? ` · showing ${shown.length}` : ''}${radstats.listTruncated ? ' · (from a sample of the range)' : ''}</div>
+    <div style="max-height:62vh;overflow:auto">${body}</div>`);
+}
+
+function rsWeekdayName(dateStr) { const m = String(dateStr || '').match(/(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay() : -1; }
 
 // Gender split.
 function rsGender(g) {
