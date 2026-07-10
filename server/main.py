@@ -11096,6 +11096,42 @@ def _radiology_autofile_sweep():
 
 _RAD_AUTOSTAMP_EVERY_SEC = int(os.environ.get("RAD_AUTOSTAMP_EVERY_SEC") or 90)
 _RAD_AUTOSTAMP_USER = {"id": None, "username": "system:autostamp", "role": "system", "branch_name": None}
+_RAD_STAGE_SWEEP_EVERY_SEC = int(os.environ.get("RAD_STAGE_SWEEP_EVERY_SEC") or 120)
+
+def _radiology_stage_sweep():
+    """One background pipeline-stage pass: fetch the ready=1 worklist (DePACS-grounded
+    stage + readyToFile for the whole org) and persist it to the lifecycle store. This is
+    what keeps state='reported'/reported_at, TAT, and orphan detection advancing even when
+    NOBODY has the board open — previously the store only moved forward when an operator's
+    live ?ready=1 poll happened to run. It also keeps the cold-open Final seed
+    (_rad_seed_confirmed_stages) fresh within one sweep window. Read-only vs the HIS; the
+    board's own live ready pass is unchanged, so this never drives what an operator sees."""
+    import urllib.parse
+    ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+    qs = {"ready": "1",
+          "from": (ksa_today - timedelta(days=_RAD_WORKLIST_DAYS_BACK)).isoformat()}
+    data = _bridge_request("/his/worklist?" + urllib.parse.urlencode(qs), timeout=240)
+    if isinstance(data, dict):
+        items = data.get("items")
+        _rad_persist_writes(items)      # upsert orders + exam-state + reconcile resolved
+        return len(items or [])
+    return 0
+
+def _radiology_stage_sweep_loop():
+    """Background stage worker — same claim pattern as auto-file/auto-stamp so exactly one
+    sweep runs per window across gunicorn workers. Gated by rad_stage_sweep_enabled (flip
+    to '0' to stop)."""
+    import time
+    time.sleep(50)   # stagger away from the autofile(20s)/autostamp(35s) boot sweeps
+    while True:
+        try:
+            if (get_setting("rad_stage_sweep_enabled", "1") or "1").strip() == "1":
+                if _claim_sweep_lock("stage_sweep", 600):
+                    try: _radiology_stage_sweep()
+                    finally: _release_sweep_lock("stage_sweep")
+        except Exception as e:
+            print(f"[rad-stage] {e}")
+        time.sleep(_RAD_STAGE_SWEEP_EVERY_SEC)
 # DICOM modality → the worklist's coarse modality bucket, for matching a DePACS study
 # to the right pending order when a patient has several.
 _AUTOSTAMP_MOD = {"CT": "CT", "MR": "MR", "US": "US", "MG": "MG",
@@ -11517,6 +11553,7 @@ def start_scheduler():
     threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
     threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
     threading.Thread(target=_radiology_autostamp_loop, daemon=True).start()
+    threading.Thread(target=_radiology_stage_sweep_loop, daemon=True).start()   # keeps store stage/ledger warm viewer-independently
     threading.Thread(target=_cdxfer_cleanup_loop, daemon=True).start()
 
 def _capture_radiology_day(day_str, source_label="worklist"):
