@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'awaiting-pay-2026-07-10r';
+const CONNECTOR_BUILD = 'dl-schema-2026-07-10s';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2296,6 +2296,28 @@ app.get('/diag/schema-dump', requireAuth, async (req, res) => {
     const summary = dump.map((d) => `${d.status != null ? 'HTTP ' + d.status : 'ERR'} · ${d.name} · ${d.schema ? (d.schema.kind === 'array' ? d.schema.count + ' rows' : d.schema.kind === 'object' ? 'obj{' + (d.schema.arrays || []).map((a) => a.field + '[' + a.count + ']').join(',') + '}' : d.schema.kind) : 'error'}`);
     return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'Siratech data schema reference — field names + one redacted sample per endpoint', mrno: mrno || null, seededBillId: gpb || null, seededEncounterId: enc || null, summary, dump });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Downloadable reference (token in the URL, browser/phone friendly) ──────────
+// Serves the schema-dump as a DOWNLOAD (Content-Disposition attachment) so it can be
+// opened straight from a phone browser — the token goes in the query string instead of
+// an Authorization header. Same read-only, PHI-redacted content as /diag/schema-dump.
+// Auth is checked here explicitly (timing-safe) since it bypasses requireAuth's header.
+app.get('/download/schema', async (req, res) => {
+  try {
+    const tok = String(req.query.token || '');
+    if (API_TOKEN) {
+      const a = Buffer.from(tok), b = Buffer.from(API_TOKEN);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).send('Unauthorized — bad or missing ?token=');
+    }
+    const mrno = String(req.query.mrno || '');
+    // Self-call the schema-dump with the proper Bearer header, then hand it back as a file.
+    const r = await fetch(`http://127.0.0.1:${PORT}/diag/schema-dump?mrno=${encodeURIComponent(mrno)}`, { headers: { Authorization: `Bearer ${API_TOKEN}` } });
+    const text = await r.text();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="siratech-everything.json"');
+    return res.send(text);
+  } catch (e) { return res.status(502).send('Error: ' + String(e.message || e)); }
 });
 
 // ── Order trace (read-only) — does a doctor's order reach the worklist? ────────
