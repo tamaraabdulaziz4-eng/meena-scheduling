@@ -1004,6 +1004,37 @@ def init_schema():
                 FROM scheduling.radiology_orders
                 WHERE gen_pat_billing_id IS NOT NULL
                 ON CONFLICT (gen_pat_billing_id, service_id) DO NOTHING;""")
+            # ── Critical / urgent result closed-loop communication (Meena-owned) ─────────
+            # A radiologist/tech flags a critical or urgent finding on a study; the loop is
+            # not closed until someone documents that the result was communicated to (and
+            # read back by) the referring team — with who/when. This is a CBAHI / Joint
+            # Commission accreditation requirement the HIS didn't cover. Purely local; it is
+            # NEVER written back to Siratech.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.critical_results (
+                    id              BIGSERIAL PRIMARY KEY,
+                    site            INTEGER,
+                    mrno            TEXT NOT NULL,
+                    gen_pat_billing_id BIGINT,
+                    accession       TEXT,
+                    patient_name    TEXT,
+                    exam            TEXT,
+                    severity        TEXT NOT NULL DEFAULT 'critical',  -- critical | urgent
+                    finding         TEXT NOT NULL,
+                    flagged_by      INTEGER,
+                    flagged_by_name TEXT,
+                    flagged_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    notify_to       TEXT,          -- referring doctor / team told
+                    status          TEXT NOT NULL DEFAULT 'open',  -- open | acknowledged
+                    acked_by        INTEGER,
+                    acked_by_name   TEXT,
+                    acked_at        TIMESTAMPTZ,
+                    ack_note        TEXT,          -- how/whom communicated + read-back
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_status ON scheduling.critical_results(status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_mrno ON scheduling.critical_results(mrno);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_site ON scheduling.critical_results(site);")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -1701,6 +1732,80 @@ def send_whatsapp(to, message, *, ntype="info", link=None, force=False, sync=Fal
         if not ok:
             print(f"[whatsapp] failed to {to}: {detail}")
     threading.Thread(target=_worker, daemon=True).start()
+
+def _sms_config():
+    """SMS gateway config (superadmin-set, stored in app_settings). Provider-agnostic:
+    a URL + method + body template with {to}/{message}/{sender} placeholders, so any
+    HTTP SMS provider (Unifonic, Twilio, a telecom gateway) can be plugged in."""
+    return {
+        "enabled": (get_setting("sms_enabled", "") or "").lower() in ("1", "true", "yes", "on"),
+        "url": (get_setting("sms_url", "") or "").strip(),
+        "method": (get_setting("sms_method", "POST") or "POST").strip().upper(),
+        "content_type": (get_setting("sms_content_type", "json") or "json").strip().lower(),
+        "headers": get_setting("sms_headers", "") or "",
+        "body": get_setting("sms_body", "") or "",
+        "sender": (get_setting("sms_sender", "") or "").strip(),
+    }
+
+def _sms_configured():
+    c = _sms_config()
+    return bool(c["enabled"] and c["url"])
+
+def send_sms(to, message, *, sync=False):
+    """Send one SMS via the configured generic HTTP gateway. Best-effort/async by
+    default; sync=True sends inline and returns {ok, detail} (used by the test button
+    and OTP send). Substitutes {to}/{message}/{sender} into the operator's templates."""
+    import json as _json, urllib.request, urllib.parse
+    c = _sms_config()
+    if not (c["enabled"] and c["url"]) or not to or not message:
+        return {"ok": False, "detail": "SMS not configured"} if sync else None
+    num = _normalize_whatsapp_number(to)   # same E.164-style normalisation as WhatsApp
+    if not num:
+        return {"ok": False, "detail": "invalid number"} if sync else None
+
+    def _do():
+        headers = {}
+        raw = (c["headers"] or "").strip()
+        if raw:
+            try:
+                hd = _json.loads(raw)
+                if isinstance(hd, dict):
+                    headers.update({str(k): str(v) for k, v in hd.items()})
+            except Exception:
+                for line in raw.splitlines():          # fallback: "Key: Value" per line
+                    if ":" in line:
+                        k, v = line.split(":", 1); headers[k.strip()] = v.strip()
+        method = c["method"] or "POST"
+        ct = c["content_type"] or "json"
+        tpl = (c["body"] or "").strip()
+        url = c["url"]; data = None
+        if method == "GET" or ct == "query":
+            qs = (tpl.replace("{to}", urllib.parse.quote(num)).replace("{message}", urllib.parse.quote(message)).replace("{sender}", urllib.parse.quote(c["sender"]))
+                  if tpl else urllib.parse.urlencode({"to": num, "message": message, **({"sender": c["sender"]} if c["sender"] else {})}))
+            url = url + ("&" if "?" in url else "?") + qs
+            method = "GET"
+        elif ct == "form":
+            body_str = (tpl.replace("{to}", num).replace("{message}", message).replace("{sender}", c["sender"])
+                        if tpl else urllib.parse.urlencode({"to": num, "message": message, **({"sender": c["sender"]} if c["sender"] else {})}))
+            data = body_str.encode(); headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        else:  # json
+            base_tpl = tpl or '{"to":"{to}","message":"{message}"}'
+            safe_msg = _json.dumps(message)[1:-1]      # JSON-escape without the surrounding quotes
+            body_str = base_tpl.replace("{to}", num).replace("{message}", safe_msg).replace("{sender}", c["sender"])
+            data = body_str.encode(); headers.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return True, f"HTTP {resp.status}"
+        except Exception as e:
+            return False, str(e)[:200]
+
+    if sync:
+        ok, detail = _do()
+        if not ok:
+            print(f"[sms] failed to {num}: {detail}")
+        return {"ok": ok, "detail": detail}
+    threading.Thread(target=lambda: _do(), daemon=True).start()
 
 def notify(user_id, message, link=None, ntype="info", whatsapp=True):
     """Create one in-app notification, and email/WhatsApp it when configured.
@@ -2607,8 +2712,8 @@ async def register_send_phone_code(request: Request):
     to = _normalize_whatsapp_number(body.get("phone"))
     if not to:
         raise HTTPException(400, "Enter a valid mobile number first")
-    if not _phone_verify_enabled():
-        raise HTTPException(503, "WhatsApp verification isn't set up on the server yet. Ask your admin.")
+    if not (_sms_configured() or _phone_verify_enabled()):
+        raise HTTPException(503, "Phone verification isn't set up on the server yet. Ask your admin.")
     # Throttle: one code per 45 seconds per number.
     prev = q("SELECT created_at FROM scheduling.phone_verifications WHERE phone=%s", (to,), one=True)
     if prev and prev.get("created_at") and \
@@ -2620,12 +2725,20 @@ async def register_send_phone_code(request: Request):
          ON CONFLICT (phone) DO UPDATE SET code=EXCLUDED.code, expires_at=EXCLUDED.expires_at,
                                            attempts=0, created_at=NOW()""",
       (to, code, datetime.now(timezone.utc) + timedelta(minutes=10)), exec_only=True)
+    text = (f"Meena Scheduling verification code: {code}\n\n"
+            f"It expires in 10 minutes. Enter it on the sign-up form to confirm your mobile number.")
+    # Prefer SMS when a gateway is configured; otherwise fall back to WhatsApp.
+    channel = "sms" if _sms_configured() else "whatsapp"
     try:
-        _whatsapp_send_now(to, f"Meena Scheduling verification code: {code}\n\n"
-                               f"It expires in 10 minutes. Enter it on the sign-up form to confirm your mobile number.")
+        if channel == "sms":
+            res = send_sms(to, text, sync=True)
+            if not (res and res.get("ok")):
+                raise Exception((res or {}).get("detail") or "SMS send failed")
+        else:
+            _whatsapp_send_now(to, text)
     except Exception as e:
-        raise HTTPException(502, f"Couldn't send the WhatsApp code: {e}")
-    return {"ok": True}
+        raise HTTPException(502, f"Couldn't send the {channel.upper()} code: {e}")
+    return {"ok": True, "channel": channel}
 
 def _verify_phone_code(phone_raw, code, consume=True):
     """Validate a WhatsApp code for the number; raise 400 if missing/expired/wrong.
@@ -8123,6 +8236,133 @@ async def radiology_order_reopen(gpb: int, request: Request, user=Depends(requir
     insert_audit(user, "RADIOLOGY_REOPEN", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
     return {"ok": True}
 
+# ── Critical / urgent result closed-loop communication (Meena-owned) ────────────
+# Flag a critical finding → the reading team is notified → the loop stays OPEN until
+# someone documents that the result was communicated to (and read back by) the
+# referring team. Accreditation-grade; never written back to Siratech.
+def _critical_row(r):
+    """Shape a critical_results DB row for the client, with a computed overdue flag.
+    Open criticals unacknowledged past their SLA (critical 30 min, urgent 60 min)
+    are surfaced as overdue so the panel can escalate them visually."""
+    import datetime as _dt
+    out = dict(r)
+    fa = r.get("flagged_at")
+    mins = None
+    if fa:
+        try:
+            mins = (_dt.datetime.now(_dt.timezone.utc) - fa).total_seconds() / 60.0
+        except Exception:
+            mins = None
+    sla = 30 if (r.get("severity") or "critical") == "critical" else 60
+    out["age_minutes"] = round(mins) if mins is not None else None
+    out["overdue"] = bool(r.get("status") == "open" and mins is not None and mins > sla)
+    for k in ("flagged_at", "acked_at", "created_at"):
+        if out.get(k) is not None:
+            try: out[k] = out[k].isoformat()
+            except Exception: out[k] = str(out[k])
+    return out
+
+@app.get("/api/radiology/critical")
+def radiology_critical_list(status: str = Query("open"), user=Depends(require_radiology)):
+    """List critical results. status=open (default) | acknowledged | all. Branch-locked
+    team leads see only their own site."""
+    site = _rad_scope_site(user)
+    where, params = [], []
+    if status in ("open", "acknowledged"):
+        where.append("status=%s"); params.append(status)
+    if site is not None:
+        where.append("(site=%s OR site IS NULL)"); params.append(site)
+    sql = "SELECT * FROM scheduling.critical_results"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY (status='open') DESC, flagged_at DESC LIMIT 500"
+    rows = q(sql, tuple(params)) or []
+    items = [_critical_row(r) for r in rows]
+    open_count = sum(1 for r in items if r["status"] == "open")
+    overdue_count = sum(1 for r in items if r.get("overdue"))
+    return {"ok": True, "items": items, "openCount": open_count, "overdueCount": overdue_count}
+
+@app.get("/api/radiology/critical/count")
+def radiology_critical_count(user=Depends(require_radiology)):
+    """Cheap badge count of OPEN critical results in the user's scope."""
+    site = _rad_scope_site(user)
+    if site is not None:
+        row = q("""SELECT COUNT(*) AS n, COUNT(*) FILTER (
+                     WHERE flagged_at < NOW() - (CASE WHEN severity='critical' THEN INTERVAL '30 min' ELSE INTERVAL '60 min' END)
+                   ) AS overdue
+                   FROM scheduling.critical_results
+                   WHERE status='open' AND (site=%s OR site IS NULL)""", (site,), one=True)
+    else:
+        row = q("""SELECT COUNT(*) AS n, COUNT(*) FILTER (
+                     WHERE flagged_at < NOW() - (CASE WHEN severity='critical' THEN INTERVAL '30 min' ELSE INTERVAL '60 min' END)
+                   ) AS overdue
+                   FROM scheduling.critical_results WHERE status='open'""", (), one=True)
+    return {"open": (row and row.get("n")) or 0, "overdue": (row and row.get("overdue")) or 0}
+
+@app.post("/api/radiology/critical")
+async def radiology_critical_flag(request: Request, user=Depends(require_radiology)):
+    """Flag a critical/urgent result. Records it OPEN and notifies the radiology
+    reading/management team so the communication loop starts."""
+    b = await _rad_body(request)
+    mrno = str(b.get("mrno") or "").strip()
+    finding = str(b.get("finding") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "Patient MRN is required")
+    if not finding:
+        raise HTTPException(400, "The critical finding is required")
+    severity = "urgent" if str(b.get("severity") or "").lower() == "urgent" else "critical"
+    site = b.get("site")
+    try: site = int(site) if site not in (None, "") else _rad_scope_site(user)
+    except Exception: site = _rad_scope_site(user)
+    gpb = b.get("gpb")
+    try: gpb = int(gpb) if gpb not in (None, "") else None
+    except Exception: gpb = None
+    row = q("""INSERT INTO scheduling.critical_results
+                 (site, mrno, gen_pat_billing_id, accession, patient_name, exam, severity,
+                  finding, flagged_by, flagged_by_name, notify_to)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING *""",
+            (site, mrno, gpb, (str(b.get("accession") or "").strip() or None),
+             (str(b.get("patientName") or "").strip() or None),
+             (str(b.get("exam") or "").strip() or None), severity, finding[:2000],
+             user.get("id"), user.get("username"),
+             (str(b.get("notifyTo") or "").strip() or None)), one=True)
+    # Notify the reading/management team so the loop is picked up. Best-effort.
+    try:
+        pname = row.get("patient_name") or mrno
+        msg = f"🚨 {'CRITICAL' if severity=='critical' else 'Urgent'} result flagged: {pname} — {finding[:120]}. Needs acknowledgement."
+        targets = q("""SELECT id FROM scheduling.users
+                       WHERE role IN ('superadmin','manager','admin')
+                          OR COALESCE(can_use_radiology,false)""", ()) or []
+        for t in targets:
+            if t.get("id") and t["id"] != user.get("id"):
+                notify(t["id"], msg, link="#/critical", ntype="alert")
+    except Exception:
+        pass
+    insert_audit(user, "RADIOLOGY_CRITICAL_FLAG", mrno,
+                 json.dumps({"id": row.get("id"), "severity": severity, "gpb": gpb}))
+    return {"ok": True, "item": _critical_row(row)}
+
+@app.post("/api/radiology/critical/{cid}/ack")
+async def radiology_critical_ack(cid: int, request: Request, user=Depends(require_radiology)):
+    """Close the loop: document that the critical result was communicated to and read
+    back by the referring team (who + how). Requires a note."""
+    b = await _rad_body(request)
+    note = str(b.get("note") or "").strip()
+    if not note:
+        raise HTTPException(400, "Document how the result was communicated (who was told + read-back)")
+    notify_to = str(b.get("notifyTo") or "").strip() or None
+    row = q("""UPDATE scheduling.critical_results
+               SET status='acknowledged', acked_by=%s, acked_by_name=%s, acked_at=NOW(),
+                   ack_note=%s, notify_to=COALESCE(%s, notify_to)
+               WHERE id=%s RETURNING *""",
+            (user.get("id"), user.get("username"), note[:2000], notify_to, cid), one=True)
+    if not row:
+        raise HTTPException(404, "Critical result not found")
+    insert_audit(user, "RADIOLOGY_CRITICAL_ACK", str(row.get("mrno") or cid),
+                 json.dumps({"id": cid}))
+    return {"ok": True, "item": _critical_row(row)}
+
 @app.get("/api/radiology/technologists")
 def radiology_technologists(user=Depends(require_radiology)):
     """Active staff for the worklist's technologist picker (assign action). Org-wide
@@ -8848,6 +9088,57 @@ async def create_consent_link(request: Request, user=Depends(require_radiology))
         qr = ""
     insert_audit(user, "CONSENT_LINK", file_no, json.dumps({"id": row["id"]}))
     return {"ok": True, "id": row["id"], "url": url, "qr": qr}
+
+@app.post("/api/consent/send-sms")
+async def consent_send_sms(request: Request, user=Depends(require_radiology)):
+    """Text the patient the consent link via the configured SMS gateway (alternative to
+    the on-screen QR). The link is created by /api/consent/link; this sends it."""
+    b = await request.json()
+    phone = str((b or {}).get("phone") or "").strip()
+    url = str((b or {}).get("url") or "").strip()
+    if not phone:
+        raise HTTPException(400, "Enter the patient's mobile number")
+    if not url:
+        raise HTTPException(400, "Missing consent link — create it first")
+    if not _sms_configured():
+        raise HTTPException(503, "The SMS gateway isn't set up yet. Ask a superadmin to configure it in Settings.")
+    msg = f"Meena Radiology · مينا للأشعة\nPlease review & sign your consent form / يرجى مراجعة وتوقيع نموذج الموافقة:\n{url}"
+    res = send_sms(phone, msg, sync=True)
+    insert_audit(user, "CONSENT_SMS", phone, json.dumps({"ok": bool(res and res.get('ok'))}))
+    if not (res and res.get("ok")):
+        raise HTTPException(502, f"SMS failed: {(res or {}).get('detail') or 'unknown error'}")
+    return {"ok": True}
+
+# ── SMS gateway config (superadmin) ────────────────────────────────────────────
+@app.get("/api/sms/config")
+def sms_config_get(user=Depends(require_superadmin)):
+    c = _sms_config()
+    return {"ok": True, "enabled": c["enabled"], "url": c["url"], "method": c["method"],
+            "content_type": c["content_type"], "headers": c["headers"], "body": c["body"],
+            "sender": c["sender"], "configured": _sms_configured()}
+
+@app.put("/api/sms/config")
+async def sms_config_set(request: Request, user=Depends(require_superadmin)):
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    if "enabled" in b:
+        set_setting("sms_enabled", "1" if b.get("enabled") else "0")
+    for short, key in (("url", "sms_url"), ("method", "sms_method"), ("content_type", "sms_content_type"),
+                       ("headers", "sms_headers"), ("body", "sms_body"), ("sender", "sms_sender")):
+        if short in b:
+            set_setting(key, str(b.get(short) or ""))
+    insert_audit(user, "SMS_CONFIG", None, None)
+    return {"ok": True}
+
+@app.post("/api/sms/test")
+async def sms_config_test(request: Request, user=Depends(require_superadmin)):
+    b = await request.json()
+    to = str((b or {}).get("phone") or "").strip()
+    if not to:
+        raise HTTPException(400, "Enter a phone number to test")
+    res = send_sms(to, "Meena test SMS ✓ — your gateway is working.", sync=True)
+    return res or {"ok": False, "detail": "no result"}
 
 @app.get("/api/consent/status/{consent_id}")
 def consent_status(consent_id: int, user=Depends(require_radiology)):

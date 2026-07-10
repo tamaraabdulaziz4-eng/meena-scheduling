@@ -14,7 +14,7 @@ let radstats = {
   data: null, loading: false,
   modData: null, modLoading: false, modError: '',
   finData: null, finLoading: false, finError: '',
-  auto: false, timer: null, clockTimer: null, lastError: '',
+  auto: true, timer: null, clockTimer: null, lastError: '', lastLoaded: 0,
 };
 
 const RS_PRESETS = [
@@ -84,6 +84,7 @@ async function renderRadStatsPage(opts) {
   else if (!embed) rsShowOverlay();    // first load → full-screen branded loader (page only, not embedded)
   if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
   await rsLoad();
+  if (radstats.auto) rsStartAuto();    // live board on by default — poll every 30s
 }
 
 // ── Full-screen loader (login-style): cycling status + a progress bar ─────────
@@ -133,12 +134,21 @@ function rsClockNow() {
   try { return new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Riyadh', hour12: false }); }
   catch (e) { return new Date().toLocaleTimeString(); }
 }
+function rsAgoText() {
+  if (!radstats.lastLoaded) return '';
+  const s = Math.max(0, Math.round((Date.now() - radstats.lastLoaded) / 1000));
+  if (s < 60) return `updated ${s}s ago`;
+  const m = Math.floor(s / 60);
+  return `updated ${m}m ago`;
+}
 function rsStartClock() {
   if (radstats.clockTimer) clearInterval(radstats.clockTimer);
   radstats.clockTimer = setInterval(() => {
     const el = document.getElementById('rs-clock-t');
     if (!el) { clearInterval(radstats.clockTimer); radstats.clockTimer = null; return; }
     el.textContent = rsClockNow();
+    const up = document.getElementById('rs-updated');
+    if (up) up.textContent = rsAgoText();
   }, 1000);
 }
 
@@ -282,7 +292,8 @@ function rsRenderControls() {
         </div>
         <div class="rs-ctl-actions">
           <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
-          <label class="rs-auto"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Auto</label>
+          <span id="rs-updated" style="font-size:11.5px;color:var(--muted);white-space:nowrap">${rsAgoText()}</span>
+          <label class="rs-auto" title="Auto-refresh every 30s"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> ${radstats.auto ? '🟢 Live' : 'Live'}</label>
           <button class="ghost" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">${icon('bar-chart')} Monthly report</button>
           <button class="open pri" style="width:auto" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
         </div>
@@ -344,7 +355,7 @@ function rsStartAuto() {
     if (!document.getElementById('rs-body')) { rsStopAuto(); return; }
     if (document.hidden) return;               // don't poll a backgrounded tab
     rsLoad(true);
-  }, 60000);
+  }, 30000);   // live board — refresh every 30s
 }
 function rsStopAuto() { if (radstats.timer) { clearInterval(radstats.timer); radstats.timer = null; } }
 
@@ -378,6 +389,7 @@ async function rsLoad(silent, force) {
   } finally {
     if (myReq === radstats._reqSeq) {   // only the latest request owns the UI state
       radstats.loading = false;
+      if (!radstats.lastError) radstats.lastLoaded = Date.now();   // for the "updated Xs ago" ticker
       rsHideOverlay();                  // everything in → dismiss the full-screen loader
       rsRenderControls();
       rsRenderBody();
@@ -559,6 +571,106 @@ function rsKpi(accent, dot, val, label, sub) {
   </div>`;
 }
 
+// Peak hours — orders by hour of day. Hidden gracefully if the HIS timestamps are date-only.
+function rsHourly(byHour, hasTime) {
+  const arr = Array.isArray(byHour) ? byHour : [];
+  if (!hasTime || !arr.some((v) => v > 0)) {
+    return `<div class="rs-empty">Order timestamps don't carry a time-of-day in this data, so peak-hours can't be shown. It fills in automatically if order times become available.</div>`;
+  }
+  const max = Math.max(1, ...arr);
+  const peak = arr.indexOf(Math.max(...arr));
+  const fmtH = (h) => { const ap = h < 12 ? 'a' : 'p'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ap; };
+  const bars = arr.map((v, h) => {
+    const pct = Math.max(3, Math.round((v / max) * 100));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0" title="${fmtH(h)} — ${v} orders">
+      <div style="width:100%;display:flex;align-items:flex-end;height:92px"><div style="width:76%;margin:0 auto;height:${pct}%;border-radius:4px 4px 0 0;background:${h === peak ? 'var(--danger,#E25555)' : 'var(--accent,#6B4EFF)'}"></div></div>
+      <div style="font-size:9px;color:var(--muted)">${h % 3 === 0 ? fmtH(h) : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div style="display:flex;gap:2px;align-items:flex-end;padding-top:6px">${bars}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Busiest hour: <b>${fmtH(peak)}</b> (${max} orders) — staff to the peak.</div>`;
+}
+
+// Busiest weekdays — average orders per weekday across the range (KSA week: Sun–Thu).
+// Uses the per-day average so a range with more Mondays doesn't skew "busiest".
+function rsWeekday(daily) {
+  const arr = Array.isArray(daily) ? daily : [];
+  if (arr.length < 3) return `<div class="rs-empty">Pick a wider date range (a week+) to see the weekday pattern.</div>`;
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const tot = new Array(7).fill(0), cnt = new Array(7).fill(0);
+  for (const row of arr) {
+    const m = String(row.date || '').match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) continue;
+    const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+    tot[dow] += (row.count || 0); cnt[dow] += 1;
+  }
+  const avg = tot.map((t, i) => cnt[i] ? t / cnt[i] : 0);
+  const max = Math.max(1, ...avg);
+  const peak = avg.indexOf(Math.max(...avg));
+  const bars = names.map((nm, i) => {
+    const pct = Math.max(3, Math.round((avg[i] / max) * 100));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px" title="${nm} — avg ${avg[i].toFixed(1)}/day">
+      <div style="width:100%;display:flex;align-items:flex-end;height:88px"><div style="width:64%;margin:0 auto;height:${pct}%;border-radius:5px 5px 0 0;background:${i === peak ? 'var(--danger,#E25555)' : 'var(--accent2,#8358fd)'}"></div></div>
+      <div style="font-size:11px;color:var(--muted)">${nm}</div>
+    </div>`;
+  }).join('');
+  return `<div style="display:flex;gap:5px;align-items:flex-end;padding-top:6px">${bars}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Busiest weekday: <b>${names[peak]}</b> (avg ${avg[peak].toFixed(0)}/day) — roster more staff.</div>`;
+}
+
+// Busiest specific dates in the range — the top days by order volume.
+function rsBusyDates(daily) {
+  const arr = (Array.isArray(daily) ? daily : []).filter((r) => r && r.date);
+  if (arr.length < 2) return `<div class="rs-empty">Not enough days in range.</div>`;
+  const max = Math.max(1, ...arr.map((r) => r.count || 0));
+  const top = arr.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 8);
+  const fmt = (d) => { const m = String(d).match(/(\d{4})-(\d{2})-(\d{2})/); if (!m) return d; return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
+  return top.map((r) => {
+    const pct = Math.max(4, Math.round(((r.count || 0) / max) * 100));
+    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+      <div style="width:140px;font-size:12px;flex-shrink:0">${escapeHtml(fmt(r.date))}</div>
+      <div style="flex:1;background:var(--border);border-radius:5px;height:16px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--accent,#6B4EFF)"></div></div>
+      <div style="width:36px;text-align:right;font-size:12px;font-weight:700">${r.count || 0}</div>
+    </div>`;
+  }).join('');
+}
+
+// Radiology funnel — ordered → imaged → reported, with the drop-off at each stage.
+function rsFunnel(f) {
+  if (!f || !f.ordered) return '';
+  const max = Math.max(1, f.ordered);
+  const stages = [
+    { label: 'Ordered', v: f.ordered, color: 'var(--accent,#6B4EFF)' },
+    { label: 'Imaged', v: f.imaged, color: 'var(--blue,#3BA0FF)' },
+    { label: 'Reported', v: f.reported, color: 'var(--green,#00C896)' },
+  ];
+  const rows = stages.map((s) => {
+    const pct = Math.round((s.v / max) * 100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0">
+      <div style="width:74px;font-size:12.5px;font-weight:600">${s.label}</div>
+      <div style="flex:1;background:var(--border);border-radius:6px;height:22px;overflow:hidden"><div style="width:${Math.max(2, pct)}%;height:100%;background:${s.color};border-radius:6px"></div></div>
+      <div style="width:84px;text-align:right;font-size:12.5px"><b>${rsNum(s.v)}</b> <span style="color:var(--muted)">${pct}%</span></div>
+    </div>`;
+  }).join('');
+  const unimaged = Math.max(0, f.ordered - f.imaged), unreported = Math.max(0, f.imaged - f.reported);
+  return rows + `<div style="font-size:12px;color:var(--muted);margin-top:8px">⚠️ <b>${rsNum(unimaged)}</b> ordered but not imaged · <b>${rsNum(unreported)}</b> imaged but not reported</div>`;
+}
+
+// Gender split.
+function rsGender(g) {
+  if (!Array.isArray(g) || !g.length) return '';
+  const tot = g.reduce((s, x) => s + (x.count || 0), 0) || 1;
+  const col = (n) => /female|^f|أنثى|انثى/i.test(n) ? '#ec4899' : (/male|^m|ذكر/i.test(n) ? '#3BA0FF' : 'var(--muted)');
+  return g.map((x) => {
+    const pct = Math.round((x.count / tot) * 100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+      <div style="width:90px;font-size:12.5px">${escapeHtml(x.name)}</div>
+      <div style="flex:1;background:var(--border);border-radius:5px;height:16px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${col(x.name)}"></div></div>
+      <div style="width:72px;text-align:right;font-size:12px"><b>${rsNum(x.count)}</b> <span style="color:var(--muted)">${pct}%</span></div>
+    </div>`;
+  }).join('');
+}
+
 function rsRenderBody() {
   const body = document.getElementById('rs-body');
   const banner = document.getElementById('rs-billing-banner');
@@ -670,6 +782,8 @@ function rsRenderBody() {
       ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
     </div>
+    ${d.funnel ? rsPanel('🔻 Pipeline — ordered → imaged → reported', rsFunnel(d.funnel), 'where studies drop off', 'rs-wide') : ''}
+    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'patients by gender', 'rs-wide') : ''}
 
     ${rsSection('Where the work is')}
     <div class="rs-grid2">
@@ -683,6 +797,9 @@ function rsRenderBody() {
       ${rsPanel('Daily trend', rsArea(d.daily || []), `${dayCount} day${dayCount === 1 ? '' : 's'} in range`)}
       ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order')}
     </div>
+    ${rsPanel('⏰ Peak hours — when orders come in', rsHourly(d.byHour, d.hourHasTime), 'orders by hour of day · staff to the peak', 'rs-wide')}
+    ${dayCount >= 3 ? rsPanel('📅 Busiest weekdays', rsWeekday(d.daily || []), 'avg orders per weekday · roster to demand', 'rs-wide') : ''}
+    ${dayCount >= 5 ? rsPanel('🗓️ Busiest dates', rsBusyDates(d.daily || []), 'top days by volume in the range', 'rs-wide') : ''}
 
     ${rsSection('Financial — revenue &amp; payer')}
     ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;

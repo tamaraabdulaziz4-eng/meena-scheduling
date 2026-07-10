@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'umgr-probe-2026-07-09k';
+const CONNECTOR_BUILD = 'funnel-demo-2026-07-10c';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1145,9 +1145,35 @@ app.get('/user/:id/privileges', requireAuth, async (req, res) => {
       }
     }
     const names = Array.isArray(priv.data) ? priv.data.map((p) => p && (p.privilages || p.privileges || p.privilegeName || p.name)).filter(Boolean) : [];
+    // Groups are the real unit of access in Siratech (a save assigns groups, not loose
+    // privileges), so surface the user's groups + the full group catalogue for naming.
+    // READ-ONLY: GetGenUserGroups (this user) and GetAllGenGroups (catalogue). Never writes.
+    const umgrHeaders = { 'X-App-Client': 'his.meena-health.com', 'X-App-Mode': 'ENCV0',
+      'GENERAL-API-ACCESS': 'GENERAL-API-ACCESS', 'API-LICENSE-ACCESS': 'API-FREE-LICENSE' };
+    const Gum = (p) => hisFetch(p, { method: 'GET', headers: umgrHeaders })
+      .then((r) => ({ status: r.status, data: (r.json && (r.json.data !== undefined ? r.json.data : r.json)) }))
+      .catch((e) => ({ error: String(e && e.message) }));
+    const [userGroups, allGroups] = await Promise.all([
+      Gum('/user-management-api/api/v1/Group/GetGenUserGroups?UserId=' + enc),
+      Gum('/user-management-api/api/v1/Group/GetAllGenGroups?ParentGroupId=0'),
+    ]);
+    // Normalise a group row (field names vary across endpoints) to {id, name}.
+    const gId = (g) => g && (g.genGroupID ?? g.genGroupId ?? g.groupId ?? g.groupid ?? g.id);
+    const gName = (g) => g && (g.groupName ?? g.groupname ?? g.name ?? g.groupDescription ?? '');
+    const catalogArr = Array.isArray(allGroups.data) ? allGroups.data
+      : (allGroups.data && Array.isArray(allGroups.data.genGroups) ? allGroups.data.genGroups : []);
+    const nameById = {};
+    for (const g of catalogArr) { const id = gId(g); if (id != null) nameById[id] = gName(g) || ('Group ' + id); }
+    const userGroupArr = Array.isArray(userGroups.data) ? userGroups.data
+      : (userGroups.data && Array.isArray(userGroups.data.genGroups) ? userGroups.data.genGroups : []);
+    const groups = userGroupArr.map((g) => { const id = gId(g); return { id, name: gName(g) || nameById[id] || ('Group ' + id) }; })
+      .filter((g) => g.id != null);
     return res.json({ ok: true, build: CONNECTOR_BUILD, userId: uid, hospitalId,
       sites: siteList.map((s) => ({ id: s.siteId, name: s.shortName || s.name || ('Site ' + s.siteId) })),
       grantedSites: [...granted].sort((a, b) => a - b),
+      groups, groupCount: groups.length,
+      groupCatalog: { status: allGroups.status, count: catalogArr.length,
+        items: catalogArr.map((g) => ({ id: gId(g), name: gName(g) })).filter((g) => g.id != null) },
       privilegesByUser: { status: priv.status, error: priv.error || null, count: sz(priv), keys: sampleKeys(priv),
         names, sample: Array.isArray(priv.data) ? priv.data.slice(0, 3) : priv.data },
       modulePrivilege: { status: modPriv.status, error: modPriv.error || null, topLevel: sz(modPriv), leafCount: countTree(modPriv.data), keys: sampleKeys(modPriv) },
@@ -2828,8 +2854,12 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const byBranch = new Map(), byDept = new Map(), byDoctor = new Map();
   const patientSet = new Set();
   const daily = new Map();
+  const hourly = new Array(24).fill(0);   // peak-hours: orders per hour-of-day (0..23)
+  let nonMidnight = 0;                     // >0 means the timestamps actually carry a time (not date-only)
   const aging = { '<1d': 0, '1-3d': 0, '3-7d': 0, '>7d': 0 };
   let total = 0, emergency = 0, routine = 0;
+  let imagedN = 0, reportedN = 0;         // funnel: ordered → imaged → reported
+  const byGender = new Map();             // demographics (only emitted if the rows carry gender)
   const now = Date.now();
 
   // Seed every queried branch at zero so the panel shows ALL branches (a branch
@@ -2848,8 +2878,18 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       tallyPush(byDept, r.departmentName, r.departmentName);
       tallyPush(byDoctor, r.providerId || r.doctorName, (r.doctorName || '').trim() || (r.providerId || 'Unknown'));
       if (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) emergency += 1; else routine += 1;
+      // Funnel stages (field names vary; all optional — availability flagged after the loop).
+      const acc = r.accessionNumber ?? r.accessionNo ?? r.accession;
+      if ((acc != null && String(acc).trim() !== '') || Number(r.radioImageStatus) > 0) imagedN += 1;
+      if (Number(r.radioReportStatus) > 0 || r.hasRadiologyRepot || Number(r.reportStatus) > 0) reportedN += 1;
+      const g = r.gender ?? r.sex ?? r.patientGender ?? r.genderName;
+      if (g != null && String(g).trim() !== '') { const gv = String(g).trim(); tallyPush(byGender, gv, gv); }
       const d = dayOf(r.billDate || r.visitDate);
       if (d) daily.set(d, (daily.get(d) || 0) + 1);
+      // Peak-hours: read the hour straight from the timestamp string (no timezone shift).
+      // If the order timestamps are date-only, `nonMidnight` stays 0 and the UI hides the chart.
+      const hm = String(r.billDate || r.visitDate || '').match(/[T ](\d{2}):(\d{2})/);
+      if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
       const t = Date.parse(r.billDate || r.visitDate || '');
       if (Number.isFinite(t)) {
         const days = (now - t) / 864e5;
@@ -3027,6 +3067,12 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     priority: { emergency, routine },
     aging,
     daily: [...daily.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([date, count]) => ({ date, count })),
+    byHour: hourly,                 // 24 buckets — orders per hour-of-day (peak-hours chart)
+    hourHasTime: nonMidnight > 0,   // false → order timestamps are date-only, hide the chart
+    // Funnel — only meaningful if the rows carry a stage/accession field; else null → UI hides it.
+    funnel: (flat.length && (('accessionNumber' in flat[0].r) || ('accessionNo' in flat[0].r) || ('radioImageStatus' in flat[0].r) || ('radioReportStatus' in flat[0].r) || ('reportStatus' in flat[0].r)))
+      ? { ordered: total, imaged: imagedN, reported: reportedN } : null,
+    byGender: byGender.size ? tallyList(byGender).map((e) => ({ name: e.name, count: e.count })) : null,
     generatedAt: new Date().toISOString(),
     note: 'Requests = billed radiology orders in the RIS worklist (awaiting result). Paid/unpaid collection split is added from the billing report.',
   };
