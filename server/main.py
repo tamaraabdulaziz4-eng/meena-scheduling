@@ -1035,6 +1035,30 @@ def init_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_status ON scheduling.critical_results(status);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_mrno ON scheduling.critical_results(mrno);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_site ON scheduling.critical_results(site);")
+            # Peer review (radiology QA). A second radiologist reviews a colleague's report
+            # and scores agreement on the RADPEER 1–4 scale. The discrepancy rate per reader
+            # and overall is an accreditation-grade quality metric (CBAHI / ACR). Purely
+            # local — never written back to Siratech.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.peer_reviews (
+                    id                BIGSERIAL PRIMARY KEY,
+                    site              INTEGER,
+                    mrno              TEXT NOT NULL,
+                    accession         TEXT,
+                    patient_name      TEXT,
+                    exam              TEXT,
+                    modality          TEXT,
+                    original_reader   TEXT,          -- the radiologist whose report is reviewed
+                    reviewer_id       INTEGER,
+                    reviewer_name     TEXT,
+                    score             SMALLINT NOT NULL,   -- RADPEER 1=concur .. 4=misinterpretation
+                    clinically_significant BOOLEAN NOT NULL DEFAULT FALSE,
+                    note              TEXT,
+                    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_peer_site ON scheduling.peer_reviews(site);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_peer_reader ON scheduling.peer_reviews(original_reader);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_peer_created ON scheduling.peer_reviews(created_at);")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -8393,6 +8417,125 @@ async def radiology_critical_ack(cid: int, request: Request, user=Depends(requir
     insert_audit(user, "RADIOLOGY_CRITICAL_ACK", str(row.get("mrno") or cid),
                  json.dumps({"id": cid}))
     return {"ok": True, "item": _critical_row(row)}
+
+# ── Peer review (radiology QA, RADPEER-style) ─────────────────────────────────
+# A second radiologist scores agreement with a colleague's report. Discrepancy
+# rate (score ≥ 2) and significant-discrepancy rate (score ≥ 3 or flagged) per
+# reader and overall are the accreditation quality metric. Meena-owned.
+_PEER_SCORE_LABEL = {
+    1: "Concur",
+    2: "Discrepancy — not ordinarily expected",
+    3: "Discrepancy — should be made most of the time",
+    4: "Discrepancy — misinterpretation",
+}
+
+def _peer_row(r):
+    out = dict(r)
+    sc = int(out.get("score") or 1)
+    out["score"] = sc
+    out["score_label"] = _PEER_SCORE_LABEL.get(sc, str(sc))
+    out["discrepancy"] = sc >= 2
+    out["significant"] = bool(sc >= 3 or out.get("clinically_significant"))
+    if out.get("created_at") is not None:
+        try: out["created_at"] = out["created_at"].isoformat()
+        except Exception: out["created_at"] = str(out["created_at"])
+    return out
+
+@app.get("/api/radiology/peer-review")
+def radiology_peer_list(reader: str = Query(""), days: int = Query(90), user=Depends(require_radiology)):
+    """List peer reviews, most recent first. Optional reader filter and lookback
+    window. Branch-locked leads see only their own site."""
+    site = _rad_scope_site(user)
+    where, params = [], []
+    try: days = max(1, min(int(days), 730))
+    except Exception: days = 90
+    where.append("created_at >= NOW() - (%s || ' days')::interval"); params.append(str(days))
+    reader = (reader or "").strip()
+    if reader:
+        where.append("original_reader = %s"); params.append(reader)
+    if site is not None:
+        where.append("(site=%s OR site IS NULL)"); params.append(site)
+    sql = "SELECT * FROM scheduling.peer_reviews"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC LIMIT 500"
+    rows = q(sql, tuple(params)) or []
+    return {"ok": True, "items": [_peer_row(r) for r in rows]}
+
+@app.get("/api/radiology/peer-review/summary")
+def radiology_peer_summary(days: int = Query(90), user=Depends(require_radiology)):
+    """QA rollup: total reviews, discrepancy rate and significant-discrepancy rate,
+    overall and per reader. The ACR benchmark discrepancy rate is roughly 3%."""
+    site = _rad_scope_site(user)
+    try: days = max(1, min(int(days), 730))
+    except Exception: days = 90
+    where = ["created_at >= NOW() - (%s || ' days')::interval"]
+    params = [str(days)]
+    if site is not None:
+        where.append("(site=%s OR site IS NULL)"); params.append(site)
+    wsql = " WHERE " + " AND ".join(where)
+    tot = q(f"""SELECT COUNT(*) AS reviews,
+                   COUNT(*) FILTER (WHERE score >= 2) AS discrepancies,
+                   COUNT(*) FILTER (WHERE score >= 3 OR clinically_significant) AS significant
+                FROM scheduling.peer_reviews{wsql}""", tuple(params), one=True) or {}
+    per = q(f"""SELECT COALESCE(NULLIF(TRIM(original_reader),''),'—') AS reader,
+                   COUNT(*) AS reviews,
+                   COUNT(*) FILTER (WHERE score >= 2) AS discrepancies,
+                   COUNT(*) FILTER (WHERE score >= 3 OR clinically_significant) AS significant
+                FROM scheduling.peer_reviews{wsql}
+                GROUP BY 1 ORDER BY reviews DESC, reader LIMIT 100""", tuple(params)) or []
+    reviews = int(tot.get("reviews") or 0)
+    disc = int(tot.get("discrepancies") or 0)
+    sig = int(tot.get("significant") or 0)
+    pct = lambda n, d: (round(n * 1000.0 / d) / 10.0) if d else 0.0
+    return {
+        "ok": True, "days": days,
+        "reviews": reviews, "discrepancies": disc, "significant": sig,
+        "discrepancyRate": pct(disc, reviews), "significantRate": pct(sig, reviews),
+        "byReader": [{
+            "reader": r.get("reader"), "reviews": int(r.get("reviews") or 0),
+            "discrepancies": int(r.get("discrepancies") or 0),
+            "significant": int(r.get("significant") or 0),
+            "discrepancyRate": pct(int(r.get("discrepancies") or 0), int(r.get("reviews") or 0)),
+        } for r in per],
+    }
+
+@app.post("/api/radiology/peer-review")
+async def radiology_peer_create(request: Request, user=Depends(require_radiology)):
+    """Record a peer review of a colleague's report. Score is RADPEER 1–4."""
+    b = await _rad_body(request)
+    mrno = str(b.get("mrno") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "Patient MRN is required")
+    try: score = int(b.get("score"))
+    except Exception: score = 0
+    if score < 1 or score > 4:
+        raise HTTPException(400, "Score must be 1–4 (RADPEER scale)")
+    reader = str(b.get("originalReader") or "").strip()
+    # Don't let a reviewer score their own report — peer review must be a second reader.
+    if reader and reader.lower() == str(user.get("username") or "").lower():
+        raise HTTPException(400, "A peer review must be by a different radiologist")
+    scope = _rad_scope_site(user)
+    if scope is not None:
+        site = scope
+    else:
+        try: site = int(b.get("site")) if b.get("site") not in (None, "") else None
+        except Exception: site = None
+    sig = bool(b.get("clinicallySignificant")) or score >= 3
+    row = q("""INSERT INTO scheduling.peer_reviews
+                 (site, mrno, accession, patient_name, exam, modality, original_reader,
+                  reviewer_id, reviewer_name, score, clinically_significant, note)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING *""",
+            (site, mrno, (str(b.get("accession") or "").strip() or None),
+             (str(b.get("patientName") or "").strip() or None),
+             (str(b.get("exam") or "").strip() or None),
+             (str(b.get("modality") or "").strip() or None),
+             (reader or None), user.get("id"), user.get("username"),
+             score, sig, (str(b.get("note") or "").strip() or None)), one=True)
+    insert_audit(user, "RADIOLOGY_PEER_REVIEW", mrno,
+                 json.dumps({"id": row.get("id"), "score": score, "reader": reader}))
+    return {"ok": True, "item": _peer_row(row)}
 
 @app.get("/api/radiology/technologists")
 def radiology_technologists(user=Depends(require_radiology)):
