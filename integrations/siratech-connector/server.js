@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'patient-due-2026-07-10z';
+const CONNECTOR_BUILD = 'worklist-parallel-2026-07-10a';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1775,6 +1775,75 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const wantSites = (sites && sites.length) ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);
   const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
 
+  // ── Run BOTH bulk per-site fetches CONCURRENTLY. RadiologySearch (pending orders) and
+  // FetchRISPanel (exam/status) are INDEPENDENT — the RIS panel isn't derived from the
+  // search — so kicking them off together halves the cold-build blocking time (2 waves
+  // instead of 4 across 14 sites). RIS-panel helpers + the risByBill map are set up first
+  // so the RIS pool can start immediately; both are awaited before expansion below.
+  const risFromDay = (from || fromISO.slice(0, 10));
+  const risToDay = (to || toISO.slice(0, 10));
+  const risServiceOf = (row) => {
+    for (const k of ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
+                     'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
+                     'invServiceName', 'invmastServiceName', 'ServiceName']) {
+      const v = row && row[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  const risStatusOf = (row) => {
+    for (const k of ['cpoeStatusDescription', 'cpoeStatus', 'risOrderStatus', 'resultStatus',
+                     'risStatus', 'radiologyStatus', 'orderStatus', 'statusDescription', 'status']) {
+      const v = row && row[k];
+      if (v != null && String(v).trim() !== '' && !/^\d+$/.test(String(v).trim())) return String(v).trim();
+    }
+    return '';
+  };
+  const risStageOf = (status) => {
+    const s = String(status || '').toLowerCase();
+    if (!s) return null;
+    if (/\bnot\b|\bnon[\s-]?|to\s+be|\bawait|\bun[\s-]?(verif|sign|approv)/.test(s)) {
+      return /(verif|sign|approv|report|dictat|transcrib)/.test(s) ? 'draft' : 'ordered';
+    }
+    if (/dictat|transcrib|prelim|\bdraft\b|partial|interim|\bpend/.test(s)) return 'draft';
+    if (/\b(verif|report|sign|approv|final|released|authenticat)/.test(s)) return 'reported';
+    if (/(complet|perform|imag|acquir|scan|exam)/.test(s)) return 'imaged';
+    return 'ordered';
+  };
+  let _risKeysLogged = false;
+  const risByBill = new Map();
+  const _risStatuses = new Set();
+  const risP = pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+    try {
+      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+        mrno: '', fromDate: risFromDay + 'T00:00:00', toDate: risToDay + 'T23:59:59',
+        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+        serviceCategoryId: 0, emrPatRisPanelId: 0,
+        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+      } });
+      const rows = (rp.json && rp.json.data) || [];
+      if (!_risKeysLogged && rows.length) { _risKeysLogged = true; console.log('[worklist] FetchRISPanel row keys:', Object.keys(rows[0]).join(',')); }
+      for (const row of rows) {
+        if (row.billNo == null) continue;
+        const st = risStatusOf(row);
+        if (st) _risStatuses.add(st);
+        const list = risByBill.get(String(row.billNo)) || [];
+        list.push({
+          svc: risServiceOf(row), status: st,
+          svcId: row.invMastServiceId != null ? row.invMastServiceId : null,
+          billDate: row.billDate || row.appoinmentDate || null,
+          encounterER: String(row.encounter || '').trim().toUpperCase() === 'ER',
+          examStart: row.examStartDate || null,
+          examEnd: row.examEndDate || null,
+          arrival: row.arrivalDate || null,
+          reported: /(verif|report|sign|approv|final|released|authenticat)/i.test(st)
+            || Number(row.radioReportStatus) > 0 || !!row.hasRadiologyRepot || Number(row.reportStatus) > 0,
+        });
+        risByBill.set(String(row.billNo), list);
+      }
+    } catch (e) { /* fall back to the per-order RadiologyDetails pass below */ }
+  });
+
   const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
       const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
@@ -1812,92 +1881,10 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
 
   // ── Exam + modality the RIS-panel way (fast, ALL rows, one call per site) ──────
-  // Siratech's own RIS panel (FetchRISPanel) returns the Service (exam) for EVERY
-  // order in a SINGLE call per site — which is why it's instant. We do the same:
-  // one FetchRISPanel per site, map billNo → service, and derive modality from the
-  // service name. This fills exam+modality for the WHOLE board up front, replacing
-  // the slow, capped per-order RadiologyDetails fan-out. Runs on every load (incl.
-  // the fast one) so the exam column is populated immediately, like the RIS panel.
-  const risFromDay = (from || fromISO.slice(0, 10));
-  const risToDay = (to || toISO.slice(0, 10));
-  const risServiceOf = (row) => {
-    for (const k of ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
-                     'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
-                     'invServiceName', 'invmastServiceName', 'ServiceName']) {
-      const v = row && row[k];
-      if (v != null && String(v).trim() !== '') return String(v).trim();
-    }
-    return '';
-  };
-  const risStatusOf = (row) => {
-    for (const k of ['cpoeStatusDescription', 'cpoeStatus', 'risOrderStatus', 'resultStatus',
-                     'risStatus', 'radiologyStatus', 'orderStatus', 'statusDescription', 'status']) {
-      const v = row && row[k];
-      if (v != null && String(v).trim() !== '' && !/^\d+$/.test(String(v).trim())) return String(v).trim();
-    }
-    return '';
-  };
-  // Map the HIS's RIS status text → our 3 pipeline stages, for a FAST preliminary
-  // stage (the accurate, PACS-grounded stage still refines the top rows below when
-  // ready=1). Conservative: only a clearly-final status counts as "report ready".
-  const risStageOf = (status) => {
-    const s = String(status || '').toLowerCase();
-    if (!s) return null;
-    // Negation/pending FIRST — "not verified", "to be signed", "pending approval",
-    // "un-verified" all carry a positive token but are NOT a signed report. Without
-    // this they wrongly read as 'reported' (same lesson as isReported in results.js).
-    if (/\bnot\b|\bnon[\s-]?|to\s+be|\bawait|\bun[\s-]?(verif|sign|approv)/.test(s)) {
-      // a negated report state that still implies a report exists → draft, else ordered
-      return /(verif|sign|approv|report|dictat|transcrib)/.test(s) ? 'draft' : 'ordered';
-    }
-    // a report exists but isn't signed → draft (dictated / transcribed / preliminary / pending approval)
-    if (/dictat|transcrib|prelim|\bdraft\b|partial|interim|\bpend/.test(s)) return 'draft';
-    if (/\b(verif|report|sign|approv|final|released|authenticat)/.test(s)) return 'reported';
-    if (/(complet|perform|imag|acquir|scan|exam)/.test(s)) return 'imaged';
-    return 'ordered';   // ordered / scheduled / registered / arrived / booked
-  };
-  let _risKeysLogged = false;   // one-time: reveal real field names if a guess misses
-  const risByBill = new Map();
-  const _risStatuses = new Set();
-  await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
-    try {
-      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
-        mrno: '', fromDate: risFromDay + 'T00:00:00', toDate: risToDay + 'T23:59:59',
-        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
-        serviceCategoryId: 0, emrPatRisPanelId: 0,
-        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
-      } });
-      const rows = (rp.json && rp.json.data) || [];
-      if (!_risKeysLogged && rows.length) { _risKeysLogged = true; console.log('[worklist] FetchRISPanel row keys:', Object.keys(rows[0]).join(',')); }
-      for (const row of rows) {
-        if (row.billNo == null) continue;
-        const st = risStatusOf(row);
-        if (st) _risStatuses.add(st);
-        // ONE ENTRY PER SERVICE — a bill can bundle several exams (US Pelvis + US
-        // Abdomen on one bill) and Siratech's RIS panel shows a row per exam; a
-        // last-wins map was collapsing them into a single mislabelled row.
-        const list = risByBill.get(String(row.billNo)) || [];
-        list.push({
-          svc: risServiceOf(row), status: st,
-          svcId: row.invMastServiceId != null ? row.invMastServiceId : null,
-          billDate: row.billDate || row.appoinmentDate || null,
-          encounterER: String(row.encounter || '').trim().toUpperCase() === 'ER',
-          // Siratech's OWN patient-tracking timestamps (discovered in FetchRISPanel):
-          // arrival → exam start → exam end. examStart/examEnd are a HARD "the scan
-          // physically happened" signal — instant imaged status straight from the HIS,
-          // no DePACS/MPPS needed. Empty when the workflow isn't recorded (harmless).
-          examStart: row.examStartDate || null,
-          examEnd: row.examEndDate || null,
-          arrival: row.arrivalDate || null,
-          // Native report-ready signal straight from Siratech's RIS panel (no DePACS):
-          // a report/verified status text, or an explicit report flag on the row.
-          reported: /(verif|report|sign|approv|final|released|authenticat)/i.test(st)
-            || Number(row.radioReportStatus) > 0 || !!row.hasRadiologyRepot || Number(row.reportStatus) > 0,
-        });
-        risByBill.set(String(row.billNo), list);
-      }
-    } catch (e) { /* fall back to the per-order RadiologyDetails pass below */ }
-  });
+  // The FetchRISPanel pool (risP) was kicked off ABOVE, concurrently with the
+  // RadiologySearch pool, so by now it's already in flight (or done). Just await it
+  // here so risByBill is fully populated before we expand rows into per-exam entries.
+  await risP;
   if (_risStatuses.size) console.log('[worklist] distinct risOrderStatus:', [..._risStatuses].join(' | '));
   // Expand each bill-level row into ONE ROW PER EXAM (RIS-panel parity), stamping the
   // per-exam service, modality, preliminary stage, the bill's real order time (the

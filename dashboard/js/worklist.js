@@ -283,15 +283,21 @@ async function renderWorklistPage() {
     sel.title = 'You see your own branch. To find a patient from another branch, use the search box.';
     if (sel.options[0]) sel.options[0].textContent = 'Your branch';
   } else {
-    try {
-      const b = await API.get('/radiology/branches');
+    // Populate the branch picker in the BACKGROUND — don't hold the board waiting for it.
+    API.get('/radiology/branches').then((b) => {
       wlState.branches = (b && b.branches) || [];
-      if (sel) for (const br of wlState.branches) {
+      const s2 = document.getElementById('wl-branch');
+      if (s2) for (const br of wlState.branches) {
         const o = document.createElement('option');
         o.value = br.siteId; o.textContent = br.shortName || br.name || ('Branch ' + br.siteId);
-        sel.appendChild(o);
+        s2.appendChild(o);
       }
-    } catch (e) { /* picker optional; org-wide roles can still see all */ }
+    }).catch(() => { /* picker optional; org-wide roles can still see all */ });
+  }
+  // Restore the last board for this scope (survives a hard reload) so the FIRST paint is
+  // instant; wlLoad then refreshes underneath.
+  if (!wlState.data || !((wlState.data.items || []).length)) {
+    try { const raw = sessionStorage.getItem('wl:board:' + wlScopeKey()); if (raw) { const s = JSON.parse(raw); if (s && s.data) wlState.data = s.data; } } catch (e) { /* ignore */ }
   }
   await wlLoad();
   if (jumpMrn) {
@@ -386,6 +392,10 @@ function wlSwitchReload() {
   wlLoad(true);                   // force nocache — fresh data for the new scope
 }
 
+// Cache key for the persisted board — scoped to the branch + date window so switching
+// scope never shows another scope's rows.
+function wlScopeKey() { return `${wlState.site || 'all'}|${wlState.from || ''}|${wlState.to || ''}`; }
+
 async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
   if (!body || wlState.loading) return;
@@ -400,7 +410,13 @@ async function wlLoad(force, silent) {
       wlState.reconnecting = true; wlPaintLive();
     }
   }, 120000);
-  if (!silent && !wlState.filter) { body.innerHTML = LOADING_HTML; wlState._lastBodyHtml = null; }
+  // OPEN INSTANTLY: if we already have a board in hand (this session, or restored from
+  // sessionStorage on a fresh mount), paint it NOW and refresh underneath — a spinner only
+  // shows when there is genuinely nothing to display. No more "press the button → spin".
+  if (!silent && !wlState.filter) {
+    if (wlState.data && ((wlState.data.items || []).length)) { wlHydrate(); wlRender(); }
+    else { body.innerHTML = LOADING_HTML; wlState._lastBodyHtml = null; }
+  }
   // FAST load: no ready/modality — just the pending list, so the board paints in one
   // round-trip. The pipeline stage + exam/modality (per-order HIS work) come in a
   // background pass right after, and never block the first paint.
@@ -411,13 +427,18 @@ async function wlLoad(force, silent) {
   // order (or a new emergency) could lag up to the cache TTL + poll interval. Force a fresh
   // fetch on an explicit load AND at least every ~30s on the live timer, so HIS-side changes
   // surface within roughly half a minute without nocache-ing every 12s tick.
-  const fresh = force || (Date.now() - (wlState.lastFresh || 0) > 30000);
+  // Don't force nocache on the very FIRST open (lastFresh unset) — let it hit the server's
+  // 10s / connector's 12s worklist cache when any operator built this scope seconds ago,
+  // turning a 28-call cold build into an instant cache hit. Explicit refresh + the ~30s
+  // live-timer window still bypass the cache so HIS changes surface quickly.
+  const fresh = force || (wlState.lastFresh && Date.now() - wlState.lastFresh > 30000);
   if (fresh) qs.set('nocache', '1');
   try {
     const data = await API.get('/radiology/worklist?' + qs.toString());
     if (wlState._loadGen !== gen) return;         // superseded — the watchdog gave up, a newer load owns the board
     if (fresh) wlState.lastFresh = Date.now();
     wlState.data = data;
+    try { sessionStorage.setItem('wl:board:' + wlScopeKey(), JSON.stringify({ t: Date.now(), data })); } catch (e) { /* quota/private mode — ignore */ }
     // Status is driven by the NATIVE Siratech status (it.hisStatus), which the connector
     // stamps on the fast pass — so rows land in the right status bucket on the FIRST paint
     // with no DePACS wait (this is what removed the old "everyone sits in Waiting then
