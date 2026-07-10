@@ -1733,6 +1733,80 @@ def send_whatsapp(to, message, *, ntype="info", link=None, force=False, sync=Fal
             print(f"[whatsapp] failed to {to}: {detail}")
     threading.Thread(target=_worker, daemon=True).start()
 
+def _sms_config():
+    """SMS gateway config (superadmin-set, stored in app_settings). Provider-agnostic:
+    a URL + method + body template with {to}/{message}/{sender} placeholders, so any
+    HTTP SMS provider (Unifonic, Twilio, a telecom gateway) can be plugged in."""
+    return {
+        "enabled": (get_setting("sms_enabled", "") or "").lower() in ("1", "true", "yes", "on"),
+        "url": (get_setting("sms_url", "") or "").strip(),
+        "method": (get_setting("sms_method", "POST") or "POST").strip().upper(),
+        "content_type": (get_setting("sms_content_type", "json") or "json").strip().lower(),
+        "headers": get_setting("sms_headers", "") or "",
+        "body": get_setting("sms_body", "") or "",
+        "sender": (get_setting("sms_sender", "") or "").strip(),
+    }
+
+def _sms_configured():
+    c = _sms_config()
+    return bool(c["enabled"] and c["url"])
+
+def send_sms(to, message, *, sync=False):
+    """Send one SMS via the configured generic HTTP gateway. Best-effort/async by
+    default; sync=True sends inline and returns {ok, detail} (used by the test button
+    and OTP send). Substitutes {to}/{message}/{sender} into the operator's templates."""
+    import json as _json, urllib.request, urllib.parse
+    c = _sms_config()
+    if not (c["enabled"] and c["url"]) or not to or not message:
+        return {"ok": False, "detail": "SMS not configured"} if sync else None
+    num = _normalize_whatsapp_number(to)   # same E.164-style normalisation as WhatsApp
+    if not num:
+        return {"ok": False, "detail": "invalid number"} if sync else None
+
+    def _do():
+        headers = {}
+        raw = (c["headers"] or "").strip()
+        if raw:
+            try:
+                hd = _json.loads(raw)
+                if isinstance(hd, dict):
+                    headers.update({str(k): str(v) for k, v in hd.items()})
+            except Exception:
+                for line in raw.splitlines():          # fallback: "Key: Value" per line
+                    if ":" in line:
+                        k, v = line.split(":", 1); headers[k.strip()] = v.strip()
+        method = c["method"] or "POST"
+        ct = c["content_type"] or "json"
+        tpl = (c["body"] or "").strip()
+        url = c["url"]; data = None
+        if method == "GET" or ct == "query":
+            qs = (tpl.replace("{to}", urllib.parse.quote(num)).replace("{message}", urllib.parse.quote(message)).replace("{sender}", urllib.parse.quote(c["sender"]))
+                  if tpl else urllib.parse.urlencode({"to": num, "message": message, **({"sender": c["sender"]} if c["sender"] else {})}))
+            url = url + ("&" if "?" in url else "?") + qs
+            method = "GET"
+        elif ct == "form":
+            body_str = (tpl.replace("{to}", num).replace("{message}", message).replace("{sender}", c["sender"])
+                        if tpl else urllib.parse.urlencode({"to": num, "message": message, **({"sender": c["sender"]} if c["sender"] else {})}))
+            data = body_str.encode(); headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        else:  # json
+            base_tpl = tpl or '{"to":"{to}","message":"{message}"}'
+            safe_msg = _json.dumps(message)[1:-1]      # JSON-escape without the surrounding quotes
+            body_str = base_tpl.replace("{to}", num).replace("{message}", safe_msg).replace("{sender}", c["sender"])
+            data = body_str.encode(); headers.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return True, f"HTTP {resp.status}"
+        except Exception as e:
+            return False, str(e)[:200]
+
+    if sync:
+        ok, detail = _do()
+        if not ok:
+            print(f"[sms] failed to {num}: {detail}")
+        return {"ok": ok, "detail": detail}
+    threading.Thread(target=lambda: _do(), daemon=True).start()
+
 def notify(user_id, message, link=None, ntype="info", whatsapp=True):
     """Create one in-app notification, and email/WhatsApp it when configured.
     Best-effort: never break the caller. Pass whatsapp=False to create the in-app
@@ -2638,8 +2712,8 @@ async def register_send_phone_code(request: Request):
     to = _normalize_whatsapp_number(body.get("phone"))
     if not to:
         raise HTTPException(400, "Enter a valid mobile number first")
-    if not _phone_verify_enabled():
-        raise HTTPException(503, "WhatsApp verification isn't set up on the server yet. Ask your admin.")
+    if not (_sms_configured() or _phone_verify_enabled()):
+        raise HTTPException(503, "Phone verification isn't set up on the server yet. Ask your admin.")
     # Throttle: one code per 45 seconds per number.
     prev = q("SELECT created_at FROM scheduling.phone_verifications WHERE phone=%s", (to,), one=True)
     if prev and prev.get("created_at") and \
@@ -2651,12 +2725,20 @@ async def register_send_phone_code(request: Request):
          ON CONFLICT (phone) DO UPDATE SET code=EXCLUDED.code, expires_at=EXCLUDED.expires_at,
                                            attempts=0, created_at=NOW()""",
       (to, code, datetime.now(timezone.utc) + timedelta(minutes=10)), exec_only=True)
+    text = (f"Meena Scheduling verification code: {code}\n\n"
+            f"It expires in 10 minutes. Enter it on the sign-up form to confirm your mobile number.")
+    # Prefer SMS when a gateway is configured; otherwise fall back to WhatsApp.
+    channel = "sms" if _sms_configured() else "whatsapp"
     try:
-        _whatsapp_send_now(to, f"Meena Scheduling verification code: {code}\n\n"
-                               f"It expires in 10 minutes. Enter it on the sign-up form to confirm your mobile number.")
+        if channel == "sms":
+            res = send_sms(to, text, sync=True)
+            if not (res and res.get("ok")):
+                raise Exception((res or {}).get("detail") or "SMS send failed")
+        else:
+            _whatsapp_send_now(to, text)
     except Exception as e:
-        raise HTTPException(502, f"Couldn't send the WhatsApp code: {e}")
-    return {"ok": True}
+        raise HTTPException(502, f"Couldn't send the {channel.upper()} code: {e}")
+    return {"ok": True, "channel": channel}
 
 def _verify_phone_code(phone_raw, code, consume=True):
     """Validate a WhatsApp code for the number; raise 400 if missing/expired/wrong.
@@ -9006,6 +9088,57 @@ async def create_consent_link(request: Request, user=Depends(require_radiology))
         qr = ""
     insert_audit(user, "CONSENT_LINK", file_no, json.dumps({"id": row["id"]}))
     return {"ok": True, "id": row["id"], "url": url, "qr": qr}
+
+@app.post("/api/consent/send-sms")
+async def consent_send_sms(request: Request, user=Depends(require_radiology)):
+    """Text the patient the consent link via the configured SMS gateway (alternative to
+    the on-screen QR). The link is created by /api/consent/link; this sends it."""
+    b = await request.json()
+    phone = str((b or {}).get("phone") or "").strip()
+    url = str((b or {}).get("url") or "").strip()
+    if not phone:
+        raise HTTPException(400, "Enter the patient's mobile number")
+    if not url:
+        raise HTTPException(400, "Missing consent link — create it first")
+    if not _sms_configured():
+        raise HTTPException(503, "The SMS gateway isn't set up yet. Ask a superadmin to configure it in Settings.")
+    msg = f"Meena Radiology · مينا للأشعة\nPlease review & sign your consent form / يرجى مراجعة وتوقيع نموذج الموافقة:\n{url}"
+    res = send_sms(phone, msg, sync=True)
+    insert_audit(user, "CONSENT_SMS", phone, json.dumps({"ok": bool(res and res.get('ok'))}))
+    if not (res and res.get("ok")):
+        raise HTTPException(502, f"SMS failed: {(res or {}).get('detail') or 'unknown error'}")
+    return {"ok": True}
+
+# ── SMS gateway config (superadmin) ────────────────────────────────────────────
+@app.get("/api/sms/config")
+def sms_config_get(user=Depends(require_superadmin)):
+    c = _sms_config()
+    return {"ok": True, "enabled": c["enabled"], "url": c["url"], "method": c["method"],
+            "content_type": c["content_type"], "headers": c["headers"], "body": c["body"],
+            "sender": c["sender"], "configured": _sms_configured()}
+
+@app.put("/api/sms/config")
+async def sms_config_set(request: Request, user=Depends(require_superadmin)):
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    if "enabled" in b:
+        set_setting("sms_enabled", "1" if b.get("enabled") else "0")
+    for short, key in (("url", "sms_url"), ("method", "sms_method"), ("content_type", "sms_content_type"),
+                       ("headers", "sms_headers"), ("body", "sms_body"), ("sender", "sms_sender")):
+        if short in b:
+            set_setting(key, str(b.get(short) or ""))
+    insert_audit(user, "SMS_CONFIG", None, None)
+    return {"ok": True}
+
+@app.post("/api/sms/test")
+async def sms_config_test(request: Request, user=Depends(require_superadmin)):
+    b = await request.json()
+    to = str((b or {}).get("phone") or "").strip()
+    if not to:
+        raise HTTPException(400, "Enter a phone number to test")
+    res = send_sms(to, "Meena test SMS ✓ — your gateway is working.", sync=True)
+    return res or {"ok": False, "detail": "no result"}
 
 @app.get("/api/consent/status/{consent_id}")
 def consent_status(consent_id: int, user=Depends(require_radiology)):

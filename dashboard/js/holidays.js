@@ -24,7 +24,57 @@ async function openHolidaysModal() {
   loadRegistrationLink();
   document.getElementById('holidays-modal-overlay').classList.add('open');
   loadEmailConfig();
+  loadSmsConfig();
   await reloadHolidayList();
+}
+
+async function loadSmsConfig() {
+  const st = document.getElementById('sms-config-status');
+  if (!st) return;
+  try {
+    const c = await API.get('/sms/config');
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    const en = document.getElementById('sms-enabled'); if (en) en.checked = !!c.enabled;
+    set('sms-url', c.url); set('sms-sender', c.sender); set('sms-headers', c.headers); set('sms-body', c.body);
+    const m = document.getElementById('sms-method'); if (m) m.value = c.method || 'POST';
+    const ct = document.getElementById('sms-content-type'); if (ct) ct.value = c.content_type || 'json';
+    st.innerHTML = c.configured
+      ? '🟢 <b>Configured</b> — SMS is used for consent links and sign-up OTP.'
+      : '⚪ Not set — configure a gateway to send consent links and OTP by SMS.';
+    const t = document.getElementById('sms-test-to');
+    if (t && !t.value && currentUser?.phone) t.value = currentUser.phone;
+  } catch (e) { st.textContent = ''; }
+}
+
+async function saveSmsConfig() {
+  const msg = document.getElementById('sms-config-msg');
+  const body = {
+    enabled: document.getElementById('sms-enabled')?.checked || false,
+    url: (document.getElementById('sms-url')?.value || '').trim(),
+    method: document.getElementById('sms-method')?.value || 'POST',
+    content_type: document.getElementById('sms-content-type')?.value || 'json',
+    sender: (document.getElementById('sms-sender')?.value || '').trim(),
+    headers: (document.getElementById('sms-headers')?.value || '').trim(),
+    body: (document.getElementById('sms-body')?.value || '').trim(),
+  };
+  msg.className = 'msg'; msg.style.color = ''; msg.textContent = 'Saving…';
+  try {
+    await API.put('/sms/config', body);
+    msg.style.color = 'var(--green)'; msg.textContent = '✅ Saved. Use “Send test SMS” to verify.';
+    loadSmsConfig();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+}
+
+async function testSmsConfig() {
+  const msg = document.getElementById('sms-config-msg');
+  const to = (document.getElementById('sms-test-to')?.value || '').trim();
+  if (!to) { msg.className = 'msg err'; msg.textContent = 'Enter a phone number to test'; return; }
+  msg.className = 'msg'; msg.style.color = ''; msg.textContent = 'Sending…';
+  try {
+    const r = await API.post('/sms/test', { phone: to });
+    if (r && r.ok) { msg.style.color = 'var(--green)'; msg.textContent = '✅ Sent — check the phone.'; }
+    else { msg.className = 'msg err'; msg.textContent = 'Failed: ' + ((r && r.detail) || 'unknown'); }
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
 }
 
 async function loadRegistrationLink() {

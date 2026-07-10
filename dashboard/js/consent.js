@@ -40,6 +40,11 @@ function renderConsentQR(ov, r) {
         <input class="input" readonly value="${escapeHtml(r.url || '')}" style="flex:1;font-size:12px" onclick="this.select()">
         <button class="btn btn-sm" onclick="consentCopyLink(this,'${escapeHtml(r.url || '')}')">Copy</button>
       </div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
+        <input id="cn-sms-phone" class="input" value="${escapeHtml(p.phone || '')}" placeholder="جوال المريضة · patient mobile e.g. 05xxxxxxxx" style="flex:1;font-size:13px">
+        <button class="btn btn-sm btn-primary" onclick="consentSendSms(this,'${escapeHtml(r.url || '')}')">📱 Send SMS</button>
+      </div>
+      <div id="cn-sms-msg" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
       <div id="cn-poll" class="cn-poll">⏳ بانتظار توقيع المريضة… · waiting for signature…</div>
       <div style="margin-top:14px;border-top:1px dashed var(--border);padding-top:12px">
         <button class="btn btn-ghost btn-sm" onclick="consentSignHere()">أو وقّعي على هذا الجهاز · sign on this device</button>
@@ -48,6 +53,20 @@ function renderConsentQR(ov, r) {
 }
 function consentCopyLink(btn, url) {
   try { navigator.clipboard.writeText(url).then(() => { const t = btn.textContent; btn.textContent = '✓'; setTimeout(() => btn.textContent = t, 1200); }); } catch (e) {}
+}
+async function consentSendSms(btn, url) {
+  const phone = (document.getElementById('cn-sms-phone')?.value || '').trim();
+  const msg = document.getElementById('cn-sms-msg');
+  if (!phone) { if (msg) { msg.textContent = 'Enter the patient mobile number first'; msg.style.color = 'var(--danger-ink)'; } return; }
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await API.post('/consent/send-sms', { phone, url });
+    if (msg) { msg.textContent = '✓ Consent link sent by SMS'; msg.style.color = 'var(--success-ink)'; }
+    btn.textContent = '✓ Sent';
+  } catch (e) {
+    if (msg) { msg.textContent = (e.message || 'SMS failed'); msg.style.color = 'var(--danger-ink)'; }
+    btn.disabled = false; btn.textContent = orig;
+  }
 }
 function consentSignHere() {
   const pre = _consent.prefill, done = _consent.onDone;

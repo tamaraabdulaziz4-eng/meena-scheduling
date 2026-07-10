@@ -751,6 +751,26 @@
           </div>
           <div class="msg" id="email-test-msg" style="margin-top:6px"></div>
         </div>
+        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
+          <label>📱 SMS gateway <span style="font-weight:400;color:var(--muted)">(consent links + sign-up OTP)</span></label>
+          <div id="sms-config-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">Loading…</div>
+          <label style="display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:8px"><input type="checkbox" id="sms-enabled"> Enable SMS sending</label>
+          <input type="url" id="sms-url" placeholder="Gateway URL · https://api.provider.com/send" style="width:100%;margin-bottom:6px">
+          <div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+            <select id="sms-method" style="flex:1;min-width:90px"><option value="POST">POST</option><option value="GET">GET</option></select>
+            <select id="sms-content-type" style="flex:1;min-width:120px"><option value="json">JSON body</option><option value="form">Form-encoded</option><option value="query">Query string</option></select>
+            <input type="text" id="sms-sender" placeholder="Sender name" style="flex:1;min-width:120px">
+          </div>
+          <input type="text" id="sms-headers" placeholder='Headers JSON · {"Authorization":"Bearer KEY"}' style="width:100%;margin-bottom:6px;font-family:monospace;font-size:12px">
+          <input type="text" id="sms-body" placeholder='Body template · {"to":"{to}","body":"{message}","sender":"{sender}"}' style="width:100%;margin-bottom:6px;font-family:monospace;font-size:12px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Use <code>{to}</code>, <code>{message}</code>, <code>{sender}</code> placeholders. Leave the body blank for a default <code>to</code>/<code>message</code> payload.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" onclick="saveSmsConfig()">Save</button>
+            <input type="text" id="sms-test-to" placeholder="Test to 05xxxxxxxx" style="flex:1;min-width:140px">
+            <button class="btn btn-ghost btn-sm" onclick="testSmsConfig()">Send test SMS</button>
+          </div>
+          <div class="msg" id="sms-config-msg" style="margin-top:6px"></div>
+        </div>
         <div style="border-top:1px solid var(--border);padding-top:10px;font-weight:700;font-size:13px">Public Holidays</div>
         <div class="form-row">
           <div class="form-field" style="flex:1">
@@ -1107,7 +1127,7 @@
 <script src="/js/staff.js?v=20260709x"></script>
 <script src="/js/leaves.js?v=20260709x"></script>
 <script src="/js/swaps.js?v=20260709x"></script>
-<script src="/js/holidays.js?v=20260709x"></script>
+<script src="/js/holidays.js?v=20260710a"></script>
 <script src="/js/notifications.js?v=20260709x"></script>
 <script src="/js/push.js?v=20260709x"></script>
 <script src="/js/portal.js?v=20260709x"></script>
