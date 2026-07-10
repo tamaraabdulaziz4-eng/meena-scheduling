@@ -7793,6 +7793,19 @@ def _rad_seed_confirmed_stages(items):
     except Exception:
         pass
 
+# ── Worklist response cache ───────────────────────────────────────────────────
+# Short server-side cache keyed by (scope, date range, pass kind). The Node connector
+# already caches the HIS fetch, but every worklist request also re-runs the DB annotate
+# reads (seed/consent/overlay); with many tabs/operators polling the same branch that's
+# repeated DB work for an identical board. Caching the FINAL annotated payload for a few
+# seconds collapses that to one build per window. Bypassed by ?nocache=1 (the client
+# forces it right after an action and periodically), so an operator's own change is never
+# served stale to themselves. Keyed by the scoped sites, so a branch-locked team lead can
+# only ever hit their own branch's entry — no cross-branch leak.
+_wl_cache = {}   # key -> (monotonic_ts, data)
+_WL_CACHE_TTL_FAST = float(os.environ.get("WL_CACHE_TTL_FAST") or 10.0)
+_WL_CACHE_TTL_HEAVY = float(os.environ.get("WL_CACHE_TTL_HEAVY") or 60.0)
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_radiology)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -7826,6 +7839,15 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # (~90-100s, once per ~55min token lapse) so a token refresh racing a poll shows the
     # board, not the retry card. Steady polls return from the 60s worklist cache anyway.
     import time as _time
+    # Serve an identical board from the short cache (unless the client asked for fresh).
+    nocache = qs.get("nocache") == "1"
+    ck = (qs.get("sites", ""), qs.get("from", ""), qs.get("to", ""),
+          qs.get("ready", ""), qs.get("modality", ""))
+    ttl = _WL_CACHE_TTL_HEAVY if heavy else _WL_CACHE_TTL_FAST
+    if not nocache:
+        hit = _wl_cache.get(ck)
+        if hit and (_time.monotonic() - hit[0]) < ttl:
+            return hit[1]
     _t_bridge = _time.perf_counter()
     data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 130)
     _bridge_ms = int((_time.perf_counter() - _t_bridge) * 1000)
@@ -7861,6 +7883,14 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             print(f"[worklist] {kind} bridge={_bridge_ms}ms post={_post_ms}ms rows={n}", flush=True)
         except Exception:
             pass
+    # Cache the fully-annotated board for the next few seconds of pollers on this scope.
+    if isinstance(data, dict):
+        _wl_cache[ck] = (_time.monotonic(), data)
+        if len(_wl_cache) > 128:                       # bound memory: drop the oldest entry
+            try:
+                del _wl_cache[min(_wl_cache, key=lambda k: _wl_cache[k][0])]
+            except (ValueError, KeyError):
+                pass
     return data
 
 def _annotate_worklist_consent(items):
