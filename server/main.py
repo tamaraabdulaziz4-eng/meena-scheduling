@@ -7970,7 +7970,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
         qs["sites"] = str(scope)
     elif (p.get("sites") or "").strip():
         qs["sites"] = p.get("sites").strip()
-    for k in ("from", "to", "ready", "readyLimit", "modality", "nocache"):
+    for k in ("from", "to", "ready", "readyLimit", "modality", "pay", "nocache"):
         if (p.get(k) or "").strip():
             qs[k] = p.get(k).strip()
     # A worklist is "what's pending NOW", not a 2-week archive. If the client didn't
@@ -7982,7 +7982,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     query = ("?" + urllib.parse.urlencode(qs)) if qs else ""
     # ready=1 (per-patient match) and modality=1 (per-order RadiologyDetails) both do
     # heavy per-order HIS work — give them the long timeout.
-    heavy = p.get("ready") == "1" or p.get("modality") == "1"
+    heavy = p.get("ready") == "1" or p.get("modality") == "1" or p.get("pay") == "1"
     # 130s fast-pass ceiling: comfortably above the worst-case headless HIS-login refresh
     # (~90-100s, once per ~55min token lapse) so a token refresh racing a poll shows the
     # board, not the retry card. Steady polls return from the 60s worklist cache anyway.
@@ -7990,7 +7990,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # Serve an identical board from the short cache (unless the client asked for fresh).
     nocache = qs.get("nocache") == "1"
     ck = (qs.get("sites", ""), qs.get("from", ""), qs.get("to", ""),
-          qs.get("ready", ""), qs.get("modality", ""))
+          qs.get("ready", ""), qs.get("modality", ""), qs.get("pay", ""))
     ttl = _WL_CACHE_TTL_HEAVY if heavy else _WL_CACHE_TTL_FAST
     if not nocache:
         hit = _wl_cache.get(ck)

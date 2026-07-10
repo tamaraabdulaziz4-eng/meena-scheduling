@@ -377,6 +377,9 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 .rw .rw-indline { margin-top: 3px; }
 .rw .stat-tag { font-size: 9.5px; font-weight: 900; letter-spacing: .05em; color: #fff; background: var(--danger); padding: 1px 6px; border-radius: 5px; flex: none; }
 .rw .consent-tag { font-size: 9.5px; font-weight: 900; letter-spacing: .05em; color: var(--danger-ink); background: var(--danger-wash); padding: 1px 6px; border-radius: 5px; flex: none; }
+.rw .pay-tag { font-size: 9.5px; font-weight: 900; letter-spacing: .04em; padding: 1px 6px; border-radius: 5px; flex: none; }
+.rw .pay-tag.unpaid { color: #fff; background: #d1453b; }
+.rw .pay-tag.paid { color: var(--ok-ink,#0a7d38); background: var(--ok-wash,#e6f6ec); }
 
 /* exam cell */
 .rw .exam .l1 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }

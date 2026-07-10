@@ -17,7 +17,7 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 // Persistent per-order caches so a live refresh paints INSTANTLY and the
                 // heavy per-order HIS work (modality/exam + pipeline stage) runs in the
                 // background, only for rows we don't already know — never blocking paint.
-                modCache: new Map(), stageCache: new Map(), pregCache: new Map(),
+                modCache: new Map(), stageCache: new Map(), pregCache: new Map(), payCache: new Map(),
                 // Per-MRN clinical-indication index cache (bug #2 — inline row indication).
                 indCache: new Map(),
                 // Per-MRN vitals cache (auto-loaded when an order row is expanded).
@@ -464,6 +464,9 @@ function wlHydrate() {
     if (!k) continue;                              // keyless row → never restore from cache (collision-safe)
     if (!it.modality && !it.exam) { const c = wlState.modCache.get(k); if (c) { it.modality = c.modality; it.exam = c.exam; } }
     if (!it.stage) { const s = wlState.stageCache.get(k); if (s) it.stage = s; }
+    // Payment (patient-outstanding) is read on the opt-in pay pass; restore it from cache
+    // so a plain refresh keeps the paid/unpaid badge instead of blanking it.
+    if (it.paymentKnown == null) { const p = wlState.payCache.get(k); if (p) { it.paymentKnown = true; it.unpaid = p.unpaid; it.patientDue = p.patientDue; it.sponsorAmt = p.sponsorAmt; it.billed = p.billed; if (p.payer && !it.payer) it.payer = p.payer; } }
     // "scanned" is a hard fact (Siratech recorded the exam start/end) — once true it
     // stays true, so a later load where the RIS panel omitted the times can't drop the
     // row back off the Imaged strip.
@@ -544,6 +547,18 @@ async function wlEnrich(silent, force) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
     }
+    // Payment pass — reads each order's bill for the patient's outstanding portion, so the
+    // board can flag "patient payment due". Independent + bounded on the connector. Runs on
+    // an explicit load, once per board, then at most every ~3 min on the silent timer.
+    const payDue = force || !wlState.paidOnce || (silent && (Date.now() - (wlState.lastPay || 0) > 180000));
+    if (payDue) {
+      passes.push(API.get('/radiology/worklist?' + mkQs({ pay: '1' }))
+        .then((d) => {
+          if (wlState._loadGen !== enrichGen) return;
+          wlMergePay(d); wlState.lastPay = Date.now(); wlState.paidOnce = true;
+          if (d && d.billItemKeys && !wlState._billKeysLogged) { wlState._billKeysLogged = true; console.log('[worklist] bill item keys:', (d.billItemKeys || []).join(',')); }
+        }).catch(() => {}));
+    }
     await Promise.all(passes);
     wlState.lastEnrich = Date.now();
   } finally {
@@ -622,6 +637,29 @@ function wlMergeEnrich(d, isReady) {
       // provisional placement (scanned / preliminary), clearing the "confirming" dot;
       // ranks are unique per code, so this still never demotes a row.
       if (isReady && e.stage && wlStageRank(e.stage) >= wlCurRank(it)) it.stage = e.stage;
+    }
+  }
+  if (document.getElementById('wl-body')) wlRender();
+}
+
+// Merge the payment pass (patient-outstanding) onto the visible rows + cache it, so the
+// paid/unpaid badge survives a plain refresh. Only rows with paymentKnown are stamped —
+// an unread bill leaves the row unmarked (never a false "unpaid").
+function wlMergePay(d) {
+  if (wlState.payCache.size > 4000) wlState.payCache.clear();
+  const enr = new Map();
+  for (const it of ((d && d.items) || [])) {
+    const k = wlRowKey(it); if (!k || !it.paymentKnown) continue;
+    const rec = { unpaid: !!it.unpaid, patientDue: it.patientDue, sponsorAmt: it.sponsorAmt, billed: it.billed, payer: it.payer };
+    enr.set(k, rec); wlState.payCache.set(k, rec);
+  }
+  if (enr.size && wlState.data && Array.isArray(wlState.data.items)) {
+    for (const it of wlState.data.items) {
+      const k = wlRowKey(it); if (!k) continue;
+      const e = enr.get(k); if (!e) continue;
+      it.paymentKnown = true; it.unpaid = e.unpaid; it.patientDue = e.patientDue;
+      it.sponsorAmt = e.sponsorAmt; it.billed = e.billed;
+      if (e.payer && !it.payer) it.payer = e.payer;
     }
   }
   if (document.getElementById('wl-body')) wlRender();
@@ -849,6 +887,19 @@ function wlRenderFilters(items) {
   if (docsel) docsel.value = wlState.fDoc;
 }
 
+const wlSAR = (n) => Math.round(Number(n) || 0).toLocaleString() + ' SAR';
+
+// Payment cell for the expand grid: who pays, what's billed, and any patient balance due.
+function wlPayHtml(it) {
+  if (!it.paymentKnown) return '';
+  const meta = [it.payer ? escapeHtml(it.payer) : '', it.billed != null ? 'billed ' + wlSAR(it.billed) : '']
+    .filter(Boolean).join(' · ');
+  const v = it.unpaid
+    ? `<span style="color:var(--danger-ink);font-weight:800">Patient owes ${wlSAR(it.patientDue)}</span>`
+    : `<span style="color:var(--ok-ink,#0a7d38);font-weight:700">✓ No patient balance</span>`;
+  return `<div class="xf"><div class="k">Payment</div><div class="v">${v}${meta ? `<div class="dept" style="margin-top:2px">${meta}</div>` : ''}</div></div>`;
+}
+
 function wlRowsHtml(rows) { return rows.map(wlRowHtml).join(''); }
 
 // One dense board row (compact or detailed) + its (hidden until open) expand card.
@@ -872,6 +923,11 @@ function wlRowHtml(it) {
   // The referring clinic (Family Medicine, ENT, …) — its own line, distinct from the doctor.
   const clinic = it.department || '';
   const consentChip = (wlNeedsRadSafety(it) && !it.consentOnFile) ? '<span class="consent-tag">CONSENT</span>' : '';
+  // Payment: red "UNPAID" chip when the patient still owes a portion on this order's bill.
+  // Only shown when the bill was actually read (paymentKnown) — never a false flag.
+  const payChip = (it.paymentKnown && it.unpaid)
+    ? `<span class="pay-tag unpaid" title="Patient portion still due${it.patientDue ? ' — ' + wlSAR(it.patientDue) : ''}">UNPAID${it.patientDue ? ' · ' + wlSAR(it.patientDue) : ''}</span>`
+    : '';
   const prelim = (st === 'completed' && it.stage === 'draft');
   const pillNote = prelim ? '<div class="prelim-note">Preliminary read</div>' : '';
   const examCell = it.exam
@@ -884,7 +940,7 @@ function wlRowHtml(it) {
   return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" onclick="wlToggleRow('${uid}',event)">
     <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
     <div class="pt">
-      <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}</div>
+      <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}${payChip}</div>
       <div class="l2 tnum"><span class="mrn-chip">MRN <b>${escapeHtml(mrn)}</b></span>${ageg ? `<span>${ageg}</span>` : ''}${det && it.doctorName ? `<span>Dr ${escapeHtml(it.doctorName)}</span>` : ''}</div>
     </div>
     <div class="exam">
@@ -938,6 +994,7 @@ function wlExpandHtml(it, st) {
       <div class="xf"><div class="k">Ordered</div><div class="v tnum">${it.orderedDate ? escapeHtml(wlTrackFmt(it.orderedDate)) : (age ? age + ' ago' : '—')}</div></div>
       <div class="xf"><div class="k">Technologist</div><div class="v">${it.assignedTechName ? escapeHtml(String(it.assignedTechName)) : '<span style="color:var(--muted)">Unassigned</span>'}</div></div>
       <div class="xf"><div class="k">Priority</div><div class="v">${it.emergency ? '<span style="color:var(--danger-ink);font-weight:800">STAT / Emergency</span>' : 'Routine'}</div></div>
+      ${wlPayHtml(it)}
     </div>
     <div class="xsec-title">Clinical indication</div>
     <div class="rw-xind">${wlIndEl(it)}</div>
