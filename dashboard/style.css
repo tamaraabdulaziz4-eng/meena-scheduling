@@ -2068,6 +2068,28 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 /* Exam accordion cards */
 .ps-examhead { margin:18px 0 9px; }
 .ps-examhead span { color:var(--muted); font-weight:600; text-transform:none; letter-spacing:0; margin-inline-start:6px; }
+/* Patient search results — clean card picker */
+.ps-res-head { font-size:12px; font-weight:800; color:var(--muted); letter-spacing:.04em; margin:2px 2px 10px; }
+.ps-reslist { display:flex; flex-direction:column; gap:8px; }
+.ps-rescard { display:flex; align-items:center; gap:12px; width:100%; text-align:start;
+  padding:12px 14px; border:1px solid var(--border); border-radius:14px; background:var(--surface,#fff);
+  cursor:pointer; transition:border-color .14s, box-shadow .14s, background .14s; font:inherit; }
+.ps-rescard:hover { border-color:var(--accent); box-shadow:var(--shadow-sm,0 2px 8px rgba(0,0,0,.06)); }
+.ps-rescard.on { border-color:var(--accent); background:var(--violet-wash,#f0edff); }
+.ps-res-av { flex:none; width:42px; height:42px; border-radius:12px; display:grid; place-items:center;
+  font-weight:800; font-size:14px; color:#fff; background:linear-gradient(135deg,var(--accent,#6b4eff),var(--accent2,#8358fd)); letter-spacing:.5px; }
+.ps-res-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.ps-res-name { font-size:15px; font-weight:800; color:var(--text,#111); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:7px; }
+.ps-res-ar { font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ps-res-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:2px; }
+.ps-res-chip { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; color:var(--muted);
+  background:var(--surface-2,#f4f4f7); border:1px solid var(--border); border-radius:8px; padding:3px 8px; white-space:nowrap; }
+.ps-res-chip svg { width:13px; height:13px; opacity:.75; flex:none; }
+.ps-res-chip span { direction:ltr; }
+.ps-res-chev { flex:none; color:var(--muted); opacity:.5; display:grid; place-items:center; }
+.ps-res-chev svg { width:18px; height:18px; }
+.ps-rescard:hover .ps-res-chev, .ps-rescard.on .ps-res-chev { color:var(--accent); opacity:1; }
+[dir="rtl"] .ps-res-chev svg { transform:scaleX(-1); }
 /* All-orders rows (incl. unpaid / not-yet-performed) */
 .ps-ord { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:11px; margin-bottom:8px; background:var(--surface); }
 .ps-ord-badge { flex:none; font-size:10.5px; font-weight:800; padding:3px 9px; border-radius:8px; white-space:nowrap; align-self:center; }
