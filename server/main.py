@@ -7694,6 +7694,54 @@ def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadm
 # drill-down to a single day, not the default view.
 _RAD_WORKLIST_DAYS_BACK = int(os.environ.get("RAD_WORKLIST_DAYS_BACK") or 1)
 
+# ── Deferred worklist persistence ─────────────────────────────────────────────
+# The worklist endpoint used to run three persist-only DB writes (upsert orders,
+# upsert exam-state, reconcile resolved) INLINE before returning — so every poll
+# made the operator wait on writes they never see. We hand those writes to this
+# background queue instead and return the board immediately; a daemon worker drains
+# it. The writes are idempotent upserts, so if the queue overflows we simply drop
+# the payload — the next poll (seconds later) re-enqueues the same rows.
+import queue as _queue
+_rad_persist_q = _queue.Queue(maxsize=200)
+_rad_persist_started = False   # True once the drain worker is running (see start_scheduler)
+
+def _rad_persist_writes(items):
+    """The three persist-only worklist writes, in order. Best-effort."""
+    try:
+        _rad_upsert_orders(items)
+        _rad_upsert_exam_state(items)
+        _rad_reconcile_resolved(items)
+    except Exception:
+        pass
+
+def _rad_persist_worker():
+    """Drain the deferred-write queue: persist order + exam-state, reconcile resolved.
+    Best-effort — a DB hiccup on one payload never wedges the worker or the board."""
+    global _rad_persist_started
+    _rad_persist_started = True
+    while True:
+        items = _rad_persist_q.get()
+        try:
+            if items:
+                _rad_persist_writes(items)
+        finally:
+            _rad_persist_q.task_done()
+
+def _rad_persist_async(items):
+    """Hand the worklist rows to the background writer so the response returns without
+    waiting on persistence. If the drain worker isn't running (scheduler disabled / test
+    harness), fall back to writing INLINE so the lifecycle store never silently stops.
+    Drops on overflow — the writes are idempotent and re-enqueued by the next poll."""
+    if not items:
+        return
+    if not _rad_persist_started:
+        _rad_persist_writes(items)
+        return
+    try:
+        _rad_persist_q.put_nowait(items)
+    except _queue.Full:
+        pass
+
 def _rad_seed_confirmed_stages(items):
     """Fast-pass cold-open seed: flag rows that already have a DePACS-CONFIRMED verified
     report in our lifecycle store, so a brand-new browser open shows them as Final
@@ -7774,10 +7822,14 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # 130s fast-pass ceiling: comfortably above the worst-case headless HIS-login refresh
     # (~90-100s, once per ~55min token lapse) so a token refresh racing a poll shows the
     # board, not the retry card. Steady polls return from the 60s worklist cache anyway.
+    import time as _time
+    _t_bridge = _time.perf_counter()
     data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 130)
+    _bridge_ms = int((_time.perf_counter() - _t_bridge) * 1000)
     # RIS Phase 2: persist the lifecycle store off the live board. Best-effort — a DB
     # hiccup never breaks the worklist view. On a ?ready=1 pass readyToFile is known,
     # so orders promote ordered → reported here.
+    _t_post = _time.perf_counter()
     try:
         if isinstance(data, dict):
             # Fast pass only: seed DePACS-confirmed Final from the store so cold opens paint
@@ -7785,13 +7837,27 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             # already carries authoritative stage, so it doesn't need (or want) the seed.
             if not heavy:
                 _rad_seed_confirmed_stages(data.get("items"))
-            _rad_upsert_orders(data.get("items"))
-            _rad_upsert_exam_state(data.get("items"))   # per-exam companion store (#9)
-            _rad_reconcile_resolved(data.get("items"))
+            # RESPONSE-MUTATING READS stay inline (the client needs them on this paint):
+            # consent-on-file flags and the Meena-local overlay (received/started/completed).
             _annotate_worklist_consent(data.get("items"))
             _annotate_worklist_overlay(data.get("items"))
+            # PERSIST-ONLY WRITES go to the background queue so the operator never waits on
+            # them. Idempotent upserts, so a continuously-polled board self-heals; seed/overlay
+            # above therefore reflect the PREVIOUS poll's write (acceptable — a brand-new order
+            # has no local overlay/Final to seed yet).
+            _rad_persist_async(data.get("items"))
     except Exception:
         pass
+    _post_ms = int((_time.perf_counter() - _t_post) * 1000)
+    # Perf baseline: log slow worklist responses split into bridge (HIS/connector) vs
+    # in-process post-work, so we can tell WHERE the time goes.
+    if _bridge_ms + _post_ms > 1500:
+        try:
+            kind = "ready" if p.get("ready") == "1" else "modality" if p.get("modality") == "1" else "fast"
+            n = len(data.get("items") or []) if isinstance(data, dict) else 0
+            print(f"[worklist] {kind} bridge={_bridge_ms}ms post={_post_ms}ms rows={n}", flush=True)
+        except Exception:
+            pass
     return data
 
 def _annotate_worklist_consent(items):
@@ -11410,6 +11476,7 @@ def start_scheduler():
     except Exception:
         pass
     import threading
+    threading.Thread(target=_rad_persist_worker, daemon=True).start()   # drains deferred worklist writes
     threading.Thread(target=_cases_reminder_loop, daemon=True).start()
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()

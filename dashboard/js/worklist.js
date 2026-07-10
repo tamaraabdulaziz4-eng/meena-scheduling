@@ -424,7 +424,7 @@ async function wlLoad(force, silent) {
     wlState.lastGood = Date.now(); wlState.reconnecting = false; wlPaintLive();
     wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
-    wlEnrich(silent);                             // background: fill stage + modality for unknown rows
+    wlEnrich(silent, force);                      // background: fill stage + modality for unknown rows
   } catch (e) {
     // A failed/aborted fetch flips the live pill to amber "Reconnecting…" instead of
     // freezing the board — the next good poll clears it on its own.
@@ -478,11 +478,13 @@ function wlHydrate() {
 // while a steady board stays light. Never blocks paint; caches results so paints are
 // instant. Cache-restored stages are refreshed by the periodic re-check.
 let _wlEnrichBusy = false;
-async function wlEnrich(silent) {
+async function wlEnrich(silent, force) {
   if (_wlEnrichBusy) return;
   const items = (wlState.data && wlState.data.items) || [];
   if (!items.length) return;
   const anyMissing = items.some((it) => !it.stage || !it.exam);
+  // Only the exam/modality cells drive the modality pass — the stage pass is gated below.
+  const examMissing = items.some((it) => !it.exam);
   // Re-check the pipeline stage on (almost) every live refresh so promotions
   // (ordered→imaged→reported) show within a poll — the DePACS lookups are now
   // short-window + cached on the connector, so this is cheap. The ratchet in
@@ -513,8 +515,13 @@ async function wlEnrich(silent) {
   // work finished; now each pass merges + repaints the moment it lands.
   try {
     const passes = [];
-    // Modality/exam enrichment — fast HIS work, runs on every enrich.
-    passes.push(API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => { if (wlState._loadGen === enrichGen) wlMergeEnrich(d, false); }).catch(() => {}));
+    // Modality/exam enrichment — fast HIS work. After PR #252 the bulk FetchRISPanel fills
+    // exam+modality for the whole board on the fast pass, so this per-order fallback only
+    // needs to run when a row is ACTUALLY missing an exam (usually none). Skipping it on a
+    // healthy board removes a whole round-trip from every open/refresh.
+    if (examMissing) {
+      passes.push(API.get('/radiology/worklist?' + mkQs({ modality: '1' })).then((d) => { if (wlState._loadGen === enrichGen) wlMergeEnrich(d, false); }).catch(() => {}));
+    }
     // Pipeline STAGE — the slow per-patient DePACS "ready" pass. It NO LONGER withholds the
     // first paint (the fast pass already placed rows by native hisStatus, and the stage
     // ratchet in wlMergeEnrich keeps it flicker-free), so the old "everyone waits then jumps"
@@ -523,7 +530,15 @@ async function wlEnrich(silent) {
     // orphan detection (a verified report that never reached the patient file), TAT stats,
     // and the cold-open Final seed. Run it on an explicit load, and at most every ~3 min on
     // the live timer so it stays light on the connector.
-    if (!silent || (Date.now() - (wlState.lastReady || 0) > 180000)) {
+    //
+    // NOT on page open: the fast pass already seeds DePACS-confirmed Final from the server
+    // store, so the board is correct without paying the slow ready pass on the very first
+    // paint. It runs on an EXPLICIT refresh (force — the Refresh button / an action reload)
+    // and, on the silent live timer, at most every ~3 min to keep the Meena ledger
+    // (state='reported', TAT, orphan detection) advancing. A plain page-open load is neither
+    // force nor silent, so it skips ready entirely — the biggest cut to first-open latency.
+    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 180000));
+    if (readyDue) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
     }

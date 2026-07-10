@@ -298,6 +298,7 @@ window.addEventListener('hashchange', () => {
 async function showPage(requested) {
   const page = resolvePage(requested);
   const seq = ++_navSeq;
+  const _t0 = performance.now();   // page-open timing (nav → rendered)
   currentPage = page;
   // Reflect the resolved page in the URL hash (the hashchange echo is a no-op
   // since it now matches currentPage).
@@ -328,6 +329,12 @@ async function showPage(requested) {
   if (seq !== _navSeq) return;                 // superseded by a newer navigation
   content.scrollTop = 0;
   const main = document.getElementById('main'); if (main) main.scrollTop = 0;
+  // Page-open timing → perf ring buffer (path 'page:<name>' so __perf.summary('page:') groups them).
+  try {
+    const ms = Math.round(performance.now() - _t0);
+    if (window.__perf) window.__perf.record({ path: 'page:' + page, ms, ok: true, bytes: null, at: Date.now() });
+    if (ms > 800) console.debug(`[nav] ${page} rendered in ${ms}ms`);
+  } catch (_) {}
   // Premium entrance motion for the freshly rendered page.
   playPageReveal();
 }
