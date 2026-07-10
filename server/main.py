@@ -2110,6 +2110,7 @@ def _compute_build_id():
         # the ?v= URL buster and the SW cache name stay stuck and the device is pinned to
         # old code with no recovery path.
         files = sorted(_glob.glob(os.path.join(DASHBOARD, "js", "*.js")))
+        files += sorted(_glob.glob(os.path.join(DASHBOARD, "css", "*.css")))
         files += [os.path.join(DASHBOARD, n) for n in ("index.html", "sw.js", "style.css")]
         h = _hashlib.md5()
         for f in files:
@@ -2144,6 +2145,8 @@ def serve_build_id():
                     headers={"Cache-Control": "no-store"})
 
 app.mount("/js", StaticFiles(directory=os.path.join(DASHBOARD, "js")), name="js")
+# Split-out per-page stylesheets (worklist.css, radstats.css) loaded on demand by main.js.
+app.mount("/css", StaticFiles(directory=os.path.join(DASHBOARD, "css")), name="css")
 
 @app.get("/style.css")
 def serve_css():

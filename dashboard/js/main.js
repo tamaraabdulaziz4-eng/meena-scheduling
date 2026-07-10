@@ -248,13 +248,19 @@ function resolvePage(page) {
 // (eager) via shared globals, and portal.js's "Request Leave" button calls leaves.js's
 // openLeaveModal; radstats.js and radreport.js are mutually coupled, so radstats always
 // pulls radreport, and home (which embeds the rad-stats widget) pulls both.
+// Each page lists the /js AND /css it needs. The two biggest, cleanly-namespaced CSS
+// blocks were split out of style.css (which keeps ALL shared rules) so a user only
+// downloads those styles for pages they open: worklist.css (.cc + .rw board, ~35KB) with
+// the worklist page, and radstats.css (.rs- + .rsr-, ~25KB) with the rad-stats/monthly
+// deck (also pulled by home, which embeds the rad-stats widget). Handoff/patient-lookup
+// CSS stays in style.css (small + shares the consent overlay with the worklist).
 const PAGE_ASSETS = {
-  worklist:      ['/js/worklist.js'],
+  worklist:      ['/js/worklist.js', '/css/worklist.css'],
   patientsearch: ['/js/patientsearch.js'],
   handoff:       ['/js/handoff.js'],
   reports:       ['/js/reports.js'],
-  radstats:      ['/js/radstats.js', '/js/radreport.js'],
-  home:          ['/js/home.js', '/js/radstats.js', '/js/radreport.js'],
+  radstats:      ['/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
+  home:          ['/js/home.js', '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
 };
 // Cache-buster for injected chunks: the server stamps the content-hash BUILD_ID into
 // <meta name="meena-build"> and rewrites every ?v= in index.html to it, and stamps the
@@ -263,36 +269,46 @@ const PAGE_ASSETS = {
 const _ASSET_VER = (document.querySelector('meta[name="meena-build"]') || {}).content || 'dev';
 const _loadedAssets = new Set();
 const _loadingAssets = new Map();   // url -> Promise (dedup concurrent/hover-prefetch loads)
-function _loadScriptOnce(url) {
+// Load a /js (<script>) or /css (<link rel=stylesheet>) asset once, resolving on load.
+function _loadAssetOnce(url) {
   if (_loadedAssets.has(url)) return Promise.resolve();
   if (_loadingAssets.has(url)) return _loadingAssets.get(url);
+  const isCss = url.endsWith('.css');
   const p = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = url + '?v=' + _ASSET_VER;
-    s.async = false;   // preserve execution order when several are injected together
-    s.onload = () => { _loadedAssets.add(url); _loadingAssets.delete(url); resolve(); };
-    s.onerror = () => { _loadingAssets.delete(url); reject(new Error('Failed to load ' + url)); };
-    document.head.appendChild(s);
+    let el;
+    if (isCss) {
+      el = document.createElement('link');
+      el.rel = 'stylesheet';
+      el.href = url + '?v=' + _ASSET_VER;
+    } else {
+      el = document.createElement('script');
+      el.src = url + '?v=' + _ASSET_VER;
+      el.async = false;   // preserve execution order when several scripts are injected together
+    }
+    el.onload = () => { _loadedAssets.add(url); _loadingAssets.delete(url); resolve(); };
+    el.onerror = () => { _loadingAssets.delete(url); reject(new Error('Failed to load ' + url)); };
+    document.head.appendChild(el);
   });
   _loadingAssets.set(url, p);
   return p;
 }
-// Ensure a page's module(s) are loaded before we render it. Eager pages (not in the map)
-// resolve instantly. Rejects if a chunk fails to load → showPage shows its retry card.
+// Ensure a page's assets (JS + CSS) are loaded before we render it, so there's no unstyled
+// flash. Eager pages (not in the map) resolve instantly. Rejects if an asset fails to load
+// → showPage shows its retry card.
 async function loadPageAssets(page) {
   const assets = PAGE_ASSETS[page];
   if (!assets || !assets.length) return;
   const t0 = performance.now();
-  await Promise.all(assets.map(_loadScriptOnce));
+  await Promise.all(assets.map(_loadAssetOnce));
   try {
     const ms = Math.round(performance.now() - t0);
     if (ms > 1 && window.__perf) window.__perf.record({ path: 'chunk:' + page, ms, ok: true, bytes: null, at: Date.now() });
   } catch (_) {}
 }
-// Prefetch a page's chunk on nav-hover so the click paints instantly (no-op once loaded).
+// Prefetch a page's assets on nav-hover so the click paints instantly (no-op once loaded).
 function prefetchPageAssets(page) {
   const assets = PAGE_ASSETS[page];
-  if (assets) assets.forEach((u) => { if (!_loadedAssets.has(u)) _loadScriptOnce(u).catch(() => {}); });
+  if (assets) assets.forEach((u) => { if (!_loadedAssets.has(u)) _loadAssetOnce(u).catch(() => {}); });
 }
 
 async function renderRoute(page) {
