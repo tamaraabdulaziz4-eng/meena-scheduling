@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'find-fullfile-2026-07-10x';
+const CONNECTOR_BUILD = 'find-routes-2026-07-10y';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -649,7 +649,23 @@ app.get('/diag/frontend-find', requireAuth, async (req, res) => {
       }
       found[t] = { count, samples };
     }
-    return res.json({ ok: true, rawSizeMB: Math.round(raw.length / 1e6 * 10) / 10, found });
+    // routes=MIS_API,Finance_API,... (or ALL) → every DISTINCT route under those service
+    // tokens, from the real frontend. Complete list, not just 5 samples.
+    let routes = null;
+    const routesReq = String(req.query.routes || '').trim();
+    if (routesReq) {
+      routes = {};
+      const want = routesReq.toUpperCase() === 'ALL' ? null : new Set(routesReq.split(',').map((s) => s.trim().toUpperCase()));
+      const RE = /([A-Za-z_]+_[Aa][Pp][Ii])\}\/([A-Za-z0-9/_-]+)/g;
+      let m;
+      while ((m = RE.exec(raw)) !== null) {
+        const tok = m[1];
+        if (want && !want.has(tok.toUpperCase())) continue;
+        (routes[tok] = routes[tok] || new Set()).add('/' + m[2]);
+      }
+      for (const kk of Object.keys(routes)) routes[kk] = [...routes[kk]].sort();
+    }
+    return res.json({ ok: true, rawSizeMB: Math.round(raw.length / 1e6 * 10) / 10, found, routes });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
