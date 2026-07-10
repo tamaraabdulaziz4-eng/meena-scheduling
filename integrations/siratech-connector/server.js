@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'find-routes-2026-07-10y';
+const CONNECTOR_BUILD = 'patient-due-2026-07-10z';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -669,11 +669,48 @@ app.get('/diag/frontend-find', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// The patient's UNPAID radiology, per service name. Siratech's own flow (from its code):
+// GetDueSettlementBills → the patient's UNSETTLED (still-owed) bills; GetDueBillDetailsByID
+// → each bill's line items; a radiology line with patient-outstanding > 0 is unpaid. Returns
+// a name→amount map so an order can be marked unpaid with the real balance. Best-effort: an
+// empty/failed read just means "no unpaid detected" (never a false unpaid).
+async function patientDueRadiology(mrno, sites, uid, empId, fromISO, toISO) {
+  const catalog = await getRadCatalog().catch(() => new Map());
+  const dueByName = new Map();
+  const seenBill = new Set();
+  let unpaidBills = 0, billsRead = 0;
+  for (const site of sites) {
+    const bodies = [
+      { mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, fromSlider: 0, patientType: 0, visitMode: 0 },
+      { mrno, hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO },
+    ];
+    let bills = [];
+    for (const body of bodies) {
+      const r = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueSettlementBills', { method: 'POST', body }).catch(() => null);
+      const rows = (r && r.json && (r.json.data || r.json.Data)) || [];
+      if (Array.isArray(rows) && rows.length) { bills = rows; break; }
+    }
+    for (const b of bills) {
+      const gpb = b.genPatBillingId ?? b.GenPatBillingId ?? b.genPatbillingId ?? b.genpatBillingId;
+      if (gpb == null || seenBill.has(String(gpb))) continue;
+      seenBill.add(String(gpb));
+      unpaidBills += 1;
+      const res = await readBillItems(gpb);
+      if (res.ok) billsRead += 1;
+      for (const it of res.items) {
+        if (!catalog.get(normName(it.itemName))) continue;   // radiology line items only
+        const due = linePatientDue(it).due;
+        if (due > 0) dueByName.set(normName(it.itemName), (dueByName.get(normName(it.itemName)) || 0) + due);
+      }
+    }
+  }
+  return { dueByName, unpaidBills, billsRead };
+}
+
 // Every radiology order a doctor PLACED for this patient — including the ones that never
-// reach RadiologySearch (billed/unbilled, not yet performed). This is the per-patient
-// "all orders + payment status" view (proved to be the only way: Siratech has no branch-
-// wide placed-orders list; its own reception is per-patient too). Source: FetchEmrOrders,
-// which needs a real hospitalId, so we try each branch and keep radiology leaves.
+// reach RadiologySearch (billed/unbilled, not yet performed) — WITH real paid/unpaid from
+// the patient's due bills. This is the per-patient "all orders + payment status" view
+// (proved the only way: Siratech has no branch-wide list; its own reception is per-patient).
 app.get('/patient/:file/radiology-orders', requireAuth, async (req, res) => {
   const mrno = String(req.params.file || '').trim();
   if (!mrno) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
@@ -719,9 +756,23 @@ app.get('/patient/:file/radiology-orders', requireAuth, async (req, res) => {
       const eo = await hisFetch('/emr-api/api/v1/EMR/FetchEmrOrders', { body: { mrno, hospitalId: s, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseCategoryId: 2, baseInvCategoryId: 2 } }).catch(() => null);
       walk(eo && eo.json, s);
     }
+    // Real paid/unpaid: read the patient's due (unsettled) bills and mark any order whose
+    // radiology line still has a patient balance.
+    const due = await patientDueRadiology(mrno, siteList.map((x) => x.siteId), uid, empId, fromISO, toISO).catch(() => ({ dueByName: new Map(), unpaidBills: 0, billsRead: 0 }));
+    const r2 = (n) => Math.round(n * 100) / 100;
+    for (const o of orders) {
+      const amt = due.dueByName.get(normName(o.exam));
+      o.unpaid = amt != null && amt > 0;
+      o.patientDue = o.unpaid ? r2(amt) : 0;
+    }
     orders.sort((a, b) => Date.parse(b.orderedDate || 0) - Date.parse(a.orderedDate || 0));
+    const dueTotal = [...due.dueByName.values()].reduce((a, b) => a + b, 0);
     return res.json({ ok: true, mrno, count: orders.length,
-      pending: orders.filter((o) => o.state !== 'performed').length, orders });
+      pending: orders.filter((o) => o.state !== 'performed').length,
+      unpaidCount: orders.filter((o) => o.unpaid).length,
+      unpaidBills: due.unpaidBills, dueTotal: r2(dueTotal),
+      dueServices: [...due.dueByName.entries()].map(([name, amt]) => ({ name, amount: r2(amt) })),
+      orders });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 

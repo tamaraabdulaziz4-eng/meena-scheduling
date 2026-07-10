@@ -255,28 +255,35 @@ async function psLoadAllOrders(mrno) {
   try { d = await API.get(`/radiology/patient/${encodeURIComponent(mrno)}/radiology-orders`); }
   catch (e) { box.innerHTML = ''; return; }              // best-effort — never break the card
   const orders = (d && d.orders) || [];
-  // The worklist/DePACS exams (already shown below) are the TRUTH for "performed". Exclude any
-  // order whose exam matches one of them — FetchEmrOrders' status is stale, so a reported study
-  // could otherwise show here as "pending". Only genuinely not-in-queue orders remain.
+  const sar = (n) => Math.round(Number(n) || 0).toLocaleString() + ' ﷼';
+  // The worklist/DePACS exams (already shown below) are the TRUTH for "performed" — used to
+  // avoid mislabeling a done exam as "pending". But UNPAID (o.unpaid, from the patient's due
+  // bill) is shown regardless of performed status: a scan can be done yet the patient still owes.
   const norm = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
   const inQueue = new Set(((psState.lookup && psState.lookup.orders) || [])
     .map((o) => norm(o.service || o.exam || o.serviceName)).filter(Boolean));
-  const pend = orders.filter((o) => o.state !== 'performed' && !inQueue.has(norm(o.exam)));
-  if (!pend.length) { box.innerHTML = ''; return; }       // nothing not-in-queue → show nothing
-  const rows = pend.map((o) => {
-    const st = PS_STATE[o.state] || PS_STATE.billed_pending;
+  // Show: anything the patient still OWES for (real, from the bill), plus orders not yet in
+  // the queue. A performed + paid order isn't shown here (it's in the exams list below).
+  const show = orders.filter((o) => o.unpaid || (o.state !== 'performed' && !inQueue.has(norm(o.exam))));
+  if (!show.length) { box.innerHTML = ''; return; }
+  const unpaidN = show.filter((o) => o.unpaid).length;
+  const rows = show.map((o) => {
     const when = o.orderedDate ? (String(o.orderedDate).slice(0, 10)) : '';
-    return `<div class="ps-ord ${st.cls}">
+    let cls, badge;
+    if (o.unpaid) { cls = 'ps-ord-unpaid'; badge = `غير مدفوع${o.patientDue ? ' · ' + sar(o.patientDue) : ''}`; }
+    else { const st = PS_STATE[o.state] || PS_STATE.billed_pending; cls = st.cls; badge = st.label; }
+    return `<div class="ps-ord ${cls}">
       <div style="flex:1;min-width:0">
         <div style="font-weight:700;font-size:13.5px">${escapeHtml(o.exam || '—')}${o.modality ? ` <span style="color:var(--muted);font-weight:500">· ${escapeHtml(o.modality)}</span>` : ''}</div>
         <div style="font-size:11.5px;color:var(--muted);margin-top:2px">${when ? escapeHtml(when) + ' · ' : ''}${o.doctorName ? 'د. ' + escapeHtml(o.doctorName) : ''}${o.branch ? ' · ' + escapeHtml(o.branch) : ''}</div>
         ${o.clinicalIndication ? `<div style="font-size:11.5px;margin-top:2px">${escapeHtml(o.clinicalIndication)}</div>` : ''}
       </div>
-      <span class="ps-ord-badge">${st.label}</span>
+      <span class="ps-ord-badge">${badge}</span>
     </div>`;
   }).join('');
+  const dueTotal = (d && d.dueTotal) || 0;
   box.innerHTML = `<div class="ps-sec">
-    <div class="ps-sec-l ps-examhead">طلبات لم تصل الطابور · ${pend.length}<span>طلبها الطبيب ولم تُنفَّذ بعد</span></div>
+    <div class="ps-sec-l ps-examhead">طلبات الأشعة · غير مدفوعة/معلّقة · ${show.length}${unpaidN ? ` <span style="color:var(--danger-ink);font-weight:800">· ${unpaidN} غير مدفوع${dueTotal ? ' (' + sar(dueTotal) + ')' : ''}</span>` : ''}<span>من فواتير المريض</span></div>
     ${rows}</div>`;
 }
 
