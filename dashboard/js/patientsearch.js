@@ -221,7 +221,8 @@ function renderPsDetail() {
     examBlock = `<div class="ps-sec-l ps-examhead">Radiology exams · ${sorted.length}${notBilled ? ` <span style="color:var(--danger-ink);font-weight:800">· ${notBilled} not billed</span>` : ''}<span>newest first</span></div>` +
       sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
-  det.innerHTML = patCard + examBlock;
+  det.innerHTML = patCard + `<div id="ps-allorders"></div>` + examBlock;
+  psLoadAllOrders(p.mrno);
   psLoadConsents();
   psLoadDocuments();
   psLoadLabs();
@@ -232,6 +233,43 @@ function renderPsDetail() {
   psLazyStub('ps-visits', 'Recent clinic visits');
   psLazyStub('ps-appts', 'Appointment history');
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
+}
+
+// ALL radiology orders the doctor placed for this patient — including the ones that never
+// reach the worklist because they're not performed yet (billed-awaiting-payment or unbilled).
+// This is the only way to see unpaid/pending orders: Siratech is per-patient (proved from its
+// own code — every order/billing endpoint needs an mrno), exactly how their reception works.
+const PS_STATE = {
+  billed_pending: { label: 'غير مدفوع / بانتظار الدفع', en: 'Awaiting payment', cls: 'ps-ord-unpaid' },
+  unbilled:       { label: 'غير مفوتر — لم يُسعّر بعد', en: 'Not billed yet',   cls: 'ps-ord-unbilled' },
+  performed:      { label: 'منفّذ', en: 'Performed', cls: 'ps-ord-done' },
+};
+async function psLoadAllOrders(mrno) {
+  const box = document.getElementById('ps-allorders');
+  if (!box || !mrno) return;
+  box.innerHTML = `<div class="ps-sec"><div class="ps-sec-l">All radiology orders · طلبات الأشعة كاملة</div>
+    <div style="padding:8px 2px;color:var(--muted);font-size:12.5px"><span class="mini-spin"></span> Loading every order (incl. unpaid)…</div></div>`;
+  let d;
+  try { d = await API.get(`/radiology/patient/${encodeURIComponent(mrno)}/radiology-orders`); }
+  catch (e) { box.innerHTML = ''; return; }              // best-effort — never break the card
+  const orders = (d && d.orders) || [];
+  if (!orders.length) { box.innerHTML = ''; return; }     // nothing to add
+  const pending = orders.filter((o) => o.state !== 'performed');
+  const rows = orders.map((o) => {
+    const st = PS_STATE[o.state] || PS_STATE.performed;
+    const when = o.orderedDate ? (String(o.orderedDate).slice(0, 10)) : '';
+    return `<div class="ps-ord ${st.cls}">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13.5px">${escapeHtml(o.exam || '—')}${o.modality ? ` <span style="color:var(--muted);font-weight:500">· ${escapeHtml(o.modality)}</span>` : ''}</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:2px">${when ? escapeHtml(when) + ' · ' : ''}${o.doctorName ? 'د. ' + escapeHtml(o.doctorName) : ''}${o.branch ? ' · ' + escapeHtml(o.branch) : ''}</div>
+        ${o.clinicalIndication ? `<div style="font-size:11.5px;margin-top:2px">${escapeHtml(o.clinicalIndication)}</div>` : ''}
+      </div>
+      <span class="ps-ord-badge">${st.label}</span>
+    </div>`;
+  }).join('');
+  box.innerHTML = `<div class="ps-sec">
+    <div class="ps-sec-l ps-examhead">طلبات الأشعة كاملة · ${orders.length}${pending.length ? ` <span style="color:var(--danger-ink);font-weight:800">· ${pending.length} غير مدفوع/معلّق</span>` : ''}<span>من طلبات الطبيب</span></div>
+    ${rows}</div>`;
 }
 
 // A collapsed, tap-to-load section header. The real loader (psLoadRealLabs / psLoadVisits /
