@@ -635,6 +635,42 @@ function rsBusyDates(daily) {
   }).join('');
 }
 
+// Radiology funnel — ordered → imaged → reported, with the drop-off at each stage.
+function rsFunnel(f) {
+  if (!f || !f.ordered) return '';
+  const max = Math.max(1, f.ordered);
+  const stages = [
+    { label: 'Ordered', v: f.ordered, color: 'var(--accent,#6B4EFF)' },
+    { label: 'Imaged', v: f.imaged, color: 'var(--blue,#3BA0FF)' },
+    { label: 'Reported', v: f.reported, color: 'var(--green,#00C896)' },
+  ];
+  const rows = stages.map((s) => {
+    const pct = Math.round((s.v / max) * 100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0">
+      <div style="width:74px;font-size:12.5px;font-weight:600">${s.label}</div>
+      <div style="flex:1;background:var(--border);border-radius:6px;height:22px;overflow:hidden"><div style="width:${Math.max(2, pct)}%;height:100%;background:${s.color};border-radius:6px"></div></div>
+      <div style="width:84px;text-align:right;font-size:12.5px"><b>${rsNum(s.v)}</b> <span style="color:var(--muted)">${pct}%</span></div>
+    </div>`;
+  }).join('');
+  const unimaged = Math.max(0, f.ordered - f.imaged), unreported = Math.max(0, f.imaged - f.reported);
+  return rows + `<div style="font-size:12px;color:var(--muted);margin-top:8px">⚠️ <b>${rsNum(unimaged)}</b> ordered but not imaged · <b>${rsNum(unreported)}</b> imaged but not reported</div>`;
+}
+
+// Gender split.
+function rsGender(g) {
+  if (!Array.isArray(g) || !g.length) return '';
+  const tot = g.reduce((s, x) => s + (x.count || 0), 0) || 1;
+  const col = (n) => /female|^f|أنثى|انثى/i.test(n) ? '#ec4899' : (/male|^m|ذكر/i.test(n) ? '#3BA0FF' : 'var(--muted)');
+  return g.map((x) => {
+    const pct = Math.round((x.count / tot) * 100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+      <div style="width:90px;font-size:12.5px">${escapeHtml(x.name)}</div>
+      <div style="flex:1;background:var(--border);border-radius:5px;height:16px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${col(x.name)}"></div></div>
+      <div style="width:72px;text-align:right;font-size:12px"><b>${rsNum(x.count)}</b> <span style="color:var(--muted)">${pct}%</span></div>
+    </div>`;
+  }).join('');
+}
+
 function rsRenderBody() {
   const body = document.getElementById('rs-body');
   const banner = document.getElementById('rs-billing-banner');
@@ -746,6 +782,8 @@ function rsRenderBody() {
       ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
     </div>
+    ${d.funnel ? rsPanel('🔻 Pipeline — ordered → imaged → reported', rsFunnel(d.funnel), 'where studies drop off', 'rs-wide') : ''}
+    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'patients by gender', 'rs-wide') : ''}
 
     ${rsSection('Where the work is')}
     <div class="rs-grid2">
