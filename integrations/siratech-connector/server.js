@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'rev-full-2026-07-10g';
+const CONNECTOR_BUILD = 'wl-pay-2026-07-10h';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1516,6 +1516,10 @@ const worklistCache = new Map();
 // concurrent so the board stays fast. Emergency-first sort means the ones that
 // matter most are enriched first.
 const WORKLIST_MODALITY_CAP = Number(process.env.WORKLIST_MODALITY_CAP || 80);
+// Opt-in payment enrichment reads one bill per order (GetDueBillDetailsByID) to see
+// the patient's outstanding portion. Bounded so a wide board can't stall; today's
+// per-branch pending count is well under this.
+const WORKLIST_PAY_CAP = Number(process.env.WORKLIST_PAY_CAP || 400);
 // Default look-back window for the live board. A radiology worklist is an operational
 // "what's pending now" view, not an archive — 14 days across 14 branches returns
 // hundreds of stale orders and is slow. 3 days is the right operational default;
@@ -1547,8 +1551,8 @@ function parseHisDate(s) {
   return Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(str) ? str : str + '+03:00');
 }
 
-async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, noCache = false }) {
-  const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality });
+async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false }) {
+  const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality, pay });
   // Fast board pass refreshes on the short TTL; the heavy ready/modality pass keeps the
   // long TTL so DePACS/per-order load is unchanged.
   const ttl = (ready || modality) ? WORKLIST_CACHE_TTL : WORKLIST_FAST_CACHE_TTL;
@@ -1928,6 +1932,51 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     }
   }
 
+  // ── Payment status (opt-in, pay=1) ────────────────────────────────────────────
+  // Read each order's bill (GetDueBillDetailsByID, the DueSettlement report) and sum
+  // the PATIENT portion across its radiology line items. patient > 0 means the patient
+  // still owes for the imaging → the row is flagged so reception can collect. Bill-level
+  // (stamped on every row of the bill), bounded + retrying, radiology-only (labs/drugs on
+  // the same visit don't count). billItemKeys is echoed once as a diagnostic so the exact
+  // outstanding-vs-responsibility field can be confirmed against the live payload.
+  let billItemKeys = null;
+  if (pay && items.length) {
+    const catalog = await getRadCatalog().catch(() => new Map());
+    const byBill = new Map();
+    for (const it of items) {
+      const id = it.genPatBillingId;
+      if (id != null && id !== '' && !byBill.has(String(id))) byBill.set(String(id), true);
+    }
+    const uniq = [...byBill.keys()].slice(0, WORKLIST_PAY_CAP);
+    const dueByBill = new Map();
+    await pool(uniq, STATS_MODALITY_CONCURRENCY, async (gpb) => {
+      const res = await readBillItems(gpb);
+      if (!billItemKeys && Array.isArray(res.items) && res.items.length) billItemKeys = Object.keys(res.items[0]);
+      let pat = 0, spo = 0, net = 0, radItems = 0;
+      for (const it of res.items) {
+        if (!catalog.get(normName(it.itemName))) continue;   // radiology line items only
+        radItems += 1;
+        pat += Number(it.patient) || 0;
+        spo += Number(it.sponsor) || 0;
+        net += Number(it.netAmount) || 0;
+      }
+      dueByBill.set(gpb, { pat, spo, net, radItems, ok: res.ok });
+    });
+    const r2 = (n) => Math.round(n * 100) / 100;
+    for (const it of items) {
+      const d = it.genPatBillingId != null ? dueByBill.get(String(it.genPatBillingId)) : null;
+      // paymentKnown=false → the bill couldn't be read or carried no radiology line item;
+      // the UI shows nothing (never a false "unpaid") in that case.
+      if (!d || !d.ok || d.radItems === 0) { it.paymentKnown = false; continue; }
+      it.paymentKnown = true;
+      it.patientDue = r2(d.pat);
+      it.sponsorAmt = r2(d.spo);
+      it.billed = r2(d.net);
+      it.unpaid = d.pat > 0;                       // patient still owes a portion
+      if (!it.payer) it.payer = d.spo > 0 ? (d.pat > 0 ? 'Insurance + copay' : 'Insurance') : (d.pat > 0 ? 'Cash / self-pay' : null);
+    }
+  }
+
   for (const it of items) { delete it.__row; delete it.__site; }   // strip enrichment scratch
   const data = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
@@ -1935,6 +1984,8 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     total: items.length, emergency: items.filter((i) => i.emergency).length,
     readyChecked: ready ? Math.min(readyLimit, new Set(items.map((i) => i.mrno)).size) : 0,
     modalityChecked: modality ? Math.min(WORKLIST_MODALITY_CAP, items.length) : 0,
+    paymentChecked: pay ? Math.min(WORKLIST_PAY_CAP, new Set(items.map((i) => i.genPatBillingId).filter((x) => x != null)).size) : 0,
+    billItemKeys,   // diagnostic: raw bill line-item field names (confirm the true "outstanding" field)
     items, generatedAt: new Date().toISOString(),
   };
   worklistCache.set(key, { data, ts: Date.now() });
@@ -1950,8 +2001,9 @@ app.get('/worklist', requireAuth, async (req, res) => {
     const ready = String(req.query.ready || '') === '1';
     const readyLimit = Math.max(1, Math.min(60, Number(req.query.readyLimit) || 25));
     const modality = String(req.query.modality || '') === '1';
+    const pay = String(req.query.pay || '') === '1';
     const noCache = String(req.query.nocache || '') === '1';
-    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, noCache })) });
+    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache })) });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
