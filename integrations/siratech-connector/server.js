@@ -109,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'order-trace2-2026-07-10q';
+const CONNECTOR_BUILD = 'awaiting-pay-2026-07-10r';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2013,6 +2013,102 @@ app.get('/worklist', requireAuth, async (req, res) => {
     const pay = String(req.query.pay || '') === '1';
     const noCache = String(req.query.nocache || '') === '1';
     return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache })) });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Awaiting-payment board: the doctor's PLACED radiology orders ───────────────
+// Orders a doctor placed that HAVEN'T been performed yet never reach RadiologySearch
+// (proved by /diag/order-trace), so the worklist can't show them. This board pulls them
+// from the EMR order layer: get the branch's active patients (roster), fan out
+// FetchEmrOrders per patient, and keep the radiology orders still pending (not performed).
+// Bounded + cached (heavy — one HIS call per patient), so it's a SEPARATE on-demand board,
+// never on the fast worklist path.
+const AWP_TTL = Number(process.env.AWP_CACHE_TTL_MS || 300000);   // 5 min
+const AWP_ROSTER_CAP = Number(process.env.AWP_ROSTER_CAP || 400);
+const AWP_CONCURRENCY = Number(process.env.AWP_CONCURRENCY || 10);
+const awpCache = new Map();
+// Pull the branch's active-patient roster (mrno + name) from open encounters. Field names
+// vary, so probe broadly; returns [] if the source is empty/unavailable (board just shows
+// nothing rather than erroring).
+async function awpRoster(site, empId, uid, fromISO, toISO) {
+  const bodies = [
+    { hospitalId: site, userId: uid, empId, fromDate: fromISO, toDate: toISO, mrno: '' },
+    { hospitalId: site, userId: uid, empId, mrno: '' },
+  ];
+  for (const body of bodies) {
+    const r = await hisFetch('/billing-api/api/v1/Encounter/PatientOpenEncounters', { method: 'POST', body }).catch(() => null);
+    const rows = (r && r.json && (r.json.data || r.json.Data)) || (r && Array.isArray(r.json) ? r.json : null);
+    if (Array.isArray(rows) && rows.length) {
+      const out = [];
+      for (const x of rows) {
+        const mrno = x.mrno ?? x.mrNo ?? x.MRNO ?? x.mrNumber;
+        if (mrno != null && String(mrno).trim()) out.push({ mrno: String(mrno).trim(), name: (x.patientName || x.patName || '').trim() });
+      }
+      if (out.length) return out;
+    }
+  }
+  return [];
+}
+const awpIsRadPending = (o) => o && o.invMastServiceName && /radiolog/i.test(String(o.invCategoryName || ''))
+  && String(o.adminStatus || '').toLowerCase() !== 'completed'
+  && String(o.adminStatus || '').toLowerCase() !== 'performed';
+async function radiologyAwaitingPayment({ sites, noCache = false }) {
+  await getToken();
+  const empId = currentEmpId() || '0';
+  const uid = String(HIS_USER).padStart(8, '0');
+  const siteList = await getSites().catch(() => []);
+  const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+  const wantSites = (sites && sites.length) ? sites : siteList.map((s) => s.siteId);
+  const cacheKey = JSON.stringify(wantSites.slice().sort((a, b) => a - b));
+  if (!noCache) { const c = awpCache.get(cacheKey); if (c && Date.now() - c.ts < AWP_TTL) return c.data; }
+  const today = new Date();
+  const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
+  const fromISO = `${new Date(today.getTime() - 30 * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
+  const rosterDiag = [];
+  const roster = new Map();   // mrno -> { site, name }
+  for (const site of wantSites) {
+    const r = await awpRoster(site, empId, uid, fromISO, toISO);
+    rosterDiag.push({ site, count: r.length });
+    for (const p of r) if (!roster.has(p.mrno)) roster.set(p.mrno, { site, name: p.name });
+  }
+  const rosterList = [...roster.entries()].slice(0, AWP_ROSTER_CAP);
+  const items = [];
+  await pool(rosterList, AWP_CONCURRENCY, async ([mrno, info]) => {
+    const eo = await hisFetch('/emr-api/api/v1/EMR/FetchEmrOrders', { body: { mrno, hospitalId: info.site, userId: uid, empId, fromDate: fromISO, toDate: toISO, baseCategoryId: 2, baseInvCategoryId: 2 } }).catch(() => null);
+    const found = [];
+    const walk = (o) => {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach(walk); return; }
+      if (awpIsRadPending(o)) found.push(o);
+      for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
+    };
+    walk(eo && eo.json);
+    for (const o of found) {
+      items.push({
+        mrno, patientName: info.name || (o.patientName || '').trim(),
+        exam: o.invMastServiceName, modality: results.normMod(o.invMastServiceName || o.subCategoryName || '') || null,
+        clinicalIndication: (o.clinicalIndication || '').trim() || null,
+        doctorName: (o.providerName || '').trim() || null,
+        orderedDate: o.proposedDate || null,
+        billedStatus: o.billedStatus || null, isBilled: Number(o.isbilled) === 1,
+        adminStatus: o.adminStatus || null,
+        serviceOrderId: o.serviceOrderId != null ? o.serviceOrderId : null,
+        site: info.site, branch: nameOf.get(info.site) || `Branch ${info.site}`,
+        awaitingPayment: true,
+      });
+    }
+  });
+  items.sort((a, b) => Date.parse(b.orderedDate || 0) - Date.parse(a.orderedDate || 0));
+  const data = { ok: true, build: CONNECTOR_BUILD, total: items.length, rosterSize: roster.size, rosterDiag, items, generatedAt: new Date().toISOString() };
+  awpCache.set(cacheKey, { data, ts: Date.now() });
+  return data;
+}
+
+app.get('/radiology/awaiting-payment', requireAuth, async (req, res) => {
+  try {
+    const sites = String(req.query.sites || '').split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => n > 0);
+    const noCache = String(req.query.nocache || '') === '1';
+    return res.json(await radiologyAwaitingPayment({ sites, noCache }));
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
