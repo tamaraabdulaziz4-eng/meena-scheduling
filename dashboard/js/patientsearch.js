@@ -84,7 +84,7 @@ function renderPsResults() {
   const ICON_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
   const initials = (nm) => String(nm || '').trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '؟';
   const chip = (ic, val) => val ? `<span class="ps-res-chip">${ic}<span>${escapeHtml(String(val))}</span></span>` : '';
-  box.innerHTML = `<div class="ps-res-head">${pts.length} matches · اختر المريض</div>
+  box.innerHTML = `<div class="ps-res-head">${pts.length} matches — pick the patient</div>
     <div class="ps-reslist">` +
     pts.map((p, i) => `
       <button class="ps-rescard${i === psState.sel ? ' on' : ''}" onclick="psOpen(${i})"
@@ -235,9 +235,9 @@ function renderPsDetail() {
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech) — auto (kept open)
   // The heavy history sections each hit Siratech; loading all three on open made the card slow.
   // Render them as collapsed headers that fetch only when tapped — vitals (above) stay auto.
-  psLazyStub('ps-labresults', 'Lab results', 'التحاليل المخبرية', 'labs');
-  psLazyStub('ps-visits', 'Recent clinic visits', 'زيارات العيادة', 'visits');
-  psLazyStub('ps-appts', 'Appointment history', 'سجل المواعيد', 'appts');
+  psLazyStub('ps-labresults', 'Lab results', 'labs');
+  psLazyStub('ps-visits', 'Recent clinic visits', 'visits');
+  psLazyStub('ps-appts', 'Appointment history', 'appts');
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
 }
 
@@ -251,15 +251,15 @@ const PS_LAZY_ICON = {
   appts:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>',
 };
 const PS_LAZY_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
-function psLazyStub(id, title, titleAr, iconKey) {
+function psLazyStub(id, title, iconKey) {
   const box = document.getElementById(id);
   if (!box) return;
   box.dataset.psLoaded = '';
   box.innerHTML = `<button class="ps-lazy" onclick="psLazyOpen('${id}')">
     <span class="ps-lazy-ic">${PS_LAZY_ICON[iconKey] || ''}</span>
     <span class="ps-lazy-txt">
-      <span class="ps-lazy-t">${escapeHtml(titleAr || title)}</span>
-      <span class="ps-lazy-s">${escapeHtml(title)} · اضغط للعرض</span>
+      <span class="ps-lazy-t">${escapeHtml(title)}</span>
+      <span class="ps-lazy-s">Tap to view</span>
     </span>
     <span class="ps-lazy-chev">${PS_LAZY_CHEV}</span>
   </button>`;
@@ -268,7 +268,7 @@ function psLazyOpen(id) {
   const box = document.getElementById(id);
   if (!box || box.dataset.psLoaded) return;
   box.dataset.psLoaded = '1';
-  box.innerHTML = `<div class="ps-lazy-loading"><span class="mini-spin"></span> جاري التحميل…</div>`;
+  box.innerHTML = `<div class="ps-lazy-loading"><span class="mini-spin"></span> Loading…</div>`;
   const fn = { 'ps-labresults': psLoadRealLabs, 'ps-visits': psLoadVisits, 'ps-appts': psLoadAppointments }[id];
   if (fn) fn();
 }
