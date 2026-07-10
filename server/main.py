@@ -1004,6 +1004,37 @@ def init_schema():
                 FROM scheduling.radiology_orders
                 WHERE gen_pat_billing_id IS NOT NULL
                 ON CONFLICT (gen_pat_billing_id, service_id) DO NOTHING;""")
+            # ── Critical / urgent result closed-loop communication (Meena-owned) ─────────
+            # A radiologist/tech flags a critical or urgent finding on a study; the loop is
+            # not closed until someone documents that the result was communicated to (and
+            # read back by) the referring team — with who/when. This is a CBAHI / Joint
+            # Commission accreditation requirement the HIS didn't cover. Purely local; it is
+            # NEVER written back to Siratech.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.critical_results (
+                    id              BIGSERIAL PRIMARY KEY,
+                    site            INTEGER,
+                    mrno            TEXT NOT NULL,
+                    gen_pat_billing_id BIGINT,
+                    accession       TEXT,
+                    patient_name    TEXT,
+                    exam            TEXT,
+                    severity        TEXT NOT NULL DEFAULT 'critical',  -- critical | urgent
+                    finding         TEXT NOT NULL,
+                    flagged_by      INTEGER,
+                    flagged_by_name TEXT,
+                    flagged_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    notify_to       TEXT,          -- referring doctor / team told
+                    status          TEXT NOT NULL DEFAULT 'open',  -- open | acknowledged
+                    acked_by        INTEGER,
+                    acked_by_name   TEXT,
+                    acked_at        TIMESTAMPTZ,
+                    ack_note        TEXT,          -- how/whom communicated + read-back
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_status ON scheduling.critical_results(status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_mrno ON scheduling.critical_results(mrno);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_critical_site ON scheduling.critical_results(site);")
             # DICOM Modality Worklist entries pushed by the on-site MWL agent. Each row is
             # one scheduled procedure step carrying the Siratech-generated accession — the
             # deterministic key that links order → images → report. The HIS REST API
@@ -8122,6 +8153,133 @@ async def radiology_order_reopen(gpb: int, request: Request, user=Depends(requir
         mrno=b.get("mrno"), site=b.get("site"), patient_name=b.get("patientName"))
     insert_audit(user, "RADIOLOGY_REOPEN", str(b.get("mrno") or gpb), json.dumps({"gpb": gpb}))
     return {"ok": True}
+
+# ── Critical / urgent result closed-loop communication (Meena-owned) ────────────
+# Flag a critical finding → the reading team is notified → the loop stays OPEN until
+# someone documents that the result was communicated to (and read back by) the
+# referring team. Accreditation-grade; never written back to Siratech.
+def _critical_row(r):
+    """Shape a critical_results DB row for the client, with a computed overdue flag.
+    Open criticals unacknowledged past their SLA (critical 30 min, urgent 60 min)
+    are surfaced as overdue so the panel can escalate them visually."""
+    import datetime as _dt
+    out = dict(r)
+    fa = r.get("flagged_at")
+    mins = None
+    if fa:
+        try:
+            mins = (_dt.datetime.now(_dt.timezone.utc) - fa).total_seconds() / 60.0
+        except Exception:
+            mins = None
+    sla = 30 if (r.get("severity") or "critical") == "critical" else 60
+    out["age_minutes"] = round(mins) if mins is not None else None
+    out["overdue"] = bool(r.get("status") == "open" and mins is not None and mins > sla)
+    for k in ("flagged_at", "acked_at", "created_at"):
+        if out.get(k) is not None:
+            try: out[k] = out[k].isoformat()
+            except Exception: out[k] = str(out[k])
+    return out
+
+@app.get("/api/radiology/critical")
+def radiology_critical_list(status: str = Query("open"), user=Depends(require_radiology)):
+    """List critical results. status=open (default) | acknowledged | all. Branch-locked
+    team leads see only their own site."""
+    site = _rad_scope_site(user)
+    where, params = [], []
+    if status in ("open", "acknowledged"):
+        where.append("status=%s"); params.append(status)
+    if site is not None:
+        where.append("(site=%s OR site IS NULL)"); params.append(site)
+    sql = "SELECT * FROM scheduling.critical_results"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY (status='open') DESC, flagged_at DESC LIMIT 500"
+    rows = q(sql, tuple(params)) or []
+    items = [_critical_row(r) for r in rows]
+    open_count = sum(1 for r in items if r["status"] == "open")
+    overdue_count = sum(1 for r in items if r.get("overdue"))
+    return {"ok": True, "items": items, "openCount": open_count, "overdueCount": overdue_count}
+
+@app.get("/api/radiology/critical/count")
+def radiology_critical_count(user=Depends(require_radiology)):
+    """Cheap badge count of OPEN critical results in the user's scope."""
+    site = _rad_scope_site(user)
+    if site is not None:
+        row = q("""SELECT COUNT(*) AS n, COUNT(*) FILTER (
+                     WHERE flagged_at < NOW() - (CASE WHEN severity='critical' THEN INTERVAL '30 min' ELSE INTERVAL '60 min' END)
+                   ) AS overdue
+                   FROM scheduling.critical_results
+                   WHERE status='open' AND (site=%s OR site IS NULL)""", (site,), one=True)
+    else:
+        row = q("""SELECT COUNT(*) AS n, COUNT(*) FILTER (
+                     WHERE flagged_at < NOW() - (CASE WHEN severity='critical' THEN INTERVAL '30 min' ELSE INTERVAL '60 min' END)
+                   ) AS overdue
+                   FROM scheduling.critical_results WHERE status='open'""", (), one=True)
+    return {"open": (row and row.get("n")) or 0, "overdue": (row and row.get("overdue")) or 0}
+
+@app.post("/api/radiology/critical")
+async def radiology_critical_flag(request: Request, user=Depends(require_radiology)):
+    """Flag a critical/urgent result. Records it OPEN and notifies the radiology
+    reading/management team so the communication loop starts."""
+    b = await _rad_body(request)
+    mrno = str(b.get("mrno") or "").strip()
+    finding = str(b.get("finding") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "Patient MRN is required")
+    if not finding:
+        raise HTTPException(400, "The critical finding is required")
+    severity = "urgent" if str(b.get("severity") or "").lower() == "urgent" else "critical"
+    site = b.get("site")
+    try: site = int(site) if site not in (None, "") else _rad_scope_site(user)
+    except Exception: site = _rad_scope_site(user)
+    gpb = b.get("gpb")
+    try: gpb = int(gpb) if gpb not in (None, "") else None
+    except Exception: gpb = None
+    row = q("""INSERT INTO scheduling.critical_results
+                 (site, mrno, gen_pat_billing_id, accession, patient_name, exam, severity,
+                  finding, flagged_by, flagged_by_name, notify_to)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING *""",
+            (site, mrno, gpb, (str(b.get("accession") or "").strip() or None),
+             (str(b.get("patientName") or "").strip() or None),
+             (str(b.get("exam") or "").strip() or None), severity, finding[:2000],
+             user.get("id"), user.get("username"),
+             (str(b.get("notifyTo") or "").strip() or None)), one=True)
+    # Notify the reading/management team so the loop is picked up. Best-effort.
+    try:
+        pname = row.get("patient_name") or mrno
+        msg = f"🚨 {'CRITICAL' if severity=='critical' else 'Urgent'} result flagged: {pname} — {finding[:120]}. Needs acknowledgement."
+        targets = q("""SELECT id FROM scheduling.users
+                       WHERE role IN ('superadmin','manager','admin')
+                          OR COALESCE(can_use_radiology,false)""", ()) or []
+        for t in targets:
+            if t.get("id") and t["id"] != user.get("id"):
+                notify(t["id"], msg, link="#/critical", ntype="alert")
+    except Exception:
+        pass
+    insert_audit(user, "RADIOLOGY_CRITICAL_FLAG", mrno,
+                 json.dumps({"id": row.get("id"), "severity": severity, "gpb": gpb}))
+    return {"ok": True, "item": _critical_row(row)}
+
+@app.post("/api/radiology/critical/{cid}/ack")
+async def radiology_critical_ack(cid: int, request: Request, user=Depends(require_radiology)):
+    """Close the loop: document that the critical result was communicated to and read
+    back by the referring team (who + how). Requires a note."""
+    b = await _rad_body(request)
+    note = str(b.get("note") or "").strip()
+    if not note:
+        raise HTTPException(400, "Document how the result was communicated (who was told + read-back)")
+    notify_to = str(b.get("notifyTo") or "").strip() or None
+    row = q("""UPDATE scheduling.critical_results
+               SET status='acknowledged', acked_by=%s, acked_by_name=%s, acked_at=NOW(),
+                   ack_note=%s, notify_to=COALESCE(%s, notify_to)
+               WHERE id=%s RETURNING *""",
+            (user.get("id"), user.get("username"), note[:2000], notify_to, cid), one=True)
+    if not row:
+        raise HTTPException(404, "Critical result not found")
+    insert_audit(user, "RADIOLOGY_CRITICAL_ACK", str(row.get("mrno") or cid),
+                 json.dumps({"id": cid}))
+    return {"ok": True, "item": _critical_row(row)}
 
 @app.get("/api/radiology/technologists")
 def radiology_technologists(user=Depends(require_radiology)):

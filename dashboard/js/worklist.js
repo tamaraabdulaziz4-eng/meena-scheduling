@@ -948,6 +948,7 @@ function wlExpandHtml(it, st) {
     <div class="xbtns">
       ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
+      <button class="btn" onclick="wlFlagCritical('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(acc)}',${it.genPatBillingId != null ? it.genPatBillingId : 'null'},${it.site != null ? "'" + jsAttr(String(it.site)) + "'" : 'null'},'${jsAttr(it.doctorName || '')}')">🚨 Flag critical</button>
       ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
       ${wlWorkflowBtns(it, st)}
     </div>
@@ -1239,6 +1240,12 @@ function wlPregBadge(r) {
   }
   return `<span class="sc warn" title="${nm} ordered but result still pending">${icon('droplet')} Test pending${dstr}</span>`;
 }
+// Open the critical-result flag form pre-filled from a worklist row (criticalresults.js).
+function wlFlagCritical(mrno, name, exam, acc, gpb, site, doctor) {
+  if (typeof crFlagForm !== 'function') { toast('Critical Results module not loaded', 'err'); return; }
+  crFlagForm({ mrno, patientName: name, exam, accession: acc, gpb: gpb, site: site, notifyTo: doctor });
+}
+
 function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
