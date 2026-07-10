@@ -248,19 +248,23 @@ function resolvePage(page) {
 // (eager) via shared globals, and portal.js's "Request Leave" button calls leaves.js's
 // openLeaveModal; radstats.js and radreport.js are mutually coupled, so radstats always
 // pulls radreport, and home (which embeds the rad-stats widget) pulls both.
-// Each page lists the /js AND /css it needs. The two biggest, cleanly-namespaced CSS
-// blocks were split out of style.css (which keeps ALL shared rules) so a user only
-// downloads those styles for pages they open: worklist.css (.cc + .rw board, ~35KB) with
-// the worklist page, and radstats.css (.rs- + .rsr-, ~25KB) with the rad-stats/monthly
-// deck (also pulled by home, which embeds the rad-stats widget). Handoff/patient-lookup
-// CSS stays in style.css (small + shares the consent overlay with the worklist).
+// The radiology WORKFLOW modules are mutually coupled and must load together: the worklist
+// opens the patient card (renderPsDetail/psState from patientsearch) and the handoff flow
+// (handoff.js); patientsearch calls back into worklist (wlNeedsRadSafety); home embeds the
+// patient-lookup + handoff quick actions. So they ship as one cluster on any radiology page
+// — a rad operator uses all three anyway, and non-radiology users still never download them.
+const RAD_JS = ['/js/worklist.js', '/js/patientsearch.js', '/js/handoff.js'];
+// Each page lists the /js AND /css it needs. The two biggest, cleanly-namespaced CSS blocks
+// were split out of style.css (which keeps ALL shared rules) so a user only downloads those
+// styles for pages they open: worklist.css (.cc + .rw board, ~35KB) and radstats.css
+// (.rs- + .rsr-, ~25KB, also pulled by home which embeds the rad-stats widget).
 const PAGE_ASSETS = {
-  worklist:      ['/js/worklist.js', '/css/worklist.css'],
-  patientsearch: ['/js/patientsearch.js'],
-  handoff:       ['/js/handoff.js'],
+  worklist:      [...RAD_JS, '/css/worklist.css'],
+  patientsearch: RAD_JS,
+  handoff:       RAD_JS,
   reports:       ['/js/reports.js'],
   radstats:      ['/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
-  home:          ['/js/home.js', '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
+  home:          ['/js/home.js', ...RAD_JS, '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
 };
 // Cache-buster for injected chunks: the server stamps the content-hash BUILD_ID into
 // <meta name="meena-build"> and rewrites every ?v= in index.html to it, and stamps the
