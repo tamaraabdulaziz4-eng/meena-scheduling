@@ -140,6 +140,9 @@ async function initApp() {
   // see where their reports landed; Rad Stats stays management-only.
   const ordersNav = document.getElementById('nav-orders');
   if (ordersNav) ordersNav.style.display = canRad ? 'flex' : 'none';
+  // Peer review (radiology QA) — management/quality owners, gated like Rad Stats.
+  const peerNav = document.getElementById('nav-peerreview');
+  if (peerNav) peerNav.style.display = canRadMgmt ? 'flex' : 'none';
   // Radiology CD transfers.
   const cdxferNav = document.getElementById('nav-cdxfer');
   if (cdxferNav) cdxferNav.style.display = canRad ? 'flex' : 'none';
@@ -150,7 +153,7 @@ async function initApp() {
   if (canRad) {
     const nav = document.querySelector('.sidebar-nav');
     const radIds = ['nav-section-radiology', 'nav-worklist', 'nav-critical', 'nav-orders', 'nav-handoff',
-                    'nav-patientsearch', 'nav-radstats', 'nav-cdxfer'];
+                    'nav-patientsearch', 'nav-radstats', 'nav-peerreview', 'nav-cdxfer'];
     if (nav) {
       // Insert each at the front in REVERSE so the original visual order is preserved on top.
       radIds.map((id) => document.getElementById(id)).filter(Boolean).reverse()
@@ -244,6 +247,7 @@ function resolvePage(page) {
   if (page === 'radstats' && !ADMIN_ROLES.includes(role)) return canRadRoute ? 'worklist' : radElse;
   if (page === 'orders' && !canRadRoute) return radElse;
   if (page === 'critical' && !canRadRoute) return radElse;
+  if (page === 'peerreview' && !ADMIN_ROLES.includes(role)) return canRadRoute ? 'worklist' : radElse;
   if (page === 'branches' && role !== 'superadmin') return 'schedule';
   if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
   if (page === 'audit'    && role !== 'superadmin') return 'schedule';
@@ -280,6 +284,7 @@ const PAGE_ASSETS = {
   handoff:       RAD_JS,
   reports:       ['/js/reports.js'],
   critical:      ['/js/criticalresults.js', '/css/worklist.css'],
+  peerreview:    ['/js/peerreview.js', '/css/radstats.css'],
   radstats:      ['/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
   home:          ['/js/home.js', ...RAD_JS, '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
 };
@@ -362,6 +367,7 @@ async function renderRoute(page) {
     case 'radstats':   await renderRadStatsPage(); break;
     case 'worklist':   await renderWorklistPage(); break;
     case 'critical':   renderCriticalResultsPage(); break;
+    case 'peerreview': renderPeerReviewPage(); break;
     case 'orders':     await renderOrdersPage(); break;
     case 'cdxfer':     await renderCdxferPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
@@ -384,7 +390,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','worklist','critical','patientsearch','radstats','cdxfer','branches','shifts','users','audit']);
+  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','worklist','critical','peerreview','patientsearch','radstats','cdxfer','branches','shifts','users','audit']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
