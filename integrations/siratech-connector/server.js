@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risreported-2026-07-11q';
+const CONNECTOR_BUILD = 'risall-2026-07-11r';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2171,9 +2171,11 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
 }
 
 async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false, source = null }) {
-  // Fast board via the RIS panel (flag or ?src=ris) — but only the plain fast board; the heavy
-  // ready/modality/pay passes still use the search path for now.
-  if ((source || WORKLIST_SOURCE) === 'ris' && !ready && !modality && !pay) {
+  // RIS-panel board (flag or ?src=ris): it already carries exam, modality, and the
+  // reported/in-progress status, so we route EVERY pass to it — the client's background
+  // ready/modality passes then hit the same fast, same-keyed board instead of the slow
+  // search. (Payment isn't in the panel, so the pay overlay is simply absent on this board.)
+  if ((source || WORKLIST_SOURCE) === 'ris') {
     return await buildWorklistRis({ sites, from, to, noCache });
   }
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality, pay });
