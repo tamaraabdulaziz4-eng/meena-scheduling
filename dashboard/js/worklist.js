@@ -544,7 +544,12 @@ function wlHydrate() {
     const k = wlRowKey(it);
     if (!k) continue;                              // keyless row → never restore from cache (collision-safe)
     if (!it.modality && !it.exam) { const c = wlState.modCache.get(k); if (c) { it.modality = c.modality; it.exam = c.exam; } }
-    if (!it.stage) { const s = wlState.stageCache.get(k); if (s) it.stage = s; }
+    // Restore the pipeline stage FORWARD-ONLY from cache. The fast RIS board carries no PACS
+    // data, so it stamps every non-reported row 'ordered' — without this ratchet, each fast
+    // poll would overwrite an 'imaged'/'reported' stage the PACS pass had established, and the
+    // Pending Report lane would flash in (on the ready pass) then vanish (on the next poll).
+    // A genuinely-newer higher stage on the incoming row still wins (rank comparison).
+    { const s = wlState.stageCache.get(k); if (s && wlStageRank(s) > wlStageRank(it.stage)) it.stage = s; }
     // Payment (patient-outstanding) is read on the opt-in pay pass; restore it from cache
     // so a plain refresh keeps the paid/unpaid badge instead of blanking it.
     if (it.paymentKnown == null) { const p = wlState.payCache.get(k); if (p) { it.paymentKnown = true; it.unpaid = p.unpaid; it.patientDue = p.patientDue; it.sponsorAmt = p.sponsorAmt; it.billed = p.billed; if (p.payer && !it.payer) it.payer = p.payer; } }
