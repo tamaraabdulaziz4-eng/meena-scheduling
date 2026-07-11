@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risstage-2026-07-11p';
+const CONNECTOR_BUILD = 'risreported-2026-07-11q';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2089,10 +2089,13 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
       // result code for "reported" — more reliable than any status text (the panel has none).
       const hasArrival = !!r.arrivalDate, hasStart = !!r.examStartDate, hasEnd = !!r.examEndDate;
       const scanned = hasStart || hasEnd;
-      const reported = Number(r.resultStatus) >= 2 || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;  // provisional; confirm via histogram
+      // resultStatus is the panel's report signal: 1 = result/report ready (REPORTED), 0 = still
+      // in progress — this matches the "reported vs in progress" operators use, and the branch-
+      // wide panel doesn't populate the exam-progress timestamps, so this is the reliable source.
+      // (Being verified against known-reported patients before we flip.)
+      const reported = Number(r.resultStatus) >= 1 || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;
       const stage = reported ? 'reported' : scanned ? 'imaged' : 'ordered';
-      const status = reported ? 'Reported' : hasEnd ? 'Scan done' : hasStart ? 'In progress'
-        : hasArrival ? 'Arrived' : 'Waiting';
+      const status = reported ? 'Reported' : hasEnd ? 'Scan done' : hasStart ? 'In progress' : 'In progress';
       // Diagnostic tally: which (risOrderStatusId, risStatus, resultStatus) codes go with a scan
       // done / report — so we can decode the "reported" flag across ALL rows in one run.
       const _hk = `orderStatusId=${r.risOrderStatusId}|risStatus=${r.risStatus}|resultStatus=${r.resultStatus}|scanned=${scanned}|end=${hasEnd}`;
