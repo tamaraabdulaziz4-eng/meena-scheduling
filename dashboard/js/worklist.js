@@ -625,7 +625,14 @@ async function wlEnrich(silent, force) {
     // and, on the silent live timer, at most every ~3 min to keep the Meena ledger
     // (state='reported', TAT, orphan detection) advancing. A plain page-open load is neither
     // force nor silent, so it skips ready entirely — the biggest cut to first-open latency.
-    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 180000));
+    // On the FAST RIS board we DO want the ready pass right after the first instant paint —
+    // it's a light background DePACS enrichment that fills the middle of the pipeline (imaged
+    // exams → Completed lane) that the panel alone can't see. So fire it once on the first RIS
+    // load, then throttle to ~3 min like the live timer. The legacy search board keeps its
+    // "not on open" behaviour (its ready pass is the slow per-patient work we defer).
+    const _isRis = !!(wlState.data && wlState.data.source === 'ris');
+    const _firstReady = wlState.lastReady == null;
+    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 180000)) || (_isRis && _firstReady);
     if (readyDue) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));

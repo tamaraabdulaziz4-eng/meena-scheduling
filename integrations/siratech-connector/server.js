@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risordered-2026-07-11u';
+const CONNECTOR_BUILD = 'risdepacs-2026-07-11v';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2029,6 +2029,44 @@ function _statMs(a) {
 // (FetchRISPanel — ~10x faster, billed orders). Flag-gated so we can test before switching.
 const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'ris').toLowerCase();
 
+// Stage each board row from DePACS reality (one LIGHT lookup per patient): ordered (no study
+// of this modality in its window) → imaged (images exist, no report) → draft (unverified
+// report) → reported (verified report). Shared by the search board's ready pass and the RIS
+// board's background ready enrichment so both surface the SAME PACS-grounded pipeline. Mutates
+// items in place; best-effort — a failed/missing lookup leaves the row's preliminary stage
+// untouched. Only ever fills the middle of the pipeline; the caller keeps any authoritative
+// "reported" it already knows (RIS resultStatus) so a DePACS window-miss can't demote it.
+async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
+  if (!items || !items.length) return 0;
+  const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
+  const studiesBy = new Map();
+  await pool(mrns, DEPACS_STAGE_CONCURRENCY, async (m) => {
+    try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
+  });
+  const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
+  for (const it of items) {
+    if (!studiesBy.has(it.mrno)) continue;              // DePACS lookup failed → keep preliminary stage
+    const all = (studiesBy.get(it.mrno) || []).filter((s) => results.sameMrn(s.patId, it.mrno));
+    const mod = results.normMod(it.modality || it.exam || '');
+    if (!KNOWN_MOD.has(mod)) continue;                  // unmappable modality → don't force 'ordered'
+    const ot = parseHisDate(it.orderedDate);
+    const matched = all.filter((s) => {
+      if (results.normMod(s.modality || '') !== mod) return false;
+      if (!Number.isFinite(ot)) return true;
+      const st = parseHisDate(s.studyDate);
+      return Number.isFinite(st) ? (st >= ot - 24 * 36e5 && st <= ot + 96 * 36e5) : true;
+    });
+    if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; continue; }
+    const reportedHit = matched.find((s) => results.isReported(s.status));
+    const chosen = reportedHit || matched.find((s) => s.accession) || matched[0];
+    if (chosen && chosen.accession) { it.accession = chosen.accession; it.accessionSource = 'depacs'; }
+    if (reportedHit) { it.stage = 'reported'; it.readyToFile = true; }
+    else if (matched.some((s) => results.isDraftReport(s.status))) { it.stage = 'draft'; it.readyToFile = false; }
+    else { it.stage = 'imaged'; it.readyToFile = false; }
+  }
+  return mrns.length;
+}
+
 // ── Fast board straight from FetchRISPanel ──────────────────────────────────────────────
 // RadiologySearch is ~5s/branch; FetchRISPanel is ~0.3s and already carries everything the
 // board lists (mrno, patientName, providerName, serviceName, billingStatus, workflow status,
@@ -2036,9 +2074,17 @@ const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'ris').toLowerCase();
 // exam per RIS row — skipping RadiologySearch entirely. Age/gender/doctor-phone aren't in the
 // panel (they lazy-load with the patient card on row-expand). The order key uses the panel's
 // own billing id so the lifecycle actions can be wired to it.
-async function buildWorklistRis({ sites, from, to, noCache = false }) {
-  const key = JSON.stringify({ src: 'ris', sites: (sites || []).slice().sort((a, b) => a - b), from, to });
-  if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < WORKLIST_FAST_CACHE_TTL) return e.data; }
+//
+// ready=1 (the client's throttled background pass) adds a DePACS stage enrichment on top of
+// the instant panel board: the first paint is Ordered vs Reported (from the panel's
+// resultStatus), then a few seconds later imaged exams move to the Completed lane and any
+// PACS-verified report is confirmed — WITHOUT slowing the first paint.
+async function buildWorklistRis({ sites, from, to, ready = false, noCache = false }) {
+  const key = JSON.stringify({ src: 'ris', sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready: !!ready });
+  // The ready pass (DePACS enrichment) keeps the long TTL — its per-patient PACS lookups are
+  // the heavy part; the fast panel board stays on the short TTL so it refreshes often.
+  const _ttl = ready ? WORKLIST_CACHE_TTL : WORKLIST_FAST_CACHE_TTL;
+  if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < _ttl) return e.data; }
   const _tmark = { start: Date.now() };
   const _callMs = { panel: [] };
   let _panelFields = null;
@@ -2156,9 +2202,24 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
   };
   const kept = items.filter(inRange);
 
+  // ── ready=1: DePACS stage enrichment (background pass) ──────────────────────────────────
+  // Fill the MIDDLE of the pipeline the panel can't see. The branch-wide FetchRISPanel only
+  // tells us reported-vs-not (resultStatus), so the instant board is Ordered + Reported. When
+  // the client's throttled ready pass runs, ground each row in PACS: imaged exams move to the
+  // Completed lane, drafts/verified reports are confirmed. The panel's resultStatus stays
+  // authoritative for "reported" — re-assert it after, so a DePACS window-miss (report filed
+  // under a slightly different modality/date) can never demote a known-reported row to Ordered.
+  let _readyChecked = 0;
+  if (ready && kept.length) {
+    _tmark.beforeReady = Date.now();
+    try { _readyChecked = await enrichStagesFromDepacs(kept, { noCache }); } catch (_e) { /* best-effort */ }
+    for (const it of kept) { if (it.hisReported && it.stage !== 'reported') { it.stage = 'reported'; it.readyToFile = true; } }
+    _tmark.afterReady = Date.now();
+  }
+
   const _timings = {
     bulkMs: (_tmark.afterBulk || _tmark.start) - _tmark.start,
-    modalityMs: 0, readyMs: 0, payMs: 0,
+    modalityMs: 0, readyMs: (_tmark.afterReady && _tmark.beforeReady) ? (_tmark.afterReady - _tmark.beforeReady) : 0, payMs: 0,
     totalMs: Date.now() - _tmark.start,
     sites: wantSites.length, rows: kept.length,
     concurrency: STATS_SITE_CONCURRENCY,
@@ -2174,7 +2235,7 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
     sites: { requested: wantSites, failed },
     _timings, source: 'ris',
     total: kept.length, emergency: kept.filter((i) => i.emergency).length,
-    readyChecked: 0, modalityChecked: 0, paymentChecked: 0,
+    readyChecked: _readyChecked, modalityChecked: 0, paymentChecked: 0,
     items: kept, generatedAt: new Date().toISOString(),
   };
   worklistCache.set(key, { data, ts: Date.now() });
@@ -2188,7 +2249,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // ready/modality passes then hit the same fast, same-keyed board instead of the slow
   // search. (Payment isn't in the panel, so the pay overlay is simply absent on this board.)
   if ((source || WORKLIST_SOURCE) === 'ris') {
-    return await buildWorklistRis({ sites, from, to, noCache });
+    return await buildWorklistRis({ sites, from, to, ready, noCache });
   }
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality, pay });
   // Fast board pass refreshes on the short TTL; the heavy ready/modality pass keeps the
