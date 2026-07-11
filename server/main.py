@@ -8792,17 +8792,33 @@ def _elite_fix_date(d):
 _ELITE_EMERGENCY_CATEGORY_ID = int(os.environ.get("ELITE_EMERGENCY_CATEGORY_ID") or 3)
 _ELITE_EMERGENCY_CATEGORY_NAME = (os.environ.get("ELITE_EMERGENCY_CATEGORY_NAME") or "Others").strip()
 
-def _elite_write_history(study_id, history, set_emergency=True):
+def _elite_write_history(study_id, history, set_emergency=True, preserve_emergency=True):
     """Write `history` into a study's clinical_history via the same endpoint the
     Butterfly UI uses — PUT study/update_study_stats/{id} (multipart form-data).
     ALWAYS files the study under Category "Others" (study_category_id=3) — a routine
     study must be bucketed too, not left uncategorised — and flags Emergency ✓
-    (emergency_status=1) only for the ER/emergency hand-off, clearing it (0) for a
-    routine one. Unlike the old edit_study_info call, this endpoint only touches
-    these fields — it never requires (or risks blanking) the patient demographics."""
+    (emergency_status=1) only for the ER/emergency hand-off. Unlike the old
+    edit_study_info call, this endpoint only touches these fields — it never requires
+    (or risks blanking) the patient demographics.
+
+    SAFETY (preserve_emergency, default on): this endpoint always SENDS emergency_status,
+    so a routine write would CLEAR an emergency flag already on the study (set by MWL, a
+    prior write, or a human). That is dangerous for a background auto-stamp merely filling
+    history. So when this write is routine we first read the study's current flag and NEVER
+    downgrade an existing emergency — we only ever raise it, never lower it."""
+    eff_emergency = bool(set_emergency)
+    if not eff_emergency and preserve_emergency:
+        try:
+            chk = _elite_get(f"/study_management/get_study_info/{study_id}")
+            cb = (chk.get("body") or {}) if isinstance(chk, dict) else {}
+            es = cb.get("emergency_status")
+            if (es is True) or (str(es).strip().lower() in ("true", "1", "yes")):
+                eff_emergency = True   # already emergency → keep it; a routine write must not clear it
+        except Exception:
+            pass   # readback failed — fall through and write the requested (routine) value
     form = {"clinical_history": history or "",
             "study_category_id": _ELITE_EMERGENCY_CATEGORY_ID,   # "Others" for routine AND ER
-            "emergency_status": 1 if set_emergency else 0}       # ER = 1, routine = 0
+            "emergency_status": 1 if eff_emergency else 0}       # ER = 1, routine = 0 (never downgrades)
     res = _elite_put_form(f"/study/update_study_stats/{study_id}", form)
     # _elite_put_form raises on any non-2xx, so reaching here means the PUT was
     # accepted. Only treat it as a failure if the body carries an explicit error
@@ -8813,7 +8829,7 @@ def _elite_write_history(study_id, history, set_emergency=True):
     # Read the study back and confirm the flag actually stuck, so the UI can show a
     # truthful state rather than trusting success=true.
     emerg_ok = None
-    if set_emergency:
+    if eff_emergency:
         try:
             chk = _elite_get(f"/study_management/get_study_info/{study_id}")
             cb = (chk.get("body") or {}) if isinstance(chk, dict) else {}
@@ -8822,7 +8838,7 @@ def _elite_write_history(study_id, history, set_emergency=True):
         except Exception:
             emerg_ok = None  # readback failed — leave unknown rather than claim success
     return {"ok": True, "study_id": study_id,
-            "emergency": bool(set_emergency),
+            "emergency": bool(eff_emergency),
             "emergency_confirmed": emerg_ok,
             "category": _ELITE_EMERGENCY_CATEGORY_NAME}   # always set now (routine + ER)
 
@@ -11951,15 +11967,18 @@ def _radiology_autostamp_sweep():
                                                  "history": text[:160], "site": o.get("site")}))
                     except Exception as e:
                         print(f"[rad-autostamp] history {mrno}/{sid}: {e}")
-            # accession: deterministic key from the MWL feed — only when unambiguous
-            # (single entry for the patient today, or exactly one of this modality).
-            # Same branch guard: never stamp the scoped branch's accession onto a study
-            # that isn't confirmed to be that branch's.
+            # accession: deterministic key from the MWL feed — only on a true modality 1:1.
+            # SAFETY: a single MWL accession must NEVER be stamped onto more than one study
+            # (it would make two DePACS studies share an accession and poison the reverse-
+            # file deterministic key). So we require EXACTLY ONE fresh study of this modality
+            # AND exactly one MWL entry of the same modality before stamping — mirroring the
+            # history gate. The old "len(mwl)==1 → stamp every fresh study" fallback did the
+            # opposite and is removed (fail closed: unmatched accessions wait for a human).
+            # Same branch guard: never stamp the scoped branch's accession onto a study that
+            # isn't confirmed to be that branch's.
             if branch_ok and sid not in _autostamp_acc_done:
                 acc = None
-                if len(mwl) == 1:
-                    acc = mwl[0].get("accession")
-                elif smod:
+                if smod and fresh_mod_count.get(smod, 0) == 1:
                     hits = [r for r in mwl
                             if _AUTOSTAMP_MOD.get(str(r.get("modality") or "").strip().upper()) == smod]
                     if len(hits) == 1:
