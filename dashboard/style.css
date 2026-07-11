@@ -2160,6 +2160,23 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 .ps-nf-solo { font-size:12.5px; line-height:1.45; color:var(--text,#111); white-space:pre-line; word-break:break-word; }
 .ps-note-empty { font-size:12px; color:var(--muted); }
 @media (max-width:520px){ .ps-nf { grid-template-columns:1fr; gap:1px; } .ps-nf-k { font-size:11px; } }
+/* Radiology report — parsed into clean sections instead of one wall of text */
+.ps-rpt { border:1px solid var(--border); border-radius:12px; background:var(--surface,#fff); overflow:hidden; }
+.ps-rpt-head { display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:9px 13px; border-bottom:1px solid var(--border); background:var(--card-alt,#f7f7fa); }
+.ps-rpt-who { font-size:11px; font-weight:700; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ps-rpt-print { flex:none; display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700;
+  color:var(--accent,#6b4eff); background:var(--violet-wash,#f0edff); border:1px solid transparent;
+  border-radius:8px; padding:5px 11px; cursor:pointer; transition:background .13s, border-color .13s; }
+.ps-rpt-print:hover { background:#fff; border-color:var(--accent,#6b4eff); }
+.ps-rpt-print svg { width:15px; height:15px; }
+.ps-rpt-body { padding:13px 14px; display:flex; flex-direction:column; gap:12px; }
+.ps-rpt-sec { break-inside:avoid; }
+.ps-rpt-h { font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--accent2,#6B4EFF); margin:0 0 3px; }
+.ps-rpt-t { font-size:12.5px; line-height:1.55; color:var(--text,#111); white-space:pre-wrap; word-break:break-word; }
+.ps-rpt-sign { margin-top:2px; padding-top:11px; border-top:1px dashed var(--border); font-size:11.5px;
+  line-height:1.5; color:var(--muted); white-space:pre-line; }
+.ps-rpt-plain { font-size:12.5px; line-height:1.55; color:var(--text,#111); white-space:pre-wrap; word-break:break-word; padding:13px 14px; }
 /* All-orders rows (incl. unpaid / not-yet-performed) */
 .ps-ord { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:11px; margin-bottom:8px; background:var(--surface); }
 .ps-ord-badge { flex:none; font-size:10.5px; font-weight:800; padding:3px 9px; border-radius:8px; white-space:nowrap; align-self:center; }

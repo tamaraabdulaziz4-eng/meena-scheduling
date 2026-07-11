@@ -9,6 +9,9 @@ let psState = { q: '', patients: null, loading: false, sel: null, lookup: null, 
 // expand is INSTANT once prefetched in the background. Value is the notes[] array (or
 // null = fetched-but-empty). Reset per patient lookup so it never leaks across patients.
 let psNoteCache = new Map();
+// Loaded radiology reports keyed by their DOM id, so the Print button can rebuild a
+// clean Meena-letterhead printout without re-fetching. { txt, who, when, exam }.
+let psReportStore = {};
 let psPendingQuery = '';   // set by openPatientLookup() so the page auto-searches on open
 
 // Deep-link into this page for a specific file/MRN (e.g. from the Home drill-down).
@@ -121,6 +124,7 @@ async function psOpen(i) {
     // Keep the search-row patient as a fallback when the lookup's own patient block is thin.
     psState.lookup = { ...d, patient: d.patient || p };
     psNoteCache = new Map();   // fresh patient → drop any prefetched notes from the last one
+    psReportStore = {};        // and any stored reports (Print rebuilds from these)
     renderPsDetail();
   } catch (e) {
     if (seq !== psState.reqSeq) return;
@@ -893,10 +897,19 @@ async function psLoadReport(o, elId, btn) {
     } else {
       el.dataset.loaded = '1';
       const who = d.verifiedBy || 'Radiologist';
-      const when = d.reportDate ? ' · ' + escapeHtml(String(d.reportDate).slice(0, 16).replace('T', ' ')) : '';
-      el.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card-alt,#f7f7fa)">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${escapeHtml(String(who))}${when}</div>
-        <div style="white-space:pre-wrap;font-size:12.5px;line-height:1.5">${escapeHtml(txt)}</div>
+      const whenRaw = d.reportDate ? String(d.reportDate).slice(0, 16).replace('T', ' ') : '';
+      // Stash the report so the Print button can rebuild a clean letterhead without refetch.
+      psReportStore[elId] = { txt, who: String(who), when: whenRaw, exam: o };
+      const parsed = psFormatReport(txt);
+      el.innerHTML = `<div class="ps-rpt">
+        <div class="ps-rpt-head">
+          <span class="ps-rpt-who">${escapeHtml(String(who))}${whenRaw ? ` · ${escapeHtml(whenRaw)}` : ''}</span>
+          <button type="button" class="ps-rpt-print" onclick="event.stopPropagation();psPrintReport('${elId}')" title="Print with Meena letterhead">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
+            Print
+          </button>
+        </div>
+        <div class="ps-rpt-body">${psReportSectionsHtml(parsed)}</div>
       </div>`;
       // Backfill a missing indication from the report's own CLINICAL DATA line.
       if (!o.clinicalIndication) {
@@ -927,4 +940,121 @@ function psFillIndication(o, ind) {
   box.style.display = '';
   const v = box.querySelector('.ps-field-v');
   if (v) v.textContent = ind;
+}
+
+// ── Report formatting ──────────────────────────────────────────────────────────
+// Teleradiology reports arrive as ONE unbroken blob — the section headers are glued
+// to the previous sentence (…reporting.COMPARISION: None available.CLINICAL DATA:…).
+// Parse it into its standard sections so it reads like a real report instead of a wall.
+const PS_RPT_HEADERS = ['TECHNIQUE', 'PROCEDURE', 'CONTRAST', 'COMPARISON', 'COMPARISION',
+  'CLINICAL DATA', 'CLINICAL HISTORY', 'CLINICAL INDICATION', 'CLINICAL NOTES', 'INDICATION',
+  'HISTORY', 'FINDINGS', 'IMPRESSION', 'CONCLUSION', 'RECOMMENDATIONS', 'RECOMMENDATION',
+  'LIMITATIONS', 'LIMITATION'];
+function psFormatReport(txt) {
+  let s = String(txt || '').replace(/\r/g, '').trim();
+  if (!s) return { sections: [], footer: '' };
+  // Peel off the radiologist sign-off ("Reported by … Electronic Signature") — it also
+  // arrives glued (…appendicitisReported by Dr.…), so no leading word-boundary.
+  let footer = '';
+  const sig = s.match(/Reported\s+by[\s\S]*$/i);
+  if (sig) { footer = sig[0].trim(); s = s.slice(0, sig.index).trim(); }
+  const kw = PS_RPT_HEADERS.map((h) => h.replace(/ /g, '\\s+')).join('|');
+  const headRe = new RegExp('(' + kw + ')\\s*:', 'gi');
+  const isHead = new RegExp('^(?:' + kw + ')$', 'i');
+  // Mark each header, split, then peel "HEADER: body" off each chunk.
+  const parts = s.replace(headRe, (m) => '\u0001' + m).split('\u0001').map((x) => x.trim()).filter(Boolean);
+  const sections = [];
+  for (const part of parts) {
+    const m = part.match(/^([A-Za-z][A-Za-z /]*?)\s*:\s*([\s\S]*)$/);
+    if (m && isHead.test(m[1].replace(/\s+/g, ' ').trim())) {
+      let head = m[1].replace(/\s+/g, ' ').trim().toUpperCase();
+      if (head === 'COMPARISION') head = 'COMPARISON';   // fix the vendor's common misspelling
+      const body = m[2].trim();
+      if (body && !/^(none|n\/?a|none\s+available|not\s+(?:available|provided))\.?$/i.test(body)) {
+        sections.push({ head, body });
+      } else if (body) {
+        sections.push({ head, body });   // keep "None available" — it's meaningful in a report
+      }
+    } else {
+      sections.push({ head: null, body: part });   // preamble before the first header
+    }
+  }
+  return { sections, footer };
+}
+// Inline HTML for the parsed report — a labelled block per section.
+function psReportSectionsHtml(parsed) {
+  if (!parsed || !parsed.sections.length) {
+    return `<div class="ps-rpt-plain">${escapeHtml(String((parsed && parsed.footer) || '').trim() || '—')}</div>`;
+  }
+  const body = parsed.sections.map((sec) => sec.head
+    ? `<div class="ps-rpt-sec"><div class="ps-rpt-h">${escapeHtml(sec.head)}</div><div class="ps-rpt-t">${escapeHtml(sec.body)}</div></div>`
+    : `<div class="ps-rpt-sec"><div class="ps-rpt-t">${escapeHtml(sec.body)}</div></div>`).join('');
+  const foot = parsed.footer
+    ? `<div class="ps-rpt-sign">${escapeHtml(psTidySignature(parsed.footer))}</div>` : '';
+  return body + foot;
+}
+// Lightly de-glue the sign-off so names/roles aren't mashed together.
+function psTidySignature(f) {
+  return String(f || '')
+    .replace(/\s+/g, ' ')
+    .replace(/(Reported\s+by)/i, '$1 ')
+    .replace(/([a-z])(Radiologist|Consultant|Specialist)/g, '$1\n$2')
+    .replace(/(Radiologist|Consultant|Specialist)([A-Z])/g, '$1\n$2')
+    .replace(/\s*(Call\s+Center\s*:)/i, '\n$1 ')
+    .replace(/\s*(Electronic\s+Signature)/i, '\n$1')
+    .replace(/ *\n */g, '\n').trim();
+}
+
+// Print THIS report on a clean Meena letterhead (logo + patient/exam header + the
+// formatted sections). Opens a print-ready window — same-origin so /meena_logo.png loads.
+function psPrintReport(elId) {
+  const rec = psReportStore[elId];
+  if (!rec) { toast('Report not loaded yet.'); return; }
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  const o = rec.exam || {};
+  const parsed = psFormatReport(rec.txt);
+  const esc = escapeHtml;
+  const field = (l, v) => (v == null || String(v).trim() === '') ? ''
+    : `<div class="f"><span class="fl">${esc(l)}</span><span class="fv">${esc(String(v))}</span></div>`;
+  const secs = parsed.sections.map((s) => s.head
+    ? `<section><h3>${esc(s.head)}</h3><p>${esc(s.body)}</p></section>`
+    : `<section><p>${esc(s.body)}</p></section>`).join('');
+  const sign = parsed.footer ? `<div class="sign">${esc(psTidySignature(parsed.footer)).replace(/\n/g, '<br>')}</div>` : '';
+  const now = new Date();
+  const printedOn = now.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Radiology Report — ${esc(p.name || '')}</title>
+  <style>
+    *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a1a2e;margin:0;padding:32px 34px;font-size:13px;line-height:1.55}
+    .lh{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #6B4EFF;padding-bottom:14px;margin-bottom:18px}
+    .lh img{height:46px} .lh .rt{text-align:right;color:#6B4EFF;font-weight:800;font-size:15px;letter-spacing:.02em}
+    .lh .rt small{display:block;color:#8a8aa0;font-weight:600;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
+    .pt{display:grid;grid-template-columns:1fr 1fr;gap:4px 26px;background:#f7f6ff;border:1px solid #e7e3ff;border-radius:10px;padding:13px 16px;margin-bottom:18px}
+    .f{display:flex;gap:8px;font-size:12px;padding:1px 0} .fl{color:#8a8aa0;min-width:96px;font-weight:600} .fv{color:#1a1a2e;font-weight:600}
+    .exam{font-size:16px;font-weight:800;margin:0 0 3px} .examsub{color:#8a8aa0;font-size:12px;margin-bottom:16px}
+    section{margin:0 0 13px;break-inside:avoid} h3{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:#6B4EFF;margin:0 0 4px;font-weight:800}
+    section p{margin:0;white-space:pre-wrap} .sign{margin-top:20px;padding-top:12px;border-top:1px solid #e0e0ea;color:#444;font-size:12px;white-space:pre-line}
+    .ft{margin-top:26px;padding-top:10px;border-top:1px solid #eee;color:#9a9ab0;font-size:10px;display:flex;justify-content:space-between}
+    @media print{body{padding:0}@page{margin:16mm 14mm}}
+  </style></head><body>
+    <div class="lh"><img src="${location.origin}/meena_logo_transparent.png" alt="Meena" onerror="this.src='${location.origin}/meena_logo.png'"><div class="rt">Radiology Report<small>Meena RIS</small></div></div>
+    <div class="exam">${esc(o.service || 'Radiology exam')}</div>
+    <div class="examsub">${esc([o.modality, o.branch].filter(Boolean).join(' · '))}</div>
+    <div class="pt">
+      ${field('Patient', p.name)}
+      ${field('File / MRN', p.mrno)}
+      ${field('Gender', p.gender)}
+      ${field('Age', p.age)}
+      ${field('Ordered', o.orderedDate)}
+      ${field('Accession', o.accessionNumber)}
+      ${field('Ordering Dr', o.provider)}
+      ${field('Reported', rec.when)}
+    </div>
+    ${secs || `<p>${esc(rec.txt)}</p>`}
+    ${sign || `<div class="sign">${esc(rec.who)}</div>`}
+    <div class="ft"><span>Printed ${esc(printedOn)}</span><span>Meena Health · Radiology</span></div>
+    <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('Allow pop-ups to print.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
 }
