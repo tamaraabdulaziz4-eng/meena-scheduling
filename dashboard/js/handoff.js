@@ -188,7 +188,10 @@ async function handoffLookup() {
   if (!file) return;
   handoffStopPolling();
   handoff = { ...handoff, file, lookup: null, order: 0, history: '', studies: null, matched: null,
-              studyId: '', candidates: null, baseline: null, msg: '', msgEdited: false };
+              studyId: '', candidates: null, baseline: null, baselineFailed: false, msg: '', msgEdited: false,
+              // Reset per-patient write/file state too — a spread kept the PREVIOUS patient's
+              // written/filed/writing sets, which could block patient B's first write.
+              written: new Set(), filed: {}, writing: false, pollGen: (handoff.pollGen || 0) + 1 };
   const pane = document.getElementById('ho-patient');
   pane.innerHTML = LOADING_HTML;
   try {
@@ -415,7 +418,14 @@ async function handoffStartPolling() {
     try {
       const r = await API.get(`/reports/search?file_no=${encodeURIComponent(handoff.file)}`);
       handoff.baseline = new Set((r.studies || []).map(s => String(s.study_id)));
-    } catch (e) { handoff.baseline = new Set(); }
+      handoff.baselineFailed = false;
+    } catch (e) {
+      // Baseline UNKNOWN (not empty). An empty Set would make every pre-existing study
+      // look newly-arrived, so a stale prior study could auto-write. Mark the failure so
+      // the tick still lets the user pick/confirm, but never AUTO-writes (fail closed).
+      handoff.baseline = new Set();
+      handoff.baselineFailed = true;
+    }
   }
   if (gen === handoff.pollGen && handoff.polling) handoffPollTick(gen);
 }
@@ -463,7 +473,7 @@ async function handoffPollTick(gen) {
       // sitting a same-modality wrong-body study (XR chest vs XR knee) can land first;
       // auto-writing it would bind this order's indication + Emergency flag to the
       // wrong exam. On any doubt we leave it selected (with a warning) for manual write.
-      if ((handoff.history || '').trim() && hoStudyMatchesOrder(pool[0], handoffOrder())) handoffAutoWrite();
+      if ((handoff.history || '').trim() && !handoff.baselineFailed && hoStudyMatchesOrder(pool[0], handoffOrder())) handoffAutoWrite();
       return; }
     if (pool.length > 1) { handoff.candidates = pool; handoffStopPolling(); renderHandoffDE(); return; }
   } catch (e) { /* keep polling through transient errors */ }
