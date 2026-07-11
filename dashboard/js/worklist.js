@@ -191,7 +191,7 @@ async function renderWorklistPage() {
   const jumpMrn = window._wlPendingFilter; window._wlPendingFilter = null;
   const branch = (typeof currentUser !== 'undefined' && currentUser &&
     (currentUser.branchName || currentUser.branch || currentUser.siteName)) || '';
-  const dateStr = new Date().toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+  const dateStr = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   const c = document.getElementById('content');
   // ── Slim top bar (approved mockup): brand · live pill · search · Today · Date ·
   //    branch · refresh. The controls live in the STATIC shell (not #wl-body) so a
@@ -909,7 +909,7 @@ function wlRenderFilters(items) {
   if (docsel) docsel.value = wlState.fDoc;
 }
 
-const wlSAR = (n) => Math.round(Number(n) || 0).toLocaleString() + ' SAR';
+const wlSAR = (n) => Math.round(Number(n) || 0).toLocaleString('en-US') + ' SAR';
 
 // Payment cell for the expand grid: who pays, what's billed, and any patient balance due.
 function wlPayHtml(it) {
@@ -1024,7 +1024,7 @@ function wlExpandHtml(it, st) {
       <div class="xf"><div class="k">Exam</div><div class="v">${it.modality ? escapeHtml(String(it.modality)) + ' · ' : ''}${it.exam ? escapeHtml(it.exam) : '<span style="color:var(--muted)">—</span>'}</div></div>
       <div class="xf"><div class="k">${acc ? 'Accession' : 'Order no.'}</div><div class="v tnum">${acc ? escapeHtml(String(acc)) : (it.billNo ? escapeHtml(String(it.billNo)) : '—')}</div></div>
       <div class="xf"><div class="k">Referring clinic</div><div class="v">${dept ? escapeHtml(dept) : '<span style="color:var(--muted)">—</span>'}</div></div>
-      <div class="xf"><div class="k">Ordering doctor</div><div class="v">${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : '—'}</div></div>
+      <div class="xf"><div class="k">Ordering doctor</div><div class="v">${it.doctorName ? 'Dr ' + escapeHtml(it.doctorName) : '—'}${it.doctorPhone ? ` · <a href="tel:${escapeHtml(String(it.doctorPhone).replace(/[^0-9+]/g, ''))}" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none;font-variant-numeric:tabular-nums" dir="ltr">${escapeHtml(String(it.doctorPhone))}</a>` : ''}</div></div>
       <div class="xf"><div class="k">Ordered</div><div class="v tnum">${it.orderedDate ? escapeHtml(wlTrackFmt(it.orderedDate)) : (age ? age + ' ago' : '—')}</div></div>
       <div class="xf"><div class="k">Technologist</div><div class="v">${it.assignedTechName ? escapeHtml(String(it.assignedTechName)) : '<span style="color:var(--muted)">Unassigned</span>'}</div></div>
       <div class="xf"><div class="k">Priority</div><div class="v">${it.emergency ? '<span style="color:var(--danger-ink);font-weight:800">STAT / Emergency</span>' : 'Routine'}</div></div>
@@ -1337,12 +1337,32 @@ function wlFlagCritical(mrno, name, exam, acc, gpb, site, doctor) {
   crFlagForm({ mrno, patientName: name, exam, accession: acc, gpb: gpb, site: site, notifyTo: doctor });
 }
 
-function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
+// Arab (local) patients see their name in ARABIC on the consent; foreigners in English.
+// Decide from the registered nationality + whether an Arabic name exists.
+const WL_ARAB_NAT = /saudi|egypt|jordan|syria|yemen|sudan|emirat|kuwait|qatar|bahrain|oman|iraq|leban|palestin|libya|tunis|algeria|morocc|maurit|somal|djibouti|comoros|سعود|مصر|أردن|سوري|يمن/;
+function wlPickConsentName(patient, fallbackEn) {
+  const en = ((patient && patient.name) || fallbackEn || '').trim();
+  const ar = ((patient && patient.nameArabic) || '').trim();
+  const nat = ((patient && patient.nationality) || '').toLowerCase();
+  const arScript = /[؀-ۿ]/.test(ar);
+  // Arab if the Arabic name is real script AND nationality is Arab (or unknown = local default).
+  const isArab = arScript && (!nat || WL_ARAB_NAT.test(nat));
+  return { display: (isArab && ar) ? ar : (en || ar), en: en || ar };
+}
+async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
   // Keys must match the /consent/link backend: physician (not referring_doctor),
   // plus bill_no/site so the signed PDF auto-files against the right radiology order.
-  const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: name, procedure: exam,
+  // Fetch the patient's Arabic name + nationality so an Arab patient sees her name in
+  // Arabic (name_en is kept for the Siratech filing name-match). Best-effort.
+  let display = name, en = name;
+  try {
+    const d = await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`);
+    const picked = wlPickConsentName((d && d.patient) || {}, name);
+    display = picked.display; en = picked.en;
+  } catch (e) { /* keep the English board name */ }
+  const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: display, name_en: en, procedure: exam,
                     physician: doctor || '', branch: branch || '',
                     bill_no: bill || '', site: (Number(site) || null) };
   if (typeof openConsentQR === 'function') { openConsentQR(prefill, () => wlLoad(true)); return; }
@@ -1490,7 +1510,9 @@ function wlTrackFmt(s) {
   const t = wlParseTs(s);
   if (!t) return String(s).slice(0, 16).replace('T', ' ');
   const d = new Date(t);
-  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  // Force English formatting (en-GB) — the default device locale rendered the month/AM-PM
+  // and digits in Arabic ("يوليو، 06:35 م") on an Arabic phone. The board stays English.
+  return d.toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 }
 function wlParseTs(s) {
   if (!s) return 0;

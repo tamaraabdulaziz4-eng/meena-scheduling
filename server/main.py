@@ -504,7 +504,11 @@ def init_schema():
             for col, typ in (("token", "TEXT"), ("status", "TEXT NOT NULL DEFAULT 'signed'"),
                              ("dob", "TEXT"), ("branch", "TEXT"), ("weight", "TEXT"),
                              ("height", "TEXT"), ("hcg", "TEXT"), ("signed_at", "TIMESTAMPTZ"),
-                             ("expires_at", "TIMESTAMPTZ")):
+                             ("expires_at", "TIMESTAMPTZ"),
+                             # patient_name holds the DISPLAY name (Arabic for Arab patients);
+                             # patient_name_en keeps the English name for the Siratech filing
+                             # name-match, which compares against the HIS row's (English) name.
+                             ("patient_name_en", "TEXT")):
                 cur.execute(f"ALTER TABLE scheduling.consents ADD COLUMN IF NOT EXISTS {col} {typ};")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_consents_token ON scheduling.consents(token) WHERE token IS NOT NULL;")
             # QR document upload: a one-time token the tech/patient opens on a phone to
@@ -9262,12 +9266,15 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
         raise HTTPException(400, "The signature looks blank — please capture the patient's actual signature")
     now = _ksa_now()
     tech = _consent_signer(user)
+    # The PDF overlay font (Helvetica) can't render Arabic, so the printed name uses the
+    # ENGLISH name; the Arabic display name is kept on screen + stored as patient_name.
+    pdf_name = (b.get("name_en") or "").strip() or name
     data = {
-        "name": name, "mrn": (b.get("mrn") or file_no).strip(),
+        "name": pdf_name, "mrn": (b.get("mrn") or file_no).strip(),
         "dob": (b.get("dob") or "").strip(), "procedure": (b.get("procedure") or "").strip(),
         "weight": (b.get("weight") or "").strip(), "height": (b.get("height") or "").strip(),
         "hcg": (b.get("hcg") or "").strip(), "patient_type": patient_type,
-        "reason": reason, "lmp_date": lmp, "undersigned": name,
+        "reason": reason, "lmp_date": lmp, "undersigned": pdf_name,
         "physician": (b.get("physician") or "").strip(), "technologist": tech,
         "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
     }
@@ -9276,11 +9283,12 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
     except Exception as e:
         raise HTTPException(500, f"Could not generate the consent PDF: {e}")
     row = q("""INSERT INTO scheduling.consents
-                 (kind, file_no, mrn, patient_name, procedure, patient_type, reason, lmp_date,
+                 (kind, file_no, mrn, patient_name, patient_name_en, procedure, patient_type, reason, lmp_date,
                   physician, technologist, bill_no, site, pdf, created_by, created_by_name)
-               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING id, created_at""",
-            (file_no, data["mrn"], name, data["procedure"], patient_type or None, reason or None,
+            (file_no, data["mrn"], name, ((b.get("name_en") or "").strip() or name),
+             data["procedure"], patient_type or None, reason or None,
              lmp or None, data["physician"] or None, tech,
              (b.get("bill_no") or None), _coerce_site(b.get("site")),
              psycopg2.Binary(pdf), user["id"], tech), one=True)
@@ -9311,7 +9319,7 @@ def _file_consent_to_siratech(consent_id):
     connector's /his/consent/file (same attachment mechanism as the report, consent-only,
     never authorized). Returns True only on a confirmed write. Marks filed_siratech=true
     so the report path won't re-attach it. Safe to call repeatedly (idempotent by flag)."""
-    rec = q("""SELECT id, file_no, mrn, patient_name, bill_no, site, pdf, filed_siratech
+    rec = q("""SELECT id, file_no, mrn, patient_name, patient_name_en, bill_no, site, pdf, filed_siratech
                FROM scheduling.consents WHERE id=%s""", (consent_id,), one=True)
     if not rec or not rec.get("pdf"):
         return False
@@ -9333,7 +9341,8 @@ def _file_consent_to_siratech(consent_id):
         "site": (rec.get("site") if isinstance(rec.get("site"), int) else None),
         "consentPdf": _b64.b64encode(bytes(rec["pdf"])).decode("ascii"),
         "consentName": _consent_file_name(rec),
-        "expectName": (rec.get("patient_name") or "").strip() or None,
+        # Match against Siratech's (English) row name; the display name may be Arabic.
+        "expectName": (rec.get("patient_name_en") or rec.get("patient_name") or "").strip() or None,
         "confirm": True,
     }
     wrote = False
@@ -9429,12 +9438,13 @@ async def create_consent_link(request: Request, user=Depends(require_radiology))
         patient_type = ""
     token = secrets.token_urlsafe(24)
     tech = _consent_signer(user)
+    _lnk_name = (b.get("name") or "").strip()
     row = q("""INSERT INTO scheduling.consents
-                 (kind, file_no, mrn, patient_name, procedure, patient_type, physician, technologist,
+                 (kind, file_no, mrn, patient_name, patient_name_en, procedure, patient_type, physician, technologist,
                   bill_no, site, dob, branch, weight, height, token, status, created_by, created_by_name, expires_at)
-               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '12 hours')
+               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '12 hours')
                RETURNING id""",
-            (file_no, (b.get("mrn") or file_no).strip(), (b.get("name") or "").strip(),
+            (file_no, (b.get("mrn") or file_no).strip(), _lnk_name, ((b.get("name_en") or "").strip() or _lnk_name),
              (b.get("procedure") or "").strip(), patient_type or None, (b.get("physician") or "").strip() or None,
              tech, (b.get("bill_no") or None), _coerce_site(b.get("site")),
              (b.get("dob") or "").strip() or None, (b.get("branch") or "").strip() or None,
@@ -9788,11 +9798,14 @@ async def public_consent_sign(token: str, request: Request):
     weight = (b.get("weight") or r.get("weight") or "").strip()
     height = (b.get("height") or r.get("height") or "").strip()
     hcg = (b.get("hcg") or "").strip()
+    # PDF font (Helvetica) can't render Arabic → print the English name; the Arabic display
+    # name stays on the record (patient_name) for the on-screen views.
+    _pdf_name = (r.get("patient_name_en") or "").strip() or (r.get("patient_name") or "")
     data = {
-        "name": r.get("patient_name") or "", "mrn": r.get("mrn") or r.get("file_no") or "",
+        "name": _pdf_name, "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
         "weight": weight, "height": height, "hcg": hcg, "patient_type": r.get("patient_type") or "",
-        "reason": reason, "lmp_date": lmp, "undersigned": r.get("patient_name") or "",
+        "reason": reason, "lmp_date": lmp, "undersigned": _pdf_name,
         "physician": r.get("physician") or "", "technologist": r.get("technologist") or "",
         "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
     }
