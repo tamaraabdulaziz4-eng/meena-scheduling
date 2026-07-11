@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'report-pdf-classify-2026-07-11a';
+const CONNECTOR_BUILD = 'stats-warm-superset-2026-07-11b';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3435,6 +3435,26 @@ function statsCacheGet(key) {
   if (e) statsCache.delete(key);
   return null;
 }
+// A SUPERSET hit: a cached result for the SAME range+sites that was computed with AT
+// LEAST the requested enrichment (modality/finance/list) already contains everything a
+// lighter request needs — its result object carries d.modality / d.financial regardless.
+// This lets the dashboard's split calls (modality-only, financial-only, base) ride the
+// pre-warmed full (modality+finance) result instead of recomputing cold. Without it, the
+// split calls never matched the warm key and paid the full ~2,400-bill read every time.
+function statsCacheGetSuperset(req) {
+  const now = Date.now();
+  for (const [k, e] of statsCache) {
+    if (now - e.ts >= STATS_CACHE_TTL) continue;
+    let c; try { c = JSON.parse(k); } catch (_e) { continue; }
+    if (c.from !== req.from || c.to !== req.to) continue;
+    if (JSON.stringify(c.sites) !== JSON.stringify(req.sites)) continue;
+    if (req.withModality && !c.withModality) continue;   // cached must have ≥ what we need
+    if (req.withFinance && !c.withFinance) continue;
+    if (req.withList && !c.withList) continue;
+    return e.data;
+  }
+  return null;
+}
 function statsCacheSet(key, data) {
   statsCache.set(key, { data, ts: Date.now() });
   if (statsCache.size > 60) statsCache.delete(statsCache.keys().next().value);  // simple bound
@@ -3584,8 +3604,16 @@ const STATS_LIST_CAP = Number(process.env.STATS_LIST_CAP || 1500);
 // Bounds latency on a wide date range; today's per-branch volume is well under this.
 const STATS_LIST_ENRICH_CAP = Number(process.env.STATS_LIST_ENRICH_CAP || 120);
 async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, withList = false, topDoctors = 15, noCache = false }) {
-  const cacheKey = JSON.stringify({ from, to, sites: (sites || []).slice().sort((a, b) => a - b), withModality, withFinance, withList });
-  if (!noCache) { const cached = statsCacheGet(cacheKey); if (cached) return cached; }
+  const sortedSites = (sites || []).slice().sort((a, b) => a - b);
+  const cacheKey = JSON.stringify({ from, to, sites: sortedSites, withModality, withFinance, withList });
+  if (!noCache) {
+    const cached = statsCacheGet(cacheKey);
+    if (cached) return cached;
+    // Ride a fuller pre-warmed result (e.g. the warmed modality+finance) for a lighter
+    // split request, so the dashboard's separate modality/financial calls stay instant.
+    const sup = statsCacheGetSuperset({ from, to, sites: sortedSites, withModality, withFinance, withList });
+    if (sup) return sup;
+  }
   await getToken();
   const empId = currentEmpId() || '0';
   const today = new Date();
@@ -3890,20 +3918,27 @@ function _ksaToday() {
       year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   } catch (e) { return new Date().toISOString().slice(0, 10); }
 }
-function _defaultRange() {                       // mirrors dashboard rsPresetRange('30d')
+function _presetRange(days) {                    // mirrors dashboard rsPresetRange('30d'/'7d')
   const to = _ksaToday();
   const [y, mo, da] = to.split('-').map(Number);
   const base = new Date(Date.UTC(y, mo - 1, da, 12));
-  const from = new Date(base.getTime() - 29 * 864e5).toISOString().slice(0, 10);
+  const from = new Date(base.getTime() - (days - 1) * 864e5).toISOString().slice(0, 10);
   return { from, to };
 }
+function _defaultRange() { return _presetRange(30); }
 async function warmDefaultStats() {
-  try {
-    const { from, to } = _defaultRange();
-    const t0 = Date.now();
-    const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
-    console.log(`[warm] default stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  } catch (e) { console.error('[warm] default stats failed:', e && e.message); }
+  // Warm BOTH presets the managers actually pick (30d and 7d), all-branches, with
+  // modality + finance. The superset cache then serves the dashboard's split
+  // modality-only / financial-only / base calls straight from these — so opening stats
+  // (or switching to a warmed preset) is instant instead of a cold ~2,400-bill read.
+  for (const days of [30, 7]) {
+    try {
+      const { from, to } = _presetRange(days);
+      const t0 = Date.now();
+      const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
+      console.log(`[warm] ${days}d stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+    } catch (e) { console.error(`[warm] ${days}d stats failed:`, e && e.message); }
+  }
 }
 
 app.listen(PORT, HOST, () => {
