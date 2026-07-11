@@ -492,7 +492,7 @@ function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, fi
 // So we read that section and classify, biasing to ABNORMAL when unclear (labelling
 // a normal study abnormal only triggers a harmless review; the reverse could hide
 // real pathology). The caller can always override the result explicitly.
-const _NORMAL_IMPRESSION = /(normal study|unremarkable (study|examination|abdomen|chest|appearance|scan)|within normal limits|no (significant |radiographic |acute )?abnormalit|no abnormal finding|negative (study|examination)|study is normal|essentially normal|no evidence of (acute |significant )?(disease|abnormalit|patholog)|normal (chest|abdominal|radiographic|us|ultrasound|ct|mri) (study|examination|appearance|scan))/;
+const _NORMAL_IMPRESSION = /(normal study|unremarkable (study|examination|abdomen|chest|appearance|scan)|within normal limits|no (significant |radiographic |acute )?abnormalit|no abnormal finding|negative (study|examination)|study is normal|essentially normal|no evidence of (acute |significant )?(disease|abnormalit|patholog)|normal\b[a-z /]{0,40}?\b(exam|examination|study|ultrasound|sonograph|radiograph|scan|appearance|series))/;
 const _ABNORMAL_TERMS = /(calcul|stone|mass\b|lesion|fracture|scolio|spondyl|osteophy|retrolisthes|hernia|effusion|consolidat|nodul|cyst|dilat|stenos|opacit|collection|hydronephros|o?edema|h(a)?emorrhage|infiltrat|deformity|degener|tear\b|rupture|thromb|aneurysm|metasta|tumou?r|enlarged|thicken|narrow|gravel|distension|inflamm|abscess|fibroid|polyp|obstruct|occlus|ischem|infarct|fatty (liver|infiltration)|steatos)/;
 
 function classifyRange(reportText) {
@@ -508,10 +508,21 @@ function classifyRange(reportText) {
   const impPos = imp.replace(/\b(no|without|free of|negative for|absence of|rule out|r\/o|resolved|unremarkable)\b[^.,;:]*/g, ' ');
   const hasFinding = _ABNORMAL_TERMS.test(impPos);
   const saysNormal = _NORMAL_IMPRESSION.test(imp);
+  // A verdict that RULES OUT pathology and leaves nothing positive behind is NORMAL,
+  // even when the exact phrase isn't pre-listed — e.g. "No evidence of DVT", "Negative
+  // for pulmonary embolism", "No focal lesion". Requires: no positive finding survived
+  // the negation strip (hasFinding false) AND a ruling-out cue is present. EXCLUDES
+  // "no CHANGE / interval / stable / known / residual", which mean a known finding
+  // PERSISTS (that stays abnormal), and excludes an explicit "new ..." finding.
+  const rulesOutOnly = !hasFinding
+    && /\bno evidence\b|\bnegative for\b|\bno\b|\bwithout\b|\bfree of\b|\babsence of\b/.test(imp)
+    && !/\b(change|interval|stable|unchanged|persist|residual|known|redemonstrat|progress|recurren)/.test(imp)
+    && !/\bnew\b[^.,;:]*(mass|nodule|lesion|opacit|effusion|collection|thromb)/.test(imp);
   let range = 'abnormal', reason;
   if (!imp) { reason = 'empty report — defaulting to abnormal (needs review)'; }
   else if (hasFinding) { reason = 'impression names positive finding(s)'; }
   else if (saysNormal) { range = 'normal'; reason = 'impression states a normal / unremarkable study'; }
+  else if (rulesOutOnly) { range = 'normal'; reason = 'impression rules out pathology (negative study)'; }
   else { reason = 'no explicit normal statement in impression — defaulting to abnormal (safer)'; }
   return { range, impression: impression.slice(0, 300), reason, hadImpressionHeader: !!m };
 }
