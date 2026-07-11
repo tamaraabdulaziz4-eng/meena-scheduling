@@ -8142,7 +8142,7 @@ _MIRROR_ENABLED = (os.environ.get("WORKLIST_MIRROR", "1") == "1")
 _MIRROR_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_INTERVAL") or 30.0)        # base seconds between refreshes
 _MIRROR_MAX_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_MAX_INTERVAL") or 240.0)  # backoff ceiling when the box is slow
 _MIRROR_SLOW_SECS = float(os.environ.get("WORKLIST_MIRROR_SLOW_SECS") or 6.0)       # a tick slower than this = box strained → back off
-_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 120.0)         # older than this → serve live instead
+_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 300.0)         # older than this → serve live instead (must exceed _MIRROR_MAX_INTERVAL so a backed-off-but-healthy mirror still serves)
 
 def _wl_default_from():
     ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
@@ -8282,9 +8282,12 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # (fast pass, and the client isn't forcing fresh) serve it from the DB in a few ms
     # instead of proxying to HIS. Team leads are served the same board filtered to their
     # site. Any miss/staleness returns None → we fall straight through to the live path.
-    # The mirror holds the DEFAULT (search) board — so bypass it whenever the client asks for
-    # a specific source (e.g. the RIS preview), or it would serve the wrong board.
-    if not heavy and qs.get("nocache") != "1" and not qs.get("src"):
+    # The mirror holds the DEFAULT board (now the fast RIS-panel board — the connector's
+    # WORKLIST_SOURCE default). A client that leaves src unset, or explicitly asks for the
+    # RIS board, gets the warm mirror; only a non-default source (e.g. src=search, the legacy
+    # slow board escape hatch) bypasses it so it isn't served the wrong board.
+    _src = (qs.get("src") or "").lower()
+    if not heavy and qs.get("nocache") != "1" and _src in ("", "ris"):
         _mkey = _wl_mirror_key(qs.get("from", ""), qs.get("to", ""))
         _mret = _serve_worklist_from_mirror(request, _mkey, scope)
         if _mret is not None:
