@@ -116,7 +116,7 @@ async function openPermsModal(id) {
       <button class="ghost" onclick="permsResetToRole()">Reset to role default</button>
       <span style="flex:1"></span>
       <button class="ghost" onclick="document.getElementById('perms-modal-overlay').remove()">Cancel</button>
-      <button class="open pri" onclick="savePerms(${u.id})">Save</button>
+      <button class="btn" onclick="savePerms(${u.id})">Save</button>
     </div>
   </div>`;
   document.body.appendChild(wrap);
