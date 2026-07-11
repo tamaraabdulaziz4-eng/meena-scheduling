@@ -214,6 +214,8 @@ async function renderHomeApprovals() {
 let _hmRadTimer = null;
 let _hmRadData = null;      // last stats payload (incl. the drill-down request rows)
 let _hmRadDrill = '';       // which tile is currently expanded ('' = none)
+let _hmRadSite = null;      // resolved scope for the card, so a drill can refetch on demand
+let _hmRadScope = '';
 function _hmKsaToday() {
   try {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh',
@@ -261,8 +263,12 @@ async function renderHomeRadstats() {
 async function _hmRadFetch(site, scopeName) {
   const box = document.getElementById('hm-radstats');
   if (!box) return;
+  _hmRadSite = site; _hmRadScope = scopeName;   // remembered so a drill-open can refetch the rows
   const today = _hmKsaToday();
-  const q = `from=${today}&to=${today}${site ? `&sites=${site}` : ''}&list=1`;
+  // Only pull the (heavier) per-patient drill rows when a tile is actually expanded; the three
+  // headline tiles need aggregates only, so the default poll stays light and paints faster.
+  const wantList = !!_hmRadDrill;
+  const q = `from=${today}&to=${today}${site ? `&sites=${site}` : ''}${wantList ? '&list=1' : ''}`;
   let d;
   try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { return; }   // keep last-good on a blip
   if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; return; }
@@ -328,6 +334,14 @@ function hmRadDrillToggle(filter) {
   _hmRadDrill = (_hmRadDrill === filter) ? '' : filter;
   // Re-highlight the tiles + (re)render the list without a full refetch.
   document.querySelectorAll('#hm-radstats .kpi').forEach(el => el.classList.remove('active'));
+  // Tiles now load light (no drill rows). The first time a tile is opened, pull the rows
+  // once; show an inline spinner meanwhile so the panel isn't blank.
+  if (_hmRadDrill && !(_hmRadData && Array.isArray(_hmRadData.requests))) {
+    const panel = document.getElementById('hm-rad-drill');
+    if (panel) panel.innerHTML = `<div class="hm-rad-drillbox" style="padding:12px;color:var(--muted);font-size:12.5px"><span class="mini-spin"></span> Loading the list…</div>`;
+    _hmRadFetch(_hmRadSite, _hmRadScope);
+    return;
+  }
   hmRadDrillRender();
 }
 function hmRadDrillRender() {

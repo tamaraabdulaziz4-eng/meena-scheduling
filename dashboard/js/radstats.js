@@ -372,25 +372,44 @@ function rsScopeKey() {
   return `rs:stats:${radstats.preset || 'custom'}|${radstats.from}|${radstats.to}|${branches}`;
 }
 function rsPersist() {
-  try {
-    sessionStorage.setItem(rsScopeKey(), JSON.stringify({
-      t: Date.now(), data: radstats.data, modData: radstats.modData, finData: radstats.finData,
-    }));
-  } catch (e) { /* quota / private mode — ignore */ }
+  const payload = JSON.stringify({
+    t: Date.now(), data: radstats.data, modData: radstats.modData, finData: radstats.finData,
+  });
+  const key = rsScopeKey();
+  // sessionStorage: freshest, per-tab snapshot for instant paint on soft nav / reload.
+  try { sessionStorage.setItem(key, payload); } catch (e) { /* quota / private mode — ignore */ }
+  // localStorage: survives closing the tab/browser, so a leader who opens the dashboard
+  // the next morning gets an INSTANT first paint of the last snapshot (then it refreshes
+  // underneath). The base stats payload is aggregate-only (counts by branch / modality /
+  // department / doctor + daily trend + demographics) — no per-patient drill-down rows —
+  // so nothing patient-identifying lands in the workstation's disk store.
+  try { localStorage.setItem(key, payload); } catch (e) { /* quota / private mode — ignore */ }
 }
 function rsRestore() {
   if (radstats.data) return false;             // already have live data in hand
-  try {
-    const raw = sessionStorage.getItem(rsScopeKey());
-    if (!raw) return false;
-    const o = JSON.parse(raw);
-    // Only trust a recent snapshot (10 min) so we never flash badly-stale numbers.
-    if (!o || !o.data || Date.now() - (o.t || 0) > 600000) return false;
+  const key = rsScopeKey();
+  const paint = (o) => {
+    if (!o || !o.data) return false;
     radstats.data = o.data;
     if (o.modData) radstats.modData = o.modData;
     if (o.finData) radstats.finData = o.finData;
     return true;
-  } catch (e) { return false; }
+  };
+  // 1) Prefer the per-tab sessionStorage snapshot when it's fresh (≤10 min) — treated as
+  //    live enough to skip even the "refreshing" feel.
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (raw) { const o = JSON.parse(raw); if (o && o.data && Date.now() - (o.t || 0) <= 600000) return paint(o); }
+  } catch (e) { /* ignore */ }
+  // 2) Fall back to the cross-session localStorage snapshot for an instant first paint of
+  //    the day (≤12 h). It may be stale, but rsLoad() always refreshes right after, and the
+  //    footer's "updated Xs ago" + the rs-refreshing state make the live update visible —
+  //    far better than staring at a 2s skeleton.
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) { const o = JSON.parse(raw); if (o && o.data && Date.now() - (o.t || 0) <= 43200000) return paint(o); }
+  } catch (e) { /* ignore */ }
+  return false;
 }
 
 async function rsLoad(silent, force) {
@@ -579,7 +598,7 @@ function rsDonut(segs, opts) {
   const cVal = opts && opts.centerVal != null ? opts.centerVal : total;
   return `<div class="rs-donut-wrap">
     <svg viewBox="0 0 140 140" class="rs-donut">${arcs}
-      <text x="70" y="67" text-anchor="middle" class="rs-donut-n">${rsNum(cVal)}</text>
+      <text x="70" y="67" text-anchor="middle" class="rs-donut-n rs-count" data-count="${Number(cVal) || 0}" data-key="rs-donut-center">0</text>
       <text x="70" y="85" text-anchor="middle" class="rs-donut-l">${escapeHtml((opts && opts.centerLabel) || 'total')}</text>
     </svg>
     <div class="rs-legend">${legend}</div>
@@ -619,11 +638,42 @@ function rsPanel(title, inner, sub, cls) {
 
 // One Clinical Calm KPI card (accent bar: a=amber b=blue c=green d=violet).
 function rsKpi(accent, dot, val, label, sub) {
+  // Emit an animatable number when the value is a clean (optionally ≈-prefixed) integer, so
+  // rsAnimateCounts() can count it up from its previous value — the "alive" headline effect.
+  const raw = String(val == null ? '' : val);
+  const m = raw.replace(/,/g, '').match(/^(≈?)(\d+)$/);
+  const kv = m
+    ? `<div class="kv rs-count" data-count="${m[2]}" data-prefix="${m[1]}" data-key="${escapeHtml(String(label))}">${m[1]}0</div>`
+    : `<div class="kv">${raw}</div>`;
   return `<div class="kpi ${accent}">
     <div class="kl"><span class="kd" style="background:${dot}"></span>${label}</div>
-    <div class="kv">${val}</div>
+    ${kv}
     ${sub ? `<div class="kt">${sub}</div>` : ''}
   </div>`;
+}
+
+// Count every .rs-count element from its LAST shown value up to its new target (0 → n on the
+// first paint, old → new on a live refresh, and nothing when unchanged). Cubic ease-out, ~0.65s.
+// Honours reduced-motion by snapping straight to the value.
+const _rsCountLast = {};
+function rsAnimateCounts(root) {
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  (root || document).querySelectorAll('.rs-count[data-count]').forEach((el) => {
+    const target = Number(el.getAttribute('data-count')) || 0;
+    const prefix = el.getAttribute('data-prefix') || '';
+    const key = el.getAttribute('data-key') || '';
+    const from = (key && _rsCountLast[key] != null) ? _rsCountLast[key] : 0;
+    if (key) _rsCountLast[key] = target;
+    if (reduce || from === target) { el.textContent = prefix + target.toLocaleString(); return; }
+    const dur = 650, t0 = performance.now();
+    const ease = (p) => 1 - Math.pow(1 - p, 3);
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      el.textContent = prefix + Math.round(from + (target - from) * ease(p)).toLocaleString();
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
 }
 
 // Peak hours — orders by hour of day. Hidden gracefully if the HIS timestamps are date-only.
@@ -967,6 +1017,8 @@ function rsRenderBody() {
   }
   radstats._bodySig = sig;
   body.innerHTML = nextHtml;
+  // Bring the numbers to life — count each KPI / donut / total up to its value.
+  try { rsAnimateCounts(body); } catch (e) {}
 }
 
 // Switch dashboard tab. Reset the paint pin so the new pane animates in (feels
@@ -1040,7 +1092,7 @@ function rsFinancialInner() {
   return `<div class="rs-fin">
     ${missWarn}
     <div class="rs-fin-head">
-      <div class="rs-fin-total"><div class="rs-fin-n">${rsNum(f.requests)}</div><div class="rs-fin-l">radiology requests priced</div></div>
+      <div class="rs-fin-total"><div class="rs-fin-n rs-count" data-count="${Number(f.requests) || 0}" data-key="rs-fin-req">0</div><div class="rs-fin-l">radiology requests priced</div></div>
       <div class="rs-fin-total"><div class="rs-fin-n">${f.estimated ? '≈ ' : ''}${rsSAR(f.revenue)}</div><div class="rs-fin-l">total revenue (billed)${f.estimated ? ' · estimated' : ''}</div></div>
     </div>
     <div class="rs-grid2" style="margin:0">
