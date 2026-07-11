@@ -348,6 +348,10 @@ def init_schema():
             # certain people, not every staff account). Team leads/managers/superadmin
             # always have access by role. Filing (can_file_radiology) implies access.
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS can_use_radiology BOOLEAN NOT NULL DEFAULT false;")
+            # Per-user PERMISSION OVERRIDES: a JSON map {permKey: true|false} that grants
+            # (true) or revokes (false) an individual feature on top of the role defaults.
+            # Empty {} = pure role defaults. Only a superadmin edits it. See PERMISSION_KEYS.
+            cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;")
             # For older DBs created before `min_shifts_default` existed.
             cur.execute("ALTER TABLE scheduling.branch_settings ADD COLUMN IF NOT EXISTS min_shifts_default INTEGER NOT NULL DEFAULT 17;")
             # For older DBs created before section max_consecutive existed.
@@ -1296,6 +1300,7 @@ def get_current_user(request: Request) -> dict:
                       COALESCE(u.token_epoch,0) AS token_epoch,
                       COALESCE(u.can_file_radiology,false) AS can_file_radiology,
                       COALESCE(u.can_use_radiology,false) AS can_use_radiology,
+                      COALESCE(u.permissions,'{}'::jsonb) AS permissions,
                       b.name AS branch_name
                FROM scheduling.users u
                LEFT JOIN scheduling.branches b ON b.id=u.branch_id
@@ -1318,10 +1323,8 @@ def require_radiology(user: dict = Depends(get_current_user)) -> dict:
     # it ONLY when a superadmin granted can_use_radiology (or can_file_radiology, which
     # implies access) — so radiology is given to certain people, not every staff
     # account. Branch isolation still applies via _rad_scope_site.
-    role = user.get("role")
-    if role in ("admin", "superadmin", "manager"):
-        return user
-    if role == "staff" and (user.get("can_use_radiology") or user.get("can_file_radiology")):
+    # Radiology access = ANY radiology-view permission (effective — role default ± override).
+    if effective_perms(user) & _RAD_VIEW_PERMS:
         return user
     raise HTTPException(403, "You don't have access to the radiology worklist. Ask an admin to enable it for you.")
 
@@ -1329,10 +1332,8 @@ def require_radiology_write(user: dict = Depends(get_current_user)) -> dict:
     # FILING a result into the live HIS is a privileged write. Team leads / managers /
     # full admins can always file (role implies it). A plain `staff` member is
     # VIEW-ONLY until a superadmin grants the per-user `can_file_radiology` flag.
-    role = user.get("role")
-    if role in ("admin", "superadmin", "manager"):
-        return user
-    if role == "staff" and user.get("can_file_radiology"):
+    # Filing to the live HIS = the rad_file permission (effective — role default ± override).
+    if has_perm(user, "rad_file"):
         return user
     raise HTTPException(403, "You don't have permission to file radiology results. Ask an admin to enable it for you.")
 
@@ -1347,6 +1348,76 @@ def require_reviewer(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") not in ("manager", "superadmin"):
         raise HTTPException(403, "Forbidden")
     return user
+
+# ── Per-user permissions ──────────────────────────────────────────────────────
+# Every grantable feature is a permission KEY. A user's EFFECTIVE permissions = the
+# role defaults, then the per-user override map (permissions JSONB: {key:true|false})
+# applied on top — true grants, false revokes. A superadmin always has everything (so
+# the owner can never be locked out of the Users page). Only a superadmin edits overrides.
+PERMISSION_GROUPS = [
+    ("Scheduling", [
+        ("myschedule", "My Schedule"), ("schedule", "Team Schedule"), ("staff", "Staff list"),
+        ("leaves", "Leave"), ("swaps", "Swaps"), ("downtime", "Downtime registration"),
+        ("inventory", "Inventory"), ("equipment", "Equipment"), ("review", "Review / approvals"),
+    ]),
+    ("Overview & comms", [
+        ("home", "Home dashboard"), ("reports", "Reports"), ("messages", "Messages"),
+    ]),
+    ("Radiology", [
+        ("worklist", "RIS Worklist"), ("patientsearch", "Patient search"), ("critical", "Critical results"),
+        ("orders", "Orders / turnaround"), ("handoff", "Handoff"), ("cdxfer", "CD transfers"),
+        ("rad_file", "File results to HIS (write)"), ("radstats", "Rad statistics"), ("peerreview", "Peer review"),
+    ]),
+    ("Admin tools", [
+        ("admin_branches", "Branches"), ("admin_shifts", "Shift types"), ("admin_users", "Users & permissions"),
+        ("admin_hisaccess", "HIS access"), ("admin_audit", "Audit log"),
+    ]),
+]
+PERMISSION_KEYS = [k for _grp, items in PERMISSION_GROUPS for k, _lbl in items]
+PERMISSION_LABELS = {k: lbl for _grp, items in PERMISSION_GROUPS for k, lbl in items}
+_RAD_VIEW_PERMS = {"worklist", "patientsearch", "critical", "orders", "handoff", "cdxfer", "radstats", "peerreview"}
+_STAFF_PERMS = {"myschedule", "leaves", "swaps", "downtime", "inventory", "equipment"}
+_ADMIN_PERMS = _STAFF_PERMS | {"home", "schedule", "staff", "reports", "messages",
+                              "worklist", "patientsearch", "critical", "orders", "handoff",
+                              "cdxfer", "rad_file", "radstats", "peerreview"}
+ROLE_DEFAULT_PERMS = {
+    "viewer": set(),
+    "staff": set(_STAFF_PERMS),
+    "admin": set(_ADMIN_PERMS),
+    "manager": _ADMIN_PERMS | {"review"},
+    "superadmin": set(PERMISSION_KEYS),
+}
+
+def effective_perms(user: dict) -> set:
+    role = user.get("role") or "viewer"
+    if role == "superadmin":
+        return set(PERMISSION_KEYS)           # never lock the owner out
+    perms = set(ROLE_DEFAULT_PERMS.get(role, set()))
+    # Legacy staff flags fold into the radiology perms (until fully migrated to overrides).
+    if user.get("can_use_radiology"):
+        perms |= {"worklist", "patientsearch", "critical", "orders", "handoff", "cdxfer"}
+    if user.get("can_file_radiology"):
+        perms |= {"worklist", "patientsearch", "critical", "orders", "handoff", "cdxfer", "rad_file"}
+    ov = user.get("permissions") or {}
+    if isinstance(ov, str):
+        try: ov = json.loads(ov)
+        except Exception: ov = {}
+    if isinstance(ov, dict):
+        for k, v in ov.items():
+            if k in PERMISSION_KEYS:
+                perms.add(k) if v else perms.discard(k)
+    return perms
+
+def has_perm(user: dict, key: str) -> bool:
+    return key in effective_perms(user)
+
+def require_perm(key: str):
+    """Dependency factory — gate a route on a single permission key."""
+    def _dep(user: dict = Depends(get_current_user)) -> dict:
+        if has_perm(user, key):
+            return user
+        raise HTTPException(403, f"You don't have permission for this ({PERMISSION_LABELS.get(key, key)}). Ask an admin to enable it.")
+    return _dep
 
 def require_editor(user: dict = Depends(get_current_user)) -> dict:
     # Heavy schedule ops — GENERATE, lock/unlock, delete — are team leads + full
@@ -2424,6 +2495,8 @@ async def login(request: Request, response: Response):
     # radiology section until their next session restore (/auth/me has them; this didn't).
     payload["can_use_radiology"] = bool(user.get("can_use_radiology"))
     payload["can_file_radiology"] = bool(user.get("can_file_radiology"))
+    # Effective permissions — the client gates every nav item + route on this list.
+    payload["perms"] = sorted(effective_perms(user))
     # Secure cookie in production (HTTPS). Set COOKIE_SECURE=0 only for local HTTP.
     response.set_cookie("token", token, httponly=True, samesite="lax",
                         secure=os.environ.get("COOKIE_SECURE", "1") != "0",
@@ -3195,6 +3268,12 @@ def me(response: Response, user=Depends(get_current_user)):
                             max_age=JWT_DAYS * 86400)
     except Exception:
         pass
+    # Effective permissions for the client's nav/route gating (mirrors the login payload).
+    try:
+        user = dict(user)
+        user["perms"] = sorted(effective_perms(user))
+    except Exception:
+        pass
     return user
 
 @app.get("/api/health")
@@ -3258,15 +3337,31 @@ def delete_branch(bid: int, user=Depends(require_superadmin)):
 
 @app.get("/api/users")
 def list_users(user=Depends(require_superadmin)):
-    return q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
+    rows = q("""SELECT u.id,u.username,u.role,u.branch_id,u.staff_id,u.created_at,
                        u.email, COALESCE(u.email_notifications,true) AS email_notifications,
                        COALESCE(u.can_file_radiology,false) AS can_file_radiology,
                        COALESCE(u.can_use_radiology,false) AS can_use_radiology,
+                       COALESCE(u.permissions,'{}'::jsonb) AS permissions,
                        b.name AS branch_name, st.name AS staff_name
                 FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
                 LEFT JOIN scheduling.staff st ON st.id=u.staff_id
-                ORDER BY u.created_at""")
+                ORDER BY u.created_at""") or []
+    # Attach each user's EFFECTIVE permissions + the role defaults, so the Users page can
+    # show the resolved state and which toggles are overrides vs role-given.
+    for r in rows:
+        r["perms"] = sorted(effective_perms(r))
+        r["role_perms"] = sorted(ROLE_DEFAULT_PERMS.get(r.get("role") or "viewer", set()))
+    return rows
+
+@app.get("/api/permissions/catalog")
+def permissions_catalog(user=Depends(require_superadmin)):
+    """The full permission catalog (grouped) + per-role defaults, for the Users page."""
+    return {
+        "groups": [{"group": g, "items": [{"key": k, "label": lbl} for k, lbl in items]}
+                   for g, items in PERMISSION_GROUPS],
+        "roleDefaults": {role: sorted(perms) for role, perms in ROLE_DEFAULT_PERMS.items()},
+    }
 
 @app.post("/api/users")
 async def create_user(request: Request, user=Depends(require_superadmin)):
@@ -3324,6 +3419,13 @@ async def update_user(uid: int, request: Request, user=Depends(require_superadmi
     # reads the live row, so no re-login is needed.
     if "can_file_radiology" in body: sets.append("can_file_radiology=%s"); params.append(bool(body["can_file_radiology"]))
     if "can_use_radiology" in body: sets.append("can_use_radiology=%s"); params.append(bool(body["can_use_radiology"]))
+    # Per-user permission OVERRIDES ({permKey: true|false}), sanitised to known keys.
+    # No epoch bump needed — get_current_user reads the LIVE row, so enforcement is
+    # immediate on the user's next request; their client picks up the new nav on reload.
+    if "permissions" in body:
+        ov = body.get("permissions") or {}
+        clean = {k: bool(v) for k, v in ov.items() if k in PERMISSION_KEYS} if isinstance(ov, dict) else {}
+        sets.append("permissions=%s"); params.append(json.dumps(clean))
     # A staff account stays pinned to its staff member's branch.
     if body.get("role") == "staff" and body.get("staff_id"):
         st = q("SELECT branch_id FROM scheduling.staff WHERE id=%s", (body["staff_id"],), one=True)

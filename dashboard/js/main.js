@@ -59,71 +59,44 @@ async function initApp() {
   // Roles: viewer < staff < admin (team lead) < manager < superadmin (full admin)
   const role = currentUser.role;
   const isStaff = role === 'staff';
-  const isManager = role === 'manager';
   const isSuperAdmin = role === 'superadmin';
-  // "Admin tools" (branches, shift types, users, audit) are for the full admin only.
-  // The manager is intentionally kept focused: Schedule, Staff, Leave, Review.
-  const showAdminTools = isSuperAdmin;
-  // A staff member gets a stripped-down portal: only My Schedule + Leave.
-  const canSeeStaff = !isStaff;
-  // Reviewers (manager + full admin) get the Review page.
-  const isReviewer = ['manager','superadmin'].includes(role);
+  // EFFECTIVE per-user permissions from the server (role defaults ± per-user overrides).
+  // Every nav item is gated on its permission key, so a superadmin can grant/revoke any
+  // feature for any user on the Users page. Fall back to a role-derived set if an older
+  // session payload didn't carry perms, so nothing breaks during rollout.
+  const perms = new Set((Array.isArray(currentUser.perms) && currentUser.perms.length)
+    ? currentUser.perms : permsFromRole(role, currentUser));
+  const can = (k) => perms.has(k);
+  currentUser._perms = perms;   // resolvePage() reads this to gate route navigation too
 
-  // Home dashboard — reviewers and team leads (staff get My Schedule instead).
-  const homeNav = document.getElementById('nav-home');
-  const canSeeHome = ADMIN_ROLES.includes(role);
-  if (homeNav) homeNav.style.display = canSeeHome ? 'flex' : 'none';
-  // Staff self-service nav item.
-  const mySchedNav = document.getElementById('nav-myschedule');
-  if (mySchedNav) mySchedNav.style.display = isStaff ? 'flex' : 'none';
-  // Hide the team rota / staff list / etc. from a staff member.
-  const schedNav = document.getElementById('nav-schedule');
-  if (schedNav) schedNav.style.display = isStaff ? 'none' : 'flex';
-
-  document.getElementById('nav-section-admin').style.display = showAdminTools ? 'block' : 'none';
-  document.getElementById('nav-branches').style.display    = showAdminTools ? 'flex' : 'none';
-  document.getElementById('nav-shifts').style.display      = showAdminTools ? 'flex' : 'none';
-  document.getElementById('nav-users').style.display       = showAdminTools ? 'flex' : 'none';
-  const hisNav = document.getElementById('nav-hisaccess');
-  if (hisNav) hisNav.style.display = showAdminTools ? 'flex' : 'none';
-  document.getElementById('nav-audit').style.display       = showAdminTools ? 'flex' : 'none';
-  const staffNav = document.getElementById('nav-staff');
-  if (staffNav) staffNav.style.display = canSeeStaff ? 'flex' : 'none';
-  // Review page for reviewers (manager + full admin)
-  const reviewNav = document.getElementById('nav-review');
-  if (reviewNav) reviewNav.style.display = isReviewer ? 'flex' : 'none';
-  // Reports for team leads + managers (a lead sees their own branch).
-  const reportsNav = document.getElementById('nav-reports');
-  if (reportsNav) reportsNav.style.display = ADMIN_ROLES.includes(role) ? 'flex' : 'none';
-  const messagesNav = document.getElementById('nav-messages');
-  if (messagesNav) messagesNav.style.display = ADMIN_ROLES.includes(role) ? 'flex' : 'none';
-  // Radiology WORKFLOW pages (worklist, handoff, patient lookup, CD transfers).
-  // Team leads / managers / full admins have them by role; a plain staff member only
-  // when granted the per-user radiology privilege (so access goes to certain people,
-  // not every staff account). Rad Stats stays team-lead-and-up; Orders (order history)
-  // follows the worklist grant.
-  const staffHasRad = role === 'staff' && !!(currentUser.can_use_radiology || currentUser.can_file_radiology);
-  const canRad = ADMIN_ROLES.includes(role) || staffHasRad;
-  const canRadMgmt = ADMIN_ROLES.includes(role);
-  // Radiology handoff.
-  const handoffNav = document.getElementById('nav-handoff');
-  if (handoffNav) handoffNav.style.display = canRad ? 'flex' : 'none';
-  // Unified patient / exam lookup.
-  const patientSearchNav = document.getElementById('nav-patientsearch');
-  if (patientSearchNav) patientSearchNav.style.display = canRad ? 'flex' : 'none';
-  // Radiology statistics — management/analytics (team leads + managers).
-  const radstatsNav = document.getElementById('nav-radstats');
-  if (radstatsNav) radstatsNav.style.display = canRadMgmt ? 'flex' : 'none';
-  // Radiology RIS worklist — the operator's main screen.
-  const worklistNav = document.getElementById('nav-worklist');
-  if (worklistNav) worklistNav.style.display = canRad ? 'flex' : 'none';
-  // Critical results — closed-loop communication (anyone who works radiology).
-  const criticalNav = document.getElementById('nav-critical');
-  if (criticalNav) criticalNav.style.display = canRad ? 'flex' : 'none';
-  // Populate the open-criticals badge on login. criticalresults.js is lazy-loaded, so
-  // crRefreshBadge isn't defined yet here — fetch the count inline instead of relying on it,
-  // otherwise the patient-safety badge never shows until the operator flags/acks one.
-  if (canRad) {
+  // id → the permission that reveals it. One loop gates the whole sidebar.
+  const NAV_PERM = {
+    'nav-home': 'home', 'nav-myschedule': 'myschedule', 'nav-schedule': 'schedule',
+    'nav-staff': 'staff', 'nav-leaves': 'leaves', 'nav-swaps': 'swaps', 'nav-downtime': 'downtime',
+    'nav-inventory': 'inventory', 'nav-equipment': 'equipment', 'nav-review': 'review',
+    'nav-reports': 'reports', 'nav-messages': 'messages',
+    'nav-worklist': 'worklist', 'nav-patientsearch': 'patientsearch', 'nav-critical': 'critical',
+    'nav-orders': 'orders', 'nav-handoff': 'handoff', 'nav-cdxfer': 'cdxfer',
+    'nav-radstats': 'radstats', 'nav-peerreview': 'peerreview',
+    'nav-branches': 'admin_branches', 'nav-shifts': 'admin_shifts', 'nav-users': 'admin_users',
+    'nav-hisaccess': 'admin_hisaccess', 'nav-audit': 'admin_audit',
+  };
+  for (const [id, key] of Object.entries(NAV_PERM)) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = can(key) ? 'flex' : 'none';
+  }
+  const RAD_VIEW = ['worklist', 'patientsearch', 'critical', 'orders', 'handoff', 'cdxfer', 'radstats', 'peerreview'];
+  const canRad = RAD_VIEW.some(can);
+  const canSeeHome = can('home');
+  const isReviewer = can('review');
+  // Section headers show only when at least one of their children is visible.
+  const anyAdmin = ['admin_branches', 'admin_shifts', 'admin_users', 'admin_hisaccess', 'admin_audit'].some(can);
+  const secAdmin = document.getElementById('nav-section-admin');
+  if (secAdmin) secAdmin.style.display = anyAdmin ? 'block' : 'none';
+  const radSection = document.getElementById('nav-section-radiology');
+  if (radSection) radSection.style.display = canRad ? 'block' : 'none';
+  // Open-criticals badge on login (only when the user can see Critical results).
+  if (can('critical')) {
     API.get('/radiology/critical/count').then((d) => {
       const el = document.getElementById('nav-critical-badge');
       if (!el) return;
@@ -132,47 +105,17 @@ async function initApp() {
       el.style.display = n ? 'inline-flex' : 'none';
     }).catch(() => {});
   }
-  // "Radiology" section label — visible whenever any radiology item is.
-  const radSection = document.getElementById('nav-section-radiology');
-  if (radSection) radSection.style.display = canRad ? 'block' : 'none';
-  // Radiology order lifecycle board — the order history / turnaround view. Gated the
-  // same as the worklist (anyone who works radiology) so a privileged staff operator can
-  // see where their reports landed; Rad Stats stays management-only.
-  const ordersNav = document.getElementById('nav-orders');
-  if (ordersNav) ordersNav.style.display = canRad ? 'flex' : 'none';
-  // Peer review (radiology QA) — management/quality owners, gated like Rad Stats.
-  const peerNav = document.getElementById('nav-peerreview');
-  if (peerNav) peerNav.style.display = canRadMgmt ? 'flex' : 'none';
-  // Radiology CD transfers.
-  const cdxferNav = document.getElementById('nav-cdxfer');
-  if (cdxferNav) cdxferNav.style.display = canRad ? 'flex' : 'none';
-  // RIS-first: for anyone who works radiology, float the whole Radiology section to the
-  // TOP of the sidebar so the RIS is the base of the app (the operator's home). Purely a
-  // reorder of existing nodes — role gating + handlers are untouched. Non-radiology users
-  // keep the scheduling-first order (the radiology section stays hidden for them).
+  // RIS-first: when the user works radiology, float the whole Radiology section to the TOP
+  // of the sidebar so the RIS is the base of the app. Purely a reorder of existing nodes.
   if (canRad) {
     const nav = document.querySelector('.sidebar-nav');
     const radIds = ['nav-section-radiology', 'nav-worklist', 'nav-critical', 'nav-orders', 'nav-handoff',
                     'nav-patientsearch', 'nav-radstats', 'nav-peerreview', 'nav-cdxfer'];
     if (nav) {
-      // Insert each at the front in REVERSE so the original visual order is preserved on top.
       radIds.map((id) => document.getElementById(id)).filter(Boolean).reverse()
         .forEach((el) => nav.insertBefore(el, nav.firstChild));
     }
   }
-  // Swaps page for everyone except plain viewers (staff request & track theirs).
-  const swapsNav = document.getElementById('nav-swaps');
-  if (swapsNav) swapsNav.style.display = (role === 'viewer') ? 'none' : 'flex';
-  // A staff member can still reach the Leave page (their own requests only).
-  const leavesNav = document.getElementById('nav-leaves');
-  if (leavesNav) leavesNav.style.display = (role === 'viewer') ? 'none' : 'flex';
-  // Downtime registration: every working staff member can log a patient.
-  const downtimeNav = document.getElementById('nav-downtime');
-  if (downtimeNav) downtimeNav.style.display = (role === 'viewer') ? 'none' : 'flex';
-  const inventoryNav = document.getElementById('nav-inventory');
-  if (inventoryNav) inventoryNav.style.display = (role === 'viewer') ? 'none' : 'flex';
-  const equipmentNav = document.getElementById('nav-equipment');
-  if (equipmentNav) equipmentNav.style.display = (role === 'viewer') ? 'none' : 'flex';
   // Kick off in-app notification polling once the user is in.
   if (typeof startNotifPolling === 'function') startNotifPolling();
   // Register the service worker + reflect device-notification state in the bell.
@@ -222,38 +165,46 @@ async function initApp() {
 // Resolve role-based redirects up front so a blocked route animates ONCE to its
 // real destination instead of fading twice (old code fell into the switch, then
 // recursively called showPage → double transition).
+// Client mirror of the server's role → default-permissions map. Only used as a FALLBACK
+// when a session payload predates per-user perms; normally currentUser.perms drives gating.
+function permsFromRole(role, u) {
+  const STAFF = ['myschedule', 'leaves', 'swaps', 'downtime', 'inventory', 'equipment'];
+  const ADMIN = STAFF.concat(['home', 'schedule', 'staff', 'reports', 'messages', 'worklist',
+    'patientsearch', 'critical', 'orders', 'handoff', 'cdxfer', 'rad_file', 'radstats', 'peerreview']);
+  const ALL = ADMIN.concat(['review', 'admin_branches', 'admin_shifts', 'admin_users', 'admin_hisaccess', 'admin_audit']);
+  let base = role === 'superadmin' ? ALL
+    : role === 'manager' ? ADMIN.concat(['review'])
+    : role === 'admin' ? ADMIN.slice()
+    : role === 'staff' ? STAFF.slice() : [];
+  if (u && (u.can_use_radiology || u.can_file_radiology)) base = base.concat(['worklist', 'patientsearch', 'critical', 'orders', 'handoff', 'cdxfer']);
+  if (u && u.can_file_radiology) base = base.concat(['rad_file']);
+  return base;
+}
+
+// page id → the permission that unlocks it (pages not listed are open to any logged-in user).
+const PAGE_PERM = {
+  home: 'home', myschedule: 'myschedule', schedule: 'schedule', staff: 'staff', leaves: 'leaves',
+  swaps: 'swaps', downtime: 'downtime', inventory: 'inventory', equipment: 'equipment',
+  review: 'review', reports: 'reports', messages: 'messages',
+  worklist: 'worklist', patientsearch: 'patientsearch', critical: 'critical', orders: 'orders',
+  handoff: 'handoff', cdxfer: 'cdxfer', radstats: 'radstats', peerreview: 'peerreview',
+  branches: 'admin_branches', shifts: 'admin_shifts', users: 'admin_users',
+  hisaccess: 'admin_hisaccess', audit: 'admin_audit',
+};
 function resolvePage(page) {
-  const role = currentUser?.role;
-  if (page === 'home' && !ADMIN_ROLES.includes(role))
-    return role === 'staff' ? 'myschedule' : 'schedule';
-  if (page === 'schedule'   && role === 'staff')  return 'myschedule';
-  if (page === 'swaps' && role === 'viewer') return 'schedule';
-  // Branches, shift types, and the audit log are full-admin (superadmin) tools —
-  // the backend rejects everyone else, so the route guard must match (a team lead
-  // reaching them via a stale link would otherwise see a page that then 403s).
-  if (page === 'reports' && !ADMIN_ROLES.includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
-  if (page === 'messages' && !ADMIN_ROLES.includes(role)) return role === 'staff' ? 'myschedule' : 'schedule';
-  // Radiology workflow pages: team leads/managers/admins by role; a staff member
-  // only with the granted radiology privilege.
-  const canRadRoute = ADMIN_ROLES.includes(role)
-    || (role === 'staff' && !!(currentUser?.can_use_radiology || currentUser?.can_file_radiology));
-  const radElse = role === 'staff' ? 'myschedule' : 'schedule';
-  if (page === 'handoff' && !canRadRoute) return radElse;
-  if (page === 'patientsearch' && !canRadRoute) return radElse;
-  if (page === 'worklist' && !canRadRoute) return radElse;
-  if (page === 'cdxfer' && !canRadRoute) return radElse;
-  // Radiology management/analytics: Rad Stats stays team-lead-and-up. Orders (the order
-  // history / turnaround view) is gated the same as the worklist — a privileged staff
-  // operator who works the board can also see where their reports ended up.
-  if (page === 'radstats' && !ADMIN_ROLES.includes(role)) return canRadRoute ? 'worklist' : radElse;
-  if (page === 'orders' && !canRadRoute) return radElse;
-  if (page === 'critical' && !canRadRoute) return radElse;
-  if (page === 'peerreview' && !ADMIN_ROLES.includes(role)) return canRadRoute ? 'worklist' : radElse;
-  if (page === 'branches' && role !== 'superadmin') return 'schedule';
-  if (page === 'shifts'   && role !== 'superadmin') return 'schedule';
-  if (page === 'audit'    && role !== 'superadmin') return 'schedule';
-  if (page === 'users'    && role !== 'superadmin') return 'schedule';
-  if (page === 'hisaccess' && role !== 'superadmin') return 'schedule';
+  const perms = (currentUser && currentUser._perms) || new Set(permsFromRole(currentUser?.role, currentUser));
+  const can = (k) => perms.has(k);
+  const need = PAGE_PERM[page];
+  if (need && !can(need)) {
+    // Redirect to the best page this user CAN actually see (mirrors the landing logic),
+    // so a stale link / deep-link to a now-revoked page lands somewhere valid, not a 403.
+    if (can('home')) return 'home';
+    if (can('worklist')) return 'worklist';
+    if (['patientsearch', 'critical', 'orders', 'handoff', 'cdxfer', 'radstats', 'peerreview'].some(can)) return 'patientsearch';
+    if (can('myschedule')) return 'myschedule';
+    if (can('schedule')) return 'schedule';
+    return 'myschedule';
+  }
   return page;
 }
 

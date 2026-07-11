@@ -2441,3 +2441,13 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
 }
 .nafath-chip svg { width: 12px; height: 12px; flex: 0 0 auto; }
 
+/* Per-user permissions editor */
+.perm-grid { display:flex; flex-direction:column; gap:14px; }
+.perm-grp-h { font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--accent2,#6B4EFF); margin:0 0 6px; }
+.perm-row { display:flex; align-items:center; gap:10px; padding:7px 9px; border-radius:9px; cursor:pointer; }
+.perm-row:hover { background:var(--card-alt,#f7f7fa); }
+.perm-cb { width:17px; height:17px; flex:none; accent-color:var(--accent,#6b4eff); cursor:pointer; }
+.perm-lbl { flex:1; font-size:13px; color:var(--text,#111); }
+.perm-tag { font-size:10.5px; font-weight:700; color:var(--muted); white-space:nowrap; }
+.perm-tag.g { color:#0a7d38; }
+.perm-tag.r { color:#c0261a; }

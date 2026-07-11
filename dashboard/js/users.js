@@ -61,11 +61,82 @@ function renderUsersList() {
       ${ROLE_BADGE[u.role] || escapeHtml(u.role)}
       <div style="display:flex;gap:6px">
         <button class="ghost" onclick="openUserModal(${u.id})">Edit</button>
+        ${u.role !== 'superadmin' ? `<button class="ghost" onclick="openPermsModal(${u.id})">Permissions</button>` : ''}
         ${u.id !== currentUser?.id
           ? `<button class="ghost" style="color:var(--danger,#E25555)" onclick="deleteUserConfirm(${u.id},'${jsAttr(u.username)}')">Delete</button>`
           : '<span style="font-size:11px;color:var(--muted)">(you)</span>'}
       </div>
     </div>`).join('');
+}
+
+// ── Per-user permissions editor ───────────────────────────────────────────────
+// A superadmin toggles any feature on/off for a user. The role sets the defaults; a
+// toggle that DIFFERS from the role default is stored as an override (grant or revoke).
+let _permCatalog = null;
+async function permsCatalog() {
+  if (!_permCatalog) _permCatalog = await API.get('/permissions/catalog');
+  return _permCatalog;
+}
+async function openPermsModal(id) {
+  const u = allUsers.find(x => x.id === id);
+  if (!u) return;
+  let cat;
+  try { cat = await permsCatalog(); } catch (e) { toast('Could not load the permission list', 'err'); return; }
+  const roleDef = new Set(u.role_perms || (cat.roleDefaults[u.role] || []));
+  const eff = new Set(u.perms || []);
+  const override = (u.permissions && typeof u.permissions === 'object') ? u.permissions : {};
+  const grid = cat.groups.map(g => `
+    <div class="perm-grp">
+      <div class="perm-grp-h">${escapeHtml(g.group)}</div>
+      ${g.items.map(it => {
+        const on = eff.has(it.key), def = roleDef.has(it.key), ov = it.key in override;
+        const tag = ov ? (on ? 'granted' : 'revoked') : (def ? 'role default' : '');
+        return `<label class="perm-row">
+          <input type="checkbox" class="perm-cb" data-key="${it.key}" data-def="${def ? 1 : 0}" ${on ? 'checked' : ''}>
+          <span class="perm-lbl">${escapeHtml(it.label)}</span>
+          <span class="perm-tag ${ov ? (on ? 'g' : 'r') : ''}">${tag}</span>
+        </label>`;
+      }).join('')}
+    </div>`).join('');
+  const wrap = document.createElement('div');
+  wrap.id = 'perms-modal-overlay';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
+  wrap.innerHTML = `<div class="card" style="max-width:600px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:0">
+    <div style="display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border)">
+      <div style="flex:1"><div style="font-size:16px;font-weight:800">Permissions</div>
+        <div style="font-size:12px;color:var(--muted)">${escapeHtml(u.username)} · ${escapeHtml(u.role)}</div></div>
+      <button class="ghost" onclick="document.getElementById('perms-modal-overlay').remove()">✕</button>
+    </div>
+    <div style="padding:14px 18px;overflow:auto">
+      <p style="font-size:12.5px;color:var(--muted);margin:0 0 12px">Toggle any feature for <b>${escapeHtml(u.username)}</b>. “Role default” means their <b>${escapeHtml(u.role)}</b> role already grants it — unticking removes it just for this user; ticking an extra feature grants it just to them.</p>
+      <div class="perm-grid">${grid}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:14px 18px;border-top:1px solid var(--border)">
+      <button class="ghost" onclick="permsResetToRole()">Reset to role default</button>
+      <span style="flex:1"></span>
+      <button class="ghost" onclick="document.getElementById('perms-modal-overlay').remove()">Cancel</button>
+      <button class="open pri" onclick="savePerms(${u.id})">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+}
+function permsResetToRole() {
+  document.querySelectorAll('#perms-modal-overlay .perm-cb').forEach(cb => { cb.checked = cb.dataset.def === '1'; });
+}
+async function savePerms(id) {
+  const override = {};
+  document.querySelectorAll('#perms-modal-overlay .perm-cb').forEach(cb => {
+    const desired = cb.checked, def = cb.dataset.def === '1';
+    if (desired !== def) override[cb.dataset.key] = desired;   // store ONLY real overrides
+  });
+  try {
+    await API.put(`/users/${id}`, { permissions: override });
+    toast('Permissions updated');
+    document.getElementById('perms-modal-overlay')?.remove();
+    await loadUsers();
+    renderUsersList();
+  } catch (e) { toast(e.message || 'Save failed', 'err'); }
 }
 
 // Wipe test/operational data for a clean production start (superadmin only).
