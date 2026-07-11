@@ -8394,8 +8394,19 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
             "scanned": it.get("scanned"), "_raw": it.get("_raw"),
         } for it in _items[:5]]
         out["notes"]["total_rows"] = len(_items)
-        if conn.get("statusHistogram"):
-            out["status_histogram"] = conn.get("statusHistogram")
+        _tmg = (data.get("_timings") or {}) if isinstance(data, dict) else {}
+        if _tmg.get("statusHistogram"):
+            out["status_histogram"] = _tmg.get("statusHistogram")
+        # Also surface a few rows that ARE further along (arrived/scanned/has-radiologist), so we
+        # see their status codes directly even if the top-5 are all freshly ordered.
+        _adv = [it for it in _items if it.get("scanned") or it.get("radiologistName")
+                or (it.get("_raw") or {}).get("arrivalDate")][:5]
+        if _adv:
+            out["sample_advanced_rows"] = [{
+                "mrno": it.get("mrno"), "exam": it.get("exam"), "stage": it.get("stage"),
+                "hisStatus": it.get("hisStatus"), "radiologistName": it.get("radiologistName"),
+                "scanned": it.get("scanned"), "_raw": it.get("_raw"),
+            } for it in _adv]
     except Exception:
         pass
 
