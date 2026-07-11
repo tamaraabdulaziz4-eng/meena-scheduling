@@ -1088,6 +1088,18 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_rad_mwl_mrno ON scheduling.radiology_mwl(mrno);")
 
+            # ── Live worklist MIRROR ──────────────────────────────────────────────────
+            # A background job copies the all-branches board out of Siratech into this table
+            # every few seconds; the /radiology/worklist endpoint then serves it from HERE
+            # (a ~30ms DB read) instead of waiting on the 2 GB HIS box, with the live proxy
+            # as the fallback when the mirror is cold/stale. One row per scope (date window).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.worklist_mirror (
+                    scope_key  TEXT PRIMARY KEY,      -- "<from>|<to>" — the fast-board scope
+                    payload    JSONB NOT NULL,        -- the raw HIS board (items + meta)
+                    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+
             # ── Performance indexes for hot / growing tables (audit, on-duty, dashboard
             # counts). All additive and IF NOT EXISTS — safe to run every boot. ──
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON scheduling.audit_log(created_at DESC);")
@@ -2301,6 +2313,7 @@ def startup():
     seed_admin()
     backfill_us_sections()
     start_scheduler()
+    _start_worklist_mirror()   # background: keep the worklist board warm in our own DB
 
 # ── Static dashboard ──────────────────────────────────────────────────────────
 
@@ -8141,6 +8154,104 @@ def _conditional_json(request: Request, payload):
         return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-store"})
     return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-store"})
 
+# ── Live worklist MIRROR ──────────────────────────────────────────────────────
+# A background loop copies the default all-branches fast board out of Siratech into
+# scheduling.worklist_mirror every few seconds. The endpoint below then serves that DB row
+# (~a few ms) for the common request instead of proxying to the 2 GB HIS box, with the live
+# proxy as the fallback whenever the mirror is cold/stale. Our OWN fast-changing state
+# (consent-filed, the received/started/completed overlay, confirmed stages) is applied fresh
+# at SERVE time, not stored in the mirror, so a tech's own action still reflects instantly.
+_MIRROR_ENABLED = (os.environ.get("WORKLIST_MIRROR", "1") == "1")
+_MIRROR_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_INTERVAL") or 18.0)   # seconds between refreshes
+_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 75.0)     # older than this → serve live
+
+def _wl_default_from():
+    ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+    return (ksa_today - timedelta(days=_RAD_WORKLIST_DAYS_BACK)).isoformat()
+
+def _wl_mirror_key(frm, to):
+    return f"{frm or ''}|{to or ''}"
+
+def _worklist_mirror_tick():
+    """One refresh: pull the RAW all-branches fast board from the connector and upsert it.
+    Multi-worker safe — if another worker refreshed this scope within the interval we skip,
+    so N web workers still only drive ONE HIS fetch per interval."""
+    frm = _wl_default_from()
+    mkey = _wl_mirror_key(frm, "")
+    try:
+        row = q("SELECT fetched_at FROM scheduling.worklist_mirror WHERE scope_key=%s", (mkey,), one=True)
+        if row and row.get("fetched_at"):
+            age = (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds()
+            if age < _MIRROR_INTERVAL * 0.8:
+                return  # a sibling worker just refreshed it
+    except Exception:
+        pass
+    import urllib.parse
+    query = "?" + urllib.parse.urlencode({"from": frm, "nocache": "1"})
+    data = _bridge_request("/his/worklist" + query, timeout=130)
+    if not isinstance(data, dict) or data.get("items") is None:
+        return  # bad/empty → keep the last good mirror row (never overwrite good with empty)
+    try:
+        _rad_persist_async(data.get("items"))   # keep the lifecycle store advancing off the fresh board
+    except Exception:
+        pass
+    q("""INSERT INTO scheduling.worklist_mirror (scope_key, payload, fetched_at)
+         VALUES (%s, %s::jsonb, NOW())
+         ON CONFLICT (scope_key) DO UPDATE SET payload=EXCLUDED.payload, fetched_at=NOW()""",
+      (mkey, json.dumps(data)), exec_only=True)
+
+def _worklist_mirror_loop():
+    import time as _t
+    _t.sleep(8)   # let the schema + first requests settle before the first pull
+    while True:
+        try:
+            _worklist_mirror_tick()
+        except Exception as e:
+            try: print("[mirror] tick failed:", str(e)[:200], flush=True)
+            except Exception: pass
+        _t.sleep(_MIRROR_INTERVAL)
+
+def _start_worklist_mirror():
+    if not _MIRROR_ENABLED:
+        return
+    threading.Thread(target=_worklist_mirror_loop, daemon=True, name="worklist-mirror").start()
+
+def _serve_worklist_from_mirror(request: Request, mkey: str, scope):
+    """Return a _conditional_json Response from the mirror row for `mkey`, or None to signal
+    the caller to fall through to the live proxy (mirror missing / stale / disabled). `scope`
+    is a team lead's site (None for org-wide) — the mirror holds every branch, so we filter."""
+    if not _MIRROR_ENABLED:
+        return None
+    try:
+        row = q("SELECT payload, fetched_at FROM scheduling.worklist_mirror WHERE scope_key=%s", (mkey,), one=True)
+    except Exception:
+        return None
+    if not row or not row.get("payload") or not row.get("fetched_at"):
+        return None
+    if (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds() > _MIRROR_MAX_AGE:
+        return None
+    data = row["payload"]
+    if isinstance(data, str):                     # some psycopg2 configs return jsonb as text
+        try:
+            data = json.loads(data)
+        except Exception:
+            return None
+    if not isinstance(data, dict):
+        return None
+    items = data.get("items")
+    # Apply our always-fresh local state now (not at mirror time) so own actions are instant.
+    try:
+        _rad_seed_confirmed_stages(items)
+        _annotate_worklist_consent(items)
+        _annotate_worklist_overlay(items)
+    except Exception:
+        pass
+    if scope is not None and isinstance(items, list):
+        filtered = [it for it in items if str(it.get("site")) == str(scope)]
+        data = {**data, "items": filtered, "count": len(filtered)}
+    data["mirror"] = True   # so the client/debug can tell this was served from the mirror
+    return _conditional_json(request, data)
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_radiology)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -8170,6 +8281,16 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # ready=1 (per-patient match) and modality=1 (per-order RadiologyDetails) both do
     # heavy per-order HIS work — give them the long timeout.
     heavy = p.get("ready") == "1" or p.get("modality") == "1" or p.get("pay") == "1"
+    # ── LIVE MIRROR fast-path ─────────────────────────────────────────────────────
+    # The default fast board is kept warm in our DB by the mirror loop. For that scope
+    # (fast pass, and the client isn't forcing fresh) serve it from the DB in a few ms
+    # instead of proxying to HIS. Team leads are served the same board filtered to their
+    # site. Any miss/staleness returns None → we fall straight through to the live path.
+    if not heavy and qs.get("nocache") != "1":
+        _mkey = _wl_mirror_key(qs.get("from", ""), qs.get("to", ""))
+        _mret = _serve_worklist_from_mirror(request, _mkey, scope)
+        if _mret is not None:
+            return _mret
     # 130s fast-pass ceiling: comfortably above the worst-case headless HIS-login refresh
     # (~90-100s, once per ~55min token lapse) so a token refresh racing a poll shows the
     # board, not the retry card. Steady polls return from the 60s worklist cache anyway.
