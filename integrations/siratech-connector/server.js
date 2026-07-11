@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'real-range-flag-2026-07-11e';
+const CONNECTOR_BUILD = 'ris-caches-warm-2026-07-11f';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1056,9 +1056,19 @@ function _clinVitals(list) {
   const when = rows[0] && (rows[0].vitalDate || rows[0].recordedDate || rows[0].emrDate);
   return Object.keys(out).length ? { ...out, recordedAt: when || null } : null;
 }
+// Short-TTL cache for the clinical bundle (7 parallel HIS calls). The patient card AND
+// the worklist vitals pump both hit this per patient, and re-opens repeat it — a 60s
+// cache serves those from memory. Problem list / allergies / vitals don't change second
+// to second, so this is safe and a real load cut on the 2 GB box.
+const _clinicalCache = new Map();   // mrno -> { ts, data }
+const CLINICAL_CACHE_TTL = Number(process.env.CLINICAL_CACHE_TTL_MS || 60000);
 app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  if (String(req.query.nocache || '') !== '1') {
+    const hit = _clinicalCache.get(file);
+    if (hit && Date.now() - hit.ts < CLINICAL_CACHE_TTL) return res.json(hit.data);
+  }
   try {
     await getToken();
     const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
@@ -1149,8 +1159,11 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
         }
       }
     }
-    return res.json({ ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, fetal, flags,
-      fetchedAt: new Date().toISOString() });
+    const payload = { ok: true, build: CONNECTOR_BUILD, file, diagnoses, allergies, vitals, fetal, flags,
+      fetchedAt: new Date().toISOString() };
+    _clinicalCache.set(file, { ts: Date.now(), data: payload });
+    if (_clinicalCache.size > 500) _clinicalCache.delete(_clinicalCache.keys().next().value);
+    return res.json(payload);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
@@ -3598,12 +3611,26 @@ function tallyList(map, top) { const a = [...map.values()].sort((x, y) => y.coun
 // contributes 0 revenue and the total silently undercounts (the "600k→300k"
 // symptom). Returns { ok, items }: ok=false ONLY when both attempts failed (so the
 // caller can count it as a missed read), distinct from a genuinely empty bill.
+// One bill's line items, keyed by GenPatBillingId. A bill's contents are effectively
+// immutable within a poll window, yet the SAME bills are read by THREE independent
+// fan-outs — the worklist pay pass, the stats finance/modality pass, and the stats
+// list-enrichment pass (which overlaps the finance pass inside one stats build). A short
+// shared cache collapses all that duplication into one HIS read per bill per ~90s — the
+// single biggest reduction in load on the 2 GB box. Only successful reads are cached.
+const BILL_CACHE_TTL = Number(process.env.BILL_CACHE_TTL_MS || 90000);
+const _billCache = new Map();   // gpbId -> { ts, items }
 async function readBillItems(gpbId) {
+  const key = String(gpbId);
+  const hit = _billCache.get(key);
+  if (hit && Date.now() - hit.ts < BILL_CACHE_TTL) return { ok: true, items: hit.items, cached: true };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const d = await hisFetch('/billing-api/api/v1/DueSettlement/GetDueBillDetailsByID?GenPatBillingId=' + encodeURIComponent(gpbId), { method: 'GET' });
       if (d && d.json != null && !(d.status && d.status >= 400)) {
-        return { ok: true, items: (d.json.data || d.json.Data) || [] };
+        const items = (d.json.data || d.json.Data) || [];
+        _billCache.set(key, { ts: Date.now(), items });
+        if (_billCache.size > 4000) _billCache.delete(_billCache.keys().next().value);
+        return { ok: true, items };
       }
     } catch (_e) { /* fall through to retry / failure */ }
   }
@@ -3970,15 +3997,28 @@ async function warmDefaultStats() {
   }
 }
 
+// Pre-warm the default all-branches worklist (the fast board — no ready/pay enrichment)
+// so the FIRST operator to open the RIS doesn't pay the cold RadiologySearch‖FetchRISPanel
+// fan-out across 14 sites. Populates the connector worklist cache the same open() reads.
+async function warmDefaultWorklist() {
+  try {
+    const t0 = Date.now();
+    const wl = await buildWorklist({ sites: [], from: null, to: null, ready: false });
+    console.log(`[warm] worklist: ${(wl.items || []).length} rows in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  } catch (e) { console.error('[warm] worklist failed:', e && e.message); }
+}
+
 app.listen(PORT, HOST, () => {
   console.log(`Siratech connector listening on ${HOST}:${PORT}`);
-  // Warm branch list + radiology catalog, then keep the default view warm.
+  // Warm branch list + radiology catalog, then keep the default views warm.
   setTimeout(() => {
     getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
-    getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`)).then(warmDefaultStats).catch(() => {});
+    getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`))
+      .then(warmDefaultWorklist)      // board first — it's what opens on login
+      .then(warmDefaultStats).catch(() => {});
   }, 4000);
   // Self-scheduling (NOT setInterval): re-warm 4 min AFTER each run finishes, so a
   // slow run (>4 min of bill reads) can never overlap itself and double the load.
-  const reWarm = () => setTimeout(async () => { await warmDefaultStats(); reWarm(); }, 240000);
+  const reWarm = () => setTimeout(async () => { await warmDefaultWorklist(); await warmDefaultStats(); reWarm(); }, 240000);
   reWarm();
 });
