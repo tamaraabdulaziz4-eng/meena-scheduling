@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'speed-cache-2026-07-11h';
+const CONNECTOR_BUILD = 'speed-cache-2026-07-11i';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -462,6 +462,33 @@ app.post('/admin/his', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
+// FetchRadiologyDetails(mrno) is the patient's whole radiology order list, and the card
+// re-pulls it in quick succession: /patient/:file, then /radiology/study, then
+// /radiology/report-pdf — three identical HIS reads within seconds. Serve the raw rows
+// through a short cache + single-flight so it's ONE read per patient per window (the card
+// route has its OWN result cache; this dedupes the two exam endpoints that read the list
+// read-only via .find()). Callers here never mutate the rows, so sharing them is safe.
+const _radDetailsCache = new Map();     // mrno -> { ts, rows }
+const _radDetailsInFlight = new Map();  // mrno -> Promise
+const RAD_DETAILS_TTL_MS = Number(process.env.RAD_DETAILS_TTL_MS || 45000);
+async function fetchRadDetailsRaw(mrno, opts = {}) {
+  const key = String(mrno);
+  if (!opts.noCache) { const e = _radDetailsCache.get(key); if (e && Date.now() - e.ts < RAD_DETAILS_TTL_MS) return e.rows; }
+  if (_radDetailsInFlight.has(key)) return _radDetailsInFlight.get(key);
+  const p = (async () => {
+    const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
+    if (!r || (r.status && r.status >= 400) || r.json == null) {
+      throw new Error(`HIS radiology lookup failed (${r ? 'HTTP ' + r.status : 'unreachable'})`);
+    }
+    const rows = r.json.data || [];
+    _radDetailsCache.set(key, { ts: Date.now(), rows });
+    if (_radDetailsCache.size > 500) _radDetailsCache.delete(_radDetailsCache.keys().next().value);
+    return rows;
+  })().finally(() => { _radDetailsInFlight.delete(key); });
+  _radDetailsInFlight.set(key, p);
+  return p;
+}
+
 // ── Native Siratech report + image + status for ONE exam ───────────────────────
 // Everything from Siratech (no DePACS): status = cpoeStatusDescription; report text
 // = FetchRadiologyReport(invPatTestResultId); image = FetchRadiologyImage → a cloud
@@ -472,8 +499,7 @@ app.get('/radiology/study', requireAuth, async (req, res) => {
   const invId = String(req.query.invPatTestResultId || '').trim();
   if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
   try {
-    const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
-    const rows = (dr.json && dr.json.data) || [];
+    const rows = await fetchRadDetailsRaw(mrno);
     let row = null;
     if (invId) row = rows.find((x) => String(x.invPatTestResultId) === invId);
     if (!row && accession) row = rows.find((x) => String(x.accessionNumber || '') === accession);
@@ -544,8 +570,7 @@ app.get('/radiology/report-pdf', requireAuth, async (req, res) => {
   const invId = String(req.query.invPatTestResultId || '').trim();
   if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
   try {
-    const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
-    const rows = (dr.json && dr.json.data) || [];
+    const rows = await fetchRadDetailsRaw(mrno);
     let row = null;
     if (invId) row = rows.find((x) => String(x.invPatTestResultId) === invId);
     if (!row && accession) row = rows.find((x) => String(x.accessionNumber || '') === accession);
@@ -1107,7 +1132,8 @@ function _clinVitals(list) {
 // the worklist vitals pump both hit this per patient, and re-opens repeat it — a 60s
 // cache serves those from memory. Problem list / allergies / vitals don't change second
 // to second, so this is safe and a real load cut on the 2 GB box.
-const _clinicalCache = new Map();   // mrno -> { ts, data }
+const _clinicalCache = new Map();     // mrno -> { ts, data }
+const _clinicalInFlight = new Map();  // mrno -> Promise (collapse concurrent cold builds)
 const CLINICAL_CACHE_TTL = Number(process.env.CLINICAL_CACHE_TTL_MS || 60000);
 app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
@@ -1117,6 +1143,11 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     if (hit && Date.now() - hit.ts < CLINICAL_CACHE_TTL) return res.json(hit.data);
   }
   try {
+    // Single-flight: the card open AND the worklist vitals pump can both fire this 7-call
+    // bundle for the same patient at once on a cold cache — collapse them onto one build.
+    let _inflight = _clinicalInFlight.get(file);
+    if (!_inflight) {
+      _inflight = (async () => {
     await getToken();
     const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
     const G = (path) => hisFetch(path, { method: 'GET' }).then((r) => (r.json && r.json.data)).catch(() => null);
@@ -1210,7 +1241,11 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       fetchedAt: new Date().toISOString() };
     _clinicalCache.set(file, { ts: Date.now(), data: payload });
     if (_clinicalCache.size > 500) _clinicalCache.delete(_clinicalCache.keys().next().value);
-    return res.json(payload);
+    return payload;
+      })().finally(() => { _clinicalInFlight.delete(file); });
+      _clinicalInFlight.set(file, _inflight);
+    }
+    return res.json(await _inflight);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
