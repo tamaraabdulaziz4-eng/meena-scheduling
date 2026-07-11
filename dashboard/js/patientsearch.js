@@ -927,12 +927,17 @@ async function psLoadReport(o, elId, btn) {
       // Stash the report so the Print button can rebuild without refetch.
       psReportStore[elId] = { txt, who: String(who), when: whenRaw, exam: o };
       const parsed = psFormatReport(txt);
-      // Normal / abnormal — classified by the connector from the report's IMPRESSION.
+      // Verdict — Siratech's OWN stored flag when set (classSource==='siratech'), else our
+      // read of the impression text. The tooltip says which, so it's never a black box.
       const cls = (d.classification || '').toLowerCase();
-      const clsBadge = cls === 'normal'
-        ? `<span class="ps-rpt-cls normal" title="${escapeHtml(d.classReason || '')}">● Normal</span>`
+      const srcNote = d.classSource === 'siratech' ? 'From Siratech' : 'Read from the impression';
+      const tip = escapeHtml(`${srcNote}${d.classReason ? ' · ' + d.classReason : ''}`);
+      const clsBadge = cls === 'critical'
+        ? `<span class="ps-rpt-cls critical" title="${tip}">🚨 Critical</span>`
+        : cls === 'normal'
+        ? `<span class="ps-rpt-cls normal" title="${tip}">● Normal</span>`
         : cls === 'abnormal'
-        ? `<span class="ps-rpt-cls abnormal" title="${escapeHtml(d.classReason || '')}">▲ Abnormal</span>`
+        ? `<span class="ps-rpt-cls abnormal" title="${tip}">▲ Abnormal</span>`
         : '';
       el.innerHTML = `<div class="ps-rpt">
         <div class="ps-rpt-head">

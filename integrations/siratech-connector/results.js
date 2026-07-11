@@ -495,6 +495,45 @@ function radiologySearchBody({ mrno = '', billno = '', hospitalId = 1, empId, fi
 const _NORMAL_IMPRESSION = /(normal study|unremarkable (study|examination|abdomen|chest|appearance|scan)|within normal limits|no (significant |radiographic |acute )?abnormalit|no abnormal finding|negative (study|examination)|study is normal|essentially normal|no evidence of (acute |significant )?(disease|abnormalit|patholog)|normal\b[a-z /]{0,40}?\b(exam|examination|study|ultrasound|sonograph|radiograph|scan|appearance|series))/;
 const _ABNORMAL_TERMS = /(calcul|stone|mass\b|lesion|fracture|scolio|spondyl|osteophy|retrolisthes|hernia|effusion|consolidat|nodul|cyst|dilat|stenos|opacit|collection|hydronephros|o?edema|h(a)?emorrhage|infiltrat|deformity|degener|tear\b|rupture|thromb|aneurysm|metasta|tumou?r|enlarged|thicken|narrow|gravel|distension|inflamm|abscess|fibroid|polyp|obstruct|occlus|ischem|infarct|fatty (liver|infiltration)|steatos)/;
 
+// Siratech's OWN stored verdict for a radiology result, when it's set. The result-entry
+// row / report DTO carries a numeric range (0 normal · 1 abnormal · 2 critical/panic ·
+// 3 N/A) and/or isNotNormal / isPanic flags. We trust a POSITIVE signal (abnormal/critical)
+// as authoritative; a 0/normal is unreliable here (teleradiology reports are free text and
+// usually leave the range at its 0 default), so the caller falls back to reading the
+// impression for those. Returns {range,src} or null when nothing is set. `objs` = any of
+// the report DTO, its per-test detail rows, or the FetchRadiologyDetails row.
+function sirResultRange(...objs) {
+  const cands = [];
+  for (const o of objs) {
+    if (!o) continue;
+    if (Array.isArray(o)) cands.push(...o);
+    else cands.push(o);
+  }
+  let sawNormal = false;
+  for (const o of cands) {
+    if (!o || typeof o !== 'object') continue;
+    // explicit panic / critical flag
+    for (const k of ['isPanic', 'isCritical', 'panic', 'critical']) {
+      if (o[k] != null && Number(o[k]) > 0) return { range: 'critical', src: k };
+    }
+    // numeric range code
+    for (const k of ['stringRange', 'resultRange', 'invRange', 'rangeCode']) {
+      const v = o[k];
+      if (v != null && v !== '' && Number.isFinite(Number(v))) {
+        const n = Number(v);
+        if (n === 2) return { range: 'critical', src: k };
+        if (n === 1) return { range: 'abnormal', src: k };
+        if (n === 0) sawNormal = true;
+      }
+    }
+    // explicit abnormal flag
+    for (const k of ['isNotNormal', 'isAbnormal', 'abnormal']) {
+      if (o[k] != null && Number(o[k]) > 0) return { range: 'abnormal', src: k };
+    }
+  }
+  return sawNormal ? { range: 'normal', src: 'range=0' } : null;
+}
+
 function classifyRange(reportText) {
   const text = String(reportText || '');
   // Isolate the radiologist's verdict; fall back to the whole report if unlabelled.
@@ -562,7 +601,7 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 module.exports = {
   dpAgent, normMod, bodyTokens, sideOf, isReported, isDraftReport, sameMrn, cleanAccession,
   depacsStudies, depacsReport, matchStudy,
-  radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange,
+  radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange, sirResultRange,
   // exposed for the deep DePACS probe tool (read-only diagnostics)
   dpFetch, dpToken, _fileCandidates, depacsSigninDebug,
 };

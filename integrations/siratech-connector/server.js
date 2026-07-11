@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'classify-negation-2026-07-11d';
+const CONNECTOR_BUILD = 'real-range-flag-2026-07-11e';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -473,10 +473,28 @@ app.get('/radiology/study', requireAuth, async (req, res) => {
         out.verifiedBy = (rd && rd.verifiedBy) || null;
         out.reportText = (rd && Array.isArray(rd.radiologyDtlsDTO)
           && rd.radiologyDtlsDTO.map((x) => x && x.message).filter(Boolean).join('\n\n')) || null;
-        // Normal vs abnormal — classified from the report's own IMPRESSION (negation-aware).
-        if (out.reportText) {
-          try { const cls = results.classifyRange(out.reportText); out.classification = cls.range; out.classReason = cls.reason; }
-          catch (_e) { /* classification best-effort */ }
+        // Normal / abnormal / critical. PREFER Siratech's OWN stored flag when it's a
+        // positive signal (abnormal/critical) — from the report DTO, its per-test detail
+        // rows, or the search row. Fall back to classifying the impression text only when
+        // Siratech left the range unset (the common case for free-text teleradiology).
+        const sir = results.sirResultRange(rd, rd && rd.radiologyDtlsDTO, row);
+        if (sir && (sir.range === 'abnormal' || sir.range === 'critical')) {
+          out.classification = sir.range;
+          out.critical = sir.range === 'critical';
+          out.classReason = `Siratech flag (${sir.src})`;
+          out.classSource = 'siratech';
+        } else if (out.reportText) {
+          try {
+            const cls = results.classifyRange(out.reportText);
+            out.classification = cls.range; out.classReason = cls.reason; out.classSource = 'impression';
+          } catch (_e) { /* classification best-effort */ }
+        }
+        // Debug: surface the raw candidate fields so the real Siratech verdict is verifiable.
+        if (String(req.query.debug || '') === '1') {
+          const pick = (o) => o && typeof o === 'object'
+            ? { stringRange: o.stringRange, isNotNormal: o.isNotNormal, isPanic: o.isPanic,
+                resultRange: o.resultRange, rangeCode: o.rangeCode } : null;
+          out._rangeDiag = { report: pick(rd), rows: (rd && rd.radiologyDtlsDTO || []).map(pick), searchRow: pick(row), sir };
         }
       } catch (_e) { /* report best-effort */ }
     }
