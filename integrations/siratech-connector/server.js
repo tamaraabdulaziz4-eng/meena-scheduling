@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'recover-2026-07-11j';
+const CONNECTOR_BUILD = 'timing-2026-07-11k';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1989,6 +1989,9 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // long TTL so DePACS/per-order load is unchanged.
   const ttl = (ready || modality) ? WORKLIST_CACHE_TTL : WORKLIST_FAST_CACHE_TTL;
   if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < ttl) return e.data; }
+  // Phase timing (returned as data._timings) so we can pinpoint EXACTLY where the board's
+  // build time goes: the bulk Siratech fan-out vs the modality/ready/pay passes.
+  const _tmark = { start: Date.now() };
   await getToken();
   const empId = currentEmpId() || '0';
   const now = Date.now();
@@ -2121,6 +2124,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // RadiologySearch pool, so by now it's already in flight (or done). Just await it
   // here so risByBill is fully populated before we expand rows into per-exam entries.
   await risP;
+  _tmark.afterBulk = Date.now();   // ← the Siratech search+panel fan-out (the fast-board cost)
   if (_risStatuses.size) console.log('[worklist] distinct risOrderStatus:', [..._risStatuses].join(' | '));
   // Expand each bill-level row into ONE ROW PER EXAM (RIS-panel parity), stamping the
   // per-exam service, modality, preliminary stage, the bill's real order time (the
@@ -2302,6 +2306,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     }
   }
 
+  _tmark.afterModality = Date.now();   // ← per-order RadiologyDetails (only when modality=1)
   if (ready && items.length) {
     // Pipeline stage PER ROW for the WHOLE board, grounded in DePACS reality:
     //   ordered  — no study of this exam's modality in PACS (whatever the HIS claims)
@@ -2364,6 +2369,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // the same visit don't count). billItemKeys is echoed once as a diagnostic so the exact
   // outstanding-vs-responsibility field can be confirmed against the live payload.
   let billItemKeys = null, payDiagSample = null;
+  _tmark.afterReady = Date.now();   // ← DePACS verified-report match (only when ready=1) — usually the heaviest
   if (pay && items.length) {
     const catalog = await getRadCatalog().catch(() => new Map());
     const byBill = new Map();
@@ -2410,9 +2416,19 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   }
 
   for (const it of items) { delete it.__row; delete it.__site; }   // strip enrichment scratch
+  _tmark.afterPay = Date.now();
+  const _timings = {
+    bulkMs: (_tmark.afterBulk || _tmark.start) - _tmark.start,                                   // Siratech search+panel fan-out
+    modalityMs: modality ? (_tmark.afterModality - (_tmark.afterBulk || _tmark.start)) : 0,        // per-order RadiologyDetails
+    readyMs: ready ? (_tmark.afterReady - (_tmark.afterModality || _tmark.afterBulk || _tmark.start)) : 0,  // DePACS match
+    payMs: pay ? (_tmark.afterPay - (_tmark.afterReady || _tmark.afterModality || _tmark.afterBulk || _tmark.start)) : 0,
+    totalMs: Date.now() - _tmark.start,
+    sites: wantSites.length, rows: items.length,
+  };
   const data = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, failed },
+    _timings,
     total: items.length, emergency: items.filter((i) => i.emergency).length,
     readyChecked: ready ? Math.min(readyLimit, new Set(items.map((i) => i.mrno)).size) : 0,
     modalityChecked: modality ? Math.min(WORKLIST_MODALITY_CAP, items.length) : 0,

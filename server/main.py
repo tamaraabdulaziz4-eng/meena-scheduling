@@ -8110,7 +8110,7 @@ _WL_CACHE_TTL_HEAVY = float(os.environ.get("WL_CACHE_TTL_HEAVY") or 60.0)
 
 # Fields that change every response even when the CONTENT is identical — excluded from the
 # ETag so an unchanged board/list still matches and returns a tiny 304.
-_ETAG_VOLATILE = ("generatedAt", "fetchedAt", "builtAt", "at")
+_ETAG_VOLATILE = ("generatedAt", "fetchedAt", "builtAt", "at", "_timings", "mirror")
 
 def _conditional_json(request: Request, payload):
     """Serve `payload` as JSON with a content ETag. When the client's If-None-Match matches
@@ -8344,6 +8344,80 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             except (ValueError, KeyError):
                 pass
     return _conditional_json(request, data)
+
+@app.get("/api/radiology/diag/board-timing")
+def diag_board_timing(request: Request, user=Depends(require_admin)):
+    """Definitive 'where does the time go' probe for the worklist. Measures each layer of the
+    real request path once and returns a plain-ms breakdown, so we can PROVE whether the delay
+    is the network hop, the connector, the Siratech fan-out, or our own processing. Forces one
+    fresh (nocache) build — run it on demand, not in a loop."""
+    import time as _t, urllib.parse
+    out = {"ok": True, "layers_ms": {}, "connector_build_ms": {}, "notes": {}}
+
+    # 1) Pure network round-trip to the connector (cheap /health — no HIS work).
+    t = _t.perf_counter()
+    try:
+        h = _bridge_request("/his/health", timeout=15)
+        out["layers_ms"]["network_ping_to_connector"] = round((_t.perf_counter() - t) * 1000)
+        out["notes"]["connector_loggedIn"] = bool(isinstance(h, dict) and h.get("loggedIn"))
+    except Exception as e:
+        out["layers_ms"]["network_ping_to_connector"] = None
+        out["notes"]["ping_error"] = str(e)[:200]
+
+    # 2) One FRESH worklist build (nocache) — the whole fast board, end to end.
+    frm = _wl_default_from()
+    t = _t.perf_counter()
+    try:
+        data = _bridge_request("/his/worklist?" + urllib.parse.urlencode({"from": frm, "nocache": "1"}), timeout=180)
+    except Exception as e:
+        out["ok"] = False
+        out["error"] = f"worklist build failed: {str(e)[:200]}"
+        return out
+    bridge_ms = round((_t.perf_counter() - t) * 1000)
+    out["layers_ms"]["bridge_roundtrip_total"] = bridge_ms
+
+    conn = (data.get("_timings") or {}) if isinstance(data, dict) else {}
+    out["connector_build_ms"] = {
+        "siratech_bulk_fanout": conn.get("bulkMs"),      # RadiologySearch + RIS-panel across all branches
+        "modality_pass": conn.get("modalityMs"),
+        "ready_depacs_pass": conn.get("readyMs"),
+        "pay_pass": conn.get("payMs"),
+        "connector_total": conn.get("totalMs"),
+    }
+    out["notes"]["rows"] = conn.get("rows")
+    out["notes"]["branches_queried"] = conn.get("sites")
+    conn_total = conn.get("totalMs")
+    if conn_total is not None:
+        # bridge round-trip minus the connector's own build time ≈ the network/transport hop.
+        out["layers_ms"]["network_hop_app_to_connector"] = max(0, bridge_ms - conn_total)
+
+    # 3) Our own local post-processing (the DB annotate reads we add on every serve).
+    items = data.get("items") if isinstance(data, dict) else None
+    t = _t.perf_counter()
+    try:
+        _rad_seed_confirmed_stages(items)
+        _annotate_worklist_consent(items)
+        _annotate_worklist_overlay(items)
+    except Exception:
+        pass
+    out["layers_ms"]["our_local_processing"] = round((_t.perf_counter() - t) * 1000)
+
+    # 4) Plain-English verdict: the single biggest contributor.
+    contributors = {
+        "Siratech HIS fan-out": conn.get("bulkMs") or 0,
+        "Siratech modality pass": conn.get("modalityMs") or 0,
+        "Siratech DePACS pass": conn.get("readyMs") or 0,
+        "Network to Saudi VPS": out["layers_ms"].get("network_hop_app_to_connector") or 0,
+        "Our processing": out["layers_ms"].get("our_local_processing") or 0,
+    }
+    worst = max(contributors, key=contributors.get)
+    out["verdict"] = {
+        "biggest_delay": worst,
+        "biggest_delay_ms": contributors[worst],
+        "summary": f"The worklist took ~{bridge_ms} ms end-to-end; the largest single cost is '{worst}' "
+                   f"(~{contributors[worst]} ms). Our own processing was ~{out['layers_ms'].get('our_local_processing')} ms.",
+    }
+    return out
 
 def _annotate_worklist_consent(items):
     """Flag which worklist patients already have a SIGNED consent on file, so the board
