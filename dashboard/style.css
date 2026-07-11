@@ -2165,6 +2165,10 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 .ps-rpt-head { display:flex; align-items:center; justify-content:space-between; gap:10px;
   padding:9px 13px; border-bottom:1px solid var(--border); background:var(--card-alt,#f7f7fa); }
 .ps-rpt-who { font-size:11px; font-weight:700; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ps-rpt-head-r { flex:none; display:inline-flex; align-items:center; gap:8px; }
+.ps-rpt-cls { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:800; letter-spacing:.02em; padding:3px 9px; border-radius:20px; white-space:nowrap; }
+.ps-rpt-cls.normal { color:#0a7d38; background:var(--ok-wash,#e6f6ec); }
+.ps-rpt-cls.abnormal { color:#c0261a; background:#fdecea; }
 .ps-rpt-print { flex:none; display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700;
   color:var(--accent,#6b4eff); background:var(--violet-wash,#f0edff); border:1px solid transparent;
   border-radius:8px; padding:5px 11px; cursor:pointer; transition:background .13s, border-color .13s; }
