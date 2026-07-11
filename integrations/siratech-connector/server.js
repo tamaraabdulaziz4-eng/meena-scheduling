@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risboard-2026-07-11n';
+const CONNECTOR_BUILD = 'risstatus-2026-07-11o';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1995,8 +1995,12 @@ function _risServiceOf(row) {
   return '';
 }
 function _risStatusOf(row) {
+  // appointmentStatus carries the RIS workflow text ("Pending" / "Scan Done" / …) in the
+  // branch-wide FetchRISPanel; risOrderStatus/resultStatus are often numeric codes there
+  // (skipped by the digit guard). Kept AFTER the ris* names so the search path is unchanged.
   for (const k of ['cpoeStatusDescription', 'cpoeStatus', 'risOrderStatus', 'resultStatus',
-                   'risStatus', 'radiologyStatus', 'orderStatus', 'statusDescription', 'status']) {
+                   'risStatus', 'appointmentStatus', 'radiologyStatus', 'orderStatus',
+                   'statusDescription', 'status']) {
     const v = row && row[k];
     if (v != null && String(v).trim() !== '' && !/^\d+$/.test(String(v).trim())) return String(v).trim();
   }
@@ -2108,6 +2112,11 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
         technicianName: (r.technicianName || '').trim() || null,
         radiologistName: (r.radiologistName || '').trim() || null,
         payer: r.payerName || null, billingStatus: r.billingStatus || null,
+        // DIAGNOSTIC (temporary): raw status fields so we can see which one holds the workflow
+        // text, then finalise the mapping and remove this.
+        _raw: { risOrderStatus: r.risOrderStatus, risStatus: r.risStatus,
+                resultStatus: r.resultStatus, appointmentStatus: r.appointmentStatus,
+                arrivalDate: r.arrivalDate, examStartDate: r.examStartDate, examEndDate: r.examEndDate },
       });
     }
   }
