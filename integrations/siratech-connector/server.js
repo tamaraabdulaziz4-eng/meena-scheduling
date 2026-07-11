@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risdepacs-2026-07-11v';
+const CONNECTOR_BUILD = 'risstatus-2026-07-11w';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2131,30 +2131,37 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
       const bt = parseHisDate(billDate);
       const ageHours = Number.isFinite(bt) ? Math.max(0, Math.round((now - bt) / 36e5)) : null;
       const svc = _risServiceOf(r);
-      // Stage from the panel's UNAMBIGUOUS exam timestamps (arrival → start → end) + the numeric
-      // result code for "reported" — more reliable than any status text (the panel has none).
+      // Workflow status — read the panel's OWN status text exactly the way the old search board
+      // did (via _risStatusOf: cpoeStatusDescription / appointmentStatus / … → "Pending" / "Scan
+      // In Progress" / "Scan Done" / …). This is what populated the Ordered / In Progress /
+      // Completed lanes before the flip — the status was always in the FetchRISPanel data, the
+      // fast board just wasn't reading it. Fall back to the exam timestamps, then to a plain
+      // "Ordered", when the panel carries no usable text for a row.
       const hasArrival = !!r.arrivalDate, hasStart = !!r.examStartDate, hasEnd = !!r.examEndDate;
       const scanned = hasStart || hasEnd;
-      // resultStatus is the panel's report signal: 1 = result/report ready (REPORTED), 0 = still
-      // in progress — this matches the "reported vs in progress" operators use, and the branch-
-      // wide panel doesn't populate the exam-progress timestamps, so this is the reliable source.
-      // (Being verified against known-reported patients before we flip.)
-      const reported = Number(r.resultStatus) >= 1 || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;
-      const stage = reported ? 'reported' : scanned ? 'imaged' : 'ordered';
-      // Status TEXT must agree with `stage` — the client's lane matcher trusts the text. The old
-      // fallback hard-coded 'In progress' for every non-reported row, so even rows with NO exam
-      // timestamps (which the branch-wide panel never populates) were forced into the In-Progress
-      // lane and the Ordered lane always read 0. Drive it off the same timestamps as `stage`:
-      // reported → Reported, scan-ended → Scan done, scan-started → In progress, arrived →
-      // Received, nothing yet → Ordered (a billed exam awaiting its result).
+      let panelStatus = _risStatusOf(r);
+      // "With/Without Appointment" is a BOOKING flag, not a workflow state — drop it so it can't
+      // masquerade as a status (it would show as an ugly label and mis-seed the lane).
+      if (/appointment/i.test(panelStatus)) panelStatus = '';
+      const panelStage = _risStageOf(panelStatus);   // ordered | imaged | draft | reported (or null)
+      // resultStatus is the panel's numeric report signal (1 = reported, 0 = in progress) — the
+      // check the operators confirmed. Keep it authoritative for "reported", OR-ed with the text
+      // signal so either source can mark a row done.
+      const reported = Number(r.resultStatus) >= 1 || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0
+        || panelStage === 'reported';
+      const stage = reported ? 'reported' : scanned ? 'imaged' : (panelStage || 'ordered');
+      // The client's lane matcher trusts hisStatus text, so surface the panel's real status for
+      // non-reported rows (that's what brings the In Progress / Completed lanes back). Only fall
+      // back to a timestamp/ordered label when the panel gave us nothing usable.
       const status = reported ? 'Reported'
-        : hasEnd ? 'Scan done'
-        : hasStart ? 'In progress'
-        : hasArrival ? 'Received'
-        : 'Ordered';
+        : (panelStatus
+          || (hasEnd ? 'Scan done'
+            : hasStart ? 'In progress'
+            : hasArrival ? 'Received'
+            : 'Ordered'));
       // Diagnostic tally: which (risOrderStatusId, risStatus, resultStatus) codes go with a scan
       // done / report — so we can decode the "reported" flag across ALL rows in one run.
-      const _hk = `orderStatusId=${r.risOrderStatusId}|risStatus=${r.risStatus}|resultStatus=${r.resultStatus}|scanned=${scanned}|end=${hasEnd}`;
+      const _hk = `panel=${panelStatus || '∅'}|stage=${stage}|resultStatus=${r.resultStatus}|scanned=${scanned}`;
       _hist[_hk] = (_hist[_hk] || 0) + 1;
       // Order key for the lifecycle actions — the panel's own per-line billing id (unique per
       // exam), falling back to billNo. (Wired to the action endpoints in the follow-up step.)
