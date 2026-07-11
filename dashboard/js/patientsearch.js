@@ -223,8 +223,9 @@ function renderPsDetail() {
           <div id="ps-labs"></div>
           ${allergyAlert}
         </div>
-        ${tiles ? `<div class="kpis">${tiles}</div>` : ''}
-        <div id="ps-clinical"></div>
+        <!-- Everything we ALREADY have from the lookup renders instantly, together, at the top —
+             so the card reads as complete immediately. The heavy Siratech history sections all
+             sit below and fill their skeletons in parallel, instead of popping in one by one. -->
         <div class="ps-sec ps-demog">
           <div class="ps-sec-l">Demographics</div>
           <div class="ps-grid ps-idgrid">
@@ -234,6 +235,8 @@ function renderPsDetail() {
             ${psField('Marital status', p.maritalStatus)}
           </div>
         </div>
+        ${tiles ? `<div class="kpis">${tiles}</div>` : ''}
+        <div id="ps-clinical"></div>
         <div id="ps-labresults"></div>
         <div id="ps-visits"></div>
         <div id="ps-appts"></div>
@@ -283,9 +286,16 @@ function renderPsDetail() {
 async function psAutoLoadSections() {
   const seq = psState.reqSeq;
   const live = () => seq === psState.reqSeq && psState.lookup && psState.lookup.patient && psState.lookup.patient.mrno;
-  try { if (live()) await psLoadRealLabs(); } catch (e) {}
-  try { if (live()) await psLoadVisits(); } catch (e) {}
-  try { if (live()) await psLoadAppointments(); } catch (e) {}
+  if (!live()) return;
+  // Load the history sections CONCURRENTLY (was one-after-another, which made them pop in at
+  // staggered times). This is a single open card = one patient, so 3 parallel HIS reads are
+  // fine — the board-wide fan-out is what we throttle, not one card. Each fills its own
+  // skeleton in place; a failed one just clears itself.
+  await Promise.all([
+    psLoadRealLabs().catch(() => {}),
+    psLoadVisits().catch(() => {}),
+    psLoadAppointments().catch(() => {}),
+  ]);
 }
 
 // A shimmering skeleton placeholder for a section while its data loads — gives an
