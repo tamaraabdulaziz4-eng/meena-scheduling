@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'fields-2026-07-11m';
+const CONNECTOR_BUILD = 'risboard-2026-07-11n';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1983,6 +1983,37 @@ function parseHisDate(s) {
   return Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(str) ? str : str + '+03:00');
 }
 
+// ── Shared RIS-panel field readers (module-level so both the search-based board and the
+// RIS-panel-based board use identical logic) ──────────────────────────────────────────────
+function _risServiceOf(row) {
+  for (const k of ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
+                   'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
+                   'invServiceName', 'invmastServiceName', 'ServiceName']) {
+    const v = row && row[k];
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+}
+function _risStatusOf(row) {
+  for (const k of ['cpoeStatusDescription', 'cpoeStatus', 'risOrderStatus', 'resultStatus',
+                   'risStatus', 'radiologyStatus', 'orderStatus', 'statusDescription', 'status']) {
+    const v = row && row[k];
+    if (v != null && String(v).trim() !== '' && !/^\d+$/.test(String(v).trim())) return String(v).trim();
+  }
+  return '';
+}
+function _risStageOf(status) {
+  const s = String(status || '').toLowerCase();
+  if (!s) return null;
+  if (/\bnot\b|\bnon[\s-]?|to\s+be|\bawait|\bun[\s-]?(verif|sign|approv)/.test(s)) {
+    return /(verif|sign|approv|report|dictat|transcrib)/.test(s) ? 'draft' : 'ordered';
+  }
+  if (/dictat|transcrib|prelim|\bdraft\b|partial|interim|\bpend/.test(s)) return 'draft';
+  if (/\b(verif|report|sign|approv|final|released|authenticat)/.test(s)) return 'reported';
+  if (/(complet|perform|imag|acquir|scan|exam)/.test(s)) return 'imaged';
+  return 'ordered';
+}
+
 // Summarise a list of per-call latencies (ms) for the timing diagnostic.
 function _statMs(a) {
   if (!a || !a.length) return { n: 0 };
@@ -1990,7 +2021,138 @@ function _statMs(a) {
   return { n: a.length, avg: Math.round(sum / a.length), max: Math.max(...a), min: Math.min(...a), sum };
 }
 
-async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false }) {
+// Which source builds the fast board: 'search' (RadiologySearch, current default) or 'ris'
+// (FetchRISPanel — ~10x faster, billed orders). Flag-gated so we can test before switching.
+const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'search').toLowerCase();
+
+// ── Fast board straight from FetchRISPanel ──────────────────────────────────────────────
+// RadiologySearch is ~5s/branch; FetchRISPanel is ~0.3s and already carries everything the
+// board lists (mrno, patientName, providerName, serviceName, billingStatus, workflow status,
+// exam timestamps) plus tech + radiologist. This builds the board directly from it — one
+// exam per RIS row — skipping RadiologySearch entirely. Age/gender/doctor-phone aren't in the
+// panel (they lazy-load with the patient card on row-expand). The order key uses the panel's
+// own billing id so the lifecycle actions can be wired to it.
+async function buildWorklistRis({ sites, from, to, noCache = false }) {
+  const key = JSON.stringify({ src: 'ris', sites: (sites || []).slice().sort((a, b) => a - b), from, to });
+  if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < WORKLIST_FAST_CACHE_TTL) return e.data; }
+  const _tmark = { start: Date.now() };
+  const _callMs = { panel: [] };
+  let _panelFields = null;
+  await getToken();
+  const now = Date.now();
+  const today = new Date();
+  const def = (d, end) => `${d.toISOString().slice(0, 10)}T${end ? '23:59:59' : '00:00:00'}.000Z`;
+  const ksaDayToUtc = (dateStr, end) => new Date(`${dateStr}T${end ? '23:59:59' : '00:00:00'}.000+03:00`).toISOString();
+  const fromISO = from ? ksaDayToUtc(from, false) : def(new Date(today.getTime() - WORKLIST_DAYS_BACK * 864e5), false);
+  const toISO = to ? ksaDayToUtc(to, true) : def(new Date(today.getTime() + 864e5), true);
+  const siteList = await getSites().catch(() => []);
+  const nameOf = new Map(siteList.map((s) => [s.siteId, s.shortName]));
+  const wantSites = (sites && sites.length) ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);
+  const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
+  const risFromDay = (from || fromISO.slice(0, 10));
+  const risToDay = (to || toISO.slice(0, 10));
+
+  const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+    try {
+      const _tc = Date.now();
+      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+        mrno: '', fromDate: risFromDay + 'T00:00:00', toDate: risToDay + 'T23:59:59',
+        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+        serviceCategoryId: 0, emrPatRisPanelId: 0,
+        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+      } });
+      _callMs.panel.push(Date.now() - _tc);
+      const rows = (rp.json && rp.json.data) || [];
+      if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
+      return { site, ok: true, rows };
+    } catch (e) { return { site, ok: false, rows: [] }; }
+  });
+  _tmark.afterBulk = Date.now();
+
+  const items = [], failed = [];
+  for (const s of perSite) {
+    if (!s) continue;
+    if (!s.ok) { failed.push(s.site); continue; }
+    for (const r of s.rows) {
+      const billNo = r.billNo;
+      if (billNo == null) continue;
+      const status = _risStatusOf(r);
+      const stage = _risStageOf(status);
+      const er = String(r.encounter || '').trim().toUpperCase() === 'ER';
+      const billDate = r.billDate || r.appoinmentDate || r.proposedDate || null;
+      const bt = parseHisDate(billDate);
+      const ageHours = Number.isFinite(bt) ? Math.max(0, Math.round((now - bt) / 36e5)) : null;
+      const svc = _risServiceOf(r);
+      const reported = /(verif|report|sign|approv|final|released|authenticat)/i.test(status)
+        || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;
+      // Order key for the lifecycle actions — the panel's own per-line billing id (unique per
+      // exam), falling back to billNo. (Wired to the action endpoints in the follow-up step.)
+      const orderKey = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
+        ? r.invPatBillingId : billNo;
+      items.push({
+        site: s.site, branch: branchLabel(s.site),
+        mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
+        age: null, gender: null,
+        doctorName: (r.providerName || '').trim(), department: '',
+        doctorPhone: null,
+        emergency: er, priority: er ? 'Emergency' : 'Routine',
+        billNo: billNo || null, genPatBillingId: orderKey,
+        orderedDate: billDate, ageHours, tatStatus: null,
+        exam: svc || null,
+        modality: (svc && results.normMod(svc)) || null,
+        svcId: r.invMastServiceId != null ? r.invMastServiceId : null,
+        stage: stage || null,
+        scanned: !!(r.examEndDate || r.examStartDate),
+        examStartAt: r.examStartDate || null, examEndAt: r.examEndDate || null, arrivedAt: r.arrivalDate || null,
+        hisStatus: status || null, hisReported: !!reported,
+        technicianName: (r.technicianName || '').trim() || null,
+        radiologistName: (r.radiologistName || '').trim() || null,
+        payer: r.payerName || null, billingStatus: r.billingStatus || null,
+      });
+    }
+  }
+  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+
+  // Strict KSA-day window (the panel can return rows outside the range we asked for).
+  const fromDay = from || new Date(Date.parse(fromISO) + 3 * 36e5).toISOString().slice(0, 10);
+  const toDay = to || new Date(Date.parse(toISO) + 3 * 36e5).toISOString().slice(0, 10);
+  const inRange = (it) => {
+    const t = parseHisDate(it.orderedDate);
+    if (!Number.isFinite(t)) return true;
+    const day = new Date(t + 3 * 36e5).toISOString().slice(0, 10);
+    return day >= fromDay && day <= toDay;
+  };
+  const kept = items.filter(inRange);
+
+  const _timings = {
+    bulkMs: (_tmark.afterBulk || _tmark.start) - _tmark.start,
+    modalityMs: 0, readyMs: 0, payMs: 0,
+    totalMs: Date.now() - _tmark.start,
+    sites: wantSites.length, rows: kept.length,
+    concurrency: STATS_SITE_CONCURRENCY,
+    panelCall: _statMs(_callMs.panel),
+    panelFields: _panelFields,
+    source: 'ris',
+  };
+  const data = {
+    range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
+    sites: { requested: wantSites, failed },
+    _timings, source: 'ris',
+    total: kept.length, emergency: kept.filter((i) => i.emergency).length,
+    readyChecked: 0, modalityChecked: 0, paymentChecked: 0,
+    items: kept, generatedAt: new Date().toISOString(),
+  };
+  worklistCache.set(key, { data, ts: Date.now() });
+  if (worklistCache.size > 40) worklistCache.delete(worklistCache.keys().next().value);
+  return data;
+}
+
+async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false, source = null }) {
+  // Fast board via the RIS panel (flag or ?src=ris) — but only the plain fast board; the heavy
+  // ready/modality/pay passes still use the search path for now.
+  if ((source || WORKLIST_SOURCE) === 'ris' && !ready && !modality && !pay) {
+    return await buildWorklistRis({ sites, from, to, noCache });
+  }
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality, pay });
   // Fast board pass refreshes on the short TTL; the heavy ready/modality pass keeps the
   // long TTL so DePACS/per-order load is unchanged.
@@ -2031,34 +2193,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // so the RIS pool can start immediately; both are awaited before expansion below.
   const risFromDay = (from || fromISO.slice(0, 10));
   const risToDay = (to || toISO.slice(0, 10));
-  const risServiceOf = (row) => {
-    for (const k of ['serviceName', 'service', 'invMastServiceName', 'serviceDescription',
-                     'invMastServiceDesc', 'serviceDesc', 'testName', 'procedureName',
-                     'invServiceName', 'invmastServiceName', 'ServiceName']) {
-      const v = row && row[k];
-      if (v != null && String(v).trim() !== '') return String(v).trim();
-    }
-    return '';
-  };
-  const risStatusOf = (row) => {
-    for (const k of ['cpoeStatusDescription', 'cpoeStatus', 'risOrderStatus', 'resultStatus',
-                     'risStatus', 'radiologyStatus', 'orderStatus', 'statusDescription', 'status']) {
-      const v = row && row[k];
-      if (v != null && String(v).trim() !== '' && !/^\d+$/.test(String(v).trim())) return String(v).trim();
-    }
-    return '';
-  };
-  const risStageOf = (status) => {
-    const s = String(status || '').toLowerCase();
-    if (!s) return null;
-    if (/\bnot\b|\bnon[\s-]?|to\s+be|\bawait|\bun[\s-]?(verif|sign|approv)/.test(s)) {
-      return /(verif|sign|approv|report|dictat|transcrib)/.test(s) ? 'draft' : 'ordered';
-    }
-    if (/dictat|transcrib|prelim|\bdraft\b|partial|interim|\bpend/.test(s)) return 'draft';
-    if (/\b(verif|report|sign|approv|final|released|authenticat)/.test(s)) return 'reported';
-    if (/(complet|perform|imag|acquir|scan|exam)/.test(s)) return 'imaged';
-    return 'ordered';
-  };
+  const risServiceOf = _risServiceOf, risStatusOf = _risStatusOf, risStageOf = _risStageOf;
   let _risKeysLogged = false;
   const risByBill = new Map();
   const _risStatuses = new Set();
@@ -2481,7 +2616,8 @@ app.get('/worklist', requireAuth, async (req, res) => {
     const modality = String(req.query.modality || '') === '1';
     const pay = String(req.query.pay || '') === '1';
     const noCache = String(req.query.nocache || '') === '1';
-    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache })) });
+    const source = String(req.query.src || '').trim().toLowerCase() || null;   // 'ris' to test the fast board
+    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache, source })) });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
