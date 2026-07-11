@@ -55,16 +55,34 @@ function isFemaleGender(g) {
 // / cpoeStatusDescription), no DePACS. Keyed by mrno + accession (+ optional exact
 // per-exam invPatTestResultId). Shared by the Orders board and the worklist (was
 // defined in orders.js as odOpenStudy and reached into cross-page).
+// PREDICTIVE PREFETCH — warm a study's report/images when the operator hovers/touches the
+// Result button, so the modal opens INSTANTLY. Keyed by the exact study query; short TTL.
+const _studyCache = new Map();
+const _studyInflight = new Map();
+const STUDY_TTL = 90000;
+function _studyKey(mrno, accession, invId) { return `${mrno}|${accession || ''}|${invId || ''}`; }
+function studyPrefetch(mrno, accession, invId) {
+  if (!mrno) return null;
+  const key = _studyKey(mrno, accession, invId);
+  const hit = _studyCache.get(key);
+  if (hit && Date.now() - hit.ts < STUDY_TTL) return Promise.resolve(hit.data);
+  if (_studyInflight.has(key)) return _studyInflight.get(key);
+  const qs = new URLSearchParams({ mrno });
+  if (invId) qs.set('invPatTestResultId', invId);
+  if (accession) qs.set('accession', accession);
+  const pr = API.get('/radiology/study?' + qs.toString())
+    .then((d) => { _studyCache.set(key, { ts: Date.now(), data: d }); _studyInflight.delete(key); return d; })
+    .catch((e) => { _studyInflight.delete(key); return { ok: false, error: (e && e.message) || 'failed' }; });
+  _studyInflight.set(key, pr);
+  return pr;
+}
 async function openStudyViewer(btn, mrno, accession, invId) {
+  const key = _studyKey(mrno, accession, invId);
+  const hit = _studyCache.get(key);
+  if (hit && Date.now() - hit.ts < STUDY_TTL) { showStudyModal(mrno, hit.data || {}); return; }  // instant
   const old = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '… loading'; }
-  let d;
-  try {
-    const qs = new URLSearchParams({ mrno });
-    if (invId) qs.set('invPatTestResultId', invId);   // exact per-exam key (preferred)
-    if (accession) qs.set('accession', accession);
-    d = await API.get('/radiology/study?' + qs.toString());
-  } catch (e) { d = { ok: false, error: (e && e.message) || 'failed' }; }
+  const d = await studyPrefetch(mrno, accession, invId);
   if (btn) { btn.disabled = false; btn.textContent = old; }
   showStudyModal(mrno, d || {});
 }

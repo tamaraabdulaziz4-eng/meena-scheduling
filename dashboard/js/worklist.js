@@ -966,7 +966,7 @@ function wlRowHtml(it) {
     : (enriching ? '<span class="wl-shimmer" style="width:120px"></span>' : '<span class="ename" style="color:var(--muted)">—</span>');
   const canReport = (st === 'completed' || st === 'reported') && wlHasStudy(it);
   const primaryAct = canReport
-    ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
+    ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" ontouchstart="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
     : `<button class="iconbtn" title="Handoff" onclick="event.stopPropagation();wlOpenHandoff('${jsAttr(mrn)}')">${icon('inbox')}</button>`;
   return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" onclick="wlToggleRow('${uid}',event)">
     <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
@@ -1034,7 +1034,7 @@ function wlExpandHtml(it, st) {
     <div class="xsec-title">Exam history</div>
     <div class="hist"><div class="hist-muted">History opens in the full patient card.</div></div>
     <div class="xbtns">
-      ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
+      ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
       <button class="btn" onclick="wlFlagCritical('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(acc)}',${it.genPatBillingId != null ? it.genPatBillingId : 'null'},${it.site != null ? "'" + jsAttr(String(it.site)) + "'" : 'null'},'${jsAttr(it.doctorName || '')}')">🚨 Flag critical</button>
       ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
