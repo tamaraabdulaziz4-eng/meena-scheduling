@@ -8376,7 +8376,13 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
     _qs = {"from": frm, "nocache": "1"}
     if src:
         _qs["src"] = src
+    # ?ready=1 also runs the heavy DePACS "imaged/reported" enrichment (the background pass the
+    # board fires after first paint) so we can verify server-side how many rows PACS marks imaged.
+    _ready = (request.query_params.get("ready") or "").strip() == "1"
+    if _ready:
+        _qs["ready"] = "1"
     out["notes"]["source"] = src or "search"
+    out["notes"]["ready"] = _ready
     t = _t.perf_counter()
     try:
         data = _bridge_request("/his/worklist?" + urllib.parse.urlencode(_qs), timeout=180)
@@ -8400,6 +8406,21 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
             "scanned": it.get("scanned"), "_raw": it.get("_raw"),
         } for it in _items[:5]]
         out["notes"]["total_rows"] = len(_items)
+        # Stage/lane distribution — how many rows are ordered vs imaged (Pending Report) vs
+        # reported after this build. With ready=1 this shows whether the DePACS pass moved any
+        # non-reported exam into 'imaged'. `scanned`/`readyToFile` counts help spot a PACS miss.
+        _stage_counts, _scanned_n, _ready_n = {}, 0, 0
+        for it in _items:
+            st = str(it.get("stage") or "none")
+            _stage_counts[st] = _stage_counts.get(st, 0) + 1
+            if it.get("scanned"):
+                _scanned_n += 1
+            if it.get("readyToFile"):
+                _ready_n += 1
+        out["stage_counts"] = _stage_counts
+        out["notes"]["readyChecked"] = (data.get("readyChecked") if isinstance(data, dict) else None)
+        out["notes"]["scanned_rows"] = _scanned_n
+        out["notes"]["readyToFile_rows"] = _ready_n
         _tmg = (data.get("_timings") or {}) if isinstance(data, dict) else {}
         if _tmg.get("statusHistogram"):
             out["status_histogram"] = _tmg.get("statusHistogram")
