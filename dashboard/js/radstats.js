@@ -906,7 +906,7 @@ function rsRenderBody() {
 
   const tabFinancial = `
     ${rsSection('Financial — revenue &amp; payer')}
-    ${rsPanel('Revenue &amp; payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
+    ${rsPanel('Revenue & payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
 
   const TABS = [
     ['overview', 'Overview', tabOverview],
