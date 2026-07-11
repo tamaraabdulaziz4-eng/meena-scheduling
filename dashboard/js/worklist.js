@@ -1337,12 +1337,32 @@ function wlFlagCritical(mrno, name, exam, acc, gpb, site, doctor) {
   crFlagForm({ mrno, patientName: name, exam, accession: acc, gpb: gpb, site: site, notifyTo: doctor });
 }
 
-function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
+// Arab (local) patients see their name in ARABIC on the consent; foreigners in English.
+// Decide from the registered nationality + whether an Arabic name exists.
+const WL_ARAB_NAT = /saudi|egypt|jordan|syria|yemen|sudan|emirat|kuwait|qatar|bahrain|oman|iraq|leban|palestin|libya|tunis|algeria|morocc|maurit|somal|djibouti|comoros|سعود|مصر|أردن|سوري|يمن/;
+function wlPickConsentName(patient, fallbackEn) {
+  const en = ((patient && patient.name) || fallbackEn || '').trim();
+  const ar = ((patient && patient.nameArabic) || '').trim();
+  const nat = ((patient && patient.nationality) || '').toLowerCase();
+  const arScript = /[؀-ۿ]/.test(ar);
+  // Arab if the Arabic name is real script AND nationality is Arab (or unknown = local default).
+  const isArab = arScript && (!nat || WL_ARAB_NAT.test(nat));
+  return { display: (isArab && ar) ? ar : (en || ar), en: en || ar };
+}
+async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
   // Keys must match the /consent/link backend: physician (not referring_doctor),
   // plus bill_no/site so the signed PDF auto-files against the right radiology order.
-  const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: name, procedure: exam,
+  // Fetch the patient's Arabic name + nationality so an Arab patient sees her name in
+  // Arabic (name_en is kept for the Siratech filing name-match). Best-effort.
+  let display = name, en = name;
+  try {
+    const d = await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`);
+    const picked = wlPickConsentName((d && d.patient) || {}, name);
+    display = picked.display; en = picked.en;
+  } catch (e) { /* keep the English board name */ }
+  const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: display, name_en: en, procedure: exam,
                     physician: doctor || '', branch: branch || '',
                     bill_no: bill || '', site: (Number(site) || null) };
   if (typeof openConsentQR === 'function') { openConsentQR(prefill, () => wlLoad(true)); return; }

@@ -234,6 +234,7 @@ async function consentSave(btn) {
     file_no: p.file_no || p.mrno || '',
     mrn: p.mrno || p.file_no || '',
     name: p.name || '',
+    name_en: p.name_en || '',   // English name kept for the Siratech filing name-match
     dob: p.dob || '',
     procedure: (document.getElementById('cn-proc') || {}).value || '',
     weight: (document.getElementById('cn-weight') || {}).value || '',
