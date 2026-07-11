@@ -945,7 +945,13 @@ function wlRenderTabs(items) {
     if (it.__status) cnt[it.__status] = (cnt[it.__status] || 0) + 1;
     if (it.emergency) cnt.urgent++;
   }
-  el.innerHTML = WL_TABS.map(([k, lbl, urg]) =>
+  // Received / In Progress can't be populated from the branch-wide RIS feed — Siratech only
+  // exposes patient-arrived / actively-scanning per-patient, not in the whole-board call. So
+  // hide those two lanes while empty (self-adjusting: if a row ever lands there, or it's the
+  // active tab, it reappears) instead of showing permanently-0 dead tabs. The real pipeline on
+  // this feed is Ordered → Completed (images in PACS, report pending) → Reported.
+  const _dead = (k) => (k === 'received' || k === 'progress') && !cnt[k] && wlState.tab !== k;
+  el.innerHTML = WL_TABS.filter(([k]) => !_dead(k)).map(([k, lbl, urg]) =>
     `<button class="rw-tab${urg ? ' urg' : ''}${wlState.tab === k ? ' on' : ''}" onclick="wlSetTab('${k}')">${urg ? '🚨 ' : ''}${lbl}<span class="cnt tnum">${cnt[k] || 0}</span></button>`
   ).join('');
 }
