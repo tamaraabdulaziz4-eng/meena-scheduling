@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'timing2-2026-07-11l';
+const CONNECTOR_BUILD = 'fields-2026-07-11m';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2003,6 +2003,10 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   // (low per-call avg but high wall-clock).
   const _tmark = { start: Date.now() };
   const _callMs = { search: [], panel: [] };
+  // Field-name capture (NAMES only, no patient values) so we can tell whether the FAST
+  // FetchRISPanel endpoint carries enough (mrno/patientName/doctor) to REPLACE the slow
+  // RadiologySearch as the board's row source — the key to dropping the ~5s/call.
+  let _panelFields = null, _searchFields = null;
   await getToken();
   const empId = currentEmpId() || '0';
   const now = Date.now();
@@ -2069,6 +2073,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
       } });
       _callMs.panel.push(Date.now() - _tc);
       const rows = (rp.json && rp.json.data) || [];
+      if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
       if (!_risKeysLogged && rows.length) { _risKeysLogged = true; console.log('[worklist] FetchRISPanel row keys:', Object.keys(rows[0]).join(',')); }
       for (const row of rows) {
         if (row.billNo == null) continue;
@@ -2107,6 +2112,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   for (const s of perSite) {
     if (!s) continue;
     if (!s.ok) { failed.push(s.site); continue; }
+    if (!_searchFields && s.rows && s.rows.length) _searchFields = Object.keys(s.rows[0]);
     for (const r of s.rows) {
       const t = parseHisDate(r.billDate || r.visitDate || '');
       const ageHours = Number.isFinite(t) ? Math.max(0, Math.round((now - t) / 36e5)) : null;
@@ -2444,6 +2450,9 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     // is low but bulkMs is high, the CONNECTOR box isn't running them in parallel.
     searchCall: _statMs(_callMs.search),
     panelCall: _statMs(_callMs.panel),
+    // Field NAMES of each source row (no PHI) — to judge if the fast panel can replace search.
+    searchFields: _searchFields,
+    panelFields: _panelFields,
   };
   const data = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },

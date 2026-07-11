@@ -8393,6 +8393,12 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
     }
     out["notes"]["rows"] = conn.get("rows")
     out["notes"]["branches_queried"] = conn.get("sites")
+    # Field NAMES of each Siratech source (no patient data) — to judge whether the FAST
+    # FetchRISPanel could replace the SLOW RadiologySearch as the board's row source.
+    out["source_fields"] = {
+        "radiology_search_SLOW": conn.get("searchFields"),
+        "ris_panel_FAST": conn.get("panelFields"),
+    }
     conn_total = conn.get("totalMs")
     if conn_total is not None:
         # bridge round-trip minus the connector's own build time ≈ the network/transport hop.
