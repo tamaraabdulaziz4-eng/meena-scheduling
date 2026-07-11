@@ -13,8 +13,8 @@ async function openConsentQR(prefill, onDone) {
   _consent = { prefill: prefill || {}, onDone: onDone || null, drawing: false, hasInk: false };
   let ov = document.getElementById('consent-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'consent-overlay'; document.body.appendChild(ov); }
-  ov.innerHTML = `<div class="cn-sheet"><div class="cn-head"><div><div class="cn-title">إقرار عدم الحمل</div>
-    <div class="cn-sub">Non-Pregnancy Consent</div></div><button class="cn-x" onclick="closeConsent()">✕</button></div>
+  ov.innerHTML = `<div class="cn-sheet"><div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div>
+    <div class="cn-sub">Radiology consent</div></div><button class="cn-x" onclick="closeConsent()">✕</button></div>
     <div class="cn-body" style="text-align:center"><div class="mini-spin"></div><p style="margin-top:10px;color:var(--muted)">Preparing link…</p></div></div>`;
   try {
     const r = await API.post('/consent/link', _consent.prefill);
@@ -24,30 +24,30 @@ async function openConsentQR(prefill, onDone) {
   } catch (e) {
     const body = ov.querySelector('.cn-body');
     if (body) body.innerHTML = `<div class="cn-err">${escapeHtml(e.message || 'Failed to prepare the link')}</div>
-      <div style="margin-top:12px"><button class="btn btn-primary" onclick="consentSignHere()">Sign on this device · وقّعي على هذا الجهاز</button></div>`;
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="consentSignHere()">Sign on this device</button></div>`;
   }
 }
 function renderConsentQR(ov, r) {
   const p = _consent.prefill || {};
   ov.querySelector('.cn-sheet').innerHTML = `
-    <div class="cn-head"><div><div class="cn-title">إقرار عدم الحمل</div><div class="cn-sub">Non-Pregnancy Consent · ${escapeHtml(p.name || '')}</div></div>
+    <div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div><div class="cn-sub">${escapeHtml(p.name || '')}</div></div>
       <button class="cn-x" onclick="closeConsent()">✕</button></div>
     <div class="cn-body" style="text-align:center">
-      <p style="font-size:14px;font-weight:700;margin-bottom:4px">اطلبي من المريضة مسح الرمز بجوالها</p>
-      <p style="font-size:12.5px;color:var(--muted);direction:ltr;margin-bottom:14px">Ask the patient to scan this with her phone camera</p>
+      <p style="font-size:14px;font-weight:700;margin-bottom:4px">Ask the patient to scan this with her phone camera</p>
+      <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">She reads and signs on her own phone</p>
       ${r.qr ? `<img src="${escapeHtml(r.qr)}" alt="QR" style="width:230px;max-width:70vw;height:auto;border:1px solid var(--border);border-radius:14px;padding:8px;background:#fff">` : ''}
       <div style="margin-top:14px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
         <input class="input" readonly value="${escapeHtml(r.url || '')}" style="flex:1;font-size:12px" onclick="this.select()">
         <button class="btn btn-sm" onclick="consentCopyLink(this,'${jsAttr(r.url || '')}')">Copy</button>
       </div>
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
-        <input id="cn-sms-phone" class="input" value="${escapeHtml(p.phone || '')}" placeholder="جوال المريضة · patient mobile e.g. 05xxxxxxxx" style="flex:1;font-size:13px">
+        <input id="cn-sms-phone" class="input" value="${escapeHtml(p.phone || '')}" placeholder="Patient mobile e.g. 05xxxxxxxx" style="flex:1;font-size:13px">
         <button class="btn btn-sm btn-primary" onclick="consentSendSms(this,'${jsAttr(r.url || '')}')">📱 Send SMS</button>
       </div>
       <div id="cn-sms-msg" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
-      <div id="cn-poll" class="cn-poll">⏳ بانتظار توقيع المريضة… · waiting for signature…</div>
+      <div id="cn-poll" class="cn-poll">⏳ Waiting for the patient's signature…</div>
       <div style="margin-top:14px;border-top:1px dashed var(--border);padding-top:12px">
-        <button class="btn btn-ghost btn-sm" onclick="consentSignHere()">أو وقّعي على هذا الجهاز · sign on this device</button>
+        <button class="btn btn-ghost btn-sm" onclick="consentSignHere()">Sign on this device instead</button>
       </div>
     </div>`;
 }
@@ -84,7 +84,7 @@ function consentStartPoll(id) {
         handled = true;
         consentStopPoll();
         const box = document.getElementById('cn-poll');
-        if (box) box.innerHTML = `<span class="cn-ok">✅ تم التوقيع · Signed</span>
+        if (box) box.innerHTML = `<span class="cn-ok">✅ Signed</span>
           <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${id}/pdf?file=${encodeURIComponent((_consent.prefill && (_consent.prefill.file_no || _consent.prefill.mrno)) || '')}" target="_blank" rel="noopener">View PDF</a>`;
         const done = _consent.onDone;
         if (typeof done === 'function') done(id);
@@ -113,11 +113,11 @@ function renderConsent(ov) {
   const p = _consent.prefill || {};
   const isER = (p.patient_type === 'er');
   ov.innerHTML = `
-    <div class="cn-sheet">
+    <div class="cn-sheet" dir="ltr">
       <div class="cn-head">
         <div>
-          <div class="cn-title">نموذج إقرار بعدم وجود حمل</div>
-          <div class="cn-sub">Declaration of Non-Pregnancy · Radiology</div>
+          <div class="cn-title">Declaration of Non-Pregnancy</div>
+          <div class="cn-sub">Radiology consent</div>
         </div>
         <button class="cn-x" onclick="closeConsent()" aria-label="Close">✕</button>
       </div>
@@ -125,50 +125,49 @@ function renderConsent(ov) {
       <div class="cn-body">
         <!-- Her data, already registered — read-only summary -->
         <div class="cn-summary">
-          <div class="cn-sum-row"><span>المريضة · Patient</span><b>${escapeHtml(p.name || '—')}</b></div>
-          <div class="cn-sum-row"><span>الملف · File</span><b>${escapeHtml(p.mrno || p.file_no || '—')}</b></div>
-          ${p.dob ? `<div class="cn-sum-row"><span>الميلاد · DOB</span><b>${escapeHtml(p.dob)}</b></div>` : ''}
-          <div class="cn-sum-row"><span>الإجراء · Procedure</span><b>${escapeHtml(p.procedure || '—')}</b></div>
-          ${p.branch ? `<div class="cn-sum-row"><span>الفرع · Branch</span><b>${escapeHtml(p.branch)}</b></div>` : ''}
-          <div class="cn-sum-row"><span>النوع · Type</span><b>${isER ? 'طوارئ · ER' : 'مراجعة · Outpatient'}</b></div>
-          ${p.physician ? `<div class="cn-sum-row"><span>الطبيب · Physician</span><b>${escapeHtml(p.physician)}</b></div>` : ''}
+          <div class="cn-sum-row"><span>Patient</span><b>${escapeHtml(p.name || '—')}</b></div>
+          <div class="cn-sum-row"><span>File / MRN</span><b>${escapeHtml(p.mrno || p.file_no || '—')}</b></div>
+          ${p.dob ? `<div class="cn-sum-row"><span>Date of birth</span><b>${escapeHtml(p.dob)}</b></div>` : ''}
+          <div class="cn-sum-row"><span>Procedure</span><b>${escapeHtml(p.procedure || '—')}</b></div>
+          ${p.branch ? `<div class="cn-sum-row"><span>Branch</span><b>${escapeHtml(p.branch)}</b></div>` : ''}
+          <div class="cn-sum-row"><span>Type</span><b>${isER ? 'ER' : 'Outpatient'}</b></div>
+          ${p.physician ? `<div class="cn-sum-row"><span>Physician</span><b>${escapeHtml(p.physician)}</b></div>` : ''}
         </div>
         <input type="hidden" id="cn-proc" value="${escapeHtml(p.procedure || '')}">
 
         <!-- Optional clinical values the specialist enters if measured -->
         <div class="cn-vitals">
-          <div class="cn-vitals-h">قياسات (اختياري — يعبّيها الأخصائي) · Vitals (optional)</div>
+          <div class="cn-vitals-h">Vitals (optional)</div>
           <div class="cn-vitals-row">
-            <label><span>الوزن · Weight</span><input id="cn-weight" class="input" inputmode="decimal" value="${escapeHtml(p.weight || '')}" placeholder="kg"></label>
-            <label><span>الطول · Height</span><input id="cn-height" class="input" inputmode="decimal" value="${escapeHtml(p.height || '')}" placeholder="cm"></label>
+            <label><span>Weight</span><input id="cn-weight" class="input" inputmode="decimal" value="${escapeHtml(p.weight || '')}" placeholder="kg"></label>
+            <label><span>Height</span><input id="cn-height" class="input" inputmode="decimal" value="${escapeHtml(p.height || '')}" placeholder="cm"></label>
             <label><span>HCG</span><input id="cn-hcg" class="input" placeholder="—"></label>
           </div>
         </div>
 
         <!-- What the patient reads and chooses -->
         <div class="cn-declare">
-          <div class="cn-declare-h">أقر بأني لست حامل أثناء عمل فحص الأشعة<br><span>I declare I am not pregnant during the exam.</span></div>
-          <div class="cn-lbl" style="margin-top:10px">بسبب · Because:</div>
-          <label class="cn-radio"><input type="radio" name="cn-reason" value="not_married" onchange="consentSetReason('not_married')"> لست متزوجة · Not married</label>
-          <label class="cn-radio"><input type="radio" name="cn-reason" value="lmp" checked onchange="consentSetReason('lmp')"> تاريخ آخر دورة شهرية · Last menstrual period
+          <div class="cn-declare-h">I declare I am not pregnant during the exam.</div>
+          <div class="cn-lbl" style="margin-top:10px">Because:</div>
+          <label class="cn-radio"><input type="radio" name="cn-reason" value="not_married" onchange="consentSetReason('not_married')"> Not married</label>
+          <label class="cn-radio"><input type="radio" name="cn-reason" value="lmp" checked onchange="consentSetReason('lmp')"> Last menstrual period
             <input id="cn-lmp" type="date" class="input" style="max-width:180px;margin-inline-start:8px"></label>
-          <label class="cn-radio"><input type="radio" name="cn-reason" value="iud" onchange="consentSetReason('iud')"> مانع الحمل اللولب · IUD</label>
+          <label class="cn-radio"><input type="radio" name="cn-reason" value="iud" onchange="consentSetReason('iud')"> IUD</label>
         </div>
 
-        <div class="cn-risk">⚠️ أدرك أن هذا الإجراء يستخدم الأشعة المؤيّنة وقد يعرّض الجنين للمخاطر، وأوافق على إجرائه.<br>
-          <span>I understand this procedure uses ionizing radiation which may pose a risk to a fetus, and I consent to it.</span></div>
+        <div class="cn-risk">⚠️ I understand this procedure uses ionizing radiation which may pose a risk to a fetus, and I consent to it.</div>
 
-        <div class="cn-siglabel">التوقيع · Signature <span style="color:var(--muted);font-weight:500">— وقّعي هنا بإصبعك / sign with your finger</span></div>
+        <div class="cn-siglabel">Signature <span style="color:var(--muted);font-weight:500">— sign with your finger</span></div>
         <div class="cn-sigwrap">
           <canvas id="cn-sig" class="cn-sig"></canvas>
-          <button type="button" class="cn-sigclear" onclick="consentClearSig()">Clear · مسح</button>
+          <button type="button" class="cn-sigclear" onclick="consentClearSig()">Clear</button>
         </div>
         <div id="cn-msg" class="cn-msg"></div>
       </div>
 
       <div class="cn-foot">
-        <button class="btn btn-ghost" onclick="closeConsent()">Cancel · إلغاء</button>
-        <button class="btn btn-primary" id="cn-save" onclick="consentSave(this)">Save &amp; file · حفظ وإرفاق</button>
+        <button class="btn btn-ghost" onclick="closeConsent()">Cancel</button>
+        <button class="btn btn-primary" id="cn-save" onclick="consentSave(this)">Save &amp; file</button>
       </div>
     </div>`;
   consentInitPad();
@@ -221,15 +220,15 @@ function consentClearSig() {
 async function consentSave(btn) {
   const msg = document.getElementById('cn-msg');
   const p = _consent.prefill || {};
-  if (!_consent.hasInk) { if (msg) msg.innerHTML = `<span class="cn-err">Please have the patient sign first · التوقيع مطلوب</span>`; return; }
+  if (!_consent.hasInk) { if (msg) msg.innerHTML = `<span class="cn-err">Please have the patient sign first</span>`; return; }
   const reason = (document.querySelector('input[name="cn-reason"]:checked') || {}).value || '';
   const lmp = (document.getElementById('cn-lmp') || {}).value || '';
-  if (reason === 'lmp' && !lmp) { if (msg) msg.innerHTML = `<span class="cn-err">Enter the last menstrual period date · أدخلي تاريخ آخر دورة</span>`; return; }
+  if (reason === 'lmp' && !lmp) { if (msg) msg.innerHTML = `<span class="cn-err">Enter the last menstrual period date</span>`; return; }
   const c = document.getElementById('cn-sig');
   let signature = '';
   try { signature = c ? c.toDataURL('image/png') : ''; }
   catch (err) { if (msg) msg.innerHTML = `<span class="cn-err">Couldn't read the signature on this browser — try another. (${escapeHtml(err.message || '')})</span>`; return; }
-  if (!signature || signature.length < 200) { if (msg) msg.innerHTML = `<span class="cn-err">Signature empty — please sign again · التوقيع فارغ</span>`; return; }
+  if (!signature || signature.length < 200) { if (msg) msg.innerHTML = `<span class="cn-err">Signature empty — please sign again</span>`; return; }
   const payload = {
     file_no: p.file_no || p.mrno || '',
     mrn: p.mrno || p.file_no || '',
@@ -252,9 +251,9 @@ async function consentSave(btn) {
     const r = await API.post('/consent', payload);
     if (r && r.ok) {
       const filedNote = r.filed
-        ? `<span class="cn-ok" style="margin-inline-start:8px">📎 On the patient file · رُفعت لملف المريض</span>`
-        : `<span class="pill" style="margin-inline-start:8px">Will attach to the report · تُرفق مع التقرير</span>`;
-      if (msg) msg.innerHTML = `<span class="cn-ok">✅ Consent saved · تم الحفظ</span>${filedNote}
+        ? `<span class="cn-ok" style="margin-inline-start:8px">📎 On the patient file</span>`
+        : `<span class="pill" style="margin-inline-start:8px">Will attach to the report</span>`;
+      if (msg) msg.innerHTML = `<span class="cn-ok">✅ Consent saved</span>${filedNote}
         <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${r.id}/pdf?file=${encodeURIComponent(payload.file_no || '')}" target="_blank" rel="noopener">View PDF</a>`;
       const done = _consent.onDone;
       setTimeout(() => { closeConsent(); if (typeof done === 'function') done(r.id); }, 900);
