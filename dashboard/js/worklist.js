@@ -447,6 +447,7 @@ async function wlLoad(force, silent) {
     wlHydrate();                                  // paint known modality/exam/stage instantly from cache
     wlRender();
     wlEnrich(silent, force);                      // background: fill stage + modality for unknown rows
+    wlPrefetchCards();                            // warm the patient card for the top rows so opening is instant
   } catch (e) {
     // A failed/aborted fetch flips the live pill to amber "Reconnecting…" instead of
     // freezing the board — the next good poll clears it on its own.
@@ -467,6 +468,44 @@ async function wlLoad(force, silent) {
     clearTimeout(watchdog);
     if (wlState._loadGen === gen) wlState.loading = false;   // ALWAYS release our own lock
   }
+}
+
+// PREDICTIVE WARM: once the board lands, quietly pre-load the patient card for the top
+// rows into psLookupCache so tapping "Full patient card" (or a row) opens INSTANTLY with
+// no spinner. Runs on idle at low concurrency so the 2GB HIS box is never stressed — this
+// only warms the lightweight /radiology/lookup panel (same call the card's first paint
+// makes), not the heavy history sections, which still load lazily inside the card.
+let _wlCardWarmGen = 0;
+function wlPrefetchCards() {
+  if (typeof psPrefetchLookup !== 'function') return;        // patientsearch.js not loaded — nothing to warm
+  const items = (wlState.data && wlState.data.items) || [];
+  if (!items.length) return;
+  // Unique MRNs in board order, capped — the rows the operator is most likely to open first.
+  const seen = new Set(); const mrns = [];
+  for (const it of items) {
+    const m = String(it.mrno || '').trim();
+    if (!m || seen.has(m)) continue;
+    seen.add(m); mrns.push(m);
+    if (mrns.length >= 10) break;
+  }
+  if (!mrns.length) return;
+  const myGen = ++_wlCardWarmGen;                            // a newer board load cancels this sweep
+  const CONC = 2; let idx = 0;
+  const pump = () => {
+    if (myGen !== _wlCardWarmGen) return;                    // superseded — stop warming stale rows
+    if (idx >= mrns.length) return;
+    const mrno = mrns[idx++];
+    let done = false;
+    const next = () => { if (done) return; done = true; pump(); };
+    try {
+      const p = psPrefetchLookup(mrno);                      // no-op if already warm/in-flight
+      if (p && typeof p.then === 'function') p.then(next, next);
+      else next();
+    } catch (e) { next(); }
+  };
+  const kick = () => { for (let i = 0; i < CONC; i++) pump(); };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 1500 });
+  else setTimeout(kick, 250);
 }
 
 // Paint modality/exam AND pipeline stage onto the freshly-loaded board from the
@@ -1038,7 +1077,7 @@ function wlExpandHtml(it, st) {
     <div class="hist"><div class="hist-muted">History opens in the full patient card.</div></div>
     <div class="xbtns">
       ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
-      <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
+      <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')" onmouseenter="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')" ontouchstart="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
       <button class="btn" onclick="wlFlagCritical('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(acc)}',${it.genPatBillingId != null ? it.genPatBillingId : 'null'},${it.site != null ? "'" + jsAttr(String(it.site)) + "'" : 'null'},'${jsAttr(it.doctorName || '')}')">🚨 Flag critical</button>
       ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
       ${wlWorkflowBtns(it, st)}
@@ -1356,14 +1395,23 @@ async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // plus bill_no/site so the signed PDF auto-files against the right radiology order.
   // Fetch the patient's Arabic name + nationality so an Arab patient sees her name in
   // Arabic (name_en is kept for the Siratech filing name-match). Best-effort.
-  let display = name, en = name;
+  let display = name, en = name, pat = {};
   try {
     const d = await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`);
-    const picked = wlPickConsentName((d && d.patient) || {}, name);
+    pat = (d && d.patient) || {};
+    const picked = wlPickConsentName(pat, name);
     display = picked.display; en = picked.en;
   } catch (e) { /* keep the English board name */ }
+  // Carry the identity + vitals the HIS already has (DOB, weight, height) so the form
+  // prints COMPLETE — the worklist row alone doesn't have these, and without them the
+  // signed PDF came out with blank patient fields.
   const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: display, name_en: en, procedure: exam,
                     physician: doctor || '', branch: branch || '',
+                    dob: (pat.dob || '').trim ? (pat.dob || '').trim() : (pat.dob || ''),
+                    gender: pat.gender || '',
+                    weight: (pat.weight != null ? String(pat.weight) : ''),
+                    height: (pat.height != null ? String(pat.height) : ''),
+                    patient_type: 'outpatient',   // radiology default → ticks the Outpatient box
                     bill_no: bill || '', site: (Number(site) || null) };
   if (typeof openConsentQR === 'function') { openConsentQR(prefill, () => wlLoad(true)); return; }
   if (typeof openConsent === 'function') { openConsent(prefill, () => wlLoad(true)); return; }
@@ -1559,10 +1607,15 @@ function wlEnsurePcardStyles() {
   s.textContent = `
     .wl-pcard-ov{position:fixed;inset:0;z-index:1200;background:rgba(20,17,40,.5);
       backdrop-filter:blur(2px);display:flex;justify-content:center;align-items:flex-start;
-      padding:24px 14px;overflow:auto;animation:wlpcFade .15s ease}
+      padding:24px 14px;overflow:auto;animation:wlpcFade .18s ease;transition:opacity .16s ease}
+    .wl-pcard-ov.closing{opacity:0}
     @keyframes wlpcFade{from{opacity:0}to{opacity:1}}
     .wl-pcard-sheet{width:100%;max-width:660px;background:var(--bg,#f4f2fc);border-radius:18px;
-      box-shadow:0 24px 70px rgba(20,17,40,.4);overflow:hidden;margin:auto 0}
+      box-shadow:0 24px 70px rgba(20,17,40,.4);overflow:hidden;margin:auto 0;
+      animation:wlpcSheetIn .3s cubic-bezier(.16,1,.3,1) both;
+      transition:transform .16s ease,opacity .16s ease}
+    .wl-pcard-ov.closing .wl-pcard-sheet{transform:translateY(8px) scale(.985);opacity:0}
+    @keyframes wlpcSheetIn{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
     .wl-pcard-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;
       gap:10px;padding:13px 16px;background:var(--card,#fff);border-bottom:1px solid var(--border,#e7e4f0)}
     .wl-pcard-head b{font-size:15px}
@@ -1580,11 +1633,18 @@ async function wlOpenPatientCard(mrno) {
   wlEnsurePcardStyles();
   let ov = document.getElementById('wl-pcard');
   if (!ov) { ov = document.createElement('div'); ov.id = 'wl-pcard'; document.body.appendChild(ov); }
+  // Reopened while a previous close was mid-exit? Cancel that pending removal and clear the
+  // closing state so the fresh card can't be wiped by the old exit timer.
+  if (ov._closeTimer) { clearTimeout(ov._closeTimer); ov._closeTimer = null; }
+  ov._closing = false;
   ov.className = 'wl-pcard-ov';
   ov.onclick = (e) => { if (e.target === ov) wlClosePatientCard(); };
+  // If this patient was prefetched (board warm-up or hover), paint instantly — no spinner.
+  const warm = (typeof psLookupCache !== 'undefined') ? psLookupCache.get(mrno) : null;
+  const isWarm = warm && Date.now() - warm.ts < 90000;
   ov.innerHTML = `<div class="wl-pcard-sheet">
     <div class="wl-pcard-head"><b>Patient card</b><button class="wl-pcard-x" title="Close" onclick="wlClosePatientCard()">✕</button></div>
-    <div class="wl-pcard-body"><div id="ps-detail">${typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : '<div class="card" style="padding:26px;text-align:center">Loading…</div>'}</div></div>
+    <div class="wl-pcard-body"><div id="ps-detail">${isWarm ? '' : (typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : '<div class="card" style="padding:26px;text-align:center">Loading…</div>')}</div></div>
   </div>`;
   document.body.style.overflow = 'hidden';
   if (!window._wlPcardEsc) {
@@ -1592,8 +1652,12 @@ async function wlOpenPatientCard(mrno) {
     document.addEventListener('keydown', window._wlPcardEsc);
   }
   try {
-    const d = await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`);
+    // Use the shared patient-lookup cache (filled by hover/board prefetch); else fetch now.
+    const d = isWarm ? warm.data
+      : (typeof psPrefetchLookup === 'function' ? await psPrefetchLookup(mrno)
+        : await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`));
     if (!document.getElementById('wl-pcard')) return;                 // closed while loading
+    if (typeof psNoteCache !== 'undefined') { try { psNoteCache = new Map(); psReportStore = {}; } catch (e) {} }
     const pat = (d.patient && d.patient.mrno) ? d.patient : { ...(d.patient || {}), mrno };
     psState.lookup = { ...d, patient: pat };
     renderPsDetail();
@@ -1605,9 +1669,17 @@ async function wlOpenPatientCard(mrno) {
 }
 function wlClosePatientCard() {
   const ov = document.getElementById('wl-pcard');
-  if (ov) ov.remove();
   document.body.style.overflow = '';
   if (window._wlPcardEsc) { document.removeEventListener('keydown', window._wlPcardEsc); window._wlPcardEsc = null; }
+  if (!ov) return;
+  // Play the exit (fade + settle) before removing, instead of a hard snap-out. Guard
+  // against a double-close and honour reduced-motion (remove immediately).
+  if (ov._closing) return;
+  ov._closing = true;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) { ov.remove(); return; }
+  ov.classList.add('closing');
+  ov._closeTimer = setTimeout(() => { try { ov.remove(); } catch (e) {} }, 180);
 }
 window.wlOpenPatientCard = wlOpenPatientCard;
 window.wlClosePatientCard = wlClosePatientCard;

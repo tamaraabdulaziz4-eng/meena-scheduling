@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'doctor-phone-2026-07-11g';
+const CONNECTOR_BUILD = 'speed-cache-2026-07-11i';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -221,6 +221,35 @@ function orderedDateToISO(s) {
 // order-id + indication spellings can be confirmed from a live response.
 let _enrichKeysLogged = false, _enrichDetailKeysLogged = false, _lookupOrderKeysLogged = false, _clinKeysLogged = false;
 
+// FetchRISPanel is scoped to (mrno, day, site) and is IDENTICAL for every order a patient
+// has on the same day at the same branch — a multi-exam visit used to fire N copies of it
+// at the 2 GB HIS box (and two browsers opening the same card fired it twice more). Cache
+// the panel briefly and single-flight concurrent identical fetches so N orders (and any
+// concurrent viewers) share ONE call. Short TTL so a fresh RIS status still surfaces fast.
+const _risPanelCache = new Map();     // `mrno|isoDay|siteId` -> { ts, rows }
+const _risPanelInFlight = new Map();  // same key -> Promise (collapse concurrent duplicates)
+const RIS_PANEL_TTL_MS = Number(process.env.RIS_PANEL_TTL_MS || 30000);
+async function fetchRisPanel(mrno, isoDay, siteId) {
+  const key = `${mrno}|${isoDay}|${siteId}`;
+  const hit = _risPanelCache.get(key);
+  if (hit && Date.now() - hit.ts < RIS_PANEL_TTL_MS) return hit.rows;
+  if (_risPanelInFlight.has(key)) return _risPanelInFlight.get(key);
+  const p = (async () => {
+    const ris = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+      mrno, fromDate: isoDay + 'T00:00:00', toDate: isoDay + 'T23:59:59',
+      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+      serviceCategoryId: 0, emrPatRisPanelId: 0,
+      userId: String(HIS_USER).padStart(8, '0'), hospitalId: siteId,
+    } });
+    const rows = (ris.json && ris.json.data) || [];
+    _risPanelCache.set(key, { ts: Date.now(), rows });
+    if (_risPanelCache.size > 500) _risPanelCache.delete(_risPanelCache.keys().next().value);
+    return rows;
+  })().finally(() => { _risPanelInFlight.delete(key); });
+  _risPanelInFlight.set(key, p);
+  return p;
+}
+
 // Enrich an order from the RIS panel (which carries the internal order id,
 // billing status and encounter/ER) and then GetEmrOrderDetails (the clinical
 // indication). FetchRISPanel is site-scoped, so it MUST use the order's siteId.
@@ -228,13 +257,7 @@ async function enrichOrder(mrno, o) {
   try {
     const d = orderedDateToISO(o.orderedDate);
     if (!d || o.siteId == null) return {};
-    const ris = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
-      mrno, fromDate: d + 'T00:00:00', toDate: d + 'T23:59:59',
-      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
-      serviceCategoryId: 0, emrPatRisPanelId: 0,
-      userId: String(HIS_USER).padStart(8, '0'), hospitalId: o.siteId,
-    } });
-    const rows = (ris.json && ris.json.data) || [];
+    const rows = await fetchRisPanel(mrno, d, o.siteId);
     // Only enrich from the RIS row that matches THIS order's bill. The old
     // `|| rows[0]` fallback borrowed another same-day order's billingStatus / ER
     // flag / payer / indication when the billNo didn't match — a wrong-data risk.
@@ -439,6 +462,33 @@ app.post('/admin/his', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
+// FetchRadiologyDetails(mrno) is the patient's whole radiology order list, and the card
+// re-pulls it in quick succession: /patient/:file, then /radiology/study, then
+// /radiology/report-pdf — three identical HIS reads within seconds. Serve the raw rows
+// through a short cache + single-flight so it's ONE read per patient per window (the card
+// route has its OWN result cache; this dedupes the two exam endpoints that read the list
+// read-only via .find()). Callers here never mutate the rows, so sharing them is safe.
+const _radDetailsCache = new Map();     // mrno -> { ts, rows }
+const _radDetailsInFlight = new Map();  // mrno -> Promise
+const RAD_DETAILS_TTL_MS = Number(process.env.RAD_DETAILS_TTL_MS || 45000);
+async function fetchRadDetailsRaw(mrno, opts = {}) {
+  const key = String(mrno);
+  if (!opts.noCache) { const e = _radDetailsCache.get(key); if (e && Date.now() - e.ts < RAD_DETAILS_TTL_MS) return e.rows; }
+  if (_radDetailsInFlight.has(key)) return _radDetailsInFlight.get(key);
+  const p = (async () => {
+    const r = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
+    if (!r || (r.status && r.status >= 400) || r.json == null) {
+      throw new Error(`HIS radiology lookup failed (${r ? 'HTTP ' + r.status : 'unreachable'})`);
+    }
+    const rows = r.json.data || [];
+    _radDetailsCache.set(key, { ts: Date.now(), rows });
+    if (_radDetailsCache.size > 500) _radDetailsCache.delete(_radDetailsCache.keys().next().value);
+    return rows;
+  })().finally(() => { _radDetailsInFlight.delete(key); });
+  _radDetailsInFlight.set(key, p);
+  return p;
+}
+
 // ── Native Siratech report + image + status for ONE exam ───────────────────────
 // Everything from Siratech (no DePACS): status = cpoeStatusDescription; report text
 // = FetchRadiologyReport(invPatTestResultId); image = FetchRadiologyImage → a cloud
@@ -449,8 +499,7 @@ app.get('/radiology/study', requireAuth, async (req, res) => {
   const invId = String(req.query.invPatTestResultId || '').trim();
   if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
   try {
-    const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
-    const rows = (dr.json && dr.json.data) || [];
+    const rows = await fetchRadDetailsRaw(mrno);
     let row = null;
     if (invId) row = rows.find((x) => String(x.invPatTestResultId) === invId);
     if (!row && accession) row = rows.find((x) => String(x.accessionNumber || '') === accession);
@@ -521,8 +570,7 @@ app.get('/radiology/report-pdf', requireAuth, async (req, res) => {
   const invId = String(req.query.invPatTestResultId || '').trim();
   if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
   try {
-    const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
-    const rows = (dr.json && dr.json.data) || [];
+    const rows = await fetchRadDetailsRaw(mrno);
     let row = null;
     if (invId) row = rows.find((x) => String(x.invPatTestResultId) === invId);
     if (!row && accession) row = rows.find((x) => String(x.accessionNumber || '') === accession);
@@ -865,77 +913,101 @@ app.get('/discover/endpoints', requireAuth, async (_req, res) => {
   }
 });
 
-// Look up a patient's radiology orders by file (MRN) number.
+// Look up a patient's radiology orders by file (MRN) number. This is the HOTTEST
+// per-patient path (the card is opened/re-opened constantly, and the board warms it),
+// so it's served through a short result cache + single-flight: repeat opens and two
+// browsers on the same file share ONE HIS fan-out instead of each re-running it.
+const _patientCardCache = new Map();     // file -> { ts, data }
+const _patientCardInFlight = new Map();  // file -> Promise
+const PATIENT_CARD_TTL_MS = Number(process.env.PATIENT_CARD_TTL_MS || 20000);
+
+async function buildPatientCard(file) {
+  // Accept ANY identifier, not just the MRN: if the input is a mobile / national ID
+  // / iqama, resolve it to the real MRN first (the same unified search the lookup
+  // page uses), so every search box finds the patient the same way.
+  const _d = file.replace(/\D/g, '');
+  const _looksNonMrn = /^(?:00)?(?:966)?0?5\d{8}$/.test(_d) || /^[12]\d{9}$/.test(_d);
+  if (_looksNonMrn) {
+    try {
+      const s = await _patientSearch(file);
+      if (s && s.patients && s.patients.length && s.patients[0].mrno) file = String(s.patients[0].mrno);
+    } catch (e) { /* fall through and try the raw value as an MRN */ }
+  }
+  // Independent calls — a hiccup in patient-search must not lose the orders
+  // (and vice-versa), so settle both and use whatever came back.
+  const [radR, patR] = await Promise.allSettled([
+    hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }),
+    hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: file } }),
+  ]);
+  const rad = radR.status === 'fulfilled' ? radR.value : null;
+  const pat = patR.status === 'fulfilled' ? patR.value : null;
+  // The radiology call MUST cleanly succeed, otherwise surface an error — never
+  // report "no orders" for a transient failure (that misleads staff into
+  // thinking the patient has no order when HIS was just unreachable/logging in).
+  if (!rad || (rad.status && rad.status >= 400) || rad.json == null) {
+    throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
+  }
+  const rawOrders = rad.json.data || [];
+  // One-time diagnostic (key NAMES + non-PHI site values only): reveal which fields
+  // FetchRadiologyDetails carries for the order's OWN branch, so branch is read from
+  // the order's real ordering site (e.g. NEST 3) and not the logged-in/session site.
+  if (!_lookupOrderKeysLogged && rawOrders.length) {
+    _lookupOrderKeysLogged = true;
+    const o0 = rawOrders[0];
+    console.log('[lookup] FetchRadiologyDetails order keys:', Object.keys(o0).join(','));
+    const siteFields = Object.fromEntries(Object.entries(o0)
+      .filter(([k]) => /site|hospital|branch|facility|location|center|clinic/i.test(k)));
+    console.log('[lookup] order site/branch fields:', JSON.stringify(siteFields));
+  }
+  // Correct each order's branch to where it was ACTUALLY ordered (FetchRadiologyDetails
+  // gives the patient's registration site, not the ordering branch). Doing this BEFORE
+  // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
+  // o.siteId, so once the site is right it finds the order's row and its indication.
+  try {
+    // Only probe the branches this patient's orders actually touch (+ the result
+    // site) instead of all 14 — the orders already carry their site, so this keeps
+    // the branch correction while cutting the fan-out that made the card slow.
+    const candidateSites = [...new Set(rawOrders.map((o) => Number(o.siteId)).filter((n) => Number.isFinite(n) && n > 0).concat(RESULT_SITE))];
+    const billToSite = await discoverOrderSites(file, candidateSites);
+    for (const o of rawOrders) {
+      const t = billToSite.get(String(o.billNo));
+      if (t && t.siteId && Number(t.siteId) !== Number(o.siteId)) {
+        console.log(`[lookup] bill ${o.billNo}: site ${o.siteId} (${o.site}) -> ${t.siteId} (${t.site})`);
+        o.siteId = t.siteId;
+        o.site = t.site;
+      }
+    }
+  } catch (e) { /* keep the original registration site on any failure */ }
+  // Enrich each order with its clinical indication + billing/ER status. Bounded pool
+  // (not an unbounded Promise.all) so a 20-order patient never opens 20+ sockets to the
+  // 2 GB HIS box at once; the RIS panel is deduped per (day,site) inside fetchRisPanel.
+  const ext = await pool(rawOrders, 6, (o) => enrichOrder(file, o));
+  const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
+  const rawPatient = ((pat && pat.json && pat.json.data) || [])[0] || null;
+  const patient = normalizePatient(rawPatient);
+  const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
+  return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() };
+}
+
 app.get('/patient/:file', requireAuth, async (req, res) => {
   let file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  const noCache = req.query.nocache === '1' || req.query.nocache === 'true';
   try {
-    // Accept ANY identifier, not just the MRN: if the input is a mobile / national ID
-    // / iqama, resolve it to the real MRN first (the same unified search the lookup
-    // page uses), so every search box finds the patient the same way.
-    const _d = file.replace(/\D/g, '');
-    const _looksNonMrn = /^(?:00)?(?:966)?0?5\d{8}$/.test(_d) || /^[12]\d{9}$/.test(_d);
-    if (_looksNonMrn) {
-      try {
-        const s = await _patientSearch(file);
-        if (s && s.patients && s.patients.length && s.patients[0].mrno) file = String(s.patients[0].mrno);
-      } catch (e) { /* fall through and try the raw value as an MRN */ }
+    if (!noCache) {
+      const hit = _patientCardCache.get(file);
+      if (hit && Date.now() - hit.ts < PATIENT_CARD_TTL_MS) return res.json(hit.data);
     }
-    // Independent calls — a hiccup in patient-search must not lose the orders
-    // (and vice-versa), so settle both and use whatever came back.
-    const [radR, patR] = await Promise.allSettled([
-      hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }),
-      hisFetch('/patient-api/api/v1/Patient/Search', { body: { mrNo: file } }),
-    ]);
-    const rad = radR.status === 'fulfilled' ? radR.value : null;
-    const pat = patR.status === 'fulfilled' ? patR.value : null;
-    // The radiology call MUST cleanly succeed, otherwise surface an error — never
-    // report "no orders" for a transient failure (that misleads staff into
-    // thinking the patient has no order when HIS was just unreachable/logging in).
-    if (!rad || (rad.status && rad.status >= 400) || rad.json == null) {
-      throw new Error(`HIS radiology lookup failed (${rad ? 'HTTP ' + rad.status : (radR.reason && radR.reason.message) || 'unreachable'})`);
+    let p = _patientCardInFlight.get(file);
+    if (!p) {
+      p = buildPatientCard(file).then((data) => {
+        _patientCardCache.set(file, { ts: Date.now(), data });
+        if (_patientCardCache.size > 500) _patientCardCache.delete(_patientCardCache.keys().next().value);
+        return data;
+      }).finally(() => { _patientCardInFlight.delete(file); });
+      _patientCardInFlight.set(file, p);
     }
-    const rawOrders = rad.json.data || [];
-    // One-time diagnostic (key NAMES + non-PHI site values only): reveal which fields
-    // FetchRadiologyDetails carries for the order's OWN branch, so branch is read from
-    // the order's real ordering site (e.g. NEST 3) and not the logged-in/session site.
-    if (!_lookupOrderKeysLogged && rawOrders.length) {
-      _lookupOrderKeysLogged = true;
-      const o0 = rawOrders[0];
-      console.log('[lookup] FetchRadiologyDetails order keys:', Object.keys(o0).join(','));
-      const siteFields = Object.fromEntries(Object.entries(o0)
-        .filter(([k]) => /site|hospital|branch|facility|location|center|clinic/i.test(k)));
-      console.log('[lookup] order site/branch fields:', JSON.stringify(siteFields));
-    }
-    // Correct each order's branch to where it was ACTUALLY ordered (FetchRadiologyDetails
-    // gives the patient's registration site, not the ordering branch). Doing this BEFORE
-    // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
-    // o.siteId, so once the site is right it finds the order's row and its indication.
-    try {
-      // Only probe the branches this patient's orders actually touch (+ the result
-      // site) instead of all 14 — the orders already carry their site, so this keeps
-      // the branch correction while cutting the fan-out that made the card slow.
-      const candidateSites = [...new Set(rawOrders.map((o) => Number(o.siteId)).filter((n) => Number.isFinite(n) && n > 0).concat(RESULT_SITE))];
-      const billToSite = await discoverOrderSites(file, candidateSites);
-      for (const o of rawOrders) {
-        const t = billToSite.get(String(o.billNo));
-        if (t && t.siteId && Number(t.siteId) !== Number(o.siteId)) {
-          console.log(`[lookup] bill ${o.billNo}: site ${o.siteId} (${o.site}) -> ${t.siteId} (${t.site})`);
-          o.siteId = t.siteId;
-          o.site = t.site;
-        }
-      }
-    } catch (e) { /* keep the original registration site on any failure */ }
-    // Enrich each order with its clinical indication + billing/ER status.
-    const ext = await Promise.all(rawOrders.map((o) => enrichOrder(file, o)));
-    const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
-    const rawPatient = ((pat && pat.json && pat.json.data) || [])[0] || null;
-    const patient = normalizePatient(rawPatient);
-    // TEMP DEBUG (read-only, key NAMES only — no PHI values): reveal which fields the
-    // HIS patient row actually carries, so we can wire any missing clinical attribute
-    // (height/weight/blood group/allergy) to its real field name. Drop once mapped.
-    const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
-    return res.json({ ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() });
+    return res.json(await p);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
@@ -1060,7 +1132,8 @@ function _clinVitals(list) {
 // the worklist vitals pump both hit this per patient, and re-opens repeat it — a 60s
 // cache serves those from memory. Problem list / allergies / vitals don't change second
 // to second, so this is safe and a real load cut on the 2 GB box.
-const _clinicalCache = new Map();   // mrno -> { ts, data }
+const _clinicalCache = new Map();     // mrno -> { ts, data }
+const _clinicalInFlight = new Map();  // mrno -> Promise (collapse concurrent cold builds)
 const CLINICAL_CACHE_TTL = Number(process.env.CLINICAL_CACHE_TTL_MS || 60000);
 app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
@@ -1070,6 +1143,11 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
     if (hit && Date.now() - hit.ts < CLINICAL_CACHE_TTL) return res.json(hit.data);
   }
   try {
+    // Single-flight: the card open AND the worklist vitals pump can both fire this 7-call
+    // bundle for the same patient at once on a cold cache — collapse them onto one build.
+    let _inflight = _clinicalInFlight.get(file);
+    if (!_inflight) {
+      _inflight = (async () => {
     await getToken();
     const H = (path, body) => hisFetch(path, { body }).then((r) => (r.json && r.json.data)).catch(() => null);
     const G = (path) => hisFetch(path, { method: 'GET' }).then((r) => (r.json && r.json.data)).catch(() => null);
@@ -1163,7 +1241,11 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
       fetchedAt: new Date().toISOString() };
     _clinicalCache.set(file, { ts: Date.now(), data: payload });
     if (_clinicalCache.size > 500) _clinicalCache.delete(_clinicalCache.keys().next().value);
-    return res.json(payload);
+    return payload;
+      })().finally(() => { _clinicalInFlight.delete(file); });
+      _clinicalInFlight.set(file, _inflight);
+    }
+    return res.json(await _inflight);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }

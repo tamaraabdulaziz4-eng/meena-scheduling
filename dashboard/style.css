@@ -54,6 +54,18 @@
   --shadow-violet: 0 10px 30px rgba(107,78,255,.28), 0 3px 10px rgba(107,78,255,.18);
   --ring: 0 0 0 3px rgba(107,78,255,.14);
 
+  /* ── Motion tokens ── centralise the easings/durations that were scattered as
+     magic cubic-beziers, so new motion matches the existing curves. --ease-out is
+     the smooth decel used by reveals/modals; --ease-spring the gentle overshoot used
+     by nav/pop; --ease-std a plain ease for hovers. */
+  --ease-out:    cubic-bezier(.16,1,.3,1);
+  --ease-smooth: cubic-bezier(.22,1,.36,1);
+  --ease-spring: cubic-bezier(.34,1.5,.64,1);
+  --ease-std:    cubic-bezier(.4,0,.2,1);
+  --dur-fast: .16s;
+  --dur-med:  .28s;
+  --dur-slow: .5s;
+
   /* Shift colour overrides — can be customised */
 
   --shift-OC:  #FF6B6B;
@@ -746,6 +758,19 @@ button,
 .skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; margin-bottom: 18px; }
 .skel-card { height: 110px; }
 .skel-block { height: 240px; }
+/* Reusable LIST skeleton — a stack of card-shaped shimmer rows, for list pages that
+   previously flashed a bare spinner (orders, handoff, users…). Built by skeletonList()
+   in util.js so every page shares one look. */
+.skel-list { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; }
+.skel-rowcard { height: 64px; border-radius: var(--radius); border: 1px solid var(--border); }
+.skel-rowcard.sm { height: 46px; }
+
+/* ── Shared hover elevation ── list rows / cards lift a hair on hover for a tactile,
+   "alive" feel (was: background-only). Opt-in via .lift so it never fights layout. */
+.lift { transition: transform var(--dur-fast) var(--ease-std), box-shadow var(--dur-fast) var(--ease-std); }
+@media (hover: hover) {
+  .lift:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+}
 
 /* ── Premium page reveal ── */
 /* The whole panel clears from a soft blur + lift; its first blocks rise in a

@@ -241,6 +241,18 @@ const PAGE_ASSETS = {
   peerreview:    ['/js/peerreview.js', '/css/radstats.css'],
   radstats:      ['/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
   home:          ['/js/home.js', ...RAD_JS, '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
+  // Standalone admin/ops pages — no other module calls into them and they do no boot work
+  // (verified), so they load only when opened (and hover-prefetch from the nav). This keeps
+  // a radiology operator from downloading ~90 KB of pages they never touch at login.
+  users:         ['/js/users.js'],
+  audit:         ['/js/audit.js'],
+  inventory:     ['/js/inventory.js'],
+  equipment:     ['/js/equipment.js'],
+  downtime:      ['/js/downtime.js'],
+  messages:      ['/js/messages.js'],
+  cdxfer:        ['/js/cdxfer.js'],
+  hisaccess:     ['/js/hisaccess.js'],
+  swaps:         ['/js/swaps.js'],
 };
 // Cache-buster for injected chunks: the server stamps the content-hash BUILD_ID into
 // <meta name="meena-build"> and rewrites every ?v= in index.html to it, and stamps the

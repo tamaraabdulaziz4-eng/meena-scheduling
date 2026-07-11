@@ -292,6 +292,14 @@ async function _hmRadFetch(site, scopeName) {
     kpi(emg, 'Emergency', 'a', emg ? 'var(--danger,#E25555)' : 'var(--amber,#F4B740)', emg ? '<span class="dn">needs attention</span>' : 'none so far', 'emergency'),
     kpi(rtn, 'Routine', 'c', 'var(--green,#00C896)', 'scheduled flow', 'routine'),
   ];
+  // Poll-skip: the 90s auto-refresh re-runs this even when nothing changed, tearing down
+  // and rebuilding the tiles + drill list for zero new info (and collapsing any open drill).
+  // Skip the DOM rebuild when the content signature is unchanged — same pattern as the
+  // worklist/orders/radstats pollers.
+  const _drillCount = (_hmRadDrill && d.list) ? d.list.length : 0;
+  const _sig = `${total}|${emg}|${rtn}|${top ? top.site + ':' + top.count : ''}|${scope}|${_hmRadDrill || ''}|${_drillCount}`;
+  if (box.dataset.sig === _sig && box.firstChild) return;   // unchanged → keep the DOM (and the open drill)
+  box.dataset.sig = _sig;
   if (!site && top) tiles.push(`<button type="button" class="kpi d${_hmRadDrill === 'branch:' + top.site ? ' active' : ''}"
       style="text-align:start;font:inherit;cursor:pointer" onclick="hmRadDrillToggle('branch:${top.site}')">
       <div class="kl"><span class="kd" style="background:var(--violet,#6B4EFF)"></span>Busiest branch</div>
