@@ -8389,6 +8389,7 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
             "modality": it.get("modality"), "doctorName": it.get("doctorName"),
             "hisStatus": it.get("hisStatus"), "stage": it.get("stage"), "billingStatus": it.get("billingStatus"),
             "billNo": it.get("billNo"), "orderKey": it.get("genPatBillingId"),
+            "orderedDate": it.get("orderedDate"),
             "technicianName": it.get("technicianName"), "radiologistName": it.get("radiologistName"),
             "emergency": it.get("emergency"), "branch": it.get("branch"),
             "scanned": it.get("scanned"), "_raw": it.get("_raw"),
