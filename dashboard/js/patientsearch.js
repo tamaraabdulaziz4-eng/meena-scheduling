@@ -237,13 +237,43 @@ function renderPsDetail() {
   psLoadConsents();
   psLoadDocuments();
   psLoadLabs();
+  psSectionSkeleton('ps-clinical', 'Clinical history', 'clinical', 2);   // so the problem list doesn't pop in late
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech) — auto (kept open)
-  // The heavy history sections each hit Siratech; loading all three on open made the card slow.
-  // Render them as collapsed headers that fetch only when tapped — vitals (above) stay auto.
-  psLazyStub('ps-labresults', 'Lab results', 'labs');
-  psLazyStub('ps-visits', 'Recent clinic visits', 'visits');
-  psLazyStub('ps-appts', 'Appointment history', 'appts');
+  // The heavy history sections each hit Siratech. They now load in the BACKGROUND (were
+  // tap-to-load): each paints a skeleton immediately so the card feels alive, then fills.
+  // Loaded in sequence (psAutoLoadSections) so the 2 GB HIS box isn't hit by all at once.
+  psSectionSkeleton('ps-labresults', 'Lab results', 'labs', 3);
+  psSectionSkeleton('ps-visits', 'Recent visits', 'visits', 3);
+  psSectionSkeleton('ps-appts', 'Appointment history', 'appts', 2);
+  psAutoLoadSections();
   if (orders.length) psAutoReports(orders);   // auto-fill every exam's report — no clicking
+}
+
+// Load the patient's history sections in the background, one after another (labs →
+// visits → appointments), so at most one heavy Siratech call is in flight at a time.
+// Each already renders a skeleton; a section with no data quietly removes itself. Bails
+// if the user opened a different patient mid-sequence (reqSeq changed).
+async function psAutoLoadSections() {
+  const seq = psState.reqSeq;
+  const live = () => seq === psState.reqSeq && psState.lookup && psState.lookup.patient && psState.lookup.patient.mrno;
+  try { if (live()) await psLoadRealLabs(); } catch (e) {}
+  try { if (live()) await psLoadVisits(); } catch (e) {}
+  try { if (live()) await psLoadAppointments(); } catch (e) {}
+}
+
+// A shimmering skeleton placeholder for a section while its data loads — gives an
+// immediate, animated "loading" cue (no more blank-then-pop). `rows` = how many
+// placeholder lines to show.
+function psSectionSkeleton(id, title, iconKey, rows) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  const ic = PS_LAZY_ICON[iconKey] || '';
+  const rowHtml = `<div class="ps-skel-row"><span class="ps-skel-b ps-skel-w1"></span><span class="ps-skel-b ps-skel-w2"></span></div>`;
+  box.innerHTML = `<div class="ps-sec-l ps-skel-head" style="margin-top:14px">
+      ${ic ? `<span class="ps-skel-ic">${ic}</span>` : ''}<span>${escapeHtml(title)}</span>
+      <span class="ps-skel-dot"></span>
+    </div>
+    <div class="ps-skel">${rowHtml.repeat(Math.max(1, rows || 3))}</div>`;
 }
 
 
@@ -254,30 +284,9 @@ const PS_LAZY_ICON = {
   labs:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3h5M10.5 3v6l-4.8 7.6A2 2 0 0 0 7.4 20h9.2a2 2 0 0 0 1.7-3.4L13.5 9V3"/><path d="M8 14.5h8"/></svg>',
   visits: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1h1a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1V4a1 1 0 0 1 1-1z"/><path d="M9 12h6M9 16h4"/></svg>',
   appts:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>',
+  clinical: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10z"/><path d="M8.5 11.5h2l1-2 1.5 3.5 1-1.5h1.5"/></svg>',
 };
 const PS_LAZY_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
-function psLazyStub(id, title, iconKey) {
-  const box = document.getElementById(id);
-  if (!box) return;
-  box.dataset.psLoaded = '';
-  box.innerHTML = `<button class="ps-lazy" onclick="psLazyOpen('${id}')">
-    <span class="ps-lazy-ic">${PS_LAZY_ICON[iconKey] || ''}</span>
-    <span class="ps-lazy-txt">
-      <span class="ps-lazy-t">${escapeHtml(title)}</span>
-      <span class="ps-lazy-s">Tap to view</span>
-    </span>
-    <span class="ps-lazy-chev">${PS_LAZY_CHEV}</span>
-  </button>`;
-}
-function psLazyOpen(id) {
-  const box = document.getElementById(id);
-  if (!box || box.dataset.psLoaded) return;
-  box.dataset.psLoaded = '1';
-  box.innerHTML = `<div class="ps-lazy-loading"><span class="mini-spin"></span> Loading…</div>`;
-  const fn = { 'ps-labresults': psLoadRealLabs, 'ps-visits': psLoadVisits, 'ps-appts': psLoadAppointments }[id];
-  if (fn) fn();
-}
-
 // Patient clinical context — problem list (ICD diagnoses), allergies / clinical
 // warnings, and vitals — straight from Siratech EMR. Loaded after the card paints,
 // best-effort (a failure just shows nothing). Read-only.
@@ -359,22 +368,22 @@ async function psLoadVisits() {
   if (!visits.length) { box.innerHTML = ''; return; }
   const rows = visits.slice(0, 12).map((v, i) => {
     const er = String(v.visitType || '').toUpperCase() === 'ER';
-    const badge = v.visitType ? `<span class="sc ${er ? 'no' : 'ok'}" style="${er ? '' : 'background:var(--violet-wash,#F0EDFF);color:var(--accent2,#6B4EFF)'}">${escapeHtml(v.visitType)}</span>` : '';
+    const badge = v.visitType ? `<span class="ps-visit-badge ${er ? 'er' : 'op'}">${escapeHtml(v.visitType)}</span>` : '';
     const sub = [v.provider, v.department, v.site].filter(Boolean).map(escapeHtml).join(' · ');
     const enc = v.encounterId;
     const canNote = enc != null;
-    return `<div style="padding:7px 0;border-bottom:1px dashed var(--border)">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;${canNote ? 'cursor:pointer' : ''}" ${canNote ? `onclick="psToggleVisitNote('${escapeHtml(String(enc))}','psvn-${i}',this)"` : ''}>
-        ${canNote ? `<span id="psvn-${i}-c" style="color:var(--muted);width:12px">▸</span>` : '<span style="width:12px"></span>'}
-        <span style="font-weight:600;font-variant-numeric:tabular-nums;min-width:88px">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
+    return `<div class="ps-visit${canNote ? ' ps-visit-open' : ''}">
+      <div class="ps-visit-row" ${canNote ? `onclick="psToggleVisitNote('${escapeHtml(String(enc))}','psvn-${i}',this)"` : ''}>
+        <span class="ps-visit-date">${escapeHtml(String(v.date || '').slice(0, 10))}</span>
         ${badge}
-        ${v.chiefComplaint ? `<span style="flex:1;min-width:120px;font-size:12.5px">${escapeHtml(v.chiefComplaint)}</span>` : '<span style="flex:1"></span>'}
+        <span class="ps-visit-cc">${v.chiefComplaint ? escapeHtml(v.chiefComplaint) : '<span class="ps-visit-nocc">Visit</span>'}</span>
+        ${canNote ? `<span id="psvn-${i}-c" class="ps-visit-chev">${PS_LAZY_CHEV}</span>` : ''}
       </div>
-      ${sub ? `<div style="color:var(--muted);font-size:11.5px;margin:2px 0 0 22px">${sub}</div>` : ''}
-      <div id="psvn-${i}" style="display:none;margin:6px 0 2px 22px"></div>
+      ${sub ? `<div class="ps-visit-sub">${sub}</div>` : ''}
+      <div id="psvn-${i}" class="ps-visit-note" style="display:none"></div>
     </div>`;
   }).join('');
-  box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div>${rows}</div>`;
+  box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Recent visits · ${visits.length}</div><div class="ps-visits">${rows}</div>`;
   // Warm the notes in the BACKGROUND so expanding a visit is instant (no spinner).
   psPrefetchVisitNotes(p.mrno, visits.slice(0, 12).map((v) => v.encounterId).filter((e) => e != null));
 }
@@ -456,8 +465,9 @@ async function psToggleVisitNote(encounterId, elId, caretRow) {
   const box = document.getElementById(elId);
   if (!box) return;
   const caret = document.getElementById(elId + '-c');
-  if (box.style.display !== 'none') { box.style.display = 'none'; if (caret) caret.textContent = '▸'; return; }
-  box.style.display = ''; if (caret) caret.textContent = '▾';
+  const row = caret && caret.closest('.ps-visit');
+  if (box.style.display !== 'none') { box.style.display = 'none'; if (row) row.classList.remove('exp'); return; }
+  box.style.display = ''; if (row) row.classList.add('exp');
   if (box.dataset.loaded) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
   const key = `${p.mrno}|${encounterId}`;
@@ -499,9 +509,8 @@ async function psLoadRealLabs() {
   if (!box) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { box.innerHTML = ''; return; }
-  // Immediate placeholder so the section doesn't sit blank while the HIS call returns.
-  box.innerHTML = `<div class="ps-sec-l" style="margin-top:14px">Lab results</div>
-    <div style="color:var(--muted);font-size:12px;padding:6px 2px">${typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : 'Loading labs…'}</div>`;
+  // The shimmering section skeleton (psSectionSkeleton) is already showing — leave it in
+  // place while the HIS call returns, then replace it with the results (or clear if none).
   let d;
   try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/labs`); }
   catch (e) { box.innerHTML = ''; return; }

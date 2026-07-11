@@ -2107,6 +2107,44 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 [dir="rtl"] .ps-lazy-chev svg { transform:scaleX(-1); }
 .ps-lazy-loading { display:flex; align-items:center; gap:9px; margin:10px 0 0; padding:16px 15px;
   border:1px solid var(--border); border-radius:14px; color:var(--muted); font-size:13px; font-weight:600; }
+/* Section loading skeleton — shimmering placeholder while a section loads in the background */
+.ps-skel-head { display:flex; align-items:center; gap:8px; }
+.ps-skel-ic { flex:none; width:18px; height:18px; color:var(--accent,#6b4eff); opacity:.7; display:grid; place-items:center; }
+.ps-skel-ic svg { width:16px; height:16px; }
+.ps-skel-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--accent,#6b4eff);
+  animation:ps-skel-pulse 1s ease-in-out infinite; }
+@keyframes ps-skel-pulse { 0%,100%{ opacity:.25; transform:scale(.8) } 50%{ opacity:1; transform:scale(1.15) } }
+.ps-skel { display:flex; flex-direction:column; gap:9px; margin-top:10px; }
+.ps-skel-row { display:flex; gap:10px; align-items:center; }
+.ps-skel-b { height:12px; border-radius:6px; background:linear-gradient(90deg,
+  var(--card-alt,#f0f0f4) 25%, var(--surface-2,#e8e8ef) 37%, var(--card-alt,#f0f0f4) 63%);
+  background-size:400% 100%; animation:ps-shimmer 1.3s ease infinite; }
+.ps-skel-w1 { width:74px; flex:none; }
+.ps-skel-w2 { flex:1; max-width:230px; }
+@keyframes ps-shimmer { 0%{ background-position:100% 0 } 100%{ background-position:0 0 } }
+/* Recent visits — clean, glanceable expandable cards */
+.ps-visits { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
+.ps-visit { border:1px solid var(--border); border-radius:12px; background:var(--surface,#fff); overflow:hidden;
+  transition:border-color .14s, box-shadow .14s; }
+.ps-visit.exp { border-color:var(--accent); box-shadow:var(--shadow-sm,0 2px 8px rgba(0,0,0,.06)); }
+.ps-visit-open .ps-visit-row { cursor:pointer; }
+.ps-visit-open:hover { border-color:var(--accent); background:var(--surface-2,#faf9ff); }
+.ps-visit-row { display:flex; align-items:center; gap:9px; padding:11px 13px; }
+.ps-visit-date { font-weight:700; font-variant-numeric:tabular-nums; font-size:13px; color:var(--text,#111);
+  flex:none; letter-spacing:-.01em; }
+.ps-visit-badge { flex:none; font-size:10px; font-weight:800; letter-spacing:.03em; padding:2px 8px; border-radius:7px; }
+.ps-visit-badge.op { color:var(--accent2,#6B4EFF); background:var(--violet-wash,#F0EDFF); }
+.ps-visit-badge.er { color:#fff; background:#e2571f; }
+.ps-visit-cc { flex:1; min-width:0; font-size:13px; color:var(--text,#111); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.ps-visit-nocc { color:var(--muted); font-weight:500; }
+.ps-visit-chev { flex:none; color:var(--muted); opacity:.5; display:grid; place-items:center; transition:transform .16s ease, color .14s; }
+.ps-visit-chev svg { width:16px; height:16px; }
+.ps-visit.exp .ps-visit-chev { transform:rotate(90deg); color:var(--accent); opacity:1; }
+[dir="rtl"] .ps-visit-chev svg { transform:scaleX(-1); }
+[dir="rtl"] .ps-visit.exp .ps-visit-chev { transform:rotate(90deg); }
+.ps-visit-sub { color:var(--muted); font-size:11.5px; padding:0 13px 10px 13px; margin-top:-4px; }
+.ps-visit-note { padding:0 13px 12px 13px; }
 /* Clinical note card (expanded visit) — clean label/value fields, no raw template blob */
 .ps-note-card { border:1px solid var(--border); border-radius:13px; background:var(--surface); padding:12px 14px; margin:4px 0 2px; }
 .ps-note-head { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:9px; padding-bottom:8px; border-bottom:1px solid var(--border); }
