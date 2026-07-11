@@ -517,7 +517,12 @@ async function handoffWriteCore() {
   // That turns the later result-filing match from a fuzzy body-part guess into a
   // deterministic accession key (blank is fine — the server just skips the stamp).
   const accession = (handoffOrder().accessionNumber != null ? String(handoffOrder().accessionNumber).trim() : '');
-  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body, file_no: handoff.file, priority: handoff.priority, accession });
+  // Send the order's exam name + modality so the server can body-part/modality gate the
+  // write when there's no accession to confirm the exam (H1 — blocks a wrong-exam write).
+  const _ord = handoffOrder() || {};
+  const w = await API.post('/handoff/write-history', { study_id: handoff.studyId, history: body,
+    file_no: handoff.file, priority: handoff.priority, accession,
+    order_service: _ord.service || _ord.serviceName || '', order_modality: _ord.modality || '' });
   // Remember we've handled this study so polling won't resurface it.
   (handoff.written || (handoff.written = new Set())).add(String(handoff.studyId));
   const res = document.getElementById('ho-result');
