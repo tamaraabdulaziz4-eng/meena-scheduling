@@ -769,7 +769,7 @@ function wlMergePay(d) {
 // (a row never moves backward on a live refresh — same guarantee the old lane ratchet
 // gave). STAT/urgent (it.emergency) is a cross-cutting flag, not a status.
 const WL_STATUS_LABEL = { ordered: 'Ordered', received: 'Received', progress: 'In progress',
-                          completed: 'Completed', reported: 'Reported', notdone: 'Not done' };
+                          completed: 'Pending report', reported: 'Reported', notdone: 'Not done' };
 const _WL_ST_RANK = { ordered: 0, received: 1, progress: 2, completed: 3, reported: 4 };
 const _WL_ST_BY_RANK = ['ordered', 'received', 'progress', 'completed', 'reported'];
 function wlStatusRaw(it) {
@@ -820,7 +820,7 @@ function wlStatus(it) {
 }
 // The tabs across the top; counts are computed live in wlRenderTabs.
 const WL_TABS = [['all', 'All', false], ['ordered', 'Ordered', false], ['received', 'Received', false],
-  ['progress', 'In Progress', false], ['completed', 'Completed', false], ['reported', 'Reported', false],
+  ['progress', 'In Progress', false], ['completed', 'Pending Report', false], ['reported', 'Reported', false],
   ['notdone', 'Not Done', false], ['urgent', 'Urgent', true]];
 // A DOM-safe, stable-per-order id for the expand Set + onclick (mirrors the old drill key).
 function wlRowUid(it) {
