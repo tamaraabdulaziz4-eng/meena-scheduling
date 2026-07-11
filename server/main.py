@@ -8721,6 +8721,18 @@ async def radiology_results_file(request: Request, user=Depends(require_radiolog
                     consent_id = crow["id"]
         except Exception:
             consent_id = None
+    # H3 — idempotency: if THIS order was already filed by Meena (a page reload, or a
+    # second operator opening the same patient), don't re-file and re-authorize it. The
+    # in-memory client guard is gone after a reload, so gate on the durable ledger here.
+    if b.get("confirm"):
+        _gpb = b.get("genPatBillingId")
+        if _gpb and str(_gpb).strip().isdigit():
+            _ex = q("SELECT state, study_id FROM scheduling.radiology_orders WHERE gen_pat_billing_id=%s",
+                    (int(_gpb),), one=True)
+            if _ex and str(_ex.get("state") or "") == "filed":
+                return {"ok": True, "already_filed": True, "wrote": False, "authorized": False,
+                        "plan": {"study": {"studyId": _ex.get("study_id")}},
+                        "message": "This report was already filed for this order — not re-filing."}
     out = _bridge_request("/his/results/file", method="POST", body=b, timeout=180)
     if b.get("confirm"):
         wrote = isinstance(out, dict) and out.get("wrote")
@@ -8960,6 +8972,8 @@ async def handoff_write_history(request: Request, user=Depends(require_radiology
         raise HTTPException(409, "This study belongs to a different patient — refused to write. "
                                  "Re-open the correct patient and pick their study.")
     s_acc = str(_sb.get("accession_number") or "").strip()
+    acc_confirmed = bool(order_acc and _elite_is_real_accession(s_acc)
+                         and _elite_bare_id(s_acc) == _elite_bare_id(order_acc))
     if order_acc and _elite_is_real_accession(s_acc) and _elite_bare_id(s_acc) != _elite_bare_id(order_acc):
         insert_audit(user, "HANDOFF_WRITE_BLOCKED", str(sid),
                      json.dumps({"reason": "accession_mismatch", "file_no": file_no,
@@ -8967,6 +8981,28 @@ async def handoff_write_history(request: Request, user=Depends(require_radiology
         raise HTTPException(409, f"This study is a different exam (accession {s_acc}) than the selected "
                                  f"order (accession {order_acc}). Pick the study that matches this order "
                                  f"before writing — its indication must not go on another exam.")
+    # H1 — when the accession did NOT positively confirm the exam (the common case: no
+    # accessions on this HIS), the patient check alone would let one order's indication
+    # land on a DIFFERENT same-patient exam picked by mistake. Gate on modality + body part
+    # (mirrors the client hoStudyMatchesOrder). Blocks only a CONFIRMED conflict, so a blank
+    # study_desc / missing order info can't wrongly refuse a legitimate write.
+    if not acc_confirmed:
+        order_service = (b.get("order_service") or "").strip()
+        order_mod = _mod_bucket(b.get("order_modality") or order_service)
+        study_mod = _mod_bucket(_sb.get("modality") or _sb.get("study_desc"))
+        if order_mod and study_mod and order_mod != study_mod:
+            insert_audit(user, "HANDOFF_WRITE_BLOCKED", str(sid),
+                         json.dumps({"reason": "modality_mismatch", "file_no": file_no,
+                                     "study_modality": study_mod, "order_modality": order_mod}))
+            raise HTTPException(409, f"This study is {study_mod} but the selected order is {order_mod}. "
+                                     f"Pick the study that matches this order before writing.")
+        if order_service and _autostamp_body_conflict(_sb, order_service):
+            insert_audit(user, "HANDOFF_WRITE_BLOCKED", str(sid),
+                         json.dumps({"reason": "bodypart_mismatch", "file_no": file_no,
+                                     "study_desc": _sb.get("study_desc"), "order": order_service}))
+            raise HTTPException(409, "This study's body part doesn't match the selected order. "
+                                     "Pick the study that matches this order before writing — its "
+                                     "indication must not go on another exam.")
     # The handoff IS the emergency radiology hand-off, so flag Emergency ✓ + Category
     # "Others" by default. Only skip when the staff explicitly marked the study Routine
     # (priority == 'routine' with no emergency override) — a deliberate downgrade, not
@@ -11661,6 +11697,31 @@ def _mod_bucket(m):
     if re.search(r"MAMMOG|\bMG\b", s): return "MG"
     return s or None
 
+# Body-part tokens (mirror of handoff.js hoBodyTokens / the connector's bodyTokens): drop
+# modality/view/laterality filler, keep anatomy words — so a CHEST study is told apart
+# from a KNEE study of the same modality.
+_AS_BODY_STOP = {"XR", "CT", "MR", "MRI", "US", "THE", "AND", "VIEW", "VIEWS", "AP", "PA",
+    "LAT", "LATERAL", "OBLIQUE", "OBLIQUES", "LT", "RT", "LEFT", "RIGHT", "BILATERAL",
+    "BILAT", "BOTH", "WITH", "WITHOUT", "CONTRAST", "SERIES", "STUDY", "SCAN", "PLAIN",
+    "ROUTINE", "PORTABLE", "STANDING", "ERECT", "SUPINE", "ONE", "TWO", "THREE"}
+def _as_body_tokens(s):
+    t = " " + re.sub(r"\s+", " ", re.sub(r"[^A-Z]", " ", str(s or "").upper())) + " "
+    t = re.sub(r"\bLUMBO\s?SACRAL\b", " LUMBAR SPINE ", t)
+    t = re.sub(r"\bABDO?\b", " ABDOMEN ", t).replace(" CXR ", " CHEST ")
+    return {w for w in t.split() if len(w) > 2 and w not in _AS_BODY_STOP}
+def _autostamp_body_conflict(study, order_service):
+    """True ONLY on a CONFIRMED body-part mismatch: both the study description and the
+    order name carry recognisable anatomy AND they don't overlap. When either side has no
+    anatomy (this DePACS instance frequently leaves study_desc blank), we CANNOT confirm a
+    conflict, so we return False — never blocking a stamp on missing data (fail open on
+    absence, fail closed on a real conflict)."""
+    a = _as_body_tokens((study or {}).get("study_desc") or (study or {}).get("desc")
+                        or (study or {}).get("accession_number") or "")
+    b = _as_body_tokens(order_service or "")
+    if not a or not b:
+        return False
+    return not (a & b)
+
 _autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
 _autostamp_hist_done = set()  # study ids whose clinical-history stamp already ran this process
 _autostamp_branch_blocked = set()  # study ids skipped as not-the-scoped-branch (audit once)
@@ -11923,6 +11984,15 @@ def _radiology_autostamp_sweep():
                     insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
                                  json.dumps({"studyId": sid, "reason": "accession_mismatch",
                                              "study_accession": s_acc, "order_accession": _cand_acc}))
+                # BODY-PART GATE (AS3): the modality-1:1 fallback matches on modality ALONE,
+                # so a CT-head study could take a CT-abdomen order's indication. Block on a
+                # CONFIRMED body-part mismatch (both anatomy known and non-overlapping). Blank
+                # study_desc → no conflict detectable → still stamps (common on this HIS).
+                elif _autostamp_body_conflict(s, cand[0].get("exam") or cand[0].get("service")):
+                    insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                 json.dumps({"studyId": sid, "reason": "bodypart_mismatch",
+                                             "study_desc": s.get("study_desc") or s.get("desc"),
+                                             "order": cand[0].get("exam") or cand[0].get("service")}))
                 else:
                     chosen = cand[0]                              # unambiguous modality 1:1 (fallback)
             if (chosen is not None and not branch_ok

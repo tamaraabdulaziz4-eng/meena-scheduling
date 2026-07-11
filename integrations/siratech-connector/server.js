@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'stats-warm-superset-2026-07-11b';
+const CONNECTOR_BUILD = 'envmap-discovery-2026-07-11c';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -715,7 +715,18 @@ app.get('/diag/frontend-find', requireAuth, async (req, res) => {
       }
       for (const kk of Object.keys(routes)) routes[kk] = [...routes[kk]].sort();
     }
-    return res.json({ ok: true, rawSizeMB: Math.round(raw.length / 1e6 * 10) / 10, found, routes });
+    // envmap=1 → the ANGULAR ENVIRONMENT BASE-URL MAP: what each <Service>_API token
+    // actually resolves to (e.g. Printer_Suite_API → "/rcm-printer-api/api/v1"). This is
+    // what turns a "${environment.Printer_Suite_API}/Investigation/ResultPrint" call site
+    // into a callable path. Grep the config object: `<Token>_API:"<url>"`.
+    let envmap = null;
+    if (String(req.query.envmap || '') === '1') {
+      envmap = {};
+      const ER = /([A-Za-z_]+_[Aa][Pp][Ii])\s*:\s*["'`]([^"'`]+)["'`]/g;
+      let e;
+      while ((e = ER.exec(raw)) !== null) { if (!envmap[e[1]]) envmap[e[1]] = e[2]; }
+    }
+    return res.json({ ok: true, rawSizeMB: Math.round(raw.length / 1e6 * 10) / 10, found, routes, envmap });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
