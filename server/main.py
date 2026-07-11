@@ -8135,9 +8135,14 @@ def _conditional_json(request: Request, payload):
 # proxy as the fallback whenever the mirror is cold/stale. Our OWN fast-changing state
 # (consent-filed, the received/started/completed overlay, confirmed stages) is applied fresh
 # at SERVE time, not stored in the mirror, so a tech's own action still reflects instantly.
-_MIRROR_ENABLED = (os.environ.get("WORKLIST_MIRROR", "0") == "1")   # OFF by default (opt-in) after a prod incident
-_MIRROR_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_INTERVAL") or 18.0)   # seconds between refreshes
-_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 75.0)     # older than this → serve live
+# GENTLE + self-throttling: rides the connector's existing cache (never forces a fresh HIS
+# fan-out — that's what overloaded the box before) and a circuit-breaker loop backs off the
+# instant the box is slow. Safe to leave ON.
+_MIRROR_ENABLED = (os.environ.get("WORKLIST_MIRROR", "1") == "1")
+_MIRROR_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_INTERVAL") or 30.0)        # base seconds between refreshes
+_MIRROR_MAX_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_MAX_INTERVAL") or 240.0)  # backoff ceiling when the box is slow
+_MIRROR_SLOW_SECS = float(os.environ.get("WORKLIST_MIRROR_SLOW_SECS") or 6.0)       # a tick slower than this = box strained → back off
+_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 120.0)         # older than this → serve live instead
 
 def _wl_default_from():
     ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
@@ -8147,43 +8152,60 @@ def _wl_mirror_key(frm, to):
     return f"{frm or ''}|{to or ''}"
 
 def _worklist_mirror_tick():
-    """One refresh: pull the RAW all-branches fast board from the connector and upsert it.
-    Multi-worker safe — if another worker refreshed this scope within the interval we skip,
-    so N web workers still only drive ONE HIS fetch per interval."""
+    """One GENTLE refresh: read the board the way an operator would — WITHOUT forcing fresh —
+    so it rides the connector's existing cache (near-zero HIS load when the board is already
+    warm from operator polls / the connector's own warmer; the earlier version forced a fresh
+    fan-out every tick, which is what overloaded the box). Returns True if it actually reached
+    the connector (so the loop can time the box's health), False if it skipped."""
     frm = _wl_default_from()
     mkey = _wl_mirror_key(frm, "")
     try:
         row = q("SELECT fetched_at FROM scheduling.worklist_mirror WHERE scope_key=%s", (mkey,), one=True)
         if row and row.get("fetched_at"):
             age = (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds()
-            if age < _MIRROR_INTERVAL * 0.8:
-                return  # a sibling worker just refreshed it
+            if age < _MIRROR_INTERVAL * 0.7:
+                return False  # a sibling worker just refreshed it — don't pile on
     except Exception:
         pass
     import urllib.parse
-    query = "?" + urllib.parse.urlencode({"from": frm, "nocache": "1"})
-    data = _bridge_request("/his/worklist" + query, timeout=130)
+    # NO nocache — copying what's already computed is the whole point of "gentle".
+    query = "?" + urllib.parse.urlencode({"from": frm})
+    data = _bridge_request("/his/worklist" + query, timeout=60)
     if not isinstance(data, dict) or data.get("items") is None:
-        return  # bad/empty → keep the last good mirror row (never overwrite good with empty)
+        return True  # reached the connector but nothing usable — keep the last good mirror row
     try:
-        _rad_persist_async(data.get("items"))   # keep the lifecycle store advancing off the fresh board
+        _rad_persist_async(data.get("items"))   # keep the lifecycle store advancing off the board
     except Exception:
         pass
     q("""INSERT INTO scheduling.worklist_mirror (scope_key, payload, fetched_at)
          VALUES (%s, %s::jsonb, NOW())
          ON CONFLICT (scope_key) DO UPDATE SET payload=EXCLUDED.payload, fetched_at=NOW()""",
       (mkey, json.dumps(data)), exec_only=True)
+    return True
 
 def _worklist_mirror_loop():
-    import time as _t
-    _t.sleep(8)   # let the schema + first requests settle before the first pull
+    """Adaptive/circuit-breaker cadence: base ~30s when the box is healthy, but the moment a
+    tick runs slow (or errors) it backs off exponentially up to a ceiling, then eases back as
+    the box recovers. Slow-start + jitter so it never herds or slams a recovering box."""
+    import time as _t, random as _r
+    _t.sleep(12)                                          # let the app boot / caches warm first
+    cur = min(_MIRROR_INTERVAL * 2, _MIRROR_MAX_INTERVAL)  # slow start — ramp up only as it proves healthy
     while True:
+        t0 = _t.monotonic()
         try:
-            _worklist_mirror_tick()
+            hit = _worklist_mirror_tick()
+            dur = _t.monotonic() - t0
+            if hit and dur > _MIRROR_SLOW_SECS:
+                cur = min(cur * 2, _MIRROR_MAX_INTERVAL)   # box strained → back off (circuit breaker)
+                try: print(f"[mirror] slow tick {dur:.1f}s → backing off to {cur:.0f}s", flush=True)
+                except Exception: pass
+            else:
+                cur = max(_MIRROR_INTERVAL, cur * 0.7)     # healthy → ease back toward base cadence
         except Exception as e:
-            try: print("[mirror] tick failed:", str(e)[:200], flush=True)
+            cur = min(max(cur, _MIRROR_INTERVAL) * 2, _MIRROR_MAX_INTERVAL)   # error → back off hard
+            try: print("[mirror] tick failed → backing off to", round(cur), "s:", str(e)[:160], flush=True)
             except Exception: pass
-        _t.sleep(_MIRROR_INTERVAL)
+        _t.sleep(cur * (0.8 + 0.4 * _r.random()))          # ±20% jitter
 
 def _start_worklist_mirror():
     if not _MIRROR_ENABLED:
