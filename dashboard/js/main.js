@@ -143,23 +143,35 @@ async function initApp() {
   const _dp = new URLSearchParams(location.search).get('p') || pageFromHash() || window._defaultPage;
   prefetchPageAssets(_dp);
 
-  // Load global data. Staff don't need the full roster up front (only the swap
-  // modal does, and it lazy-loads it) — so don't make them wait on it before the
-  // first page paints.
-  showLoader('Loading data…');
-  try {
-    const loads = [loadBranches()];
-    if (!isStaff) loads.push(loadStaff());
-    await Promise.all(loads);
-  } catch (e) { console.error('Data load error:', e); }
-  hideLoader();
+  // Load global data (roster + branch list). Staff don't need the full roster up
+  // front (only the swap modal does, and it lazy-loads it). Kick it off but DON'T
+  // block every landing behind a centred "Loading data…" card: the radiology pages
+  // fetch everything they need themselves (branch picker + board come from
+  // /radiology/*), so they paint their own shimmer skeleton instantly while this
+  // runs underneath. Only roster-driven pages (schedule/home/staff/…) wait for it.
+  const _globalData = (async () => {
+    try {
+      const loads = [loadBranches()];
+      if (!isStaff) loads.push(loadStaff());
+      await Promise.all(loads);
+    } catch (e) { console.error('Data load error:', e); }
+  })();
 
   // Await the first page render so the welcome splash — shown by doLogin — stays
   // up until the page is on screen. Honour a deep-link hash (e.g. after a
   // refresh or a shared link) when it points to a page this user may see.
   // A notification tap can open the app at /?p=<page>.
   const deepLink = new URLSearchParams(location.search).get('p');
-  await showPage(deepLink || pageFromHash() || window._defaultPage || 'schedule');
+  const landing = deepLink || pageFromHash() || window._defaultPage || 'schedule';
+  // Pages that render themselves off /radiology/* don't need the global roster/branch
+  // load first — render immediately (skeleton), no blocking spinner card.
+  const SELF_FETCHING = ['worklist', 'patientsearch', 'critical', 'orders', 'handoff', 'cdxfer'];
+  if (!SELF_FETCHING.includes(landing)) {
+    showLoader('Loading data…');
+    await _globalData;
+    hideLoader();
+  }
+  await showPage(landing);
 }
 
 // Resolve role-based redirects up front so a blocked route animates ONCE to its
