@@ -1395,14 +1395,23 @@ async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // plus bill_no/site so the signed PDF auto-files against the right radiology order.
   // Fetch the patient's Arabic name + nationality so an Arab patient sees her name in
   // Arabic (name_en is kept for the Siratech filing name-match). Best-effort.
-  let display = name, en = name;
+  let display = name, en = name, pat = {};
   try {
     const d = await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`);
-    const picked = wlPickConsentName((d && d.patient) || {}, name);
+    pat = (d && d.patient) || {};
+    const picked = wlPickConsentName(pat, name);
     display = picked.display; en = picked.en;
   } catch (e) { /* keep the English board name */ }
+  // Carry the identity + vitals the HIS already has (DOB, weight, height) so the form
+  // prints COMPLETE — the worklist row alone doesn't have these, and without them the
+  // signed PDF came out with blank patient fields.
   const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: display, name_en: en, procedure: exam,
                     physician: doctor || '', branch: branch || '',
+                    dob: (pat.dob || '').trim ? (pat.dob || '').trim() : (pat.dob || ''),
+                    gender: pat.gender || '',
+                    weight: (pat.weight != null ? String(pat.weight) : ''),
+                    height: (pat.height != null ? String(pat.height) : ''),
+                    patient_type: 'outpatient',   // radiology default → ticks the Outpatient box
                     bill_no: bill || '', site: (Number(site) || null) };
   if (typeof openConsentQR === 'function') { openConsentQR(prefill, () => wlLoad(true)); return; }
   if (typeof openConsent === 'function') { openConsent(prefill, () => wlLoad(true)); return; }

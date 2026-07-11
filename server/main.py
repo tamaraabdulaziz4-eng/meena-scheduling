@@ -9747,8 +9747,11 @@ def public_consent_form_image(token: str):
     # a QR photo / browser history / proxy logs for the rest of its TTL).
     if (r.get("status") or "") == "signed":
         raise HTTPException(410, "This consent has already been signed.")
+    # The renderer's font (Helvetica) can't shape Arabic, so use the English name for the
+    # printed form — same as the final signed PDF — else the name column renders blank.
+    _form_name = (r.get("patient_name_en") or "").strip() or (r.get("patient_name") or "")
     data = {
-        "name": r.get("patient_name") or "", "mrn": r.get("mrn") or r.get("file_no") or "",
+        "name": _form_name, "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
         "weight": r.get("weight") or "", "height": r.get("height") or "",
         "patient_type": r.get("patient_type") or "", "physician": r.get("physician") or "",
