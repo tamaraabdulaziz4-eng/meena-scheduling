@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'ris-caches-warm-2026-07-11f';
+const CONNECTOR_BUILD = 'doctor-phone-2026-07-11g';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2016,6 +2016,11 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
         mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
         age: r.age, gender: r.gender,
         doctorName: (r.doctorName || '').trim(), department: (r.departmentName || '').trim(),
+        // Referring physician's phone, if the search row carries it under any of Siratech's
+        // field names (it often doesn't — then it's null and the UI hides it).
+        doctorPhone: (r.doctorMobile || r.doctorContactNo || r.doctorContactNumber || r.doctorPhone
+          || r.providerMobile || r.providerPhone || r.providerContactNo || r.referringDoctorMobile
+          || r.refDoctorMobile || r.orderProviderMobile || '').toString().trim() || null,
         emergency, priority: emergency ? 'Emergency' : 'Routine',
         billNo: r.billNo || null, genPatBillingId: r.genPatBillingId,
         orderedDate: r.billDate || r.visitDate || null, ageHours, tatStatus: r.tatStatus,
