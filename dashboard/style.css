@@ -2169,6 +2169,7 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 .ps-rpt-cls { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:800; letter-spacing:.02em; padding:3px 9px; border-radius:20px; white-space:nowrap; }
 .ps-rpt-cls.normal { color:#0a7d38; background:var(--ok-wash,#e6f6ec); }
 .ps-rpt-cls.abnormal { color:#c0261a; background:#fdecea; }
+.ps-rpt-cls.critical { color:#fff; background:#d1453b; }
 .ps-rpt-print { flex:none; display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700;
   color:var(--accent,#6b4eff); background:var(--violet-wash,#f0edff); border:1px solid transparent;
   border-radius:8px; padding:5px 11px; cursor:pointer; transition:background .13s, border-color .13s; }
