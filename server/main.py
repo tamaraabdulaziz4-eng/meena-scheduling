@@ -8384,6 +8384,13 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
         "pay_pass": conn.get("payMs"),
         "connector_total": conn.get("totalMs"),
     }
+    # Per-call Siratech latency — the key to separating "Siratech answers slowly" from
+    # "the connector box can't run the calls in parallel".
+    out["per_siratech_call_ms"] = {
+        "concurrency": conn.get("concurrency"),
+        "radiology_search": conn.get("searchCall"),   # {n, avg, max, min, sum}
+        "ris_panel": conn.get("panelCall"),
+    }
     out["notes"]["rows"] = conn.get("rows")
     out["notes"]["branches_queried"] = conn.get("sites")
     conn_total = conn.get("totalMs")
@@ -8411,9 +8418,31 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
         "Our processing": out["layers_ms"].get("our_local_processing") or 0,
     }
     worst = max(contributors, key=contributors.get)
+    # Diagnose the CAUSE inside the fan-out: is each Siratech call slow, or is the connector
+    # box failing to parallelise them?
+    sc = conn.get("searchCall") or {}
+    pc = conn.get("panelCall") or {}
+    per_call_avg = max(sc.get("avg") or 0, pc.get("avg") or 0)
+    bulk = conn.get("bulkMs") or 0
+    conc = conn.get("concurrency") or 1
+    n_calls = (sc.get("n") or 0) + (pc.get("n") or 0)
+    ideal = (((sc.get("sum") or 0) + (pc.get("sum") or 0)) / conc) if conc else bulk   # if perfectly parallel
+    cause = None
+    if bulk:
+        if per_call_avg >= 1500:
+            cause = (f"SIRATECH is slow ANSWERING each call (avg ~{per_call_avg} ms per branch call). "
+                     f"A bigger/faster Siratech server would fix this.")
+        elif ideal and bulk > ideal * 1.8:
+            cause = (f"The CONNECTOR box isn't running the calls in parallel — each call averages only "
+                     f"~{per_call_avg} ms, but they queued up ({n_calls} calls, concurrency {conc}, "
+                     f"ideal ~{round(ideal)} ms vs actual {bulk} ms). A stronger connector box (CPU) or higher "
+                     f"concurrency would fix this.")
+        else:
+            cause = (f"Spread across {n_calls} Siratech calls (avg ~{per_call_avg} ms each, concurrency {conc}).")
     out["verdict"] = {
         "biggest_delay": worst,
         "biggest_delay_ms": contributors[worst],
+        "root_cause": cause,
         "summary": f"The worklist took ~{bridge_ms} ms end-to-end; the largest single cost is '{worst}' "
                    f"(~{contributors[worst]} ms). Our own processing was ~{out['layers_ms'].get('our_local_processing')} ms.",
     }

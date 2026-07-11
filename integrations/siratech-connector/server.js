@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'timing-2026-07-11k';
+const CONNECTOR_BUILD = 'timing2-2026-07-11l';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1983,6 +1983,13 @@ function parseHisDate(s) {
   return Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(str) ? str : str + '+03:00');
 }
 
+// Summarise a list of per-call latencies (ms) for the timing diagnostic.
+function _statMs(a) {
+  if (!a || !a.length) return { n: 0 };
+  const sum = a.reduce((x, y) => x + y, 0);
+  return { n: a.length, avg: Math.round(sum / a.length), max: Math.max(...a), min: Math.min(...a), sum };
+}
+
 async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false }) {
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality, pay });
   // Fast board pass refreshes on the short TTL; the heavy ready/modality pass keeps the
@@ -1990,8 +1997,12 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const ttl = (ready || modality) ? WORKLIST_CACHE_TTL : WORKLIST_FAST_CACHE_TTL;
   if (!noCache) { const e = worklistCache.get(key); if (e && Date.now() - e.ts < ttl) return e.data; }
   // Phase timing (returned as data._timings) so we can pinpoint EXACTLY where the board's
-  // build time goes: the bulk Siratech fan-out vs the modality/ready/pay passes.
+  // build time goes: the bulk Siratech fan-out vs the modality/ready/pay passes. _callMs also
+  // records EACH individual Siratech HTTP call's latency, so we can tell whether the ~10s is
+  // Siratech answering slowly (high per-call avg) or the connector box failing to parallelise
+  // (low per-call avg but high wall-clock).
   const _tmark = { start: Date.now() };
+  const _callMs = { search: [], panel: [] };
   await getToken();
   const empId = currentEmpId() || '0';
   const now = Date.now();
@@ -2049,12 +2060,14 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
   const _risStatuses = new Set();
   const risP = pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
+      const _tc = Date.now();
       const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
         mrno: '', fromDate: risFromDay + 'T00:00:00', toDate: risToDay + 'T23:59:59',
         invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
         serviceCategoryId: 0, emrPatRisPanelId: 0,
         userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
       } });
+      _callMs.panel.push(Date.now() - _tc);
       const rows = (rp.json && rp.json.data) || [];
       if (!_risKeysLogged && rows.length) { _risKeysLogged = true; console.log('[worklist] FetchRISPanel row keys:', Object.keys(rows[0]).join(',')); }
       for (const row of rows) {
@@ -2080,9 +2093,11 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
 
   const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
+      const _tc = Date.now();
       const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
         body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
       });
+      _callMs.search.push(Date.now() - _tc);
       if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
       return { site, ok: true, rows: (sr.json.data || []) };
     } catch (e) { return { site, ok: false, rows: [] }; }
@@ -2424,6 +2439,11 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     payMs: pay ? (_tmark.afterPay - (_tmark.afterReady || _tmark.afterModality || _tmark.afterBulk || _tmark.start)) : 0,
     totalMs: Date.now() - _tmark.start,
     sites: wantSites.length, rows: items.length,
+    concurrency: STATS_SITE_CONCURRENCY,
+    // Per-call Siratech latency: if avg is high, SIRATECH is slow answering each call; if avg
+    // is low but bulkMs is high, the CONNECTOR box isn't running them in parallel.
+    searchCall: _statMs(_callMs.search),
+    panelCall: _statMs(_callMs.panel),
   };
   const data = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
