@@ -1140,7 +1140,24 @@ function wlResetFilters() {
   const ds = document.getElementById('rw-docsel'); if (ds) ds.value = '';
   wlRender();
 }
-function wlToggleRow(uid, e) { if (e) e.stopPropagation(); if (wlState.openRows.has(uid)) wlState.openRows.delete(uid); else wlState.openRows.add(uid); wlRender(); }
+function wlToggleRow(uid, e) {
+  if (e) e.stopPropagation();
+  if (wlState.openRows.has(uid)) { wlState.openRows.delete(uid); }
+  else {
+    wlState.openRows.add(uid);
+    // Expanding a row = clear intent to open THIS patient. Warm the card lookup NOW (works
+    // for any row, not just the prefetched top-10, and gives a head start before the tap
+    // reaches "Full patient card"), so the card opens from cache instead of spinning.
+    try {
+      if (typeof psPrefetchLookup === 'function') {
+        const items = (wlState.data && wlState.data.items) || [];
+        const it = items.find((x) => wlRowUid(x) === uid);
+        if (it && it.mrno) psPrefetchLookup(String(it.mrno));
+      }
+    } catch (_e) { /* prefetch is best-effort */ }
+  }
+  wlRender();
+}
 function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRender(); }
 function wlClearSel() { wlState.selMrns.clear(); wlRender(); }
 
@@ -1489,7 +1506,14 @@ function wlIndPump() {
     const { mr } = _wlIndQueue.shift();
     if (wlState.indCache.has(mr) || _wlIndInflight.has(mr)) continue;
     _wlIndBusy++; _wlIndInflight.add(mr);
-    API.get('/radiology/lookup/' + encodeURIComponent(mr))
+    // Reuse the SAME lookup the row-expand prefetch already kicked off (psPrefetchLookup
+    // serves it from psLookupCache or shares the in-flight promise) instead of firing a
+    // second identical /radiology/lookup — one call feeds both the indication cell and the
+    // patient card, so the indication resolves as soon as that prefetch lands.
+    const _lk = (typeof psPrefetchLookup === 'function')
+      ? psPrefetchLookup(mr)
+      : API.get('/radiology/lookup/' + encodeURIComponent(mr));
+    Promise.resolve(_lk)
       .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlIndSet(mr); })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })
       .finally(() => { _wlIndBusy--; _wlIndInflight.delete(mr); wlIndPump(); });
@@ -1651,9 +1675,26 @@ async function wlOpenPatientCard(mrno) {
   // If this patient was prefetched (board warm-up or hover), paint instantly — no spinner.
   const warm = (typeof psLookupCache !== 'undefined') ? psLookupCache.get(mrno) : null;
   const isWarm = warm && Date.now() - warm.ts < 90000;
+  // Not warm yet? Don't show a bare spinner — we already KNOW this patient (name/MRN/age are
+  // on the worklist row), so paint their identity + a shimmer skeleton immediately. The card
+  // reads as "here, filling in" instead of "loading nothing"; renderPsDetail swaps in the
+  // full card the instant the lookup lands.
+  let placeholder = (typeof LOADING_HTML !== 'undefined') ? LOADING_HTML : '<div class="card" style="padding:26px;text-align:center">Loading…</div>';
+  if (!isWarm) {
+    const row = (((wlState && wlState.data && wlState.data.items) || []).find((x) => String(x.mrno) === mrno)) || {};
+    const nm = (row.patientName || '').trim();
+    if (nm) {
+      const sub = [row.mrno ? 'MRN ' + row.mrno : '', row.age || '', row.gender || ''].filter(Boolean).join(' · ');
+      const skel = (typeof skeletonList === 'function') ? skeletonList(4) : '';
+      placeholder = `<div class="card" style="padding:16px 16px 18px">
+        <div style="font-weight:800;font-size:17px;color:var(--text)">${escapeHtml(nm)}</div>
+        <div style="color:var(--muted);font-size:13px;margin-top:3px">${escapeHtml(sub)}</div>
+        <div style="margin-top:14px">${skel}</div></div>`;
+    }
+  }
   ov.innerHTML = `<div class="wl-pcard-sheet">
     <div class="wl-pcard-head"><b>Patient card</b><button class="wl-pcard-x" title="Close" onclick="wlClosePatientCard()">✕</button></div>
-    <div class="wl-pcard-body"><div id="ps-detail">${isWarm ? '' : (typeof LOADING_HTML !== 'undefined' ? LOADING_HTML : '<div class="card" style="padding:26px;text-align:center">Loading…</div>')}</div></div>
+    <div class="wl-pcard-body"><div id="ps-detail">${isWarm ? '' : placeholder}</div></div>
   </div>`;
   document.body.style.overflow = 'hidden';
   if (!window._wlPcardEsc) {
