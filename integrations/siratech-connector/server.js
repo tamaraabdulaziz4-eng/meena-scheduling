@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'perf-stats-worklist-2026-07-10d';
+const CONNECTOR_BUILD = 'report-pdf-classify-2026-07-11a';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -473,6 +473,11 @@ app.get('/radiology/study', requireAuth, async (req, res) => {
         out.verifiedBy = (rd && rd.verifiedBy) || null;
         out.reportText = (rd && Array.isArray(rd.radiologyDtlsDTO)
           && rd.radiologyDtlsDTO.map((x) => x && x.message).filter(Boolean).join('\n\n')) || null;
+        // Normal vs abnormal — classified from the report's own IMPRESSION (negation-aware).
+        if (out.reportText) {
+          try { const cls = results.classifyRange(out.reportText); out.classification = cls.range; out.classReason = cls.reason; }
+          catch (_e) { /* classification best-effort */ }
+        }
       } catch (_e) { /* report best-effort */ }
     }
     // image viewer url (native — FetchRadiologyImage → cloud ZFP viewer)
@@ -483,6 +488,51 @@ app.get('/radiology/study', requireAuth, async (req, res) => {
       } catch (_e) { /* image best-effort */ }
     }
     return res.json(out);
+  } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
+// ── The OFFICIAL signed report PDF (with the letterhead/logo) ──────────────────
+// The print-with-logo document is the PACS-rendered report PDF (open_report_pdf?style=2),
+// the same authoritative file the peer-review path files to the record. We resolve the
+// exam → its DePACS study (deterministically by accession when present) and return the
+// PDF as base64 so the client can open/print it. Read-only, best-effort — the caller
+// falls back to a plain-text print when there's no verified study/PDF yet.
+app.get('/radiology/report-pdf', requireAuth, async (req, res) => {
+  const mrno = String(req.query.mrno || '').trim();
+  const accession = String(req.query.accession || '').trim();
+  const invId = String(req.query.invPatTestResultId || '').trim();
+  if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
+  try {
+    const dr = await hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno } });
+    const rows = (dr.json && dr.json.data) || [];
+    let row = null;
+    if (invId) row = rows.find((x) => String(x.invPatTestResultId) === invId);
+    if (!row && accession) row = rows.find((x) => String(x.accessionNumber || '') === accession);
+    if (!row) return res.json({ ok: true, found: false, reason: 'exam not found' });
+    // Match the exam to its VERIFIED DePACS study (accession is the deterministic key).
+    const order = {
+      mrno, serviceName: row.serviceName, categoryName: row.categoryName || row.modality,
+      orderDate: row.reportDate || row.orderDate || row.billDate || null,
+      accession: row.accessionNumber || accession || null,
+    };
+    let studies;
+    try { studies = await results.depacsStudies(mrno); }
+    catch (e) { return res.json({ ok: true, found: false, reason: 'PACS unavailable' }); }
+    const m = results.matchStudy(order, studies);
+    if (m.decision !== 'unique' || !m.study) {
+      return res.json({ ok: true, found: false, reason: m.reason || 'no verified study matched', decision: m.decision });
+    }
+    const rep = await results.depacsReport(m.study.studyId);
+    if (!rep || !rep.pdfOk || !rep.pdfBase64) {
+      return res.json({ ok: true, found: false, reason: 'report has no PDF yet' });
+    }
+    const fname = [row.serviceName, mrno].filter(Boolean).join(' - ')
+      .replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 90).trim().concat('.pdf') || 'report.pdf';
+    return res.json({
+      ok: true, found: true, pdfBase64: rep.pdfBase64, filename: fname,
+      reviewer: rep.reviewer || null, reportDate: rep.reportDate || null,
+      studyId: m.study.studyId,
+    });
   } catch (e) { return res.status(502).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 

@@ -7061,6 +7061,24 @@ def radiology_study_native(request: Request, user=Depends(require_radiology)):
             qs += f"&{k}=" + urllib.parse.quote(v)
     return _bridge_request("/his/radiology/study" + qs, timeout=90)
 
+
+@app.get("/api/radiology/report-pdf")
+def radiology_report_pdf(request: Request, user=Depends(require_radiology)):
+    """The OFFICIAL signed report PDF (PACS-rendered, with the letterhead/logo) for one
+    exam, keyed by mrno (+ accession or invPatTestResultId). Returned as base64 JSON so
+    the client can open/print it. Falls back client-side to a plain print when there's
+    no verified study/PDF yet. Read-only."""
+    import urllib.parse
+    mrno = (request.query_params.get("mrno") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "A patient file number (mrno) is required")
+    qs = "?mrno=" + urllib.parse.quote(mrno)
+    for k in ("accession", "invPatTestResultId"):
+        v = (request.query_params.get(k) or "").strip()
+        if v:
+            qs += f"&{k}=" + urllib.parse.quote(v)
+    return _bridge_request("/his/radiology/report-pdf" + qs, timeout=120)
+
 @app.get("/api/radiology/discover")
 def radiology_discover(user=Depends(require_superadmin)):
     """READ-ONLY diagnostic: enumerate every Siratech API endpoint (from its Angular

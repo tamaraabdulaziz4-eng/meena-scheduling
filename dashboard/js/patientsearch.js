@@ -898,16 +898,26 @@ async function psLoadReport(o, elId, btn) {
       el.dataset.loaded = '1';
       const who = d.verifiedBy || 'Radiologist';
       const whenRaw = d.reportDate ? String(d.reportDate).slice(0, 16).replace('T', ' ') : '';
-      // Stash the report so the Print button can rebuild a clean letterhead without refetch.
+      // Stash the report so the Print button can rebuild without refetch.
       psReportStore[elId] = { txt, who: String(who), when: whenRaw, exam: o };
       const parsed = psFormatReport(txt);
+      // Normal / abnormal — classified by the connector from the report's IMPRESSION.
+      const cls = (d.classification || '').toLowerCase();
+      const clsBadge = cls === 'normal'
+        ? `<span class="ps-rpt-cls normal" title="${escapeHtml(d.classReason || '')}">● Normal</span>`
+        : cls === 'abnormal'
+        ? `<span class="ps-rpt-cls abnormal" title="${escapeHtml(d.classReason || '')}">▲ Abnormal</span>`
+        : '';
       el.innerHTML = `<div class="ps-rpt">
         <div class="ps-rpt-head">
           <span class="ps-rpt-who">${escapeHtml(String(who))}${whenRaw ? ` · ${escapeHtml(whenRaw)}` : ''}</span>
-          <button type="button" class="ps-rpt-print" onclick="event.stopPropagation();psPrintReport('${elId}')" title="Print with Meena letterhead">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
-            Print
-          </button>
+          <span class="ps-rpt-head-r">
+            ${clsBadge}
+            <button type="button" class="ps-rpt-print" onclick="event.stopPropagation();psPrintReport('${elId}',this)" title="Print the official signed report">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
+              Print
+            </button>
+          </span>
         </div>
         <div class="ps-rpt-body">${psReportSectionsHtml(parsed)}</div>
       </div>`;
@@ -1005,9 +1015,47 @@ function psTidySignature(f) {
     .replace(/ *\n */g, '\n').trim();
 }
 
-// Print THIS report on a clean Meena letterhead (logo + patient/exam header + the
-// formatted sections). Opens a print-ready window — same-origin so /meena_logo.png loads.
-function psPrintReport(elId) {
+// Print THIS report. FIRST tries the OFFICIAL signed report PDF from the PACS (the real
+// letterhead/logo document); if there's no verified study/PDF yet, falls back to a clean
+// letterhead print built from the report text. Async: shows a "Preparing…" state.
+async function psPrintReport(elId, btn) {
+  const rec = psReportStore[elId];
+  if (!rec) { toast('Report not loaded yet.'); return; }
+  const p = (psState.lookup && psState.lookup.patient) || {};
+  const o = rec.exam || {};
+  // Try the official PACS PDF (with the real logo) before falling back to our print.
+  if (btn) { btn.disabled = true; btn.dataset._t = btn.innerHTML; btn.innerHTML = 'Preparing…'; }
+  try {
+    const qs = new URLSearchParams({ mrno: p.mrno });
+    if (o.invPatTestResultId != null && String(o.invPatTestResultId) !== '' && String(o.invPatTestResultId) !== '0') qs.set('invPatTestResultId', String(o.invPatTestResultId));
+    else if (o.accessionNumber) qs.set('accession', String(o.accessionNumber));
+    const d = await API.get('/radiology/report-pdf?' + qs.toString());
+    if (d && d.found && d.pdfBase64) {
+      psOpenPdfBase64(d.pdfBase64, d.filename || 'report.pdf');
+      return;   // official signed PDF opened — done
+    }
+  } catch (e) { /* fall back to the text-built letterhead below */ }
+  finally { if (btn) { btn.disabled = false; if (btn.dataset._t) btn.innerHTML = btn.dataset._t; } }
+  psPrintReportFallback(elId);
+}
+
+// Open a base64 PDF in a new tab (native viewer → print), via a Blob URL.
+function psOpenPdfBase64(b64, filename) {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (!w) { toast('Allow pop-ups to open the report.'); URL.revokeObjectURL(url); return; }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast('Could not open the PDF.'); }
+}
+
+// Clean letterhead print built from the report text — the fallback when the official
+// PACS PDF isn't available yet. (logo + patient/exam header + formatted sections)
+function psPrintReportFallback(elId) {
   const rec = psReportStore[elId];
   if (!rec) { toast('Report not loaded yet.'); return; }
   const p = (psState.lookup && psState.lookup.patient) || {};
