@@ -22,11 +22,16 @@ _FIELDS = {
     "hcg":        (132, 226),
     "lmp_date":   (222, 410),
     "undersigned": (135, 520),
-    "physician":  (215, 672),
-    "technologist": (215, 700),
-    "date":       (92, 779),
-    "time":       (232, 779),
+    # Physician / technologist names sit on their OWN line in the left cell — the old
+    # position (x=215) spilled into the signature column, printing over that cell.
+    "physician":  (48, 681),
+    "technologist": (48, 722),
+    # Date / time on the label baseline (were stamped a row too low, under the border).
+    "date":       (80, 765),
+    "time":       (220, 765),
 }
+# Per-field font size overrides (physician/tech IDs can be long → smaller to stay in cell).
+_FIELD_SIZE = {"physician": 8, "technologist": 8}
 # Checkbox marks: an "X" placed at the box.
 _CHECKS = {
     "outpatient":   (180, 241),
@@ -38,8 +43,9 @@ _CHECKS = {
     "risks":        (47, 455),
     "read":         (47, 536),
 }
-# Signature image box (x0, y0, x1, y1).
-_SIG_RECT = (215, 618, 340, 653)
+# Signature image box (x0, y0, x1, y1) — the Signature cell of the Patient row. Sized to
+# sit INSIDE that cell (was shifted left, overlapping the "Signature / التوقيع" hint).
+_SIG_RECT = (236, 624, 424, 655)
 
 
 def _stamp(page, data, signature_png=None, mark_declaration=True):
@@ -57,7 +63,7 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
         page.insert_text((point[0], point[1]), text, fontsize=size, fontname="helv", color=(0, 0, 0))
 
     for key, point in _FIELDS.items():
-        put(point, data.get(key))
+        put(point, data.get(key), _FIELD_SIZE.get(key, 9))
 
     marks = set()
     if mark_declaration:
@@ -76,6 +82,9 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
 
     if signature_png:
         try:
+            # White out the "Signature / التوقيع" placeholder hint first so the signature
+            # sits on a clean cell instead of on top of that text.
+            page.draw_rect(fitz.Rect(*_SIG_RECT), color=None, fill=(1, 1, 1))
             page.insert_image(fitz.Rect(*_SIG_RECT), stream=signature_png, keep_proportion=True)
         except Exception:
             pass  # a bad/empty signature must not fail the whole document
