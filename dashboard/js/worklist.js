@@ -392,9 +392,11 @@ function wlSwitchReload() {
   wlLoad(true);                   // force nocache — fresh data for the new scope
 }
 
-// Cache key for the persisted board — scoped to the branch + date window so switching
-// scope never shows another scope's rows.
-function wlScopeKey() { return `${wlState.site || 'all'}|${wlState.from || ''}|${wlState.to || ''}`; }
+// Cache key for the persisted board — keyed by the DATE window only. The board always holds
+// every branch (the picker filters client-side), so it must NOT be keyed by wlState.site;
+// otherwise switching branch would look for a different key, miss, and blank the board — the
+// very "pick a branch → empty" bug. One superset per date window, filtered on render.
+function wlScopeKey() { return `all|${wlState.from || ''}|${wlState.to || ''}`; }
 
 async function wlLoad(force, silent) {
   const body = document.getElementById('wl-body');
@@ -421,7 +423,13 @@ async function wlLoad(force, silent) {
   // round-trip. The pipeline stage + exam/modality (per-order HIS work) come in a
   // background pass right after, and never block the first paint.
   const qs = new URLSearchParams();
-  if (wlState.site) qs.set('sites', wlState.site);
+  // ALWAYS fetch every branch (never scope the fetch to the picked branch). The branch
+  // picker is a purely CLIENT-side filter (wlRender scopes by wlState.site), so the board
+  // must always hold every branch's rows — otherwise picking branch A then switching to
+  // branch B would filter A's data to zero (an instant blank board) and then hang on a
+  // scoped refetch. A branch-locked team lead is still confined server-side (it ignores
+  // any client sites), so this only widens what an org-wide role loads — which is exactly
+  // the always-all-branches board they already start on.
   qs.set('from', wlState.from); qs.set('to', wlState.to);   // explicit range (prior day + today)
   // Silent polls are normally served from the connector's worklist cache, so a new/changed
   // order (or a new emergency) could lag up to the cache TTL + poll interval. Force a fresh
@@ -568,7 +576,8 @@ async function wlEnrich(silent, force) {
   if (anyMissing) { wlState.enriching = true; if (document.getElementById('wl-body')) wlRender(); }
   const mkQs = (flags) => {
     const qs = new URLSearchParams();
-    if (wlState.site) qs.set('sites', wlState.site);
+    // All branches (the picker is a client-side filter) — must match the fast-pass fetch
+    // scope so enrichment keys line up with the rows on the board.
     qs.set('from', wlState.from); qs.set('to', wlState.to);
     for (const k of Object.keys(flags)) qs.set(k, flags[k]);
     return qs.toString();
