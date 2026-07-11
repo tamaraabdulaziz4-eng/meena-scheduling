@@ -1607,10 +1607,15 @@ function wlEnsurePcardStyles() {
   s.textContent = `
     .wl-pcard-ov{position:fixed;inset:0;z-index:1200;background:rgba(20,17,40,.5);
       backdrop-filter:blur(2px);display:flex;justify-content:center;align-items:flex-start;
-      padding:24px 14px;overflow:auto;animation:wlpcFade .15s ease}
+      padding:24px 14px;overflow:auto;animation:wlpcFade .18s ease;transition:opacity .16s ease}
+    .wl-pcard-ov.closing{opacity:0}
     @keyframes wlpcFade{from{opacity:0}to{opacity:1}}
     .wl-pcard-sheet{width:100%;max-width:660px;background:var(--bg,#f4f2fc);border-radius:18px;
-      box-shadow:0 24px 70px rgba(20,17,40,.4);overflow:hidden;margin:auto 0}
+      box-shadow:0 24px 70px rgba(20,17,40,.4);overflow:hidden;margin:auto 0;
+      animation:wlpcSheetIn .3s cubic-bezier(.16,1,.3,1) both;
+      transition:transform .16s ease,opacity .16s ease}
+    .wl-pcard-ov.closing .wl-pcard-sheet{transform:translateY(8px) scale(.985);opacity:0}
+    @keyframes wlpcSheetIn{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
     .wl-pcard-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;
       gap:10px;padding:13px 16px;background:var(--card,#fff);border-bottom:1px solid var(--border,#e7e4f0)}
     .wl-pcard-head b{font-size:15px}
@@ -1628,6 +1633,10 @@ async function wlOpenPatientCard(mrno) {
   wlEnsurePcardStyles();
   let ov = document.getElementById('wl-pcard');
   if (!ov) { ov = document.createElement('div'); ov.id = 'wl-pcard'; document.body.appendChild(ov); }
+  // Reopened while a previous close was mid-exit? Cancel that pending removal and clear the
+  // closing state so the fresh card can't be wiped by the old exit timer.
+  if (ov._closeTimer) { clearTimeout(ov._closeTimer); ov._closeTimer = null; }
+  ov._closing = false;
   ov.className = 'wl-pcard-ov';
   ov.onclick = (e) => { if (e.target === ov) wlClosePatientCard(); };
   // If this patient was prefetched (board warm-up or hover), paint instantly — no spinner.
@@ -1660,9 +1669,17 @@ async function wlOpenPatientCard(mrno) {
 }
 function wlClosePatientCard() {
   const ov = document.getElementById('wl-pcard');
-  if (ov) ov.remove();
   document.body.style.overflow = '';
   if (window._wlPcardEsc) { document.removeEventListener('keydown', window._wlPcardEsc); window._wlPcardEsc = null; }
+  if (!ov) return;
+  // Play the exit (fade + settle) before removing, instead of a hard snap-out. Guard
+  // against a double-close and honour reduced-motion (remove immediately).
+  if (ov._closing) return;
+  ov._closing = true;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) { ov.remove(); return; }
+  ov.classList.add('closing');
+  ov._closeTimer = setTimeout(() => { try { ov.remove(); } catch (e) {} }, 180);
 }
 window.wlOpenPatientCard = wlOpenPatientCard;
 window.wlClosePatientCard = wlClosePatientCard;

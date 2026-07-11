@@ -14,7 +14,14 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d0b1a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Load fonts NON-blocking: fetch as a print stylesheet (ignored for layout) then flip to
+     all once loaded, so first paint never waits on the third-party font CSS. display=swap
+     already renders text in a fallback face meanwhile. <noscript> keeps it working JS-off. -->
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Cairo:wght@400;600;700;800&display=swap">
+<noscript><link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Cairo:wght@400;600;700;800&display=swap"></noscript>
 <link rel="stylesheet" href="/style.css?v=20260711p">
 <!-- Generic .cc control styles (buttons .ghost/.open, .listcard/.lrow lists) live here and
      are used app-wide, so load them EAGERLY — not just on the radiology pages. Without this
@@ -1125,34 +1132,34 @@
      schedule + leaves stay eager (coupled to review/export/portal). main.js MUST stay last
      (it references globals the others define). The server rewrites every ?v= below to the
      content-hash build id, so these values are placeholders. -->
-<script src="/js/api.js?v=20260709x"></script>
-<script src="/js/auth.js?v=20260709x"></script>
-<script src="/js/util.js?v=20260709x"></script>
-<script src="/js/branches.js?v=20260709x"></script>
-<script src="/js/users.js?v=20260709x"></script>
-<script src="/js/hisaccess.js?v=20260710b"></script>
-<script src="/js/staff.js?v=20260709x"></script>
-<script src="/js/leaves.js?v=20260709x"></script>
-<script src="/js/swaps.js?v=20260709x"></script>
-<script src="/js/holidays.js?v=20260710a"></script>
-<script src="/js/notifications.js?v=20260709x"></script>
-<script src="/js/push.js?v=20260709x"></script>
-<script src="/js/portal.js?v=20260709x"></script>
-<script src="/js/downtime.js?v=20260709x"></script>
-<script src="/js/inventory.js?v=20260709x"></script>
-<script src="/js/equipment.js?v=20260709x"></script>
-<script src="/js/messages.js?v=20260709x"></script>
-<script src="/js/tickets.js?v=20260709x"></script>
-<script src="/js/orders.js?v=20260709x"></script>
-<script src="/js/consent.js?v=20260709x"></script>
-<script src="/js/announcements.js?v=20260709x"></script>
-<script src="/js/cdxfer.js?v=20260709x"></script>
-<script src="/js/shifts.js?v=20260709x"></script>
-<script src="/js/schedule.js?v=20260709x"></script>
-<script src="/js/review.js?v=20260709x"></script>
-<script src="/js/export.js?v=20260709x"></script>
-<script src="/js/audit.js?v=20260709x"></script>
-<script src="/js/cmdk.js?v=20260709x"></script>
-<script src="/js/main.js?v=20260709x"></script>
+<script defer src="/js/api.js?v=20260709x"></script>
+<script defer src="/js/auth.js?v=20260709x"></script>
+<script defer src="/js/util.js?v=20260709x"></script>
+<script defer src="/js/branches.js?v=20260709x"></script>
+<script defer src="/js/users.js?v=20260709x"></script>
+<script defer src="/js/hisaccess.js?v=20260710b"></script>
+<script defer src="/js/staff.js?v=20260709x"></script>
+<script defer src="/js/leaves.js?v=20260709x"></script>
+<script defer src="/js/swaps.js?v=20260709x"></script>
+<script defer src="/js/holidays.js?v=20260710a"></script>
+<script defer src="/js/notifications.js?v=20260709x"></script>
+<script defer src="/js/push.js?v=20260709x"></script>
+<script defer src="/js/portal.js?v=20260709x"></script>
+<script defer src="/js/downtime.js?v=20260709x"></script>
+<script defer src="/js/inventory.js?v=20260709x"></script>
+<script defer src="/js/equipment.js?v=20260709x"></script>
+<script defer src="/js/messages.js?v=20260709x"></script>
+<script defer src="/js/tickets.js?v=20260709x"></script>
+<script defer src="/js/orders.js?v=20260709x"></script>
+<script defer src="/js/consent.js?v=20260709x"></script>
+<script defer src="/js/announcements.js?v=20260709x"></script>
+<script defer src="/js/cdxfer.js?v=20260709x"></script>
+<script defer src="/js/shifts.js?v=20260709x"></script>
+<script defer src="/js/schedule.js?v=20260709x"></script>
+<script defer src="/js/review.js?v=20260709x"></script>
+<script defer src="/js/export.js?v=20260709x"></script>
+<script defer src="/js/audit.js?v=20260709x"></script>
+<script defer src="/js/cmdk.js?v=20260709x"></script>
+<script defer src="/js/main.js?v=20260709x"></script>
 </body>
 </html>

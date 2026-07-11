@@ -62,6 +62,7 @@ async function renderRadStatsPage(opts) {
     const r = rsPresetRange(radstats.preset);
     radstats.from = r.from; radstats.to = r.to;
   }
+  rsRestore();                           // stale-first: hydrate from sessionStorage on a hard reload
   const c = opts.container || document.getElementById('content');
   const heroSub = scopeName
     ? `Live request volume for ${escapeHtml(scopeName)} — by modality, doctor and department, straight from Siratech HIS`
@@ -361,6 +362,37 @@ function rsStartAuto() {
 }
 function rsStopAuto() { if (radstats.timer) { clearInterval(radstats.timer); radstats.timer = null; } }
 
+// ── Stale-first across a HARD reload (sessionStorage) ─────────────────────────
+// In-memory radstats.data only survives navigation; a full page reload drops it, so
+// first paint fell back to the branded overlay while awaiting the slow HIS stats call.
+// Persist the last payload keyed by scope+range and render it stale-first on mount —
+// instant first paint on reload/return, exactly like the worklist's wl:board: restore.
+function rsScopeKey() {
+  const branches = radstats.sel ? [...radstats.sel].sort().join(',') : 'all';
+  return `rs:stats:${radstats.preset || 'custom'}|${radstats.from}|${radstats.to}|${branches}`;
+}
+function rsPersist() {
+  try {
+    sessionStorage.setItem(rsScopeKey(), JSON.stringify({
+      t: Date.now(), data: radstats.data, modData: radstats.modData, finData: radstats.finData,
+    }));
+  } catch (e) { /* quota / private mode — ignore */ }
+}
+function rsRestore() {
+  if (radstats.data) return false;             // already have live data in hand
+  try {
+    const raw = sessionStorage.getItem(rsScopeKey());
+    if (!raw) return false;
+    const o = JSON.parse(raw);
+    // Only trust a recent snapshot (10 min) so we never flash badly-stale numbers.
+    if (!o || !o.data || Date.now() - (o.t || 0) > 600000) return false;
+    radstats.data = o.data;
+    if (o.modData) radstats.modData = o.modData;
+    if (o.finData) radstats.finData = o.finData;
+    return true;
+  } catch (e) { return false; }
+}
+
 async function rsLoad(silent, force) {
   // Every control (preset, branch toggle, "All", custom dates, auto-refresh) fires
   // rsLoad. A slow selection could resolve AFTER a newer, faster one and overwrite
@@ -389,6 +421,7 @@ async function rsLoad(silent, force) {
     const d = await API.get('/radiology/stats?' + q.toString());
     if (myReq !== radstats._reqSeq) return;   // superseded by a newer selection — drop this stale result
     radstats.data = d;
+    rsPersist();                              // snapshot for an instant stale-first paint on the next hard reload
   } catch (e) {
     if (myReq !== radstats._reqSeq) return;
     radstats.lastError = (e && e.message) || 'Could not load statistics';
@@ -432,7 +465,7 @@ async function rsLoadModality(opts) {
     if (myReq !== radstats._reqSeq) return;
     radstats.modError = (e && e.message) || 'Could not load modality mix';
   } finally {
-    if (myReq === radstats._reqSeq) { radstats.modLoading = false; rsRenderBody(); }
+    if (myReq === radstats._reqSeq) { radstats.modLoading = false; rsPersist(); rsRenderBody(); }
   }
 }
 
@@ -457,7 +490,7 @@ async function rsLoadFinancial(opts) {
     if (myReq !== radstats._reqSeq) return;
     radstats.finError = (e && e.message) || 'Could not load revenue';
   } finally {
-    if (myReq === radstats._reqSeq) { radstats.finLoading = false; rsRenderBody(); }
+    if (myReq === radstats._reqSeq) { radstats.finLoading = false; rsPersist(); rsRenderBody(); }
   }
 }
 

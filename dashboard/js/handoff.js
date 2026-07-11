@@ -193,7 +193,7 @@ async function handoffLookup() {
               // written/filed/writing sets, which could block patient B's first write.
               written: new Set(), filed: {}, writing: false, pollGen: (handoff.pollGen || 0) + 1 };
   const pane = document.getElementById('ho-patient');
-  pane.innerHTML = LOADING_HTML;
+  pane.innerHTML = skeletonList(4);
   try {
     handoff.lookup = await API.get(`/radiology/lookup/${encodeURIComponent(file)}`);
     handoffApplyOrder(handoffOrders()[0]);

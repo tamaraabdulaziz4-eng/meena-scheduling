@@ -255,6 +255,16 @@ function hideLoader() {
 // Animated inline loading state (no static hourglass).
 const LOADING_HTML = '<div class="loading-inline"><span class="mini-spin"></span><span>Loading…</span></div>';
 
+// A shimmer LIST skeleton (n card-shaped rows) for list pages that used to flash a bare
+// spinner while awaiting the slow HIS — a skeleton reads as "loading fast", a spinner as
+// "stuck". Styled by .skel-list/.skel-rowcard in style.css.
+function skeletonList(n = 6, opts = {}) {
+  const cls = 'skel skel-rowcard' + (opts.sm ? ' sm' : '');
+  let rows = '';
+  for (let i = 0; i < n; i++) rows += `<div class="${cls}"></div>`;
+  return `<div class="skel-list">${rows}</div>`;
+}
+
 // Replay a soft fade+rise on any element (used when a grid/list re-renders, e.g.
 // changing month) so content never just snaps in.
 function animateIn(elOrId) {

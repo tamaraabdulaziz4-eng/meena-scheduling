@@ -41,8 +41,10 @@ async function renderOrdersPage() {
     <div id="od-body"></div>
   </div>`;
   odRenderTabs();
-  try {
-    const b = await API.get('/radiology/branches');
+  // The branch <select> is a nicety — don't gate the board on it. Fill it in the
+  // background so the orders list starts loading in the SAME tick (was: await branches,
+  // THEN load orders — a needless serial round-trip before the board even asked HIS).
+  API.get('/radiology/branches').then((b) => {
     odState.branches = (b && b.branches) || [];
     const sel = document.getElementById('od-branch');
     if (sel) for (const br of odState.branches) {
@@ -50,8 +52,11 @@ async function renderOrdersPage() {
       o.value = br.siteId; o.textContent = br.shortName || br.name || ('Branch ' + br.siteId);
       sel.appendChild(o);
     }
-  } catch (e) { /* branch picker optional — team leads are scoped server-side */ }
-  odLoad();
+  }).catch(() => { /* branch picker optional — team leads are scoped server-side */ });
+  // Stale-first: odState survives navigation, so a return to Orders paints the last board
+  // INSTANTLY and refreshes underneath — no loading flash (mirrors radstats/worklist).
+  if (odState.data) { odRender(); odLoad(false, true); }
+  else odLoad();
   odStartTimer();
 }
 
@@ -103,7 +108,7 @@ async function odLoad(force, silent) {
   const body = document.getElementById('od-body');
   if (!body || odState.loading) return;
   odState.loading = true;
-  if (!silent) body.innerHTML = LOADING_HTML;
+  if (!silent) body.innerHTML = skeletonList(7);
   const qs = new URLSearchParams();
   if (odState.site) qs.set('site', odState.site);
   // 'attention' isn't a server state — it's a client-side filter over the whole
@@ -292,7 +297,7 @@ function odRow(o) {
                     : ris('scheduled', 'Ordered'));
   const attBorder = att ? (att.cls === 'badge-red' ? 'var(--danger,#E25555)' : 'var(--yellow,#e0a800)') : null;
   const border = attBorder || (emerg ? 'var(--danger,#E25555)' : null);
-  return `<div class="listcard" style="margin-bottom:10px${border ? ';box-shadow:inset 3px 0 0 ' + border : ''}">
+  return `<div class="listcard lift" style="margin-bottom:10px${border ? ';box-shadow:inset 3px 0 0 ' + border : ''}">
     <div class="lrow" style="align-items:flex-start;flex-wrap:wrap">
       <div class="pt" style="flex:1;min-width:200px">
         <div class="pname">${escapeHtml(o.patientName || '—')}
