@@ -231,11 +231,13 @@ const RAD_JS = ['/js/worklist.js', '/js/patientsearch.js', '/js/handoff.js', '/j
 // styles for pages they open: worklist.css (.cc + .rw board, ~35KB) and radstats.css
 // (.rs- + .rsr-, ~25KB, also pulled by home which embeds the rad-stats widget).
 const PAGE_ASSETS = {
-  worklist:      [...RAD_JS, '/css/worklist.css'],
+  // worklist.css is now loaded EAGERLY in index.html (its .cc control styles are app-wide),
+  // so it's no longer listed here — that avoids a duplicate <link> on the radiology pages.
+  worklist:      RAD_JS,
   patientsearch: RAD_JS,
   handoff:       RAD_JS,
   reports:       ['/js/reports.js'],
-  critical:      ['/js/criticalresults.js', '/css/worklist.css'],
+  critical:      ['/js/criticalresults.js'],
   peerreview:    ['/js/peerreview.js', '/css/radstats.css'],
   radstats:      ['/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
   home:          ['/js/home.js', ...RAD_JS, '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],

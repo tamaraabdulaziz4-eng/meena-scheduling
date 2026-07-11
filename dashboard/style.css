@@ -2451,3 +2451,19 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
 .perm-tag { font-size:10.5px; font-weight:700; color:var(--muted); white-space:nowrap; }
 .perm-tag.g { color:#0a7d38; }
 .perm-tag.r { color:#c0261a; }
+/* ── Global secondary buttons ── */
+/* .ghost / .open were only styled under `.cc` in the lazy-loaded worklist.css, so they
+   rendered UNSTYLED on pages (and modals) that didn't have it. These app-wide, unscoped
+   rules guarantee they always look like proper buttons, anywhere they're used. */
+.ghost { display:inline-flex; align-items:center; justify-content:center; gap:7px; font-size:12.5px;
+  font-weight:600; color:var(--ink-2,var(--text,#1a1a2e)); padding:8px 13px; border:1px solid var(--border);
+  border-radius:10px; background:var(--card,#fff); cursor:pointer; font-family:inherit; white-space:nowrap;
+  line-height:1.1; transition:border-color .16s, background .16s, color .16s, box-shadow .16s; }
+.ghost:hover { border-color:var(--accent,#6b4eff); color:var(--accent,#6b4eff); background:var(--surface-2,#faf9ff); }
+.ghost:active { transform:scale(.97); }
+.ghost:disabled { opacity:.5; cursor:default; }
+.ghost svg { width:15px; height:15px; }
+/* NOTE: `.open` is intentionally NOT styled globally — it's overloaded as a STATE
+   modifier (.modal-overlay.open, .notif-panel.open, .rw-row.open…), so an unscoped rule
+   would break every overlay. The button form is styled by `.cc .open` in the now-eager
+   worklist.css; buttons outside a .cc container use `.btn` / `.btn.btn-ghost`. */
