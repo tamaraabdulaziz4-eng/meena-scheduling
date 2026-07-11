@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risdefault-2026-07-11t';
+const CONNECTOR_BUILD = 'risordered-2026-07-11u';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2095,7 +2095,17 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
       // (Being verified against known-reported patients before we flip.)
       const reported = Number(r.resultStatus) >= 1 || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;
       const stage = reported ? 'reported' : scanned ? 'imaged' : 'ordered';
-      const status = reported ? 'Reported' : hasEnd ? 'Scan done' : hasStart ? 'In progress' : 'In progress';
+      // Status TEXT must agree with `stage` — the client's lane matcher trusts the text. The old
+      // fallback hard-coded 'In progress' for every non-reported row, so even rows with NO exam
+      // timestamps (which the branch-wide panel never populates) were forced into the In-Progress
+      // lane and the Ordered lane always read 0. Drive it off the same timestamps as `stage`:
+      // reported → Reported, scan-ended → Scan done, scan-started → In progress, arrived →
+      // Received, nothing yet → Ordered (a billed exam awaiting its result).
+      const status = reported ? 'Reported'
+        : hasEnd ? 'Scan done'
+        : hasStart ? 'In progress'
+        : hasArrival ? 'Received'
+        : 'Ordered';
       // Diagnostic tally: which (risOrderStatusId, risStatus, resultStatus) codes go with a scan
       // done / report — so we can decode the "reported" flag across ALL rows in one run.
       const _hk = `orderStatusId=${r.risOrderStatusId}|risStatus=${r.risStatus}|resultStatus=${r.resultStatus}|scanned=${scanned}|end=${hasEnd}`;

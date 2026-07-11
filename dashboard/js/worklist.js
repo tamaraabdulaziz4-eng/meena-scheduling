@@ -425,7 +425,9 @@ async function wlLoad(force, silent) {
   // shows when there is genuinely nothing to display. No more "press the button → spin".
   if (!silent && !wlState.filter) {
     if (wlState.data && ((wlState.data.items || []).length)) { wlHydrate(); wlRender(); }
-    else { body.innerHTML = LOADING_HTML; wlState._lastBodyHtml = null; }
+    // Nothing in hand yet → paint the shimmer BOARD skeleton (row-cards), not a bare
+    // "Loading…" spinner. Reads as "loading fast" and matches the board that lands.
+    else { body.innerHTML = (typeof skeletonList === 'function') ? skeletonList(8) : LOADING_HTML; wlState._lastBodyHtml = null; }
   }
   // FAST load: no ready/modality — just the pending list, so the board paints in one
   // round-trip. The pipeline stage + exam/modality (per-order HIS work) come in a
