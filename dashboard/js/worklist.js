@@ -44,6 +44,14 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
 // and the heavy DePACS pass stays throttled (~3 min on the silent timer).
 const WL_REFRESH_MS = 20000;
 
+// Board data source override (preview): localStorage['wl:src']='ris' renders the fast
+// RIS-panel board for THIS browser only, so it can be verified before flipping the default.
+// Returns '' (no override) unless the value is a known source.
+function wlBoardSrc() {
+  try { const s = (localStorage.getItem('wl:src') || '').trim().toLowerCase(); return (s === 'ris' || s === 'search') ? s : ''; }
+  catch (e) { return ''; }
+}
+
 // Org-wide roles (superadmin/manager) can point the board at any branch; a branch
 // team lead is server-scoped to their own branch, so the picker is locked for them.
 function wlCanSwitchBranch() {
@@ -431,6 +439,9 @@ async function wlLoad(force, silent) {
   // any client sites), so this only widens what an org-wide role loads — which is exactly
   // the always-all-branches board they already start on.
   qs.set('from', wlState.from); qs.set('to', wlState.to);   // explicit range (prior day + today)
+  // Opt-in preview of the fast RIS-panel board: set localStorage['wl:src']='ris' to test the
+  // rendered board (lanes + buttons) before it becomes everyone's default.
+  { const _s = wlBoardSrc(); if (_s) qs.set('src', _s); }
   // Silent polls are normally served from the connector's worklist cache, so a new/changed
   // order (or a new emergency) could lag up to the cache TTL + poll interval. Force a fresh
   // fetch on an explicit load AND at least every ~30s on the live timer, so HIS-side changes
@@ -579,6 +590,7 @@ async function wlEnrich(silent, force) {
     // All branches (the picker is a client-side filter) — must match the fast-pass fetch
     // scope so enrichment keys line up with the rows on the board.
     qs.set('from', wlState.from); qs.set('to', wlState.to);
+    { const _s = wlBoardSrc(); if (_s) qs.set('src', _s); }   // keep the RIS preview consistent across passes
     for (const k of Object.keys(flags)) qs.set(k, flags[k]);
     return qs.toString();
   };
