@@ -377,20 +377,37 @@ async function depacsStudies(mrno, opts = {}) {
   return out;
 }
 
+// A verified report is FINAL — its text + PDF don't change — so cache it, and fetch the
+// report-info and the PDF CONCURRENTLY (they're independent) instead of one-after-another.
+// Called from three paths (peer review, file-plan, results/file), so the cache also
+// dedupes re-opens of the same study. Short TTL keeps it fresh enough for a late addendum.
+const _reportCache = new Map();   // studyId -> { ts, data }
+const REPORT_CACHE_TTL = Number(process.env.DEPACS_REPORT_TTL_MS || 300000);
 async function depacsReport(studyId) {
+  const key = String(studyId);
+  const hit = _reportCache.get(key);
+  if (hit && Date.now() - hit.ts < REPORT_CACHE_TTL) return hit.data;
   const token = await dpToken();
-  const info = await dpFetch('/report/get_study_report_info/' + studyId, { token });
+  const [info, pdfRes] = await Promise.all([
+    dpFetch('/report/get_study_report_info/' + studyId, { token }),
+    dpRequest(DEPACS_BASE + '/report/open_report_pdf/' + studyId + '?style=2', { headers: { Authorization: 'Token ' + token } }),
+  ]);
   const b = (info.json && info.json.body) || {};
   const text = String(b.report_content || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-  const pdfRes = await dpRequest(DEPACS_BASE + '/report/open_report_pdf/' + studyId + '?style=2', { headers: { Authorization: 'Token ' + token } });
   const pdfBuf = pdfRes.buffer;
   const isPdf = pdfBuf.slice(0, 5).toString() === '%PDF-';
-  return {
+  const data = {
     reportId: b.report_id || null, patName: b.pat_name || '',
     reportText: text, reportDate: b.report_date || b.verification_date || null,
     reviewer: b.reviewer_name || null,
     pdfBase64: isPdf ? pdfBuf.toString('base64') : null, pdfBytes: pdfBuf.length, pdfOk: isPdf,
   };
+  // Only cache a real, complete report (avoid pinning a transient miss).
+  if (text || isPdf) {
+    _reportCache.set(key, { ts: Date.now(), data });
+    if (_reportCache.size > 500) _reportCache.delete(_reportCache.keys().next().value);
+  }
+  return data;
 }
 
 // ── the strict matcher ────────────────────────────────────────────────────────

@@ -921,7 +921,19 @@ function rsRenderBody() {
   const foot = `<div class="rs-foot">Range ${escapeHtml((d.range && d.range.from) || '')} → ${escapeHtml((d.range && d.range.to) || '')}
     · straight from Siratech HIS · updated ${escapeHtml(timeAgo(d.generatedAt))}${sitesFail ? ` · branches unavailable: ${escapeHtml((d.sites.failed || []).join(', '))}` : ''}</div>`;
 
-  body.innerHTML = focusNote + tabBar + `<div class="rs-tabpane">${active[2]}</div>` + foot;
+  const nextHtml = focusNote + tabBar + `<div class="rs-tabpane">${active[2]}</div>` + foot;
+  // Skip the expensive innerHTML swap (donuts + area chart + hourly/weekday bars all
+  // re-parse) when nothing changed — the 30s Auto poll otherwise repaints twice a minute
+  // for zero new information. Signature = the actual data + view state, minus the "updated
+  // Xs ago" ticker (which always moves), so a cache-hit poll is a true no-op.
+  const sig = `${(d.generatedAt) || ''}|${radstats.tab}|${radstats.modData ? radstats.modData.exams : ''}|${radstats.finData ? radstats.finData.revenue : ''}|${(radstats.sel ? [...radstats.sel].join(',') : '')}|${radstats.dayFocus && radstats.dayFocus.date || ''}|${radstats.modLoading}|${radstats.finLoading}`;
+  if (sig === radstats._bodySig && body.firstChild) {
+    // just refresh the "updated Xs ago" footer text, skip the full rebuild
+    const f = body.querySelector('.rs-foot'); if (f) f.innerHTML = foot.replace(/^<div class="rs-foot">/, '').replace(/<\/div>$/, '');
+    return;
+  }
+  radstats._bodySig = sig;
+  body.innerHTML = nextHtml;
 }
 
 // Switch dashboard tab. Reset the paint pin so the new pane animates in (feels

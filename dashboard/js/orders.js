@@ -122,6 +122,13 @@ async function odLoad(force, silent) {
 
 function odRender() {
   const d = odState.data || {}, orders = d.orders || [], by = d.byState || {};
+  // Skip the whole rebuild (each order card re-renders a full SVG timeline) when the data
+  // and tab are unchanged — the 60s silent poll otherwise repaints for zero new info.
+  const _sig = `${odState.state}|${d.count || 0}|${orders.length}|` +
+    orders.map(o => `${o.genPatBillingId || o.billNo || ''}:${o.state}:${o.filedAt || o.reportedAt || o.orderedAt || ''}`).join('|');
+  const _b = document.getElementById('od-body');
+  if (_sig === odState._renderSig && _b && _b.firstChild) return;
+  odState._renderSig = _sig;
   // Entrance animation fires ONCE per visit — the 60s silent poll recreates the
   // KPI tiles and order cards, which would replay the rise stagger as a visible
   // flicker every refresh. Same .cc-still pin as the worklist.
