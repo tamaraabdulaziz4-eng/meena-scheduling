@@ -57,6 +57,7 @@ const API = {
     if (/\/radiology\/(stats|lookup|worklist|throughput|results\/(match|file))/.test(path)) return 240000;  // 4 min
     return 45000;                                                        // 45 s
   },
+  _cond: new Map(),   // path -> { etag, data } : in-memory conditional-GET store (no disk cache)
   async request(method, path, body) {
     // no-store: never read API data from the browser cache — a GET right after a
     // save must hit the server, or the rota looks like it reverted.
@@ -65,6 +66,12 @@ const API = {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
+    // Conditional GET: if we still hold the last body for this exact path, ask the server to
+    // confirm it's unchanged. On a 304 the server sends ~0 bytes and we reuse the in-memory
+    // copy — a real saving on the boards that poll every 10-30s. Kept in JS memory only
+    // (no-store stays), so no patient data lands in the workstation's disk cache.
+    const _isGet = method === 'GET';
+    if (_isGet) { const c = API._cond.get(path); if (c) opts.headers['If-None-Match'] = c.etag; }
     // Abort the request if the server takes too long, so a slow/stuck backend
     // surfaces as a retry-able error rather than hanging the UI forever.
     const ctrl = new AbortController();
@@ -91,9 +98,21 @@ const API = {
       throw new APIError('Network error — check your connection and try again.', 0, {});
     }
     clearTimeout(timer);
+    // 304 Not Modified → the content is identical to our last poll; reuse the stored body
+    // (no re-download, no re-parse). Only reachable when we sent If-None-Match, so the entry
+    // exists; if it somehow doesn't, fall through and treat it as a normal (error) response.
+    if (res.status === 304 && _isGet) {
+      const c = API._cond.get(path);
+      if (c) { mark(true, 0); return c.data; }
+    }
     const clen = res.headers.get('content-length');
     mark(res.ok, clen != null ? Number(clen) : null);
     const data = await res.json().catch(() => ({}));
+    if (_isGet && res.ok) {
+      const et = res.headers.get('etag');
+      if (et) API._cond.set(path, { etag: et, data });
+      else if (API._cond.has(path)) API._cond.delete(path);   // endpoint stopped sending ETags
+    }
     if (!res.ok) {
       // A 401 on any non-auth call after we were signed in means the session
       // died under us (token expired, password changed elsewhere, account

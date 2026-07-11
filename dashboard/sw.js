@@ -24,7 +24,9 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;                       // never touch writes
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;        // let cross-origin (fonts) hit network
+  if (url.origin !== self.location.origin) return;        // any third-party origin → straight to network
+  // (Fonts are now self-hosted under /fonts, so they fall through to the cache-first static
+  //  handler below — cached after first load for instant repeat paints + offline.)
   if (url.pathname.startsWith('/api/')) return;           // data must always be fresh — no caching
 
   // Navigations: network-first, fall back to the cached app shell when offline.

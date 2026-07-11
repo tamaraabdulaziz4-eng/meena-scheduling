@@ -6,7 +6,7 @@ Run:
     python -m uvicorn server.main:app --port 3002 --reload
 """
 
-import os, sys, json, math, re, uuid, threading, calendar as _cal
+import os, sys, json, math, re, uuid, threading, mimetypes, hashlib, calendar as _cal
 
 # Load .env from project root
 _env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -2362,6 +2362,11 @@ def serve_build_id():
 app.mount("/js", StaticFiles(directory=os.path.join(DASHBOARD, "js")), name="js")
 # Split-out per-page stylesheets (worklist.css, radstats.css) loaded on demand by main.js.
 app.mount("/css", StaticFiles(directory=os.path.join(DASHBOARD, "css")), name="css")
+# Self-hosted WOFF2 fonts (subsetted Poppins + Cairo) + their @font-face CSS. Ensure the
+# woff2 MIME is registered so StaticFiles serves `font/woff2` (a wrong type makes the browser
+# ignore the file and fall back to a system font). Fonts are immutable per build.
+mimetypes.add_type("font/woff2", ".woff2")
+app.mount("/fonts", StaticFiles(directory=os.path.join(DASHBOARD, "fonts")), name="fonts")
 
 @app.get("/style.css")
 def serve_css():
@@ -7652,8 +7657,8 @@ def radiology_orders(request: Request, user=Depends(require_radiology)):
         orphan_count = int(oc["n"]) if oc and oc.get("n") is not None else 0
     except Exception:
         orphan_count = 0
-    return {"ok": True, "count": len(orders), "byState": by_state,
-            "orphanCount": orphan_count, "orders": orders}
+    return _conditional_json(request, {"ok": True, "count": len(orders), "byState": by_state,
+            "orphanCount": orphan_count, "orders": orders})
 
 @app.get("/api/radiology/throughput")
 def radiology_throughput(
@@ -8090,6 +8095,26 @@ _wl_cache = {}   # key -> (monotonic_ts, data)
 _WL_CACHE_TTL_FAST = float(os.environ.get("WL_CACHE_TTL_FAST") or 10.0)
 _WL_CACHE_TTL_HEAVY = float(os.environ.get("WL_CACHE_TTL_HEAVY") or 60.0)
 
+# Fields that change every response even when the CONTENT is identical — excluded from the
+# ETag so an unchanged board/list still matches and returns a tiny 304.
+_ETAG_VOLATILE = ("generatedAt", "fetchedAt", "builtAt", "at")
+
+def _conditional_json(request: Request, payload):
+    """Serve `payload` as JSON with a content ETag. When the client's If-None-Match matches
+    (nothing changed since its last poll) return a ~0-byte 304 instead of resending the whole
+    body — a real bandwidth cut on a board that polls every 10-30s. The app keeps its no-store
+    policy (no PHI on the workstation disk); the client holds the last body in memory and
+    reuses it on 304. Any failure falls back to a normal 200 so ETag can never break a page."""
+    try:
+        src = {k: v for k, v in payload.items() if k not in _ETAG_VOLATILE} if isinstance(payload, dict) else payload
+        raw = json.dumps(src, default=str, sort_keys=True, separators=(",", ":")).encode()
+        etag = 'W/"' + hashlib.md5(raw).hexdigest() + '"'
+    except Exception:
+        return JSONResponse(payload)
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-store"})
+    return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-store"})
+
 @app.get("/api/radiology/worklist")
 def radiology_worklist(request: Request, user=Depends(require_radiology)):
     """Live RIS worklist — every radiology order awaiting a result across the
@@ -8131,7 +8156,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     if not nocache:
         hit = _wl_cache.get(ck)
         if hit and (_time.monotonic() - hit[0]) < ttl:
-            return hit[1]
+            return _conditional_json(request, hit[1])
     _t_bridge = _time.perf_counter()
     data = _bridge_request("/his/worklist" + query, timeout=240 if heavy else 130)
     _bridge_ms = int((_time.perf_counter() - _t_bridge) * 1000)
@@ -8175,7 +8200,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
                 del _wl_cache[min(_wl_cache, key=lambda k: _wl_cache[k][0])]
             except (ValueError, KeyError):
                 pass
-    return data
+    return _conditional_json(request, data)
 
 def _annotate_worklist_consent(items):
     """Flag which worklist patients already have a SIGNED consent on file, so the board
