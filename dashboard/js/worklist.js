@@ -1014,6 +1014,9 @@ function wlExpandHtml(it, st) {
       <span class="ris ${st}"><span class="rd"></span>${WL_STATUS_LABEL[st]}</span>
     </div>
     ${needConsent ? `<div class="alert">${icon('alert')}Non-pregnancy consent required before imaging a female patient of childbearing age.</div>` : ''}
+    ${(!needConsent && wlNeedsRadSafety(it) && it.consentOnFile) ? (it.consentFiled
+      ? `<div class="alert" style="color:var(--success-ink,#0a7d38);background:var(--ok-wash,#e6f6ec)">${icon('check')}Non-pregnancy consent on the Siratech file ✓</div>`
+      : `<div class="alert" style="color:var(--warn-ink,#7a4b00);background:#fffaf2">${icon('alert')}Consent signed — filing to the Siratech file…</div>`) : ''}
     ${(st === 'notdone' && it.cancelReason) ? `<div class="alert" style="color:var(--danger-ink);background:var(--danger-wash)">${icon('alert')}Not done · ${escapeHtml(it.cancelReason)}</div>` : ''}
     ${it.note ? `<div class="alert" style="color:var(--text);background:var(--surface-2)">${icon('edit')}${escapeHtml(it.note)}</div>` : ''}
     ${preg ? `<div class="rw-preg">${preg}</div>` : ''}

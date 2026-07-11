@@ -239,12 +239,10 @@ function renderPsDetail() {
         <div id="ps-appts"></div>
         <div class="ps-consent">
           <div class="ps-actions">
-            ${psNeedsRadSafety()
-              ? `<button class="btn btn-primary" onclick="psStartConsent()">🖊️ Non-pregnancy consent · إقرار عدم الحمل</button>`
-              : ''}
+            <!-- Non-pregnancy consent is raised/filed ONLY from the Worklist now — removed
+                 from the patient card so there's a single place that files it to the record. -->
             <button class="btn btn-ghost" onclick="psUploadDocument()">📎 Upload document</button>
           </div>
-          <div id="ps-consent-list" class="ps-consent-list"></div>
           <div id="ps-doc-list" class="ps-consent-list"></div>
         </div>
       </div>
@@ -264,8 +262,7 @@ function renderPsDetail() {
       sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
   det.innerHTML = patCard + examBlock;
-  psLoadConsents();
-  psLoadDocuments();
+  psLoadDocuments();   // consent list removed from the card — the Worklist owns consent now
   psLoadLabs();
   psSectionSkeleton('ps-clinical', 'Clinical history', 'clinical', 2);   // so the problem list doesn't pop in late
   psLoadClinical();                            // problem list · allergies · vitals (from Siratech) — auto (kept open)
