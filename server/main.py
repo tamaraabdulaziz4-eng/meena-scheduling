@@ -8391,6 +8391,7 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
             "billNo": it.get("billNo"), "orderKey": it.get("genPatBillingId"),
             "technicianName": it.get("technicianName"), "radiologistName": it.get("radiologistName"),
             "emergency": it.get("emergency"), "branch": it.get("branch"),
+            "scanned": it.get("scanned"), "_raw": it.get("_raw"),
         } for it in _items[:5]]
         out["notes"]["total_rows"] = len(_items)
     except Exception:
