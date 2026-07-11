@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'rissort-2026-07-11s';
+const CONNECTOR_BUILD = 'risdefault-2026-07-11t';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2027,7 +2027,7 @@ function _statMs(a) {
 
 // Which source builds the fast board: 'search' (RadiologySearch, current default) or 'ris'
 // (FetchRISPanel — ~10x faster, billed orders). Flag-gated so we can test before switching.
-const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'search').toLowerCase();
+const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'ris').toLowerCase();
 
 // ── Fast board straight from FetchRISPanel ──────────────────────────────────────────────
 // RadiologySearch is ~5s/branch; FetchRISPanel is ~0.3s and already carries everything the
