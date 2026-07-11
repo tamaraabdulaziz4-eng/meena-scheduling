@@ -8353,6 +8353,8 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
     fresh (nocache) build — run it on demand, not in a loop."""
     import time as _t, urllib.parse
     out = {"ok": True, "layers_ms": {}, "connector_build_ms": {}, "notes": {}}
+    # ?src=ris tests the FAST RIS-panel board; default tests the current search board.
+    src = (request.query_params.get("src") or "").strip().lower()
 
     # 1) Pure network round-trip to the connector (cheap /health — no HIS work).
     t = _t.perf_counter()
@@ -8366,15 +8368,33 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
 
     # 2) One FRESH worklist build (nocache) — the whole fast board, end to end.
     frm = _wl_default_from()
+    _qs = {"from": frm, "nocache": "1"}
+    if src:
+        _qs["src"] = src
+    out["notes"]["source"] = src or "search"
     t = _t.perf_counter()
     try:
-        data = _bridge_request("/his/worklist?" + urllib.parse.urlencode({"from": frm, "nocache": "1"}), timeout=180)
+        data = _bridge_request("/his/worklist?" + urllib.parse.urlencode(_qs), timeout=180)
     except Exception as e:
         out["ok"] = False
         out["error"] = f"worklist build failed: {str(e)[:200]}"
         return out
     bridge_ms = round((_t.perf_counter() - t) * 1000)
     out["layers_ms"]["bridge_roundtrip_total"] = bridge_ms
+    # A few sample rows (real data — admin only) so the RIS board's contents can be eyeballed.
+    try:
+        _items = (data.get("items") or []) if isinstance(data, dict) else []
+        out["sample_rows"] = [{
+            "mrno": it.get("mrno"), "patientName": it.get("patientName"), "exam": it.get("exam"),
+            "modality": it.get("modality"), "doctorName": it.get("doctorName"),
+            "hisStatus": it.get("hisStatus"), "stage": it.get("stage"), "billingStatus": it.get("billingStatus"),
+            "billNo": it.get("billNo"), "orderKey": it.get("genPatBillingId"),
+            "technicianName": it.get("technicianName"), "radiologistName": it.get("radiologistName"),
+            "emergency": it.get("emergency"), "branch": it.get("branch"),
+        } for it in _items[:5]]
+        out["notes"]["total_rows"] = len(_items)
+    except Exception:
+        pass
 
     conn = (data.get("_timings") or {}) if isinstance(data, dict) else {}
     out["connector_build_ms"] = {
