@@ -8188,22 +8188,31 @@ def _annotate_worklist_consent(items):
         # Treat the prompt as satisfied only when THIS exam's bill already has a signed
         # consent, or a consent was signed very recently (same visit / 3-day window).
         rows = q("""SELECT file_no, bill_no,
-                           (signed_at > NOW() - INTERVAL '3 days') AS recent
+                           (signed_at > NOW() - INTERVAL '3 days') AS recent,
+                           COALESCE(filed_siratech,false) AS filed
                     FROM scheduling.consents
                     WHERE file_no = ANY(%s) AND status='signed' AND pdf IS NOT NULL""",
                  (files,)) or []
         bills_by_file, recent_files = {}, set()
+        filed_bills_by_file, filed_recent = {}, set()   # only the ones CONFIRMED on the Siratech file
         for r in rows:
             fn = r["file_no"]
             bn = str(r.get("bill_no") or "").strip()
             if bn:
                 bills_by_file.setdefault(fn, set()).add(bn)
+                if r.get("filed"):
+                    filed_bills_by_file.setdefault(fn, set()).add(bn)
             if r.get("recent"):
                 recent_files.add(fn)
+                if r.get("filed"):
+                    filed_recent.add(fn)
         for it in items:
             fn = str(it.get("mrno"))
             bill = str(it.get("billNo") or "").strip()
             it["consentOnFile"] = (fn in recent_files) or bool(bill and bill in bills_by_file.get(fn, set()))
+            # consentFiled = confirmed ON the Siratech record (not just signed in Meena),
+            # so the board can show "on file ✓" vs "signed, filing…".
+            it["consentFiled"] = (fn in filed_recent) or bool(bill and bill in filed_bills_by_file.get(fn, set()))
     except Exception:
         pass
 
@@ -12188,6 +12197,43 @@ def _radiology_autostamp_loop():
             print(f"[rad-autostamp] {e}")
         time.sleep(_RAD_AUTOSTAMP_EVERY_SEC)
 
+_CONSENT_REFILE_EVERY_SEC = int(os.environ.get("CONSENT_REFILE_EVERY_SEC") or 180)
+def _consent_refile_sweep():
+    """Retry filing SIGNED consents that aren't on the Siratech file yet (filed_siratech
+    false) — the common case is a consent signed BEFORE its order reached Result Entry,
+    where filing-at-signing couldn't find a row to attach to. _file_consent_to_siratech is
+    idempotent + claim-guarded, so this only fills the real gaps and never double-attaches.
+    Bounded per sweep so it's light on the HIS. This is what GUARANTEES a signed consent
+    eventually lands on the patient's Siratech record even if no Meena report is filed."""
+    rows = q("""SELECT id FROM scheduling.consents
+                WHERE status='signed' AND pdf IS NOT NULL AND filed_siratech=false
+                  AND signed_at > NOW() - INTERVAL '14 days'
+                ORDER BY signed_at DESC LIMIT 40""") or []
+    filed = 0
+    for r in rows:
+        try:
+            if _file_consent_to_siratech(r["id"]):
+                filed += 1
+        except Exception:
+            pass
+    if filed:
+        print(f"[consent-refile] filed {filed} pending consent(s) to Siratech")
+    return filed
+
+def _consent_refile_loop():
+    """Background worker that keeps retrying un-filed signed consents until they're on the
+    Siratech file. Single-flight across workers via the sweep lock."""
+    import time
+    time.sleep(30)
+    while True:
+        try:
+            if _claim_sweep_lock("consent_refile", 300):
+                try: _consent_refile_sweep()
+                finally: _release_sweep_lock("consent_refile")
+        except Exception as e:
+            print(f"[consent-refile] {e}")
+        time.sleep(_CONSENT_REFILE_EVERY_SEC)
+
 def _radiology_autofile_loop():
     """Background auto-file worker. Runs only when the `rad_autofile_enabled` setting
     is '1' (flip it off from the worklist to stop instantly). Each cycle is claimed
@@ -12240,6 +12286,7 @@ def start_scheduler():
     threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
     threading.Thread(target=_radiology_autostamp_loop, daemon=True).start()
     threading.Thread(target=_radiology_stage_sweep_loop, daemon=True).start()   # keeps store stage/ledger warm viewer-independently
+    threading.Thread(target=_consent_refile_loop, daemon=True).start()          # retries un-filed consents onto the Siratech file
     threading.Thread(target=_cdxfer_cleanup_loop, daemon=True).start()
 
 def _capture_radiology_day(day_str, source_label="worklist"):
