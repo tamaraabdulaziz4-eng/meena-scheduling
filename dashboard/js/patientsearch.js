@@ -12,6 +12,24 @@ let psNoteCache = new Map();
 // Loaded radiology reports keyed by their DOM id, so the Print button can rebuild a
 // clean Meena-letterhead printout without re-fetching. { txt, who, when, exam }.
 let psReportStore = {};
+// PREDICTIVE PREFETCH — a step ahead of the tap. Hovering/touching a search result (an
+// intent signal) warms the patient's full lookup into this cache, so the actual open is
+// INSTANT (like instant.page). Keyed by mrno → { ts, data }; short TTL keeps it live.
+const psLookupCache = new Map();
+const psLookupInflight = new Map();   // mrno → Promise, so hover+click don't double-fetch
+const PS_LOOKUP_TTL = 90000;
+function psPrefetchLookup(mrno) {
+  mrno = String(mrno || '').trim();
+  if (!mrno) return null;
+  const hit = psLookupCache.get(mrno);
+  if (hit && Date.now() - hit.ts < PS_LOOKUP_TTL) return Promise.resolve(hit.data);
+  if (psLookupInflight.has(mrno)) return psLookupInflight.get(mrno);
+  const pr = API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`)
+    .then((d) => { psLookupCache.set(mrno, { ts: Date.now(), data: d }); psLookupInflight.delete(mrno); return d; })
+    .catch((e) => { psLookupInflight.delete(mrno); throw e; });
+  psLookupInflight.set(mrno, pr);
+  return pr;
+}
 let psPendingQuery = '';   // set by openPatientLookup() so the page auto-searches on open
 
 // Deep-link into this page for a specific file/MRN (e.g. from the Home drill-down).
@@ -95,7 +113,10 @@ function renderPsResults() {
     <div class="ps-reslist">` +
     pts.map((p, i) => `
       <button class="ps-rescard${i === psState.sel ? ' on' : ''}" onclick="psOpen(${i})"
-              onkeydown="if(event.key==='Enter'){psOpen(${i})}">
+              onkeydown="if(event.key==='Enter'){psOpen(${i})}"
+              onmouseenter="psPrefetchLookup('${escapeHtml(String(p.mrno || ''))}')"
+              onfocus="psPrefetchLookup('${escapeHtml(String(p.mrno || ''))}')"
+              ontouchstart="psPrefetchLookup('${escapeHtml(String(p.mrno || ''))}')">
         <span class="ps-res-av">${escapeHtml(initials(p.name || p.nameArabic))}</span>
         <span class="ps-res-main">
           <span class="ps-res-name">${escapeHtml(p.name || p.nameArabic || '—')}${psElmChip(p)}</span>
@@ -116,10 +137,15 @@ async function psOpen(i) {
   psState.sel = i;
   renderPsResults();
   const det = document.getElementById('ps-detail');
-  if (det) det.innerHTML = LOADING_HTML;
+  // Skip the loading flash entirely when the patient was prefetched on hover/touch — it's
+  // already in hand, so the card paints on the very next line (feels instant).
+  const cached = psLookupCache.get(String(p.mrno));
+  const warm = cached && Date.now() - cached.ts < PS_LOOKUP_TTL;
+  if (det && !warm) det.innerHTML = LOADING_HTML;
   const seq = ++psState.reqSeq;
   try {
-    const d = await API.get(`/radiology/lookup/${encodeURIComponent(p.mrno)}`);
+    // Use the hover/touch-prefetched lookup when it's ready (instant); else fetch now.
+    const d = warm ? cached.data : await psPrefetchLookup(p.mrno);
     if (seq !== psState.reqSeq) return;
     // Keep the search-row patient as a fallback when the lookup's own patient block is thin.
     psState.lookup = { ...d, patient: d.patient || p };
