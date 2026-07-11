@@ -7010,21 +7010,47 @@ def _bridge_base():
 def _bridge_token():
     return (os.environ.get("WHATSAPP_NOTIFY_TOKEN") or "").strip()
 
+# A pooled, keep-alive HTTP client to the connector (Saudi VPS), created once and reused
+# across every bridge call. urllib.urlopen opened a fresh TCP+TLS connection PER call, so a
+# single worklist/patient open — which fans out into many bridge calls — paid a full
+# cross-internet handshake to Saudi each time. A persistent pool reuses warm connections, so
+# only the first call pays the handshake; the rest ride the open socket. httpx.Client is
+# thread-safe, so it's safe to share across FastAPI's sync-endpoint threadpool.
+_bridge_client = None
+_bridge_client_lock = threading.Lock()
+
+def _get_bridge_client():
+    global _bridge_client
+    if _bridge_client is not None:
+        return _bridge_client
+    with _bridge_client_lock:
+        if _bridge_client is None:
+            import httpx
+            _bridge_client = httpx.Client(
+                headers={"Accept": "application/json"},
+                # Keep a generous pool of warm connections to the connector; expire idle ones
+                # after a minute so a redeployed connector doesn't get hit on a dead socket.
+                limits=httpx.Limits(max_keepalive_connections=24, max_connections=48, keepalive_expiry=60.0),
+                timeout=httpx.Timeout(60.0, connect=10.0),
+            )
+    return _bridge_client
+
 def _bridge_request(path, method="GET", body=None, timeout=60):
     base = _bridge_base()
     if not base:
         raise HTTPException(400, "Radiology lookup isn't configured (WhatsApp bridge URL missing).")
-    import urllib.request, urllib.error
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    headers = {"Accept": "application/json", "Authorization": "Bearer " + _bridge_token()}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    headers = {"Authorization": "Bearer " + _bridge_token()}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8", "replace"))
-    except urllib.error.HTTPError as e:
-        raise HTTPException(502, f"Connector {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
+        client = _get_bridge_client()
+        # json=None sends no body (correct for GET); json=body sets Content-Type for writes.
+        r = client.request(method, base + path,
+                           json=(body if body is not None else None),
+                           headers=headers, timeout=timeout)
+        if r.status_code >= 400:
+            raise HTTPException(502, f"Connector {r.status_code}: {r.text[:200]}")
+        return r.json()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"Couldn't reach the radiology connector: {e}")
 
