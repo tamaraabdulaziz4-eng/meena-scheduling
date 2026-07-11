@@ -301,8 +301,8 @@ function showWelcomeSplash(name) {
 
   const messages = [
     'Signing you in…',
-    'Loading your schedule…',
-    'Fetching staff & shifts…',
+    'Preparing your dashboard…',
+    'Syncing live data…',
     'Almost ready…',
   ];
   splash.style.display = 'flex';
