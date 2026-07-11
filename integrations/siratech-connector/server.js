@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risstatus-2026-07-11o';
+const CONNECTOR_BUILD = 'risstage-2026-07-11p';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2073,22 +2073,30 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
   });
   _tmark.afterBulk = Date.now();
 
-  const items = [], failed = [];
+  const items = [], failed = [], _hist = {};
   for (const s of perSite) {
     if (!s) continue;
     if (!s.ok) { failed.push(s.site); continue; }
     for (const r of s.rows) {
       const billNo = r.billNo;
       if (billNo == null) continue;
-      const status = _risStatusOf(r);
-      const stage = _risStageOf(status);
       const er = String(r.encounter || '').trim().toUpperCase() === 'ER';
       const billDate = r.billDate || r.appoinmentDate || r.proposedDate || null;
       const bt = parseHisDate(billDate);
       const ageHours = Number.isFinite(bt) ? Math.max(0, Math.round((now - bt) / 36e5)) : null;
       const svc = _risServiceOf(r);
-      const reported = /(verif|report|sign|approv|final|released|authenticat)/i.test(status)
-        || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;
+      // Stage from the panel's UNAMBIGUOUS exam timestamps (arrival → start → end) + the numeric
+      // result code for "reported" — more reliable than any status text (the panel has none).
+      const hasArrival = !!r.arrivalDate, hasStart = !!r.examStartDate, hasEnd = !!r.examEndDate;
+      const scanned = hasStart || hasEnd;
+      const reported = Number(r.resultStatus) >= 2 || Number(r.radioReportStatus) > 0 || Number(r.reportStatus) > 0;  // provisional; confirm via histogram
+      const stage = reported ? 'reported' : scanned ? 'imaged' : 'ordered';
+      const status = reported ? 'Reported' : hasEnd ? 'Scan done' : hasStart ? 'In progress'
+        : hasArrival ? 'Arrived' : 'Waiting';
+      // Diagnostic tally: which (risOrderStatusId, risStatus, resultStatus) codes go with a scan
+      // done / report — so we can decode the "reported" flag across ALL rows in one run.
+      const _hk = `orderStatusId=${r.risOrderStatusId}|risStatus=${r.risStatus}|resultStatus=${r.resultStatus}|scanned=${scanned}|end=${hasEnd}`;
+      _hist[_hk] = (_hist[_hk] || 0) + 1;
       // Order key for the lifecycle actions — the panel's own per-line billing id (unique per
       // exam), falling back to billNo. (Wired to the action endpoints in the follow-up step.)
       const orderKey = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
@@ -2114,7 +2122,7 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
         payer: r.payerName || null, billingStatus: r.billingStatus || null,
         // DIAGNOSTIC (temporary): raw status fields so we can see which one holds the workflow
         // text, then finalise the mapping and remove this.
-        _raw: { risOrderStatus: r.risOrderStatus, risStatus: r.risStatus,
+        _raw: { risOrderStatusId: r.risOrderStatusId, risOrderStatus: r.risOrderStatus, risStatus: r.risStatus,
                 resultStatus: r.resultStatus, appointmentStatus: r.appointmentStatus,
                 arrivalDate: r.arrivalDate, examStartDate: r.examStartDate, examEndDate: r.examEndDate },
       });
@@ -2142,6 +2150,9 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
     panelCall: _statMs(_callMs.panel),
     panelFields: _panelFields,
     source: 'ris',
+    // Top status-code combinations across all rows (to decode which code = reported).
+    statusHistogram: Object.entries(_hist).sort((a, b) => b[1] - a[1]).slice(0, 25)
+      .map(([k, n]) => ({ combo: k, count: n })),
   };
   const data = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },

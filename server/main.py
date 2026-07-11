@@ -8394,6 +8394,8 @@ def diag_board_timing(request: Request, user=Depends(require_admin)):
             "scanned": it.get("scanned"), "_raw": it.get("_raw"),
         } for it in _items[:5]]
         out["notes"]["total_rows"] = len(_items)
+        if conn.get("statusHistogram"):
+            out["status_histogram"] = conn.get("statusHistogram")
     except Exception:
         pass
 
