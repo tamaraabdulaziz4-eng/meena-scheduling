@@ -20,6 +20,9 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 modCache: new Map(), stageCache: new Map(), pregCache: new Map(), payCache: new Map(),
                 // Per-MRN clinical-indication index cache (bug #2 — inline row indication).
                 indCache: new Map(),
+                // Detail the fast RIS board can't carry — restored from the patient lookup:
+                // per-bill clinic + referring-doctor phone, and per-MRN age/gender.
+                orderDetail: new Map(), cardDetail: new Map(),
                 // Per-MRN vitals cache (auto-loaded when an order row is expanded).
                 vitalsCache: new Map(),
                 // Live-pill + watchdog bookkeeping (bug #3): the timestamp of the last
@@ -507,7 +510,7 @@ function wlPrefetchCards() {
     const m = String(it.mrno || '').trim();
     if (!m || seen.has(m)) continue;
     seen.add(m); mrns.push(m);
-    if (mrns.length >= 10) break;
+    if (mrns.length >= 20) break;
   }
   if (!mrns.length) return;
   const myGen = ++_wlCardWarmGen;                            // a newer board load cancels this sweep
@@ -520,8 +523,12 @@ function wlPrefetchCards() {
     const next = () => { if (done) return; done = true; pump(); };
     try {
       const p = psPrefetchLookup(mrno);                      // no-op if already warm/in-flight
-      if (p && typeof p.then === 'function') p.then(next, next);
-      else next();
+      if (p && typeof p.then === 'function') {
+        // As each warm-up lands, backfill the clinic/phone/age/gender the fast board can't carry
+        // so the VISIBLE (collapsed) rows show them too — not only expanded ones.
+        p.then((lk) => { try { wlBackfillDetail(mrno, lk); } catch (e) {} }, () => {});
+        p.then(next, next);
+      } else next();
     } catch (e) { next(); }
   };
   const kick = () => { for (let i = 0; i < CONC; i++) pump(); };
@@ -559,6 +566,9 @@ function wlHydrate() {
     if (it.scanned) wlState.scannedSeen.add(k);
     else if (wlState.scannedSeen.has(k)) it.scanned = true;
   }
+  // Re-apply the lookup-derived clinic/phone/age/gender so a fast poll (which brings none of
+  // it) doesn't blank the columns the patient lookup already filled in.
+  wlApplyDetail();
 }
 
 // Background pass: fetch the board WITH ready=1 (pipeline stage) + modality=1 (exam +
@@ -1546,7 +1556,7 @@ function wlIndPump() {
       ? psPrefetchLookup(mr)
       : API.get('/radiology/lookup/' + encodeURIComponent(mr));
     Promise.resolve(_lk)
-      .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlIndSet(mr); })
+      .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlBackfillDetail(mr, lk); wlIndSet(mr); })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })
       .finally(() => { _wlIndBusy--; _wlIndInflight.delete(mr); wlIndPump(); });
   }
@@ -1653,6 +1663,47 @@ function wlIndexIndications(lk) {
   }
   Object.defineProperty(idx, '__er', { value: er, enumerable: false });
   return idx;
+}
+// Restore the detail the fast RIS board can't carry (clinic + referring-doctor phone per bill,
+// age/gender per patient) from the patient lookup, cache it, and paint it onto the matching
+// rows. Cached so it survives the next fast poll (which replaces wlState.data) — wlHydrate
+// re-applies it. Fires when a row's lookup lands (expand / prefetch).
+function wlBackfillDetail(mr, lk) {
+  const orders = (lk && lk.orders) || [];
+  let changed = false;
+  for (const o of orders) {
+    const bn = String(o.billNo || '').trim();
+    if (!bn || (!o.department && !o.doctorPhone)) continue;
+    const cur = wlState.orderDetail.get(bn) || {};
+    const next = { department: o.department || cur.department || null, doctorPhone: o.doctorPhone || cur.doctorPhone || null };
+    if (next.department !== cur.department || next.doctorPhone !== cur.doctorPhone) { wlState.orderDetail.set(bn, next); changed = true; }
+  }
+  const p = lk && lk.patient;
+  if (p && (p.age != null || p.gender)) {
+    const key = String(mr || '').trim();
+    const cur = wlState.cardDetail.get(key) || {};
+    if (cur.age !== p.age || cur.gender !== p.gender) { wlState.cardDetail.set(key, { age: p.age != null ? p.age : cur.age, gender: p.gender || cur.gender }); changed = true; }
+  }
+  if (changed) {
+    wlApplyDetail();
+    // Debounced repaint — a warm-up sweep backfills many rows in quick succession, so coalesce
+    // into one render instead of repainting per row.
+    clearTimeout(_wlDetailRenderT);
+    _wlDetailRenderT = setTimeout(() => { if (document.getElementById('wl-body')) wlRender(); }, 120);
+  }
+}
+let _wlDetailRenderT = null;
+// Copy the cached clinic/phone/age/gender onto the rows currently in hand. Idempotent — a row
+// only gains detail, never loses it — so it's safe to call on every hydrate/backfill.
+function wlApplyDetail() {
+  const items = (wlState.data && wlState.data.items) || [];
+  for (const it of items) {
+    const bn = String(it.billNo || '').trim();
+    const od = bn ? wlState.orderDetail.get(bn) : null;
+    if (od) { if (od.department && !it.department) it.department = od.department; if (od.doctorPhone && !it.doctorPhone) it.doctorPhone = od.doctorPhone; }
+    const cd = wlState.cardDetail.get(String(it.mrno || '').trim());
+    if (cd) { if (cd.age != null && (it.age == null || it.age === '')) it.age = cd.age; if (cd.gender && !it.gender) it.gender = cd.gender; }
+  }
 }
 // Deep-link into the trusted Handoff wizard, pre-loaded with this patient's file.
 function wlOpenHandoff(mrno) {

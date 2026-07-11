@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risbulkpacs-2026-07-11x';
+const CONNECTOR_BUILD = 'cardclinic-2026-07-11y';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -963,6 +963,7 @@ async function buildPatientCard(file) {
   // gives the patient's registration site, not the ordering branch). Doing this BEFORE
   // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
   // o.siteId, so once the site is right it finds the order's row and its indication.
+  let _rsAge = null, _rsGender = null;   // age/gender salvaged from the RadiologySearch rows below
   try {
     // Only probe the branches this patient's orders actually touch (+ the result
     // site) instead of all 14 — the orders already carry their site, so this keeps
@@ -971,20 +972,38 @@ async function buildPatientCard(file) {
     const billToSite = await discoverOrderSites(file, candidateSites);
     for (const o of rawOrders) {
       const t = billToSite.get(String(o.billNo));
-      if (t && t.siteId && Number(t.siteId) !== Number(o.siteId)) {
+      if (!t) continue;
+      if (t.siteId && Number(t.siteId) !== Number(o.siteId)) {
         console.log(`[lookup] bill ${o.billNo}: site ${o.siteId} (${o.site}) -> ${t.siteId} (${t.site})`);
         o.siteId = t.siteId;
         o.site = t.site;
       }
+      // Carry the RadiologySearch-only fields (clinic + referring-doctor phone) onto the order
+      // so the card/row can show them again. Stashed under _* and copied to the normalized order.
+      if (t.department) o._department = t.department;
+      if (t.doctorPhone) o._doctorPhone = t.doctorPhone;
+      if (t.age != null && _rsAge == null) _rsAge = t.age;
+      if (t.gender && !_rsGender) _rsGender = t.gender;
     }
   } catch (e) { /* keep the original registration site on any failure */ }
   // Enrich each order with its clinical indication + billing/ER status. Bounded pool
   // (not an unbounded Promise.all) so a 20-order patient never opens 20+ sockets to the
   // 2 GB HIS box at once; the RIS panel is deduped per (day,site) inside fetchRisPanel.
   const ext = await pool(rawOrders, 6, (o) => enrichOrder(file, o));
-  const orders = rawOrders.map((o, i) => normalizeOrder(o, ext[i]));
+  const orders = rawOrders.map((o, i) => {
+    const n = normalizeOrder(o, ext[i]);
+    if (o._department) n.department = o._department;      // ordering clinic (RadiologySearch)
+    if (o._doctorPhone) n.doctorPhone = o._doctorPhone;   // referring-doctor phone (RadiologySearch)
+    return n;
+  });
   const rawPatient = ((pat && pat.json && pat.json.data) || [])[0] || null;
   const patient = normalizePatient(rawPatient);
+  // Age/gender aren't on the RIS board rows; backfill from the RadiologySearch rows if the
+  // Patient/Search record didn't carry them, so the card header shows them.
+  if (patient) {
+    if ((patient.age == null || patient.age === '') && _rsAge != null) patient.age = _rsAge;
+    if (!patient.gender && _rsGender) patient.gender = _rsGender;
+  }
   const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
   return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() };
 }
@@ -1734,7 +1753,20 @@ async function discoverOrderSites(file, candidateSites) {
           });
           for (const r of ((sr.json && sr.json.data) || [])) {
             const b = r.billNo != null ? String(r.billNo) : '';
-            if (b && !out.has(b)) out.set(b, { siteId: site, site: nameOf.get(site) || `Branch ${site}` });
+            // RadiologySearch is the ONLY source of the ordering clinic + referring-doctor phone
+            // (+ age/gender). The card path already fetches it here to correct the site, so grab
+            // those fields too — the fast RIS board can't carry them, so this restores them on
+            // the card/row without any extra HIS call.
+            if (b && !out.has(b)) out.set(b, {
+              siteId: site, site: nameOf.get(site) || `Branch ${site}`,
+              department: (r.departmentName || '').trim() || null,
+              doctorPhone: (r.doctorMobile || r.doctorContactNo || r.doctorContactNumber || r.doctorPhone
+                || r.providerMobile || r.providerPhone || r.providerContactNo || r.referringDoctorMobile
+                || r.refDoctorMobile || r.orderProviderMobile || '').toString().trim() || null,
+              doctorName: (r.doctorName || '').trim() || null,
+              age: (r.age != null && r.age !== '') ? r.age : null,
+              gender: (r.gender || '').toString().trim() || null,
+            });
           }
         } catch (e) { /* skip this site/variant */ }
       }
