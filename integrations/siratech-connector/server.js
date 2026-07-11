@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risstatus-2026-07-11w';
+const CONNECTOR_BUILD = 'risbulkpacs-2026-07-11x';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2038,17 +2038,13 @@ const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'ris').toLowerCase();
 // "reported" it already knows (RIS resultStatus) so a DePACS window-miss can't demote it.
 async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
   if (!items || !items.length) return 0;
-  const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
-  const studiesBy = new Map();
-  await pool(mrns, DEPACS_STAGE_CONCURRENCY, async (m) => {
-    try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
-  });
   const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
-  for (const it of items) {
-    if (!studiesBy.has(it.mrno)) continue;              // DePACS lookup failed → keep preliminary stage
-    const all = (studiesBy.get(it.mrno) || []).filter((s) => results.sameMrn(s.patId, it.mrno));
+  // Match ONE row against a candidate study list (already filtered to this patient): set the
+  // stage from PACS reality (imaged / draft / reported) or 'ordered' when nothing matches its
+  // modality + time window. Shared by the fast bulk path and the per-patient fallback.
+  const applyMatch = (it, all) => {
     const mod = results.normMod(it.modality || it.exam || '');
-    if (!KNOWN_MOD.has(mod)) continue;                  // unmappable modality → don't force 'ordered'
+    if (!KNOWN_MOD.has(mod)) return;                    // unmappable modality → don't force 'ordered'
     const ot = parseHisDate(it.orderedDate);
     const matched = all.filter((s) => {
       if (results.normMod(s.modality || '') !== mod) return false;
@@ -2056,13 +2052,54 @@ async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
       const st = parseHisDate(s.studyDate);
       return Number.isFinite(st) ? (st >= ot - 24 * 36e5 && st <= ot + 96 * 36e5) : true;
     });
-    if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; continue; }
+    if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; return; }
     const reportedHit = matched.find((s) => results.isReported(s.status));
     const chosen = reportedHit || matched.find((s) => s.accession) || matched[0];
     if (chosen && chosen.accession) { it.accession = chosen.accession; it.accessionSource = 'depacs'; }
     if (reportedHit) { it.stage = 'reported'; it.readyToFile = true; }
     else if (matched.some((s) => results.isDraftReport(s.status))) { it.stage = 'draft'; it.readyToFile = false; }
     else { it.stage = 'imaged'; it.readyToFile = false; }
+  };
+
+  // ── FAST PATH: ONE bulk study sweep for the whole board, matched locally ──────────────────
+  // Window: from just before the earliest order to just after the latest, so every order's
+  // match window (-24h..+96h) is covered without pulling any patient's full history.
+  const DAY = 864e5;
+  const times = items.map((it) => parseHisDate(it.orderedDate)).filter(Number.isFinite);
+  const toDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const startDay = toDay((times.length ? Math.min(...times) : Date.now()) - 3 * DAY);
+  const endDay = toDay((times.length ? Math.max(...times) : Date.now()) + 3 * DAY);
+  let bulk = null;
+  try { bulk = await results.depacsRecentStudies({ startDate: startDay, endDate: endDay, noCache }); }
+  catch (e) { bulk = null; }
+  if (bulk && bulk.length) {
+    // Index every study by its exact patId AND by each digit-run inside it, so a bare mrno
+    // matches a prefixed patId (e.g. "N1-26279679") in O(1) — no per-order scan of all studies.
+    const byKey = new Map();
+    const add = (k, s) => { if (!k) return; const a = byKey.get(k); if (a) a.push(s); else byKey.set(k, [s]); };
+    for (const s of bulk) {
+      const pid = String(s.patId == null ? '' : s.patId).trim();
+      if (!pid) continue;
+      add(pid, s);
+      for (const d of (pid.match(/\d+/g) || [])) if (d !== pid) add(d, s);
+    }
+    for (const it of items) {
+      const m = String(it.mrno == null ? '' : it.mrno).trim();
+      if (!m) continue;
+      applyMatch(it, (byKey.get(m) || []).filter((s) => results.sameMrn(s.patId, m)));
+    }
+    return items.length;
+  }
+
+  // ── FALLBACK: bulk sweep empty/unreachable → per-patient light lookups (slow but correct) ──
+  const mrns = [...new Set(items.map((it) => it.mrno).filter(Boolean))];
+  const studiesBy = new Map();
+  await pool(mrns, DEPACS_STAGE_CONCURRENCY, async (m) => {
+    try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
+  });
+  for (const it of items) {
+    if (!studiesBy.has(it.mrno)) continue;              // per-patient lookup failed → keep preliminary stage
+    applyMatch(it, (studiesBy.get(it.mrno) || []).filter((s) => results.sameMrn(s.patId, it.mrno)));
   }
   return mrns.length;
 }

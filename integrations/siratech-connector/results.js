@@ -377,6 +377,52 @@ async function depacsStudies(mrno, opts = {}) {
   return out;
 }
 
+// ── BULK study fetch (whole-board worklist stage pass) ────────────────────────────────────
+// The per-patient depacsStudies() is right for opening ONE card, but the worklist ran it for
+// EVERY patient (~200+) → ~2 min on the small box. DePACS's get_studies takes a date window
+// with NO patient_id, so ONE paged sweep returns every recent study on the branch; we then
+// match orders to studies locally. Turns ~200 round-trips into a handful. status+modality+date
+// only (light) — same fields the stage matcher needs. Cached briefly, keyed by the window.
+const _bulkCache = new Map();   // 'start|end' -> { ts, data }
+const DEPACS_BULK_TTL = Number(process.env.DEPACS_BULK_TTL_MS || 45000);
+const DEPACS_BULK_MAX_PAGES = Number(process.env.DEPACS_BULK_MAX_PAGES || 60);   // 60*100 = 6000 studies cap
+async function depacsRecentStudies({ startDate, endDate, noCache = false } = {}) {
+  const start = startDate || new Date(Date.now() - DEPACS_LIGHT_DAYS * 864e5).toISOString().slice(0, 10);
+  const end = endDate || '2035-12-31';
+  const key = `${start}|${end}`;
+  if (!noCache) { const e = _bulkCache.get(key); if (e && Date.now() - e.ts < DEPACS_BULK_TTL) return e.data; }
+  let token = await dpToken();
+  const qs = (page) => `/study/get_studies?start_date=${start}&end_date=${end}&page_size=100&current_page=${page}`;
+  const fetchPage = async (page) => {
+    let r = await dpFetch(qs(page), { token });
+    if (r.status === 401) { token = await dpToken(true); r = await dpFetch(qs(page), { token }); }
+    if (!r || (r.status && r.status >= 400) || r.json == null) {
+      throw new Error(`DePACS bulk study lookup failed (HTTP ${r ? r.status : 'unreachable'})`);
+    }
+    return (r.json && r.json.body && r.json.body.data) || [];
+  };
+  const seen = new Set(), out = [];
+  for (let page = 1; page <= DEPACS_BULK_MAX_PAGES; page++) {
+    const batch = await fetchPage(page);
+    for (const s of batch) {
+      if (seen.has(s.study_id)) continue;
+      seen.add(s.study_id);
+      out.push({
+        studyId: s.study_id, iuid: s.study_iuid, modality: s.modality,
+        desc: s.study_desc || (s.accession_number ? String(s.accession_number) : ''),
+        studyDate: s.study_date, status: s.study_status, patName: s.pat_name, patId: s.pat_id,
+        accession: cleanAccession(s.accession_number),
+      });
+    }
+    if (batch.length < 100) break;   // last page
+  }
+  if (!noCache) {
+    _bulkCache.set(key, { ts: Date.now(), data: out });
+    if (_bulkCache.size > 20) _bulkCache.delete(_bulkCache.keys().next().value);
+  }
+  return out;
+}
+
 // A verified report is FINAL — its text + PDF don't change — so cache it, and fetch the
 // report-info and the PDF CONCURRENTLY (they're independent) instead of one-after-another.
 // Called from three paths (peer review, file-plan, results/file), so the cache also
@@ -617,7 +663,7 @@ function radiologyDetailsBody(row, { hospitalId = 1, empId }) {
 
 module.exports = {
   dpAgent, normMod, bodyTokens, sideOf, isReported, isDraftReport, sameMrn, cleanAccession,
-  depacsStudies, depacsReport, matchStudy,
+  depacsStudies, depacsRecentStudies, depacsReport, matchStudy,
   radiologySearchBody, radiologyDetailsBody, normalizeResultRow, classifyRange, sirResultRange,
   // exposed for the deep DePACS probe tool (read-only diagnostics)
   dpFetch, dpToken, _fileCandidates, depacsSigninDebug,
