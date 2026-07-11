@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'risall-2026-07-11r';
+const CONNECTOR_BUILD = 'rissort-2026-07-11s';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2131,7 +2131,9 @@ async function buildWorklistRis({ sites, from, to, noCache = false }) {
       });
     }
   }
-  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+  // Emergency (STAT) first, then MOST RECENT order first (newest bill date at the top).
+  items.sort((a, b) => (Number(b.emergency) - Number(a.emergency))
+    || ((parseHisDate(b.orderedDate) || 0) - (parseHisDate(a.orderedDate) || 0)));
 
   // Strict KSA-day window (the panel can return rows outside the range we asked for).
   const fromDay = from || new Date(Date.parse(fromISO) + 3 * 36e5).toISOString().slice(0, 10);

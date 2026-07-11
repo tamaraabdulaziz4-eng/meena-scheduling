@@ -8264,7 +8264,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
         qs["sites"] = str(scope)
     elif (p.get("sites") or "").strip():
         qs["sites"] = p.get("sites").strip()
-    for k in ("from", "to", "ready", "readyLimit", "modality", "pay", "nocache"):
+    for k in ("from", "to", "ready", "readyLimit", "modality", "pay", "nocache", "src"):
         if (p.get(k) or "").strip():
             qs[k] = p.get(k).strip()
     # A worklist is "what's pending NOW", not a 2-week archive. If the client didn't
@@ -8282,7 +8282,9 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # (fast pass, and the client isn't forcing fresh) serve it from the DB in a few ms
     # instead of proxying to HIS. Team leads are served the same board filtered to their
     # site. Any miss/staleness returns None → we fall straight through to the live path.
-    if not heavy and qs.get("nocache") != "1":
+    # The mirror holds the DEFAULT (search) board — so bypass it whenever the client asks for
+    # a specific source (e.g. the RIS preview), or it would serve the wrong board.
+    if not heavy and qs.get("nocache") != "1" and not qs.get("src"):
         _mkey = _wl_mirror_key(qs.get("from", ""), qs.get("to", ""))
         _mret = _serve_worklist_from_mirror(request, _mkey, scope)
         if _mret is not None:
