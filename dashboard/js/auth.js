@@ -401,12 +401,13 @@ async function doLogin() {
     currentUser = user;
     document.getElementById('login-overlay').style.display = 'none';
     // Branded welcome splash stays up while the app loads its first data
-    // (initApp awaits the schedule render). Enforce a minimum on-screen time
-    // so the greeting is readable even when loading is very fast.
+    // (initApp awaits the schedule render). Only hold a SMALL minimum so a fast
+    // load isn't gated behind a long forced wait — the old 1600ms floor added up
+    // to ~1.6s of dead time on every login even when everything was already ready.
     showWelcomeSplash(user.username || username);
     const _splashStart = Date.now();
     await initApp();
-    const MIN_SPLASH_MS = 1600;
+    const MIN_SPLASH_MS = 350;   // just enough to avoid a jarring flash; not a stall
     const elapsed = Date.now() - _splashStart;
     if (elapsed < MIN_SPLASH_MS) {
       await new Promise(r => setTimeout(r, MIN_SPLASH_MS - elapsed));

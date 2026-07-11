@@ -58,7 +58,21 @@ const API = {
     return 45000;                                                        // 45 s
   },
   _cond: new Map(),   // path -> { etag, data } : in-memory conditional-GET store (no disk cache)
-  async request(method, path, body) {
+  _inflight: new Map(),   // path -> pending promise : coalesce identical concurrent GETs
+  // Public entry: coalesce identical in-flight GETs so a page that (directly or via a shared
+  // helper) asks for the same endpoint twice at once issues ONE network request and both
+  // callers share the result. Non-GET / bodied requests always go straight through.
+  request(method, path, body) {
+    if (method !== 'GET' || body !== undefined) return API._send(method, path, body);
+    const hit = API._inflight.get(path);
+    if (hit) return hit;
+    const p = API._send(method, path, body);
+    API._inflight.set(path, p);
+    const done = () => { if (API._inflight.get(path) === p) API._inflight.delete(path); };
+    p.then(done, done);
+    return p;
+  },
+  async _send(method, path, body) {
     // no-store: never read API data from the browser cache — a GET right after a
     // save must hit the server, or the rota looks like it reverted.
     const opts = { method, credentials: 'include', cache: 'no-store', headers: {} };
