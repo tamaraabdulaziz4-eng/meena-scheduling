@@ -59,6 +59,7 @@ const MS_PARAM = process.env.MILLENSYS_SEARCH_PARAM || 'nationalId';
 const arg = String(process.argv[2] || '').trim();
 if (!arg) {
   console.error('usage: node tools/mri-match-test.js <nationalId | iqama | MRN | name>');
+  console.error('       node tools/mri-match-test.js find [howMany]   # find MRI/CT patients WITH a national ID');
   process.exit(1);
 }
 if (!CONNECTOR_TOKEN) {
@@ -199,8 +200,54 @@ async function millensysSide(nationalId, orders) {
   }
 }
 
+// ── FIND mode — scan recent MRI/CT worklist for patients WITH a national ID ──────
+// Not every Siratech record has the Saudi ID / Iqama filled in, and you can only test
+// the MILLENSYS national-ID join on a patient who has one. This walks the live worklist,
+// keeps MR/CT rows, and checks each patient's national ID (cheap /search per MRN) until
+// it has `want` patients that carry one. READ-ONLY.
+async function findMode(want) {
+  console.log(`\n── FIND ── scanning recent MRI/CT worklist for patients WITH a national ID (want ${want})`);
+  const w = await req('GET', `${CONNECTOR_BASE}/worklist?modality=1`, { headers: auth });
+  if (w.status !== 200 || !w.json || !w.json.ok) {
+    throw new Error(`/worklist failed (HTTP ${w.status}): ${w.json && w.json.error || w.text.slice(0, 200)}`);
+  }
+  const items = (w.json.items || []).filter((it) => isMrOrCt(it.modality));
+  const seen = new Set();
+  const mrns = [];
+  for (const it of items) { const m = String(it.mrno || '').trim(); if (m && !seen.has(m)) { seen.add(m); mrns.push({ mrno: m, exam: it.exam, orderDate: it.orderDate || it.orderedDate }); } }
+  console.log(`  ${items.length} MRI/CT rows · ${mrns.length} unique patients · checking IDs…`);
+  const hits = [];
+  let checked = 0;
+  for (const p of mrns) {
+    if (hits.length >= want) break;
+    if (checked >= 60) { console.log('  (stopped after 60 lookups)'); break; }
+    checked++;
+    const s = await req('GET', `${CONNECTOR_BASE}/search?q=${encodeURIComponent(p.mrno)}`, { headers: auth }).catch(() => null);
+    const pat = s && s.json && s.json.ok && (s.json.patients || [])[0];
+    const nid = pat && pat.nationalId;
+    if (nid) {
+      hits.push({ ...p, nationalId: nid, name: pat.name || '' });
+      console.log(`  ✓ MRN ${p.mrno}  nid=${nid}  "${p.exam}"  ordered ${p.orderDate || '—'}`);
+    }
+  }
+  if (!hits.length) {
+    console.log(`\n  Checked ${checked} MRI/CT patients — NONE had a national ID on file in Siratech.`);
+    console.log('  That is itself the finding: the national-ID join has poor coverage here.');
+  } else {
+    console.log(`\n  → Test the match with any of the ✓ patients above, e.g.:`);
+    console.log(`     node ${process.argv[1].split('/').pop()} ${hits[0].mrno}`);
+  }
+  return hits;
+}
+
 (async () => {
   try {
+    if (/^(find|--find)$/i.test(arg)) {
+      const want = Math.max(1, Math.min(10, Number(process.argv[3]) || 3));
+      await findMode(want);
+      console.log('');
+      return;
+    }
     const { nationalId, orders } = await siratechSide();
     await millensysSide(nationalId, orders);
     console.log('');
