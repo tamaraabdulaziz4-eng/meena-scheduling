@@ -487,6 +487,13 @@ async function rsLoadEnrichment(opts) {
     if (myReq !== radstats._reqSeq) return;   // superseded — don't overwrite the newer view
     radstats.modData = d.modality || { mix: [], sampled: 0, ofTotal: 0 };
     radstats.finData = d.financial || { revenue: 0, patient: 0, sponsor: 0, sampled: 0, ofTotal: 0 };
+    // Department + gender come ONLY from the RadiologySearch pass, which runs in THIS enrichment
+    // call (the base call is panel-only, for speed). Merge them onto the base data so the Ops
+    // "by department" and Overview "gender split" panels fill in behind the instant KPIs.
+    if (radstats.data) {
+      if (d.byDepartment) radstats.data.byDepartment = d.byDepartment;
+      if (d.byGender !== undefined) radstats.data.byGender = d.byGender;
+    }
   } catch (e) {
     if (myReq !== radstats._reqSeq) return;
     const msg = (e && e.message) || 'Could not load';
