@@ -12803,21 +12803,49 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
             by_key[key] = it   # last-wins; chunks don't overlap, this just de-dupes edge cases
         chunk_start = chunk_end + timedelta(days=1)
     items = list(by_key.values())
-    performed = not_performed = awaiting = reported = aged = 0
+    # Staff can mark an order "performed" on the board (local_status='completed' / completed_at)
+    # for exams the PACS auto-match can never catch — e.g. a study filed under a blank/wrong ID
+    # at the modality. Honor that HUMAN signal: a manually-completed order counts as performed
+    # even with no PACS match. (This is the "Mark completed" button that already exists.)
+    gpbs = []
+    for it in items:
+        try:
+            gpbs.append(int(it.get("genPatBillingId")))
+        except Exception:
+            pass
+    manual_done = set()
+    if gpbs:
+        for r in (q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
+                        WHERE gen_pat_billing_id = ANY(%s)
+                          AND (completed_at IS NOT NULL OR local_status = 'completed')""",
+                    (gpbs,)) or []):
+            try:
+                manual_done.add(int(r["gen_pat_billing_id"]))
+            except Exception:
+                pass
+    performed = not_performed = awaiting = reported = aged = performed_manual = 0
     aged_list = []
     by_branch = {}
     for it in items:
         stage = (it.get("stage") or "").lower()
         site = it.get("site")
+        try:
+            gpb = int(it.get("genPatBillingId"))
+        except Exception:
+            gpb = None
         bname = it.get("branchName") or it.get("siteName") or it.get("branch") or (f"Branch {site}" if site is not None else "—")
         b = by_branch.setdefault(str(site), {"site": site, "name": bname, "ordered": 0, "performed": 0, "notPerformed": 0, "aged": 0})
         b["ordered"] += 1
-        if stage in ("imaged", "draft", "reported"):
+        pacs_perf = stage in ("imaged", "draft", "reported")
+        manual_perf = gpb in manual_done
+        if pacs_perf or manual_perf:
             performed += 1; b["performed"] += 1
             if stage == "reported":
                 reported += 1
-            else:
+            elif pacs_perf:
                 awaiting += 1
+            else:
+                performed_manual += 1   # no PACS study, but staff confirmed it was done
         else:
             not_performed += 1; b["notPerformed"] += 1
             od = _rad_ts(it.get("orderedDate"))
@@ -12835,6 +12863,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
     ordered_total = len(items)
     payload = {
         "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(), "flagDays": flag_days,
+        "performedManual": performed_manual,
         "byBranch": sorted(by_branch.values(), key=lambda x: x["ordered"], reverse=True),
         "aged": aged_list, "generatedAt": now.isoformat(),
     }
@@ -12854,6 +12883,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
       exec_only=True)
     return {"runDate": run_date, "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(),
             "flagDays": flag_days, "orderedTotal": ordered_total, "performed": performed,
+            "performedManual": performed_manual,
             "notPerformed": not_performed, "notPerformedAged": aged, "awaitingReport": awaiting,
             "reported": reported, "byBranch": payload["byBranch"], "agedList": aged_list}
 
@@ -12861,9 +12891,10 @@ def _rad_reconcile_notify(summary):
     """Push the end-of-day reconciliation summary (+ top follow-up patients) to management.
     In-app + email (no WhatsApp — the list is long). Best-effort per recipient."""
     aged = summary.get("agedList") or []
+    manual = summary.get("performedManual") or 0
     lines = [
         f"🩻 End-of-day reconciliation ({summary['windowFrom']} → {summary['windowTo']})",
-        f"✅ Performed (PACS-confirmed): {summary['performed']}",
+        f"✅ Performed: {summary['performed']}" + (f" (incl. {manual} marked manually)" if manual else ""),
         f"⚠️ Billed but NOT performed >{summary['flagDays']}d: {summary['notPerformedAged']} — needs follow-up",
         f"🕓 Performed, not reported: {summary['awaitingReport']}",
         f"Ordered total (window): {summary['orderedTotal']}",
