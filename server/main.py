@@ -9118,6 +9118,24 @@ def radiology_reconcile_latest(user=Depends(require_admin)):
         return {"ok": True, "empty": True}
     return {"ok": True, **row}
 
+@app.api_route("/api/radiology/reconcile/diagnose", methods=["GET", "POST"])
+async def radiology_reconcile_diagnose(request: Request, user=Depends(require_superadmin)):
+    """Root-cause WHY a branch reads low 'performed': for the not-performed orders in a window/
+    branch, check DePACS to tell apart genuine no-shows / a different-PACS coverage gap
+    (noStudyAtAll) from a matching gap (sameModMatch — a study exists but didn't link).
+    Read-only; forwards to the connector's /diag/reconcile-branch. Params: site, from, to,
+    sample, matchAfterH."""
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    p = request.query_params
+    q_ = {}
+    for k in ("site", "from", "to", "sample", "matchAfterH"):
+        v = (p.get(k) or "").strip()
+        if v:
+            q_[k] = v
+    qs = ("?" + _up.urlencode(q_)) if q_ else ""
+    return await run_in_threadpool(lambda: _bridge_request("/his/diag/reconcile-branch" + qs, timeout=240))
+
 @app.post("/api/radiology/reconcile/run")
 def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
     """Run the reconciliation on demand (testing / an immediate check instead of waiting for
@@ -12899,6 +12917,23 @@ def _rad_reconcile_notify(summary):
         f"🕓 Performed, not reported: {summary['awaitingReport']}",
         f"Ordered total (window): {summary['orderedTotal']}",
     ]
+    # Per-branch performed rate (worst first) so a low outlier — a branch whose imaging may be
+    # on a different PACS, or a matching gap — jumps out instead of hiding in the org-wide 77%.
+    branches = summary.get("byBranch") or []
+    rated = []
+    for b in branches:
+        ordered = b.get("ordered") or 0
+        if ordered <= 0:
+            continue
+        pct = round((b.get("performed") or 0) / ordered * 100)
+        rated.append((pct, ordered, b.get("name") or f"Branch {b.get('site')}", b.get("performed") or 0))
+    if rated:
+        rated.sort(key=lambda x: (x[0], -x[1]))   # lowest rate first; ties → busier branch first
+        lines.append("")
+        lines.append("By branch (performed rate):")
+        for pct, ordered, name, perf in rated[:10]:
+            flag = " ⚠️" if (pct < 60 and ordered >= 5) else ""
+            lines.append(f"• {name}: {perf}/{ordered} ({pct}%){flag}")
     if aged:
         lines.append("")
         lines.append("Top not-performed (days waiting):")
