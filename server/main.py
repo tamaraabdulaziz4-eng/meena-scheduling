@@ -12775,6 +12775,12 @@ def _radiology_snapshot_loop():
 
 RAD_RECON_WINDOW_DAYS = int(os.environ.get("RAD_RECON_WINDOW_DAYS", "30"))
 RAD_RECON_FLAG_DAYS    = int(os.environ.get("RAD_RECON_FLAG_DAYS", "14"))
+# Modalities that do NOT push a DICOM study to PACS (DEXA / bone densitometry), so PACS can
+# never confirm them "performed" — they must not be counted as "not performed". Verified live:
+# the /diag/reconcile-branch probe showed the "Digital" branch's low rate was ~all DEXA orders
+# with zero PACS studies (no matching gap). These land in their own PACS-unverifiable bucket;
+# "performed" for them still comes from a filed report (stage='reported') or a manual complete.
+_RAD_NON_PACS_MOD_RE = re.compile(r"dexa|\bbmd\b|bone\s*densit|densitom", re.I)
 
 def _rad_reconcile_run(window_days=None, flag_days=None):
     """End-of-day BILLED vs ACTUALLY-PERFORMED reconciliation.
@@ -12841,7 +12847,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
                 manual_done.add(int(r["gen_pat_billing_id"]))
             except Exception:
                 pass
-    performed = not_performed = awaiting = reported = aged = performed_manual = 0
+    performed = not_performed = awaiting = reported = aged = performed_manual = unverifiable = 0
     aged_list = []
     by_branch = {}
     for it in items:
@@ -12852,7 +12858,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
         except Exception:
             gpb = None
         bname = it.get("branchName") or it.get("siteName") or it.get("branch") or (f"Branch {site}" if site is not None else "—")
-        b = by_branch.setdefault(str(site), {"site": site, "name": bname, "ordered": 0, "performed": 0, "notPerformed": 0, "aged": 0})
+        b = by_branch.setdefault(str(site), {"site": site, "name": bname, "ordered": 0, "performed": 0, "notPerformed": 0, "aged": 0, "unverifiable": 0})
         b["ordered"] += 1
         pacs_perf = stage in ("imaged", "draft", "reported")
         manual_perf = gpb in manual_done
@@ -12864,6 +12870,10 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
                 awaiting += 1
             else:
                 performed_manual += 1   # no PACS study, but staff confirmed it was done
+        elif _RAD_NON_PACS_MOD_RE.search(f"{it.get('exam') or ''} {it.get('modality') or ''}"):
+            # DEXA / bone-density: never lands in PACS, so "not performed" here is meaningless —
+            # bucket separately (confirm via report or the manual button, not PACS).
+            unverifiable += 1; b["unverifiable"] += 1
         else:
             not_performed += 1; b["notPerformed"] += 1
             od = _rad_ts(it.get("orderedDate"))
@@ -12881,7 +12891,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
     ordered_total = len(items)
     payload = {
         "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(), "flagDays": flag_days,
-        "performedManual": performed_manual,
+        "performedManual": performed_manual, "unverifiable": unverifiable,
         "byBranch": sorted(by_branch.values(), key=lambda x: x["ordered"], reverse=True),
         "aged": aged_list, "generatedAt": now.isoformat(),
     }
@@ -12901,7 +12911,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
       exec_only=True)
     return {"runDate": run_date, "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(),
             "flagDays": flag_days, "orderedTotal": ordered_total, "performed": performed,
-            "performedManual": performed_manual,
+            "performedManual": performed_manual, "unverifiable": unverifiable,
             "notPerformed": not_performed, "notPerformedAged": aged, "awaitingReport": awaiting,
             "reported": reported, "byBranch": payload["byBranch"], "agedList": aged_list}
 
@@ -12910,30 +12920,37 @@ def _rad_reconcile_notify(summary):
     In-app + email (no WhatsApp — the list is long). Best-effort per recipient."""
     aged = summary.get("agedList") or []
     manual = summary.get("performedManual") or 0
+    unverifiable = summary.get("unverifiable") or 0
     lines = [
         f"🩻 End-of-day reconciliation ({summary['windowFrom']} → {summary['windowTo']})",
         f"✅ Performed: {summary['performed']}" + (f" (incl. {manual} marked manually)" if manual else ""),
         f"⚠️ Billed but NOT performed >{summary['flagDays']}d: {summary['notPerformedAged']} — needs follow-up",
         f"🕓 Performed, not reported: {summary['awaitingReport']}",
-        f"Ordered total (window): {summary['orderedTotal']}",
     ]
+    if unverifiable:
+        lines.append(f"➖ DEXA/non-PACS (can't confirm via PACS): {unverifiable}")
+    lines.append(f"Ordered total (window): {summary['orderedTotal']}")
     # Per-branch performed rate (worst first) so a low outlier — a branch whose imaging may be
     # on a different PACS, or a matching gap — jumps out instead of hiding in the org-wide 77%.
+    # Denominator EXCLUDES the DEXA/non-PACS orders so a DEXA-heavy branch (e.g. "Digital")
+    # isn't unfairly low for exams PACS can never confirm.
     branches = summary.get("byBranch") or []
     rated = []
     for b in branches:
-        ordered = b.get("ordered") or 0
-        if ordered <= 0:
+        unv = b.get("unverifiable") or 0
+        denom = (b.get("ordered") or 0) - unv
+        if denom <= 0:
             continue
-        pct = round((b.get("performed") or 0) / ordered * 100)
-        rated.append((pct, ordered, b.get("name") or f"Branch {b.get('site')}", b.get("performed") or 0))
+        pct = round((b.get("performed") or 0) / denom * 100)
+        rated.append((pct, denom, b.get("name") or f"Branch {b.get('site')}", b.get("performed") or 0, unv))
     if rated:
         rated.sort(key=lambda x: (x[0], -x[1]))   # lowest rate first; ties → busier branch first
         lines.append("")
-        lines.append("By branch (performed rate):")
-        for pct, ordered, name, perf in rated[:10]:
-            flag = " ⚠️" if (pct < 60 and ordered >= 5) else ""
-            lines.append(f"• {name}: {perf}/{ordered} ({pct}%){flag}")
+        lines.append("By branch (performed rate, excl. DEXA):")
+        for pct, denom, name, perf, unv in rated[:10]:
+            flag = " ⚠️" if (pct < 60 and denom >= 5) else ""
+            tail = f" (+{unv} DEXA)" if unv else ""
+            lines.append(f"• {name}: {perf}/{denom} ({pct}%){tail}{flag}")
     if aged:
         lines.append("")
         lines.append("Top not-performed (days waiting):")
