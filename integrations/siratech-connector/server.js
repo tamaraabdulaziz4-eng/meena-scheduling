@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'cardclinic-2026-07-11y';
+const CONNECTOR_BUILD = 'rejectdiscover-2026-07-12z';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -614,6 +614,10 @@ app.get('/radiology/report-pdf', requireAuth, async (req, res) => {
 // instead of shelling into the VPS. Single-flight so a double-click can't launch
 // two browsers on the small VPS.
 const INS_RE = /nphies|eligib|insur|coverage|\bpolicy\b|policyno|member(ship)?|beneficiar|sponsor|payer|\btpa\b|scheme|approval|preauth|pre-auth|deductib|copay|co-pay|benefit|claim|cchi/i;
+// Claim REJECTION / denial reports — the HIS has a "rejection report" screen; its API path is
+// baked into the SPA JS, so the read-only crawler can surface it (no billable call is made).
+// Kept separate from INS_RE so the Discover output highlights the denial endpoints on their own.
+const REJECT_RE = /reject|denial|denied|disallow|resubmit|rework|claimreturn|claim-?return|claim-?response|claim-?status|claim-?result|shortpay|short-?pay|write-?off|writeoff|settlement|remittance|\bera\b|unpaid|outstanding/i;
 let _discoverInFlight = null;
 async function discoverEndpoints(opts = {}) {
   const collectRaw = !!opts.collectRaw;
@@ -703,10 +707,12 @@ async function discoverEndpoints(opts = {}) {
   const byModule = {};
   for (const p of all) { const mod = (p.match(/([\w-]*-api)\/api\/v\d+/) || [, '(other)'])[1]; (byModule[mod] = byModule[mod] || []).push(p); }
   const insuranceEndpoints = all.filter((p) => INS_RE.test(p));
+  const rejectionEndpoints = all.filter((p) => REJECT_RE.test(p));
   return {
     base: HIS_BASE, jsBundles: jsUrls.size, jsFetched: fetched, liveCalls: [...liveApi].sort(),
     totalEndpoints: all.length, modules: Object.keys(byModule).sort(),
     insuranceEndpoints,                       // ← the answer: empty = no Nphies module exposed to the SPA
+    rejectionEndpoints,                       // ← claim rejection / denial / settlement report endpoints
     byModuleCounts: Object.fromEntries(Object.entries(byModule).map(([m, a]) => [m, a.length])),
     allEndpoints: all,
     raw: collectRaw ? rawParts.join('\n') : undefined,   // full concatenated frontend JS (all payloads live here)
