@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'donesignal-2026-07-12at';
+const CONNECTOR_BUILD = 'donesignal2-2026-07-12au';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3392,25 +3392,30 @@ app.get('/diag/done-signal', requireAuth, async (req, res) => {
     const items = (wl.items || []).filter((it) => it.orderDate && !it.cancelled);
     const NONPACS = /dexa|\bbmd\b|bone\s*densit|densitom/i;
     const _ksaDay = (v) => { const t = parseHisDate(v); return Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null; };
-    let total = 0, hisReported = 0, pacs = 0, dexa = 0, notDone = 0;
+    let total = 0, hisReported = 0, pacs = 0, scannedNoPacs = 0, dexa = 0, notDone = 0;
     const byDay = new Map();
     for (const it of items) {
       total += 1;
       const day = _ksaDay(it.orderedDate);
-      const g = byDay.get(day) || { date: day, ordered: 0, hisReported: 0, pacs: 0, dexa: 0, notDone: 0 };
+      const g = byDay.get(day) || { date: day, ordered: 0, hisReported: 0, pacs: 0, scannedNoPacs: 0, dexa: 0, notDone: 0 };
       g.ordered += 1;
       const isDexa = NONPACS.test(`${it.exam || ''} ${it.modality || ''}`);
+      // it.scanned = Siratech recorded an exam start/end (the scan was PERFORMED on the modality),
+      // even if it never reached PACS — the manual/non-integrated period signal.
       if (it.hisReported) { hisReported += 1; g.hisReported += 1; }
       else if (['imaged', 'draft', 'reported'].includes(it.stage)) { pacs += 1; g.pacs += 1; }
+      else if (it.scanned || it.examEndAt || it.examStartAt) { scannedNoPacs += 1; g.scannedNoPacs += 1; }
       else if (isDexa) { dexa += 1; g.dexa += 1; }
       else { notDone += 1; g.notDone += 1; }
       byDay.set(day, g);
     }
     const daily = [...byDay.values()].filter((x) => x.date).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const donePlusScanned = hisReported + pacs + scannedNoPacs;
     return res.json({ ok: true, build: CONNECTOR_BUILD, site: site || 'all', from, to, matchAfterH,
-      total, hisReported, pacs, dexa, notDone,
-      doneTotal: hisReported + pacs, donePct: total ? Math.round((hisReported + pacs) / total * 100) : 0,
-      note: 'hisReported = a Siratech report exists (credited done even with NO PACS study — the manual/non-integrated period). pacs = done via a matched DePACS study. notDone = no report AND no PACS study.',
+      total, hisReported, pacs, scannedNoPacs, dexa, notDone,
+      doneNow: hisReported + pacs, doneNowPct: total ? Math.round((hisReported + pacs) / total * 100) : 0,
+      doneIfScannedCounts: donePlusScanned, doneIfScannedCountsPct: total ? Math.round(donePlusScanned / total * 100) : 0,
+      note: 'hisReported = a Siratech report exists (done even w/o PACS). pacs = matched DePACS study. scannedNoPacs = Siratech recorded the scan performed (examStart/End) but no PACS study + no report — the manual/non-integrated period, currently counted NOT done. notDone = no report, no PACS, no recorded scan.',
       daily });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
