@@ -9192,6 +9192,8 @@ def _rad_live_done_day(date):
     qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
     data = _bridge_request("/his/worklist?" + qs, timeout=240)
     items = (data or {}).get("items") or []
+    # Same exclusion as the Overview + report: only ordered (orderDate) and non-cancelled exams.
+    items = [it for it in items if it.get("orderDate") and not it.get("cancelled")]
     gpbs = []
     for it in items:
         try:
@@ -9292,6 +9294,8 @@ async def radiology_done_day(request: Request, user=Depends(require_admin)):
     qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
     data = await run_in_threadpool(lambda: _bridge_request("/his/worklist?" + qs, timeout=240))
     items = (data or {}).get("items") or []
+    # Same exclusion as the Overview + report: only ordered (orderDate) and non-cancelled exams.
+    items = [it for it in items if it.get("orderDate") and not it.get("cancelled")]
     gpbs = []
     for it in items:
         try:
@@ -13009,6 +13013,9 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
             by_key[key] = it   # last-wins; chunks don't overlap, this just de-dupes edge cases
         chunk_start = chunk_end + timedelta(days=1)
     items = list(by_key.values())
+    # Match the Overview + Siratech report: count only exams that have a CPOE order (orderDate) and
+    # aren't cancelled. Walk-in / directly-billed exams with no order and cancelled orders are dropped.
+    items = [it for it in items if it.get("orderDate") and not it.get("cancelled")]
     # Staff can mark an order "performed" on the board (local_status='completed' / completed_at)
     # for exams the PACS auto-match can never catch — e.g. a study filed under a blank/wrong ID
     # at the modality. Honor that HUMAN signal: a manually-completed order counts as performed
