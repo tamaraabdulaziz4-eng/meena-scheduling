@@ -12935,6 +12935,12 @@ def _radiology_snapshot_loop():
 
 RAD_RECON_WINDOW_DAYS = int(os.environ.get("RAD_RECON_WINDOW_DAYS", "30"))
 RAD_RECON_FLAG_DAYS    = int(os.environ.get("RAD_RECON_FLAG_DAYS", "14"))
+# Auto-notification KILL SWITCH. Default OFF: the reconciliation still runs nightly to populate
+# the dashboard tables, but it sends NO email / in-app notification to anyone. This exists because
+# the report was reaching managers' inboxes with numbers that aren't validated yet. Nothing goes
+# out until this is deliberately turned back on (set RAD_RECON_NOTIFY=1). Enforced in one place —
+# _rad_reconcile_notify — so it also blocks any manual reconcile/run?notify=1 call.
+RAD_RECON_NOTIFY_ENABLED = os.environ.get("RAD_RECON_NOTIFY", "0") == "1"
 # Modalities that do NOT push a DICOM study to PACS (DEXA / bone densitometry), so PACS can
 # never confirm them "performed" — they must not be counted as "not performed". Verified live:
 # the /diag/reconcile-branch probe showed the "Digital" branch's low rate was ~all DEXA orders
@@ -13110,6 +13116,12 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
 def _rad_reconcile_notify(summary):
     """Push the end-of-day reconciliation summary (+ top follow-up patients) to management.
     In-app + email (no WhatsApp — the list is long). Best-effort per recipient."""
+    # KILL SWITCH — default OFF. While validating the numbers, this report must reach NO ONE
+    # (managers were getting emails with unvalidated figures). Return without sending. Flip
+    # RAD_RECON_NOTIFY=1 to re-enable once the data is trusted.
+    if not RAD_RECON_NOTIFY_ENABLED:
+        print("[reconcile] notify suppressed (RAD_RECON_NOTIFY off) — no email/notification sent")
+        return 0
     aged = summary.get("agedList") or []
     manual = summary.get("performedManual") or 0
     unverifiable = summary.get("unverifiable") or 0
