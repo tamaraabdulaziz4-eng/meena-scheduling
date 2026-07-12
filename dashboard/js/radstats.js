@@ -427,7 +427,7 @@ async function rsLoad(silent, force) {
   // A non-silent load = the selection changed (branch / preset / dates / first open).
   // The old modality+revenue belong to the PREVIOUS selection, so drop them — they'll
   // reload in the background for the new selection below.
-  if (!silent) { radstats.modData = null; radstats.finData = null; radstats.modError = ''; radstats.finError = ''; }
+  if (!silent) { radstats.modData = null; radstats.finData = null; radstats.modError = ''; radstats.finError = ''; radstats._bodySig = ''; }
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
@@ -932,6 +932,12 @@ function rsRenderBody() {
   const d = radstats.data;
   if (!d || !d.ok) { body.innerHTML = rsSkeleton(); return; }
 
+  // Self-heal: if the active tab needs data that isn't there and nothing is loading it (a
+  // superseded request, a date-change race, a blip), kick the load off now — so switching
+  // dates or tabs never leaves an empty/stale panel. The loading guards prevent any loop.
+  if (radstats.tab === 'financial' && !radstats.finData && !radstats.finLoading && !radstats.finError) rsLoadFinancial();
+  else if (radstats.tab === 'done' && !radstats.doneData && !radstats.doneLoading && !radstats.doneError) rsLoadDone();
+
   const total = d.total || 0;
   const patients = d.patients != null ? d.patients : null;
   const emg = (d.priority && d.priority.emergency) || 0;
@@ -1186,12 +1192,13 @@ async function rsDoneDay(date) {
 function rsSection(title) { return `<div class="rs-section">${title}</div>`; }
 
 function rsModalitySub() {
+  const pm = radstats.data && radstats.data.panelModality;
+  if (pm && pm.mix && pm.mix.length) return `${rsNum(pm.exams || 0)} exams · exact`;
   const m = radstats.modData;
   if (!m) return 'exact — click to load';
-  // A request can bundle several exams, so exams > requests is expected.
   return m.truncated
     ? `${rsNum(m.exams || 0)} exams · sample of ${rsNum(m.sampled)}/${rsNum(m.ofTotal)}`
-    : `${rsNum(m.exams || 0)} exams from ${rsNum(m.ofTotal)} requests`;
+    : `${rsNum(m.exams || 0)} exams`;
 }
 
 // A lively indeterminate-progress block, so a genuinely slow pass (the all-branch bill read
@@ -1205,6 +1212,14 @@ function rsLoadingBlock(title, sub) {
 }
 
 function rsModalityInner() {
+  // EXACT, INSTANT modality mix straight from the base payload (FetchRISPanel — one row per
+  // exam), so the donut total matches the "Exams" tile and "Ordered vs Done" and paints with
+  // no wait. Falls back to the old sampled bill-read path only if the panel data is absent.
+  const pm = radstats.data && radstats.data.panelModality;
+  if (pm && pm.mix && pm.mix.length) {
+    const segs = pm.mix.map((x) => ({ label: x.modality, count: x.count, color: MOD_COLOR[x.modality] || '#94a3b8' }));
+    return rsDonut(segs, { centerVal: pm.exams, centerLabel: 'exams' });
+  }
   if (radstats.modLoading) return rsLoadingBlock('Reading exam details…', 'Pricing each order across all branches — a wide range can take up to a minute.');
   if (radstats.modError) return `<div class="rs-empty">${escapeHtml(radstats.modError)} <button class="ghost" onclick="rsLoadModality()">Retry</button></div>`;
   const m = radstats.modData;
