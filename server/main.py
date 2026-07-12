@@ -9167,12 +9167,52 @@ def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmi
     notified = _rad_reconcile_notify(summary) if (p.get("notify") == "1") else 0
     return {"ok": True, "notified": notified, **summary}
 
+def _rad_live_done_day(date):
+    """LIVE ordered/done for ONE day, straight from the connector's ready=1 board (DePACS-
+    grounded) — so the current day isn't frozen at the last nightly snapshot. Returns the
+    per-day dict {date, ordered, done, unverifiable, by_modality}. Blocking (bridge call)."""
+    import urllib.parse as _up
+    match_after_h = min(720, max(96, RAD_RECON_FLAG_DAYS * 24))
+    qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
+    data = _bridge_request("/his/worklist?" + qs, timeout=240)
+    items = (data or {}).get("items") or []
+    gpbs = []
+    for it in items:
+        try:
+            gpbs.append(int(it.get("genPatBillingId")))
+        except Exception:
+            pass
+    manual_done = set()
+    if gpbs:
+        for r in (q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
+                        WHERE gen_pat_billing_id = ANY(%s)
+                          AND (completed_at IS NOT NULL OR local_status='completed')""", (gpbs,)) or []):
+            try:
+                manual_done.add(int(r["gen_pat_billing_id"]))
+            except Exception:
+                pass
+    ordered = done = unverifiable = 0
+    mods = {}
+    for it in items:
+        stage = (it.get("stage") or "").lower()
+        try:
+            gpb = int(it.get("genPatBillingId"))
+        except Exception:
+            gpb = None
+        mod = (it.get("modality") or "Other").strip().upper() or "Other"
+        mm = mods.setdefault(mod, {"ordered": 0, "done": 0})
+        ordered += 1; mm["ordered"] += 1
+        if stage in ("imaged", "draft", "reported") or (gpb in manual_done):
+            done += 1; mm["done"] += 1
+        elif _RAD_NON_PACS_MOD_RE.search(f"{it.get('exam') or ''} {it.get('modality') or ''}"):
+            unverifiable += 1
+    return {"date": date, "ordered": ordered, "done": done, "unverifiable": unverifiable, "by_modality": mods}
+
 @app.get("/api/radiology/stats/done-history")
 def radiology_done_history(request: Request, user=Depends(require_admin)):
-    """Daily + monthly ORDERED vs DONE, attributed to the order date and self-corrected for
-    late exams (a patient who does the exam days after ordering makes that original day's `done`
-    rise on the nightly re-run). Reads the accumulated scheduling.radiology_done_daily table.
-    Org-wide (no per-branch split), so management-only."""
+    """Daily + monthly ORDERED vs DONE, attributed to the order date. TODAY is computed LIVE
+    from the board on each load; prior days come from the accumulated snapshot, which the
+    nightly job self-corrects for late exams. Org-wide, management-only."""
     if user.get("role") not in ("manager", "superadmin"):
         raise HTTPException(403, "Available to management only")
     p = request.query_params
@@ -9181,6 +9221,21 @@ def radiology_done_history(request: Request, user=Depends(require_admin)):
         months = max(1, min(24, int(p.get("months") or "6")))
     except Exception:
         days, months = 45, 6
+    # Refresh TODAY live (unless ?live=0), then the queries below read the fresh value — so the
+    # current day + this-month total track the live board instead of the last nightly snapshot.
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    ksa_today = (_dt.now(_tz.utc) + _td(hours=3)).strftime("%Y-%m-%d")
+    if (p.get("live") or "1") != "0":
+        try:
+            lv = _rad_live_done_day(ksa_today)
+            q("""INSERT INTO scheduling.radiology_done_daily (stat_date, ordered, done, unverifiable, by_modality, updated_at)
+                 VALUES (%s,%s,%s,%s,%s, NOW())
+                 ON CONFLICT (stat_date) DO UPDATE SET ordered=EXCLUDED.ordered, done=EXCLUDED.done,
+                     unverifiable=EXCLUDED.unverifiable, by_modality=EXCLUDED.by_modality, updated_at=NOW()""",
+              (lv["date"], lv["ordered"], lv["done"], lv["unverifiable"], json.dumps(lv["by_modality"])),
+              exec_only=True)
+        except Exception:
+            pass
     daily = q("""SELECT stat_date::text AS date, ordered, done, unverifiable, by_modality, updated_at
                  FROM scheduling.radiology_done_daily
                  WHERE stat_date >= (CURRENT_DATE - %s::int)
