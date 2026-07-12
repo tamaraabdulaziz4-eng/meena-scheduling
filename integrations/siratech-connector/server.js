@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'ordered-only-2026-07-12aq';
+const CONNECTOR_BUILD = 'donelive-2026-07-12ar';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2267,7 +2267,9 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
       // order-based report excludes; keeping this strictly null lets the stats count match.
       const orderDate = r.proposedDate || null;
       // Cancelled/void order — Siratech's report excludes these; flag so the stats count can too.
-      const cancelled = /cancel|void|delet|reject/i.test(
+      // NOT "reject": in radiology "rejected" means an IMAGE was rejected/repeated (the exam WAS
+      // performed) — matching it would wrongly drop real exams. Only true order-cancel words.
+      const cancelled = /cancel|void|deleted/i.test(
         [r.billingStatus, r.risOrderStatus, r.risStatus, r.appointmentStatus, r.cancelRemarks].map((x) => x == null ? '' : x).join(' '));
       const bt = parseHisDate(billDate);
       const ageHours = Number.isFinite(bt) ? Math.max(0, Math.round((now - bt) / 36e5)) : null;
@@ -3333,7 +3335,7 @@ app.get('/diag/panel-dates', requireAuth, async (req, res) => {
     // cancelled/void order, or a row whose order date sits outside the window.
     const _ksaDay = (v) => { const t = parseHisDate(v); return Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null; };
     const inWin = (d) => d && d >= from && d <= to;
-    const cancelRe = /cancel|void|delet|reject/i;
+    const cancelRe = /cancel|void|deleted/i;   // NOT "reject" — that's image reject/repeat, a performed exam
     const statusHist = {}, seenInv = new Map(), seenBillSvc = new Map();
     let withBillNo = 0, nullOrderDate = 0, nullBillDate = 0, orderInWin = 0, billInWin = 0, cancelledLike = 0;
     let withOrderDate = 0, withOrderNotCancelled = 0, billedNotCancelled = 0;

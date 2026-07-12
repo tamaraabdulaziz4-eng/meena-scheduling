@@ -961,8 +961,8 @@ function rsRenderBody() {
   if (banner) {
     banner.innerHTML = `<div class="rs-note">
       <b>Live.</b> <b>Patients</b> = distinct people · <b>Requests</b> = orders (a patient can have several) ·
-      <b>Exams</b> = individual studies (an order can bundle several). Revenue is <b>billed</b>; since radiology here is
-      almost all insurance, a cash “paid/unpaid” split doesn’t apply — we show insurance-covered vs cash counts instead.
+      <b>Exams</b> = individual studies (an order can bundle several). Counts match Siratech: only
+      ordered, non-cancelled exams — the worklist board also shows walk-ins &amp; cancelled.
     </div>`;
   }
 
