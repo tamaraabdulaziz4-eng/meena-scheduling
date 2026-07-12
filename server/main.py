@@ -9239,19 +9239,29 @@ def radiology_done_history(request: Request, user=Depends(require_admin)):
         months = max(1, min(24, int(p.get("months") or "6")))
     except Exception:
         days, months = 45, 6
-    # Refresh TODAY live (unless ?live=0), then the queries below read the fresh value — so the
-    # current day + this-month total track the live board instead of the last nightly snapshot.
+    # Refresh the WHOLE CURRENT MONTH live (unless ?live=0), so "This month" and every current-month
+    # day track the SAME ordered+non-cancelled basis as the Overview — not last night's snapshot,
+    # which predates today's counting rules and still counted walk-in/cancelled exams. Reuses the
+    # nightly reconcile over just the current month, gated to ~every 5 min (or ?refresh=1) so opening
+    # the tab doesn't re-run the DePACS sweep every time.
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-    ksa_today = (_dt.now(_tz.utc) + _td(hours=3)).strftime("%Y-%m-%d")
+    ksa_now = _dt.now(_tz.utc) + _td(hours=3)
     if (p.get("live") or "1") != "0":
         try:
-            lv = _rad_live_done_day(ksa_today)
-            q("""INSERT INTO scheduling.radiology_done_daily (stat_date, ordered, done, unverifiable, by_modality, updated_at)
-                 VALUES (%s,%s,%s,%s,%s, NOW())
-                 ON CONFLICT (stat_date) DO UPDATE SET ordered=EXCLUDED.ordered, done=EXCLUDED.done,
-                     unverifiable=EXCLUDED.unverifiable, by_modality=EXCLUDED.by_modality, updated_at=NOW()""",
-              (lv["date"], lv["ordered"], lv["done"], lv["unverifiable"], json.dumps(lv["by_modality"])),
-              exec_only=True)
+            last = q("SELECT value FROM scheduling.app_settings WHERE key='rad_done_live_refresh'", one=True)
+            stale = True
+            if last and last.get("value"):
+                try:
+                    stale = (ksa_now - _dt.fromisoformat(last["value"])).total_seconds() > 300
+                except Exception:
+                    stale = True
+            if stale or p.get("refresh") == "1":
+                month_start = ksa_now.replace(day=1).date()
+                win = (ksa_now.date() - month_start).days + 3
+                _rad_reconcile_run(window_days=win)
+                q("""INSERT INTO scheduling.app_settings (key, value) VALUES ('rad_done_live_refresh', %s)
+                     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""",
+                  (ksa_now.isoformat(),), exec_only=True)
         except Exception:
             pass
     daily = q("""SELECT stat_date::text AS date, ordered, done, unverifiable, by_modality, updated_at
