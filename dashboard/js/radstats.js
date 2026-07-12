@@ -939,16 +939,19 @@ function rsRenderBody() {
   const aged = (d.aging && d.aging['>7d']) || 0;
   const sitesFail = (d.sites && d.sites.failed && d.sites.failed.length) || 0;
 
-  // Exams (needs modality) and Insurance-covered (needs finance) fill in when
-  // their enrichment lands; show a subtle "…" until then.
+  // Exams = individual procedures. Prefer the EXACT panel-based count (one FetchRISPanel row
+  // per exam — the same source as the worklist + "Ordered vs Done", so the numbers agree).
+  // Only if that's unavailable, fall back to the sampled/estimated bill-read count (modData).
   const m = radstats.modData, f = radstats.finData;
-  // Exams is per-exam; when only a sample was priced we scale it to the total so
-  // it isn't misleadingly smaller than the request count.
-  let examsVal = '<span class="rs-pending">…</span>';
-  // catalogLoaded===false → the exam catalog failed to load, so exams/revenue are a
-  // false 0. Show "—" rather than a misleading zero.
-  if (m) examsVal = m.catalogLoaded === false ? '—'
-    : (m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0));
+  let examsVal;
+  if (d.panelExams != null) {
+    examsVal = rsNum(d.panelExams);                 // exact — matches Ordered vs Done, shows instantly
+  } else if (m) {
+    examsVal = m.catalogLoaded === false ? '—'
+      : (m.truncated ? '≈' + rsNum(Math.round((m.exams / Math.max(1, m.sampled)) * m.ofTotal)) : rsNum(m.exams || 0));
+  } else {
+    examsVal = '<span class="rs-pending">…</span>';
+  }
   // Insurance-covered: exact when everything was priced, else scaled to the total
   // (a sample of 800 vs 1,118 must NOT read as "the rest are unpaid").
   let coveredVal = '<span class="rs-pending">…</span>', coveredSub = '';
@@ -1045,7 +1048,7 @@ function rsRenderBody() {
 
   const tabDone = `
     ${rsSection('Ordered vs Done — daily &amp; monthly')}
-    ${rsPanel('How many ordered, how many done', rsDoneInner(), rsDoneSub(), 'rs-wide')}`;
+    ${rsPanel('Exams ordered vs actually done', rsDoneInner(), rsDoneSub(), 'rs-wide')}`;
 
   // "Ordered vs Done" is an org-wide (all-branch) management view, so it's hidden for a
   // branch-locked team lead (whose rest-of-page is scoped to their own branch).
@@ -1108,7 +1111,7 @@ async function rsLoadDone(force) {
 function rsDoneSub() {
   const d = radstats.doneData;
   if (!d) return 'daily & monthly — click to load';
-  return 'attributed to order date · self-corrects as late exams complete';
+  return 'counts are exams (procedures) · by order date · self-corrects as late exams complete';
 }
 const _rsPct = (done, ord) => (ord ? Math.round((done / ord) * 100) : 0);
 function _rsDoneTable(rows, keyLabel, keyField, opts) {
