@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelcompo-2026-07-12an';
+const CONNECTOR_BUILD = 'billdate-2026-07-12ao';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -4556,20 +4556,6 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const _wlx = await _panelPromise;
   if (_wlx && Array.isArray(_wlx.items)) {
     _wlxItems = _wlx.items;
-    // Keep only exams whose ORDER date (proposedDate) lands inside the requested KSA window — this
-    // is the "more accurate" order-date basis. The widened bill-window fetch above pulled in exams
-    // ordered in-window but billed a few days later; drop the rest (ordered before/after the window,
-    // or with no usable order date).
-    {
-      const _wf = from || fromISO.slice(0, 10);
-      const _wt = to || toISO.slice(0, 10);
-      _wlxItems = _wlxItems.filter((it) => {
-        const ts = parseHisDate(it.orderDate || it.orderedDate);
-        if (!Number.isFinite(ts)) return false;
-        const day = new Date(ts + 3 * 36e5).toISOString().slice(0, 10);
-        return day >= _wf && day <= _wt;
-      });
-    }
     panelExams = _wlxItems.length;
     const _mix = new Map();
     for (const it of _wlxItems) {
@@ -4597,11 +4583,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       tallyPush(byBranch, it.site, branchLabel(it.site));
       tallyPush(byDoctor, it.doctorName || 'Unknown', (it.doctorName || '').trim() || 'Unknown');
       if (it.emergency) emergency += 1; else routine += 1;
-      const t = parseHisDate(it.orderDate || it.orderedDate);
-      const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA ORDER-day
+      const t = parseHisDate(it.orderedDate);
+      const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA bill-day
       if (d) daily.set(d, (daily.get(d) || 0) + 1);
-      // Peak-hours from the ORDER timestamp (no timezone shift). Date-only → nonMidnight stays 0.
-      const hm = String(it.orderDate || it.orderedDate || '').match(/[T ](\d{2}):(\d{2})/);
+      // Peak-hours from the bill timestamp (no timezone shift). Date-only → nonMidnight stays 0.
+      const hm = String(it.orderedDate || '').match(/[T ](\d{2}):(\d{2})/);
       if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
       if (Number.isFinite(t)) {
         const days = (now - t) / 864e5;
