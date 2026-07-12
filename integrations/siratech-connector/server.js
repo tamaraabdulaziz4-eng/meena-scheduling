@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelbackfill-2026-07-12ag';
+const CONNECTOR_BUILD = 'panelchunk-2026-07-12ah';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2164,6 +2164,21 @@ async function enrichStagesFromDepacs(items, { noCache = false, matchAfterH = 96
 // the instant panel board: the first paint is Ordered vs Reported (from the panel's
 // resultStatus), then a few seconds later imaged exams move to the Completed lane and any
 // PACS-verified report is confirmed — WITHOUT slowing the first paint.
+// Split a KSA day range into ≤`span`-day inclusive chunks (YYYY-MM-DD strings). FetchRISPanel
+// caps the rows it returns per call, so a wide single-call range (e.g. all-branch 30 days)
+// silently TRUNCATES and the board/Overview undercounts exams — the reason "Last 30 days" could
+// read LOWER than "This month". Fetching in weekly chunks keeps every call under that cap. A
+// range of `span` days or fewer (today / 7d) yields ONE chunk, so the common case is unchanged.
+function _panelDayChunks(fromDay, toDay, span = 7) {
+  const toN = (s) => { const m = String(s).match(/(\d{4})-(\d{2})-(\d{2})/); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], 12) : NaN; };
+  const toS = (t) => new Date(t).toISOString().slice(0, 10);
+  let s = toN(fromDay); const end = toN(toDay);
+  if (!Number.isFinite(s) || !Number.isFinite(end) || s > end) return [[fromDay, toDay]];
+  const out = [];
+  while (s <= end) { const e = Math.min(s + (span - 1) * 864e5, end); out.push([toS(s), toS(e)]); s = e + 864e5; }
+  return out;
+}
+
 async function buildWorklistRis({ sites, from, to, ready = false, noCache = false, matchAfterH = 96 }) {
   const key = JSON.stringify({ src: 'ris', sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready: !!ready, matchAfterH });
   // The ready pass (DePACS enrichment) keeps the long TTL — its per-patient PACS lookups are
@@ -2187,19 +2202,35 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
   const risFromDay = (from || fromISO.slice(0, 10));
   const risToDay = (to || toISO.slice(0, 10));
 
+  // Weekly chunks so a wide range can't exceed FetchRISPanel's per-call row cap and truncate.
+  const _chunks = _panelDayChunks(risFromDay, risToDay, 7);
   const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
-      const _tc = Date.now();
-      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
-        mrno: '', fromDate: risFromDay + 'T00:00:00', toDate: risToDay + 'T23:59:59',
-        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
-        serviceCategoryId: 0, emrPatRisPanelId: 0,
-        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
-      } });
-      _callMs.panel.push(Date.now() - _tc);
-      const rows = (rp.json && rp.json.data) || [];
-      if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
-      return { site, ok: true, rows };
+      const rowsAll = [];
+      const _seen = new Set();
+      for (const [cf, ct] of _chunks) {
+        const _tc = Date.now();
+        const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+          mrno: '', fromDate: cf + 'T00:00:00', toDate: ct + 'T23:59:59',
+          invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+          serviceCategoryId: 0, emrPatRisPanelId: 0,
+          userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+        } });
+        _callMs.panel.push(Date.now() - _tc);
+        const rows = (rp.json && rp.json.data) || [];
+        if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
+        for (const r of rows) {
+          // Dedup across chunk edges — key on the panel's per-exam id (unique per exam),
+          // falling back to billNo+service so a row without it still can't double-count.
+          const k = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
+            ? 'i:' + r.invPatBillingId
+            : 'b:' + r.billNo + '|' + (r.invMastServiceId != null ? r.invMastServiceId : '');
+          if (_seen.has(k)) continue;
+          _seen.add(k);
+          rowsAll.push(r);
+        }
+      }
+      return { site, ok: true, rows: rowsAll };
     } catch (e) { return { site, ok: false, rows: [] }; }
   });
   _tmark.afterBulk = Date.now();
