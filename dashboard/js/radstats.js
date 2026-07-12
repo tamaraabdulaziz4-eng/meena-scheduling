@@ -454,11 +454,41 @@ async function rsLoad(silent, force) {
       // Instant paint done. Fill the heavy enrichment in the BACKGROUND — only when it's
       // missing (first open / selection change) or the user forced a live refresh; a
       // silent auto-refresh keeps the existing numbers (they're within the cache window).
-      if (!radstats.lastError) {
-        if (force || !radstats.modData) rsLoadModality({ seq: myReq, force });
-        if (force || !radstats.finData) rsLoadFinancial({ seq: myReq, force });
+      if (!radstats.lastError && (force || !radstats.modData || !radstats.finData)) {
+        rsLoadEnrichment({ seq: myReq, force });
       }
     }
+  }
+}
+
+// Modality mix AND revenue come from the SAME per-bill read, so fetch them in ONE call
+// (modality=1&financial=1) instead of firing two heavy passes that would hit the small
+// box concurrently, double the bill reads, and make each other look "stuck". The
+// standalone rsLoadModality/rsLoadFinancial stay for the retry buttons + the Financial tab.
+async function rsLoadEnrichment(opts) {
+  opts = opts || {};
+  const myReq = (opts.seq != null) ? opts.seq : radstats._reqSeq;
+  radstats.modLoading = true; radstats.finLoading = true;
+  radstats.modError = ''; radstats.finError = '';
+  if (!radstats.modData || !radstats.finData) rsRenderBody();   // panels show their own progress
+  const q = new URLSearchParams();
+  if (radstats.from) q.set('from', radstats.from);
+  if (radstats.to) q.set('to', radstats.to);
+  const _s = rsSitesParam(); if (_s) q.set('sites', _s);
+  q.set('modality', '1'); q.set('financial', '1');
+  if (opts.force) q.set('nocache', '1');
+  try {
+    const d = await API.get('/radiology/stats?' + q.toString());
+    if (myReq !== radstats._reqSeq) return;   // superseded — don't overwrite the newer view
+    radstats.modData = d.modality || { mix: [], sampled: 0, ofTotal: 0 };
+    radstats.finData = d.financial || { revenue: 0, patient: 0, sponsor: 0, sampled: 0, ofTotal: 0 };
+  } catch (e) {
+    if (myReq !== radstats._reqSeq) return;
+    const msg = (e && e.message) || 'Could not load';
+    if (!radstats.modData) radstats.modError = msg;
+    if (!radstats.finData) radstats.finError = msg;
+  } finally {
+    if (myReq === radstats._reqSeq) { radstats.modLoading = false; radstats.finLoading = false; rsPersist(); rsRenderBody(); }
   }
 }
 
@@ -583,12 +613,14 @@ function rsDonut(segs, opts) {
   if (!total) return `<div class="rs-empty">No data</div>`;
   const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70, sw = 20;
   let off = 0;
-  const arcs = segs.map((s) => {
+  const arcs = segs.map((s, i) => {
     const len = (s.count / total) * C;
     const tip = `<b>${escapeHtml(s.label)}</b><br>${rsNum(s.count)} · ${rsPct(s.count, total)}%`;
+    // Staggered animation-delay makes the brightness pulse travel around the ring, so the
+    // colours visibly "chase" instead of sitting static (see .rs-arc in radstats.css).
     const el = `<circle class="rs-arc" cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}" stroke-width="${sw}"
       stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})"
-      data-tip="${escapeHtml(tip)}"></circle>`;
+      style="animation-delay:${(i * 0.45).toFixed(2)}s" data-tip="${escapeHtml(tip)}"></circle>`;
     off += len; return el;
   }).join('');
   const legend = segs.map((s) => `<div class="rs-leg" data-tip="${escapeHtml(`<b>${escapeHtml(s.label)}</b><br>${rsNum(s.count)} · ${rsPct(s.count, total)}%`)}">
@@ -1043,8 +1075,18 @@ function rsModalitySub() {
     : `${rsNum(m.exams || 0)} exams from ${rsNum(m.ofTotal)} requests`;
 }
 
+// A lively indeterminate-progress block, so a genuinely slow pass (the all-branch bill read
+// can take up to a minute on the small box) reads as WORKING, not a frozen dead spinner.
+function rsLoadingBlock(title, sub) {
+  return `<div class="rs-loading">
+    <div class="rs-loading-t"><span class="mini-spin"></span> ${escapeHtml(title)}</div>
+    ${sub ? `<div class="rs-loading-s">${escapeHtml(sub)}</div>` : ''}
+    <div class="rs-loadbar"></div>
+  </div>`;
+}
+
 function rsModalityInner() {
-  if (radstats.modLoading) return `<div class="rs-empty"><span class="mini-spin"></span> Reading exam details…</div>`;
+  if (radstats.modLoading) return rsLoadingBlock('Reading exam details…', 'Pricing each order across all branches — a wide range can take up to a minute.');
   if (radstats.modError) return `<div class="rs-empty">${escapeHtml(radstats.modError)} <button class="ghost" onclick="rsLoadModality()">Retry</button></div>`;
   const m = radstats.modData;
   if (!m) {
@@ -1067,7 +1109,7 @@ function rsFinancialSub() {
   return f.truncated ? `≈ estimate · read ${rsNum(f.sampled)} of ${rsNum(f.ofTotal)} bills` : `all ${rsNum(f.ofTotal || 0)} bills read · exact`;
 }
 function rsFinancialInner() {
-  if (radstats.finLoading) return `<div class="rs-empty"><span class="mini-spin"></span> Reading bills…</div>`;
+  if (radstats.finLoading) return rsLoadingBlock('Reading bills…', 'Totting up revenue and the insurance-vs-cash split from each bill.');
   if (radstats.finError) return `<div class="rs-empty">${escapeHtml(radstats.finError)} <button class="ghost" onclick="rsLoadFinancial()">Retry</button></div>`;
   const f = radstats.finData;
   if (!f) {
