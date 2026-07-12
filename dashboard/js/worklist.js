@@ -197,6 +197,7 @@ async function renderWorklistPage() {
   wlState.selMrns.clear(); wlState.openRows.clear();
   wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = ''; wlState.fSort = 'wait';
   wlState._docSig = null; wlState.mobFilters = false;
+  wlState.site = '';   // reset branch scope to match the freshly-rebuilt "All branches" dropdown
   // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
   // that patient (search finds them even if they're not on today's board).
   const jumpMrn = window._wlPendingFilter; window._wlPendingFilter = null;
@@ -579,6 +580,7 @@ function wlHydrate() {
 // while a steady board stays light. Never blocks paint; caches results so paints are
 // instant. Cache-restored stages are refreshed by the periodic re-check.
 let _wlEnrichBusy = false;
+let _wlEnrichSeq = 0;   // per-invocation token: a hung pass's watchdog/finally must not clobber a newer pass
 async function wlEnrich(silent, force) {
   if (_wlEnrichBusy) return;
   const items = (wlState.data && wlState.data.items) || [];
@@ -593,13 +595,15 @@ async function wlEnrich(silent, force) {
   // only ever fill in progress, never cause flicker.
   if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 30000)) return;
   _wlEnrichBusy = true;
+  const myEnrich = ++_wlEnrichSeq;   // this pass owns the lock/shimmer only while it's the latest
   // Tie this enrich to the load generation that started it: if the operator switches
   // branch/date mid-flight (which bumps _loadGen), a late old-scope enrich response must
   // NOT merge onto the new scope's board.
   const enrichGen = wlState._loadGen;
   // WATCHDOG (bug #3): never let a hung enrichment pass wedge the busy lock forever —
-  // release it after ~120s so a later refresh can retry the pipeline-stage lookups.
-  const enrichWatch = setTimeout(() => { _wlEnrichBusy = false; }, 120000);
+  // release it after ~120s so a later refresh can retry the pipeline-stage lookups. Only
+  // release if THIS pass is still the latest, else it would free a newer pass's lock.
+  const enrichWatch = setTimeout(() => { if (myEnrich === _wlEnrichSeq) _wlEnrichBusy = false; }, 120000);
   // Show the loading shimmer on the not-yet-filled cells while this pass runs.
   if (anyMissing) { wlState.enriching = true; if (document.getElementById('wl-body')) wlRender(); }
   const mkQs = (flags) => {
@@ -669,11 +673,15 @@ async function wlEnrich(silent, force) {
     wlState.lastEnrich = Date.now();
   } finally {
     clearTimeout(enrichWatch);
-    _wlEnrichBusy = false;
-    // Settle: turn the shimmer off and repaint with whatever filled in (rows still
-    // empty after this pass fall back to "—" — that's the connector's per-order cap).
-    wlState.enriching = false;
-    if (document.getElementById('wl-body')) wlRender();
+    // Only the LATEST pass owns the lock/shimmer — a superseded pass settling late must not
+    // free a newer pass's lock or kill its shimmer.
+    if (myEnrich === _wlEnrichSeq) {
+      _wlEnrichBusy = false;
+      // Settle: turn the shimmer off and repaint with whatever filled in (rows still
+      // empty after this pass fall back to "—" — that's the connector's per-order cap).
+      wlState.enriching = false;
+      if (document.getElementById('wl-body')) wlRender();
+    }
   }
 }
 
@@ -1754,6 +1762,7 @@ async function wlOpenPatientCard(mrno) {
   if (ov._closeTimer) { clearTimeout(ov._closeTimer); ov._closeTimer = null; }
   ov._closing = false;
   ov.className = 'wl-pcard-ov';
+  ov.dataset.mrno = mrno;   // identity stamp: a slower lookup for a PREVIOUS patient must not paint here
   ov.onclick = (e) => { if (e.target === ov) wlClosePatientCard(); };
   // If this patient was prefetched (board warm-up or hover), paint instantly — no spinner.
   const warm = (typeof psLookupCache !== 'undefined') ? psLookupCache.get(mrno) : null;
@@ -1789,12 +1798,15 @@ async function wlOpenPatientCard(mrno) {
     const d = isWarm ? warm.data
       : (typeof psPrefetchLookup === 'function' ? await psPrefetchLookup(mrno)
         : await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`));
-    if (!document.getElementById('wl-pcard')) return;                 // closed while loading
+    const _cur = document.getElementById('wl-pcard');
+    if (!_cur || _cur.dataset.mrno !== mrno) return;                  // closed, or a newer patient was opened
     if (typeof psNoteCache !== 'undefined') { try { psNoteCache = new Map(); psReportStore = {}; } catch (e) {} }
     const pat = (d.patient && d.patient.mrno) ? d.patient : { ...(d.patient || {}), mrno };
     psState.lookup = { ...d, patient: pat };
     renderPsDetail();
   } catch (e) {
+    const _cur = document.getElementById('wl-pcard');
+    if (!_cur || _cur.dataset.mrno !== mrno) return;                  // a newer patient owns the card now
     const b = document.querySelector('#wl-pcard #ps-detail');
     if (b) b.innerHTML = `<div class="card"><div class="empty" style="padding:22px 16px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Could not load the patient')}</p></div></div>`;

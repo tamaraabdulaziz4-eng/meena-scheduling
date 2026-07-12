@@ -420,6 +420,7 @@ async function rsLoad(silent, force) {
   const myReq = (radstats._reqSeq = (radstats._reqSeq || 0) + 1);
   radstats.loading = true;
   radstats.lastError = '';
+  radstats.reconnecting = false;
   if (!silent) rsRenderControls();
   const bodyEl = document.getElementById('rs-body');
   if (bodyEl && radstats.data) bodyEl.classList.add('rs-refreshing');   // keep data visible, show it's updating
@@ -443,11 +444,15 @@ async function rsLoad(silent, force) {
     rsPersist();                              // snapshot for an instant stale-first paint on the next hard reload
   } catch (e) {
     if (myReq !== radstats._reqSeq) return;
-    radstats.lastError = (e && e.message) || 'Could not load statistics';
+    // A SILENT auto-refresh blip must NOT blow away a good board — keep the last-good data
+    // (like the worklist does) and just flag a soft "reconnecting" state. Only show the hard
+    // error card when there's nothing already on screen (first load / selection change).
+    if (silent && radstats.data) radstats.reconnecting = true;
+    else radstats.lastError = (e && e.message) || 'Could not load statistics';
   } finally {
     if (myReq === radstats._reqSeq) {   // only the latest request owns the UI state
       radstats.loading = false;
-      if (!radstats.lastError) radstats.lastLoaded = Date.now();   // for the "updated Xs ago" ticker
+      if (!radstats.lastError && !radstats.reconnecting) radstats.lastLoaded = Date.now();   // for the "updated Xs ago" ticker
       rsHideOverlay();                  // base data in → dismiss the full-screen loader, paint KPIs NOW
       rsRenderControls();
       rsRenderBody();
@@ -488,7 +493,12 @@ async function rsLoadEnrichment(opts) {
     if (!radstats.modData) radstats.modError = msg;
     if (!radstats.finData) radstats.finError = msg;
   } finally {
-    if (myReq === radstats._reqSeq) { radstats.modLoading = false; radstats.finLoading = false; rsPersist(); rsRenderBody(); }
+    // Clear the loading flags UNCONDITIONALLY — if a silent auto-refresh superseded this
+    // enrichment, its early-return would otherwise leave modLoading/finLoading stuck true
+    // and the panels frozen on their spinner despite having data. Only the latest request
+    // owns the repaint.
+    radstats.modLoading = false; radstats.finLoading = false;
+    if (myReq === radstats._reqSeq) { rsPersist(); rsRenderBody(); }
   }
 }
 
@@ -514,7 +524,8 @@ async function rsLoadModality(opts) {
     if (myReq !== radstats._reqSeq) return;
     radstats.modError = (e && e.message) || 'Could not load modality mix';
   } finally {
-    if (myReq === radstats._reqSeq) { radstats.modLoading = false; rsPersist(); rsRenderBody(); }
+    radstats.modLoading = false;   // unconditional — a superseded call must not leave the spinner stuck
+    if (myReq === radstats._reqSeq) { rsPersist(); rsRenderBody(); }
   }
 }
 
@@ -539,7 +550,8 @@ async function rsLoadFinancial(opts) {
     if (myReq !== radstats._reqSeq) return;
     radstats.finError = (e && e.message) || 'Could not load revenue';
   } finally {
-    if (myReq === radstats._reqSeq) { radstats.finLoading = false; rsPersist(); rsRenderBody(); }
+    radstats.finLoading = false;   // unconditional — a superseded call must not leave the spinner stuck
+    if (myReq === radstats._reqSeq) { rsPersist(); rsRenderBody(); }
   }
 }
 
@@ -628,9 +640,12 @@ function rsDonut(segs, opts) {
       <span class="rs-leg-l" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span>
       <span class="rs-leg-v">${rsNum(s.count)} · ${rsPct(s.count, total)}%</span></div>`).join('');
   const cVal = opts && opts.centerVal != null ? opts.centerVal : total;
+  // Key the count-up per donut (by its center label) — a shared key made two donuts on the
+  // same pane (e.g. Priority + Modality) each animate from the OTHER donut's last value.
+  const cKey = 'rs-donut-' + String((opts && opts.centerLabel) || 'total').replace(/\s+/g, '-');
   return `<div class="rs-donut-wrap">
     <svg viewBox="0 0 140 140" class="rs-donut">${arcs}
-      <text x="70" y="67" text-anchor="middle" class="rs-donut-n rs-count" data-count="${Number(cVal) || 0}" data-key="rs-donut-center">0</text>
+      <text x="70" y="67" text-anchor="middle" class="rs-donut-n rs-count" data-count="${Number(cVal) || 0}" data-key="${escapeHtml(cKey)}">0</text>
       <text x="70" y="85" text-anchor="middle" class="rs-donut-l">${escapeHtml((opts && opts.centerLabel) || 'total')}</text>
     </svg>
     <div class="rs-legend">${legend}</div>
@@ -941,7 +956,10 @@ function rsRenderBody() {
     if (f.catalogLoaded === false) { coveredVal = '—'; coveredSub = 'catalog unavailable'; }
     else {
       const priced = f.requests || 0;
-      const cov = ((f.byPayer || []).find((p) => p.type === 'Insurance') || {}).count || 0;
+      // "Insurance-covered" = insurance paid AT LEAST part, so include the copay bucket
+      // (insurance + patient copay), not just the pure-insurance one — else copay requests
+      // are wrongly dropped from the covered count and %.
+      const cov = (f.byPayer || []).reduce((a, p) => a + ((p.type === 'Insurance' || p.type === 'Insurance + copay') ? (p.count || 0) : 0), 0);
       const share = priced ? cov / priced : 0;
       if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
       else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
@@ -1098,8 +1116,13 @@ function rsModalityInner() {
   }
   if (m.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — the modality mix can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
   if (!m.mix || !m.mix.length) return `<div class="rs-empty">No exam details returned</div>`;
-  const segs = m.mix.map((x) => ({ label: x.modality, count: x.count, color: MOD_COLOR[x.modality] || '#94a3b8' }));
-  return rsDonut(segs, { centerVal: m.exams, centerLabel: 'exams' });
+  // When the bill population exceeded the cap (truncated), the Exams KPI shows an
+  // extrapolated total — so scale the donut center + segments by the SAME factor, or the
+  // two "exams" figures on screen disagree. Exact ranges keep scale = 1.
+  const scale = (m.truncated && m.sampled) ? (m.ofTotal / m.sampled) : 1;
+  const segs = m.mix.map((x) => ({ label: x.modality, count: Math.round((x.count || 0) * scale), color: MOD_COLOR[x.modality] || '#94a3b8' }));
+  const centerVal = Math.round((m.exams || 0) * scale);
+  return rsDonut(segs, { centerVal, centerLabel: 'exams' });
 }
 
 const rsSAR = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' SAR';

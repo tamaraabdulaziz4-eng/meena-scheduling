@@ -54,10 +54,17 @@ const API = {
     // worklist included: its server-side ceiling is 130s (survives the ~90-100s
     // HIS token refresh) — a 45s client abort would kill a load the server was
     // about to finish and show a false retry card.
-    if (/\/radiology\/(stats|lookup|worklist|throughput|results\/(match|file))/.test(path)) return 240000;  // 4 min
+    // EVERY /radiology/ read (not just stats/lookup/worklist) proxies to the HIS/DePACS
+    // connector and can take up to ~240s on a cold fan-out — the client ceiling must be >=
+    // the server's, or the patient/study/report reads (which the old narrow allowlist
+    // missed) abort at 45s and show a false "took too long" while the server is still
+    // succeeding, and every retry re-fires the same expensive load.
+    if (/\/radiology\//.test(path)) return 240000;  // 4 min
     return 45000;                                                        // 45 s
   },
-  _cond: new Map(),   // path -> { etag, data } : in-memory conditional-GET store (no disk cache)
+  _cond: new Map(),   // path -> { etag, data } : in-memory conditional-GET store (bounded, no disk cache)
+  // Deep-copy a cached body so callers can mutate their copy without poisoning the store.
+  _clone(o) { try { return typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)); } catch (_) { return o; } },
   _inflight: new Map(),   // path -> pending promise : coalesce identical concurrent GETs
   // Public entry: coalesce identical in-flight GETs so a page that (directly or via a shared
   // helper) asks for the same endpoint twice at once issues ONE network request and both
@@ -117,15 +124,22 @@ const API = {
     // exists; if it somehow doesn't, fall through and treat it as a normal (error) response.
     if (res.status === 304 && _isGet) {
       const c = API._cond.get(path);
-      if (c) { mark(true, 0); return c.data; }
+      // Hand back an INDEPENDENT copy — consumers (worklist merge, stage ratchet, …) mutate
+      // responses in place, which would otherwise poison the stored body and make later 304
+      // polls return stale/mutated data.
+      if (c) { mark(true, 0); return API._clone(c.data); }
     }
     const clen = res.headers.get('content-length');
     mark(res.ok, clen != null ? Number(clen) : null);
     const data = await res.json().catch(() => ({}));
     if (_isGet && res.ok) {
       const et = res.headers.get('etag');
-      if (et) API._cond.set(path, { etag: et, data });
-      else if (API._cond.has(path)) API._cond.delete(path);   // endpoint stopped sending ETags
+      if (et) {
+        // Store a PRISTINE clone (the caller gets the original to mutate freely) and bound the
+        // store so a long session flipping filters/dates can't grow it without limit.
+        API._cond.set(path, { etag: et, data: API._clone(data) });
+        if (API._cond.size > 96) API._cond.delete(API._cond.keys().next().value);
+      } else if (API._cond.has(path)) API._cond.delete(path);   // endpoint stopped sending ETags
     }
     if (!res.ok) {
       // A 401 on any non-auth call after we were signed in means the session

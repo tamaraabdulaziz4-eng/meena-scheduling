@@ -463,7 +463,11 @@ function matchStudy(order, studies, { windowBeforeH = 24, windowAfterH = 96 } = 
   const orderMod = normMod(order.categoryName || order.modality);
   const orderAnat = bodyTokens(order.serviceName);
   const orderSide = sideOf(order.serviceName);
-  const orderTime = order.orderDate ? new Date(order.orderDate).getTime() : null;
+  // A present-but-UNPARSEABLE orderDate must normalise to null, not NaN — otherwise
+  // dateKnown (below) reads true, every study falls outside the time window, and a real
+  // match is wrongly routed as "no match" instead of "order date unknown → manual review".
+  const _ot = order.orderDate ? new Date(order.orderDate).getTime() : null;
+  const orderTime = Number.isFinite(_ot) ? _ot : null;
   // Only a CLEAN accession may drive the deterministic primary key — a body-part-text
   // "accession" must fall through to the strict modality+body-part+time fuzzy gate.
   const orderAcc = cleanAccession(order.accession);
