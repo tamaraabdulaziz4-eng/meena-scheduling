@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'reconwindow-2026-07-12ac';
+const CONNECTOR_BUILD = 'recondiag-2026-07-12ad';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3178,6 +3178,66 @@ app.get('/diag/order-trace', requireAuth, async (req, res) => {
       placedCount: placed.length, pendingCount: pending.length, resultedCount: resulted.length,
       trace, missingFromWorklist: missing,
     });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Reconciliation root-cause: WHY does a branch read low "performed"? ─────────
+// For the not-performed (stage 'ordered') orders in a window/branch, check each patient
+// against DePACS to tell apart: (a) noStudyAtAll — no study in this PACS at all → genuine
+// no-show OR the branch's imaging is on a DIFFERENT PACS (coverage gap; a DePACS study has no
+// branch field and this connector talks to one host, so a branch that bills but yields ~0
+// matches across all MRNs = coverage gap); (b) sameModMatch — a same-modality study DOES exist
+// near the order but didn't link → a matching gap (accuracy bug); (c) otherStudiesOnly. Bounded
+// sample. Read-only.
+app.get('/diag/reconcile-branch', requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || '').trim() || null;
+    const to = String(req.query.to || '').trim() || null;
+    const siteQ = String(req.query.site || '').trim();
+    const site = siteQ ? Number(siteQ) : null;
+    const sample = Math.max(1, Math.min(60, Number(req.query.sample) || 30));
+    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const sites = (site && Number.isFinite(site)) ? [site] : [];
+    const wl = await buildWorklist({ sites, from, to, ready: true, matchAfterH });
+    const items = (wl && wl.items) || [];
+    const notPerf = items.filter((it) => String(it.stage || '').toLowerCase() === 'ordered');
+    // One representative not-performed order per unique MRN, bounded to `sample`.
+    const seen = new Set(); const picks = [];
+    for (const it of notPerf) {
+      const m = String(it.mrno || '').trim();
+      if (!m || seen.has(m)) continue;
+      seen.add(m); picks.push(it);
+      if (picks.length >= sample) break;
+    }
+    const AFTER_MS = matchAfterH * 36e5;
+    const rows = await pool(picks, DEPACS_STAGE_CONCURRENCY, async (it) => {
+      const m = String(it.mrno || '').trim();
+      const mod = results.normMod(it.modality || it.exam || '');
+      let studies = null;
+      try { studies = (await results.depacsStudies(m, { light: true })) || []; } catch (_e) { studies = null; }
+      if (studies === null) return { mrno: m, name: it.patientName, exam: it.exam || it.modality, branch: it.branch, orderedDate: it.orderedDate, class: 'lookupFailed' };
+      const mine = studies.filter((s) => results.sameMrn(s.patId, m));
+      const ot = parseHisDate(it.orderedDate);
+      const sameModNear = mine.filter((s) => {
+        if (results.normMod(s.modality || '') !== mod) return false;
+        const st = parseHisDate(s.studyDate);
+        return (!Number.isFinite(ot) || !Number.isFinite(st)) ? true : (st >= ot - 24 * 36e5 && st <= ot + AFTER_MS);
+      });
+      const cls = !mine.length ? 'noStudyAtAll' : (sameModNear.length ? 'sameModMatch' : 'otherStudiesOnly');
+      return { mrno: m, name: it.patientName, exam: it.exam || it.modality, modality: mod, branch: it.branch, site: it.site,
+               orderedDate: it.orderedDate, studies: mine.length, sameModNear: sameModNear.length, class: cls };
+    });
+    const agg = { notPerformed: notPerf.length, sampled: rows.length, noStudyAtAll: 0, sameModMatch: 0, otherStudiesOnly: 0, lookupFailed: 0 };
+    for (const r of rows) { agg[r.class] = (agg[r.class] || 0) + 1; }
+    const decided = (agg.noStudyAtAll + agg.sameModMatch + agg.otherStudiesOnly) || 1;
+    const performedRate = items.length ? Math.round(((items.length - notPerf.length) / items.length) * 100) : null;
+    let verdict;
+    if (!agg.sampled) verdict = 'no not-performed orders in this window/branch';
+    else if (agg.sameModMatch / decided >= 0.25) verdict = `MATCHING GAP — ${agg.sameModMatch}/${agg.sampled} sampled not-performed patients DO have a same-modality PACS study that failed to link (accuracy bug to fix)`;
+    else if (agg.noStudyAtAll / decided >= 0.7) verdict = `NO PACS STUDIES — ${agg.noStudyAtAll}/${agg.sampled} sampled not-performed patients have no study in this PACS at all → genuine no-shows OR this branch's imaging is on a different PACS (coverage gap)`;
+    else verdict = `MIXED — ${agg.noStudyAtAll} no-study · ${agg.sameModMatch} unlinked same-mod · ${agg.otherStudiesOnly} other-studies-only`;
+    return res.json({ ok: true, build: CONNECTOR_BUILD, site: site || 'all', from, to, sample, matchAfterH,
+                      orderedTotal: items.length, notPerformed: notPerf.length, performedRate, aggregate: agg, verdict, rows });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
