@@ -7167,7 +7167,12 @@ async def radiology_conn_passthrough(path: str, request: Request, user=Depends(r
             body = await request.json()
         except Exception:
             body = None
-    return _bridge_request("/his/" + path, method=request.method, body=body, timeout=150)
+    # _bridge_request does a BLOCKING urllib call (up to 150s). This route is `async def`
+    # (needed for `await request.json()`), so calling it directly would freeze the whole
+    # event loop — run it on the threadpool instead, like the sync routes get for free.
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(
+        lambda: _bridge_request("/his/" + path, method=request.method, body=body, timeout=150))
 
 @app.get("/api/radiology/study")
 def radiology_study_native(request: Request, user=Depends(require_radiology)):
@@ -8299,7 +8304,7 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # Serve an identical board from the short cache (unless the client asked for fresh).
     nocache = qs.get("nocache") == "1"
     ck = (qs.get("sites", ""), qs.get("from", ""), qs.get("to", ""),
-          qs.get("ready", ""), qs.get("modality", ""), qs.get("pay", ""))
+          qs.get("ready", ""), qs.get("modality", ""), qs.get("pay", ""), _src)
     ttl = _WL_CACHE_TTL_HEAVY if heavy else _WL_CACHE_TTL_FAST
     if not nocache:
         hit = _wl_cache.get(ck)

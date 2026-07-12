@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'statswarmtoday-2026-07-12aa';
+const CONNECTOR_BUILD = 'bugfixes-2026-07-12ab';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -617,7 +617,9 @@ const INS_RE = /nphies|eligib|insur|coverage|\bpolicy\b|policyno|member(ship)?|b
 // Claim REJECTION / denial reports — the HIS has a "rejection report" screen; its API path is
 // baked into the SPA JS, so the read-only crawler can surface it (no billable call is made).
 // Kept separate from INS_RE so the Discover output highlights the denial endpoints on their own.
-const REJECT_RE = /reject|denial|denied|disallow|resubmit|rework|claimreturn|claim-?return|claim-?response|claim-?status|claim-?result|shortpay|short-?pay|write-?off|writeoff|settlement|remittance|\bera\b|unpaid|outstanding/i;
+// NB: `(?<!due)settlement` excludes the core billing path `/DueSettlement/GetDueBillDetailsByID`
+// (the primary REVENUE endpoint) — a bare `settlement` token wrongly flagged it as a denial report.
+const REJECT_RE = /reject|denial|denied|disallow|resubmit|rework|claimreturn|claim-?return|claim-?response|claim-?status|claim-?result|shortpay|short-?pay|write-?off|writeoff|claim-?settlement|(?<!due)settlement|remittance|\bera\b|unpaid|outstanding/i;
 let _discoverInFlight = null;
 async function discoverEndpoints(opts = {}) {
   const collectRaw = !!opts.collectRaw;
@@ -3946,8 +3948,12 @@ function statsCacheGetSuperset(req) {
   return null;
 }
 function statsCacheSet(key, data) {
+  // Move an overwritten key to the tail (Map keeps insertion order) so a RE-WARM refreshes its
+  // recency — otherwise the eviction below is pure FIFO and could drop the early-inserted warm
+  // all-branch keys (today/30d/7d) first, defeating the warming they were computed for.
+  if (statsCache.has(key)) statsCache.delete(key);
   statsCache.set(key, { data, ts: Date.now() });
-  if (statsCache.size > 60) statsCache.delete(statsCache.keys().next().value);  // simple bound
+  if (statsCache.size > 60) statsCache.delete(statsCache.keys().next().value);  // evict oldest-touched
 }
 // Modality isn't on the worklist row (departmentName is the *ordering* clinic,
 // not the imaging modality), so an exact mix needs a per-order RadiologyDetails
@@ -4198,15 +4204,15 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // Dedup by bill (GenPatBillingId) BEFORE the fan-out: several worklist rows can
     // share one visit bill, and each bill read returns ALL its radiology line items.
     // Reading the same bill once per row would count its exams/revenue/payer split
-    // multiple times. Rows without a bill id are kept as-is (their fetch returns
-    // nothing, so they can't inflate anything).
+    // multiple times. Rows without a bill id are DROPPED — readBillItems(undefined) can only
+    // fail, wasting a HIS call and inflating billsFailed, so they must not consume a sample slot.
     const _seenBill = new Set();
     const deduped = flat
       .slice()
       .sort((a, b) => Date.parse(b.r.billDate || b.r.visitDate || 0) - Date.parse(a.r.billDate || a.r.visitDate || 0))
       .filter(({ r }) => {
         const id = String(r.genPatBillingId == null ? '' : r.genPatBillingId);
-        if (!id) return true;
+        if (!id) return false;
         if (_seenBill.has(id)) return false;
         _seenBill.add(id);
         return true;
@@ -4430,6 +4436,18 @@ function _presetRange(days) {                    // mirrors dashboard rsPresetRa
   return { from, to };
 }
 function _defaultRange() { return _presetRange(30); }
+
+// One serializing chain for ALL heavy HIS warm builds. The reWarm (240s) and reWarmToday
+// (180s) loops run on independent timers; without this, warmDefaultStats(30d/7d) and
+// warmTodayStats(today) regularly overlap and fire multiple concurrent full bill fan-outs on
+// the 2 GB box. runExclusive() queues each build after the previous one settles (win or lose).
+let _warmChain = Promise.resolve();
+function runExclusive(fn) {
+  const next = _warmChain.then(fn, fn);
+  _warmChain = next.catch(() => {});
+  return next;
+}
+
 // TODAY (all-branches, modality+finance) is the DEFAULT landing view (radstats.preset ===
 // 'today'). It was the gap that made stats feel slow: we warmed 30d/7d but NEVER today, so
 // the first open each cache-window paid a cold ~10s RadiologySearch fan-out. It's cheap
@@ -4438,41 +4456,53 @@ function _defaultRange() { return _presetRange(30); }
 let _warmTodayInFlight = null;
 async function warmTodayStats() {
   if (_warmTodayInFlight) return _warmTodayInFlight;   // coalesce — never double the branch fan-out
-  const run = (async () => {
+  const run = runExclusive(async () => {
     try {
       const { from, to } = _presetRange(1);
       const t0 = Date.now();
       const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
       console.log(`[warm] today stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
     } catch (e) { console.error('[warm] today stats failed:', e && e.message); }
-  })();
+  });
   _warmTodayInFlight = run.finally(() => { _warmTodayInFlight = null; });
   return _warmTodayInFlight;
 }
+let _warmDefaultInFlight = null;
 async function warmDefaultStats() {
+  if (_warmDefaultInFlight) return _warmDefaultInFlight;   // coalesce duplicate scheduling
   // Warm the heavier presets managers also pick (30d and 7d), all-branches, with modality +
   // finance. The superset cache then serves the dashboard's split modality-only /
   // financial-only / base calls straight from these — so switching to a warmed preset is
   // instant instead of a cold ~2,400-bill read. (Today is warmed separately, see above.)
-  for (const days of [30, 7]) {
-    try {
-      const { from, to } = _presetRange(days);
-      const t0 = Date.now();
-      const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
-      console.log(`[warm] ${days}d stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-    } catch (e) { console.error(`[warm] ${days}d stats failed:`, e && e.message); }
-  }
+  const run = runExclusive(async () => {
+    for (const days of [30, 7]) {
+      try {
+        const { from, to } = _presetRange(days);
+        const t0 = Date.now();
+        const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
+        console.log(`[warm] ${days}d stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+      } catch (e) { console.error(`[warm] ${days}d stats failed:`, e && e.message); }
+    }
+  });
+  _warmDefaultInFlight = run.finally(() => { _warmDefaultInFlight = null; });
+  return _warmDefaultInFlight;
 }
 
 // Pre-warm the default all-branches worklist (the fast board — no ready/pay enrichment)
 // so the FIRST operator to open the RIS doesn't pay the cold RadiologySearch‖FetchRISPanel
 // fan-out across 14 sites. Populates the connector worklist cache the same open() reads.
+let _warmWlInFlight = null;
 async function warmDefaultWorklist() {
-  try {
-    const t0 = Date.now();
-    const wl = await buildWorklist({ sites: [], from: null, to: null, ready: false });
-    console.log(`[warm] worklist: ${(wl.items || []).length} rows in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  } catch (e) { console.error('[warm] worklist failed:', e && e.message); }
+  if (_warmWlInFlight) return _warmWlInFlight;   // coalesce duplicate scheduling
+  const run = runExclusive(async () => {
+    try {
+      const t0 = Date.now();
+      const wl = await buildWorklist({ sites: [], from: null, to: null, ready: false });
+      console.log(`[warm] worklist: ${(wl.items || []).length} rows in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+    } catch (e) { console.error('[warm] worklist failed:', e && e.message); }
+  });
+  _warmWlInFlight = run.finally(() => { _warmWlInFlight = null; });
+  return _warmWlInFlight;
 }
 
 app.listen(PORT, HOST, () => {

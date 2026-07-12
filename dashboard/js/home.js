@@ -269,9 +269,16 @@ async function _hmRadFetch(site, scopeName) {
   // headline tiles need aggregates only, so the default poll stays light and paints faster.
   const wantList = !!_hmRadDrill;
   const q = `from=${today}&to=${today}${site ? `&sites=${site}` : ''}${wantList ? '&list=1' : ''}`;
+  // If a drill is open and its rows aren't loaded yet, a failed fetch must resolve the
+  // "Loading the list…" spinner hmRadDrillToggle injected — otherwise it spins forever.
+  const _drillFail = () => {
+    if (!_hmRadDrill || (_hmRadData && Array.isArray(_hmRadData.requests))) return;
+    const p = document.getElementById('hm-rad-drill');
+    if (p) p.innerHTML = `<div class="hm-rad-drillbox" style="padding:12px;color:var(--muted);font-size:12.5px">Couldn't load the list — tap the tile again to retry.</div>`;
+  };
   let d;
-  try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { return; }   // keep last-good on a blip
-  if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; return; }
+  try { d = await API.get(`/radiology/stats?${q}`); } catch (e) { _drillFail(); return; }   // keep last-good on a blip
+  if (!d || !d.ok) { if (!box.dataset.loaded) box.innerHTML = ''; else _drillFail(); return; }
   // Entrance animation fires ONCE per visit — the 90s auto-refresh recreates the
   // board/KPI nodes, which would replay the rise stagger as a visible flicker.
   // Mirror the worklist's .cc-still pin; dataset.loaded lives on the DOM node, so
@@ -302,7 +309,7 @@ async function _hmRadFetch(site, scopeName) {
   // and rebuilding the tiles + drill list for zero new info (and collapsing any open drill).
   // Skip the DOM rebuild when the content signature is unchanged — same pattern as the
   // worklist/orders/radstats pollers.
-  const _drillCount = (_hmRadDrill && d.list) ? d.list.length : 0;
+  const _drillCount = (_hmRadDrill && Array.isArray(d.requests)) ? d.requests.length : 0;
   const _sig = `${total}|${emg}|${rtn}|${top ? top.site + ':' + top.count : ''}|${scope}|${_hmRadDrill || ''}|${_drillCount}`;
   if (box.dataset.sig === _sig && box.firstChild) return;   // unchanged → keep the DOM (and the open drill)
   box.dataset.sig = _sig;
@@ -368,7 +375,7 @@ function hmRadDrillRender() {
   });
   const trunc = d.requestsTruncated ? ` · showing first ${all.length} of ${d.requestsTruncated}` : '';
   const list = rows.length ? rows.map(r => `
-    <button type="button" class="lrow" style="display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;text-align:start;font:inherit;cursor:pointer;background:none;border:none;border-bottom:1px solid var(--border);padding:9px 12px" onclick="openPatientLookup('${escapeHtml(r.mrno || '')}')">
+    <button type="button" class="lrow" style="display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;text-align:start;font:inherit;cursor:pointer;background:none;border:none;border-bottom:1px solid var(--border);padding:9px 12px" onclick="openPatientLookup('${jsAttr(r.mrno || '')}')">
       <div style="min-width:0">
         <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name || '(no name)')}</div>
         <div style="font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.exam || '—')}${r.branch ? ' · ' + escapeHtml(r.branch) : ''}${r.doctor ? ' · ' + escapeHtml(r.doctor) : ''}</div>
@@ -488,7 +495,7 @@ function renderHomeStaffResults() {
         </div>
       </div>
       <div class="hm-ring" style="--p:${pct}" title="${bal} of 22 annual leave days"><i>${bal}</i></div>
-      <button class="hm-rota-btn" onclick="openStaffSchedule(${s.branch_id}, '${payload}')">View rota →</button>
+      <button class="hm-rota-btn" onclick="openStaffSchedule(${s.branch_id}, '${jsAttr(payload)}')">View rota →</button>
     </div>`;
   }).join('');
 }
@@ -511,7 +518,7 @@ function renderHomeRecent() {
   const list = _hmRecent();
   if (!list.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<span class="hm-recent-lbl">Recent</span>` + list.map(s => `
-    <button class="hm-rchip" onclick="openStaffSchedule(${s.branch_id}, '${encodeURIComponent(JSON.stringify(s))}')">
+    <button class="hm-rchip" onclick="openStaffSchedule(${s.branch_id}, '${jsAttr(encodeURIComponent(JSON.stringify(s)))}')">
       <span class="hm-rmini">${escapeHtml(_hmInitials(s.name))}</span>${escapeHtml(s.name)}
     </button>`).join('');
 }

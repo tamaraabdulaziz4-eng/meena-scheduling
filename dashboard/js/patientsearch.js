@@ -25,7 +25,7 @@ function psPrefetchLookup(mrno) {
   if (hit && Date.now() - hit.ts < PS_LOOKUP_TTL) return Promise.resolve(hit.data);
   if (psLookupInflight.has(mrno)) return psLookupInflight.get(mrno);
   const pr = API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`)
-    .then((d) => { psLookupCache.set(mrno, { ts: Date.now(), data: d }); psLookupInflight.delete(mrno); return d; })
+    .then((d) => { psLookupCache.set(mrno, { ts: Date.now(), data: d }); if (psLookupCache.size > 300) psLookupCache.delete(psLookupCache.keys().next().value); psLookupInflight.delete(mrno); return d; })
     .catch((e) => { psLookupInflight.delete(mrno); throw e; });
   psLookupInflight.set(mrno, pr);
   return pr;
