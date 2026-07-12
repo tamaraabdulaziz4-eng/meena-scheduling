@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'rejectdiscover-2026-07-12z';
+const CONNECTOR_BUILD = 'statswarmtoday-2026-07-12aa';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -4430,11 +4430,30 @@ function _presetRange(days) {                    // mirrors dashboard rsPresetRa
   return { from, to };
 }
 function _defaultRange() { return _presetRange(30); }
+// TODAY (all-branches, modality+finance) is the DEFAULT landing view (radstats.preset ===
+// 'today'). It was the gap that made stats feel slow: we warmed 30d/7d but NEVER today, so
+// the first open each cache-window paid a cold ~10s RadiologySearch fan-out. It's cheap
+// (only today's orders/bills), so it gets its own tighter warm loop, kept single-flight so
+// the boot warm + the loop can never double the fan-out.
+let _warmTodayInFlight = null;
+async function warmTodayStats() {
+  if (_warmTodayInFlight) return _warmTodayInFlight;   // coalesce — never double the branch fan-out
+  const run = (async () => {
+    try {
+      const { from, to } = _presetRange(1);
+      const t0 = Date.now();
+      const d = await radiologyStats({ from, to, sites: [], withModality: true, withFinance: true });
+      console.log(`[warm] today stats: ${d.total} requests in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+    } catch (e) { console.error('[warm] today stats failed:', e && e.message); }
+  })();
+  _warmTodayInFlight = run.finally(() => { _warmTodayInFlight = null; });
+  return _warmTodayInFlight;
+}
 async function warmDefaultStats() {
-  // Warm BOTH presets the managers actually pick (30d and 7d), all-branches, with
-  // modality + finance. The superset cache then serves the dashboard's split
-  // modality-only / financial-only / base calls straight from these — so opening stats
-  // (or switching to a warmed preset) is instant instead of a cold ~2,400-bill read.
+  // Warm the heavier presets managers also pick (30d and 7d), all-branches, with modality +
+  // finance. The superset cache then serves the dashboard's split modality-only /
+  // financial-only / base calls straight from these — so switching to a warmed preset is
+  // instant instead of a cold ~2,400-bill read. (Today is warmed separately, see above.)
   for (const days of [30, 7]) {
     try {
       const { from, to } = _presetRange(days);
@@ -4463,10 +4482,16 @@ app.listen(PORT, HOST, () => {
     getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
     getRadCatalog().then((m) => console.log(`[warm] radiology catalog: ${m.size}`))
       .then(warmDefaultWorklist)      // board first — it's what opens on login
+      .then(warmTodayStats)           // then the stats LANDING view (today) — must be hot
       .then(warmDefaultStats).catch(() => {});
   }, 4000);
   // Self-scheduling (NOT setInterval): re-warm 4 min AFTER each run finishes, so a
   // slow run (>4 min of bill reads) can never overlap itself and double the load.
   const reWarm = () => setTimeout(async () => { await warmDefaultWorklist(); await warmDefaultStats(); reWarm(); }, 240000);
   reWarm();
+  // Keep TODAY (the stats landing view) hot on a TIGHTER 3-min cadence than the heavy
+  // 30d/7d cycle, so it never expires from the 5-min cache between those slower runs —
+  // that gap was why opening stats felt "مو لحظيه" (not instant).
+  const reWarmToday = () => setTimeout(async () => { await warmTodayStats(); reWarmToday(); }, 180000);
+  reWarmToday();
 });
