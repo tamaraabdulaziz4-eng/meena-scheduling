@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'recondiag-2026-07-12ad';
+const CONNECTOR_BUILD = 'panelexams-2026-07-12ae';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -4434,11 +4434,22 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     }
   }
 
+  // EXACT exam/procedure count from the SAME source as the worklist + reconciliation
+  // (FetchRISPanel — one row per exam). The Overview "Exams" tile uses this so it matches
+  // "Ordered vs Done" exactly; the bill-read modality.exams stays a sampled estimate used only
+  // for the modality MIX. Best-effort + cached via buildWorklistRis's own cache.
+  let panelExams = null;
+  try {
+    const _wlx = await buildWorklistRis({ sites: wantSites, from, to, ready: false, noCache });
+    panelExams = ((_wlx && _wlx.items) || []).length;
+  } catch (_e) { panelExams = null; }
+
   const result = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, returned, failed },
     branches: siteList,
     total,
+    panelExams,
     patients: patientSet.size,
     requests, requestsTruncated, requestKeys,
     byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), name: e.name, count: e.count })),
