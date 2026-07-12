@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelchunk-2026-07-12ah';
+const CONNECTOR_BUILD = 'panelprimary-2026-07-12ai';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2203,36 +2203,46 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
   const risToDay = (to || toISO.slice(0, 10));
 
   // Weekly chunks so a wide range can't exceed FetchRISPanel's per-call row cap and truncate.
+  // Fetch (branch × week-chunk) as ONE bounded pool so the whole grid parallelises — a 30-day
+  // range no longer pays each branch's 5 chunks back-to-back (that made the board crawl). The
+  // concurrency cap still protects the 2 GB box.
   const _chunks = _panelDayChunks(risFromDay, risToDay, 7);
-  const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+  const _tasks = [];
+  for (const site of wantSites) for (const [cf, ct] of _chunks) _tasks.push({ site, cf, ct });
+  const _chunkRes = await pool(_tasks, STATS_SITE_CONCURRENCY, async ({ site, cf, ct }) => {
     try {
-      const rowsAll = [];
-      const _seen = new Set();
-      for (const [cf, ct] of _chunks) {
-        const _tc = Date.now();
-        const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
-          mrno: '', fromDate: cf + 'T00:00:00', toDate: ct + 'T23:59:59',
-          invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
-          serviceCategoryId: 0, emrPatRisPanelId: 0,
-          userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
-        } });
-        _callMs.panel.push(Date.now() - _tc);
-        const rows = (rp.json && rp.json.data) || [];
-        if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
-        for (const r of rows) {
-          // Dedup across chunk edges — key on the panel's per-exam id (unique per exam),
-          // falling back to billNo+service so a row without it still can't double-count.
-          const k = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
-            ? 'i:' + r.invPatBillingId
-            : 'b:' + r.billNo + '|' + (r.invMastServiceId != null ? r.invMastServiceId : '');
-          if (_seen.has(k)) continue;
-          _seen.add(k);
-          rowsAll.push(r);
-        }
-      }
-      return { site, ok: true, rows: rowsAll };
+      const _tc = Date.now();
+      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+        mrno: '', fromDate: cf + 'T00:00:00', toDate: ct + 'T23:59:59',
+        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+        serviceCategoryId: 0, emrPatRisPanelId: 0,
+        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+      } });
+      _callMs.panel.push(Date.now() - _tc);
+      const rows = (rp.json && rp.json.data) || [];
+      if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
+      return { site, ok: true, rows };
     } catch (e) { return { site, ok: false, rows: [] }; }
   });
+  // Regroup chunks → per-branch, deduping across chunk edges on the per-exam id (unique per exam),
+  // falling back to billNo+service. A branch counts as fetched if ANY of its chunks returned.
+  const _bySite = new Map();
+  for (const site of wantSites) _bySite.set(site, { site, ok: false, rows: [], _seen: new Set() });
+  for (const cr of _chunkRes) {
+    if (!cr) continue;
+    const g = _bySite.get(cr.site); if (!g) continue;
+    if (!cr.ok) continue;
+    g.ok = true;
+    for (const r of cr.rows) {
+      const k = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
+        ? 'i:' + r.invPatBillingId
+        : 'b:' + r.billNo + '|' + (r.invMastServiceId != null ? r.invMastServiceId : '');
+      if (g._seen.has(k)) continue;
+      g._seen.add(k);
+      g.rows.push(r);
+    }
+  }
+  const perSite = wantSites.map((site) => { const g = _bySite.get(site); return { site, ok: g.ok, rows: g.rows }; });
   _tmark.afterBulk = Date.now();
 
   const items = [], failed = [], _hist = {};
@@ -4238,7 +4248,15 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const wantSites = (sites && sites.length) ? sites : (siteList.length ? siteList.map((s) => s.siteId) : STATS_SITES);
   const branchLabel = (site) => nameOf.get(site) || `Branch ${site}`;
 
-  const perSite = await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
+  // The FAST panel (FetchRISPanel, weekly-chunked) is the SOLE source for the headline KPIs —
+  // patients / requests / exams / priority / daily / aging / by-branch / by-doctor / peak-hours.
+  // Kick it off first so it overlaps everything. RadiologySearch is slow and flaky on wide ranges
+  // and now supplies ONLY department + gender demographics and the revenue bill list, so it runs
+  // solely when the caller asks for finance or the drill-down list — never on the base Overview
+  // call, which must paint fast.
+  const _panelPromise = buildWorklistRis({ sites: wantSites, from, to, ready: false, noCache }).catch(() => null);
+  const needRS = withFinance || withList;
+  const perSite = needRS ? await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
       const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
         body: results.radiologySearchBody({ mrno: '', hospitalId: site, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }),
@@ -4246,12 +4264,10 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       if (!sr || (sr.status && sr.status >= 400) || sr.json == null) return { site, ok: false, rows: [] };
       return { site, ok: true, rows: (sr.json.data || []) };
     } catch (e) {
-      // A thrown fetch (network/TLS/DNS blip) must be reported as a FAILED branch,
-      // not swallowed into pool's null → skipped silently, which would undercount
-      // the total and present it as complete.
+      // Demographics-only failure — the headline is panel-sourced, so this never undercounts KPIs.
       return { site, ok: false, rows: [] };
     }
-  });
+  }) : [];
 
   const returned = [], failed = [], flat = [];
   const byBranch = new Map(), byDept = new Map(), byDoctor = new Map();
@@ -4268,31 +4284,19 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // with no radiology that period still appears, instead of silently missing).
   for (const site of wantSites) byBranch.set(String(site), { key: String(site), name: branchLabel(site), count: 0 });
 
+  // RadiologySearch pass (only when needRS): supplies department + gender demographics and the
+  // per-order rows the revenue bill-reader / drill-down list consume. The headline KPIs are NO
+  // LONGER taken from here — the panel owns them — so a slow or partial RadiologySearch can never
+  // undercount requests / patients / exams again, and a failed branch here is NOT a false
+  // "branches unavailable" on the headline (that reflects panel fetch failures only).
   for (const s of perSite) {
-    if (!s) continue;
-    if (!s.ok) { failed.push(s.site); continue; }
+    if (!s || !s.ok) continue;
     returned.push({ site: s.site, count: s.rows.length });
     for (const r of s.rows) {
-      total += 1;
-      if (r.mrno) patientSet.add(String(r.mrno));
       flat.push({ r, site: s.site });
-      tallyPush(byBranch, s.site, branchLabel(s.site));
       tallyPush(byDept, r.departmentName, r.departmentName);
-      tallyPush(byDoctor, r.providerId || r.doctorName, (r.doctorName || '').trim() || (r.providerId || 'Unknown'));
-      if (Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0) emergency += 1; else routine += 1;
       const g = r.gender ?? r.sex ?? r.patientGender ?? r.genderName;
       if (g != null && String(g).trim() !== '') { const gv = String(g).trim(); tallyPush(byGender, gv, gv); }
-      const d = dayOf(r.billDate || r.visitDate);
-      if (d) daily.set(d, (daily.get(d) || 0) + 1);
-      // Peak-hours: read the hour straight from the timestamp string (no timezone shift).
-      // If the order timestamps are date-only, `nonMidnight` stays 0 and the UI hides the chart.
-      const hm = String(r.billDate || r.visitDate || '').match(/[T ](\d{2}):(\d{2})/);
-      if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
-      const t = Date.parse(r.billDate || r.visitDate || '');
-      if (Number.isFinite(t)) {
-        const days = (now - t) / 864e5;
-        if (days < 1) aging['<1d'] += 1; else if (days < 3) aging['1-3d'] += 1; else if (days < 7) aging['3-7d'] += 1; else aging['>7d'] += 1;
-      }
     }
   }
 
@@ -4471,9 +4475,9 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // (no waiting for the slow, SAMPLED bill-read pass — which is kept only for revenue). Cached
   // via buildWorklistRis's own cache.
   let panelExams = null, panelModality = null, _wlxItems = [];
-  try {
-    const _wlx = await buildWorklistRis({ sites: wantSites, from, to, ready: false, noCache });
-    _wlxItems = (_wlx && _wlx.items) || [];
+  const _wlx = await _panelPromise;
+  if (_wlx && Array.isArray(_wlx.items)) {
+    _wlxItems = _wlx.items;
     panelExams = _wlxItems.length;
     const _mix = new Map();
     for (const it of _wlxItems) {
@@ -4484,31 +4488,16 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       exams: panelExams, exact: true, source: 'panel',
       mix: [..._mix.entries()].map(([modality, count]) => ({ modality, count })).sort((a, b) => b.count - a.count),
     };
-  } catch (_e) { panelExams = null; panelModality = null; _wlxItems = []; }
 
-  // Panel backfill — RadiologySearch is SLOW and, on wide ranges, times out or fails for
-  // every branch (a 30-day all-branch fan-out is its worst case). When that happens the base
-  // tallies (total/patients/priority/daily/aging/byBranch/byDoctor) all read 0 and the Overview
-  // shows alarming false zeros ("REQUESTS 0, PATIENTS 0, branches unavailable: 1-14") even though
-  // the reliable FetchRISPanel board returned thousands of exams. So when RadiologySearch didn't
-  // deliver, recompute those core KPIs from the panel items we already fetched — one row per exam,
-  // deduped to bill level for order-scoped counts. byDepartment/byGender stay whatever
-  // RadiologySearch gave (the panel carries neither) and may be empty; that's honest, not a zero.
-  const _rsFailedAll = failed.length >= wantSites.length && wantSites.length > 0;
-  if (_wlxItems.length && (total === 0 || _rsFailedAll)) {
-    // Dedup panel exams to bill (order) level — several exam rows share one billNo; requests are
-    // orders, not procedures, so byBranch/byDoctor/daily/aging must count each order once.
-    const _orders = new Map();   // billNo (or genPatBillingId fallback) -> representative item
+    // Headline KPIs — ALWAYS from the panel (one row per exam), so requests / patients / exams and
+    // every distribution agree with the worklist + reconciliation and never depend on the slow
+    // RadiologySearch. Dedup exams to bill (order) level for the order-scoped counts (requests,
+    // by-branch, by-doctor, daily, aging, peak-hours); exams stay per-procedure (panelExams).
+    const _orders = new Map();
     for (const it of _wlxItems) {
-      const ok = (it.billNo != null && String(it.billNo) !== '') ? `b:${it.billNo}` : `g:${it.genPatBillingId}`;
+      const ok = (it.billNo != null && String(it.billNo) !== '') ? `b:${it.site}:${it.billNo}` : `g:${it.genPatBillingId}`;
       if (!_orders.has(ok)) _orders.set(ok, it);
     }
-    // Reset the base tallies (they're all zero/empty when RadiologySearch failed) and rebuild.
-    total = 0; emergency = 0; routine = 0;
-    patientSet.clear(); daily.clear();
-    aging['<1d'] = 0; aging['1-3d'] = 0; aging['3-7d'] = 0; aging['>7d'] = 0;
-    byBranch.clear(); byDoctor.clear();
-    for (const site of wantSites) byBranch.set(String(site), { key: String(site), name: branchLabel(site), count: 0 });
     for (const it of _orders.values()) {
       total += 1;
       if (it.mrno) patientSet.add(String(it.mrno));
@@ -4517,15 +4506,18 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       if (it.emergency) emergency += 1; else routine += 1;
       const d = dayOf(it.orderedDate);
       if (d) daily.set(d, (daily.get(d) || 0) + 1);
+      // Peak-hours from the order timestamp (no timezone shift). Date-only → nonMidnight stays 0.
+      const hm = String(it.orderedDate || '').match(/[T ](\d{2}):(\d{2})/);
+      if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
       const t = parseHisDate(it.orderedDate);
       if (Number.isFinite(t)) {
         const days = (now - t) / 864e5;
         if (days < 1) aging['<1d'] += 1; else if (days < 3) aging['1-3d'] += 1; else if (days < 7) aging['3-7d'] += 1; else aging['>7d'] += 1;
       }
     }
-    // The base counts are now sourced from the panel, so the branches DID resolve — clear the
-    // "branches unavailable" alarm the (failed) RadiologySearch fan-out would otherwise raise.
+    // "Branches unavailable" reflects PANEL fetch failures only — the headline's real source.
     failed.length = 0;
+    for (const s of (_wlx.sites && _wlx.sites.failed) || []) failed.push(s);
   }
 
   const result = {
