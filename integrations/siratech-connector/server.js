@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'billdate-2026-07-12ao';
+const CONNECTOR_BUILD = 'panelexcl-2026-07-12ap';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3333,16 +3333,22 @@ app.get('/diag/panel-dates', requireAuth, async (req, res) => {
     const cancelRe = /cancel|void|delet|reject/i;
     const statusHist = {}, seenInv = new Map(), seenBillSvc = new Map();
     let withBillNo = 0, nullOrderDate = 0, nullBillDate = 0, orderInWin = 0, billInWin = 0, cancelledLike = 0;
-    const dupInv = [], dupBillSvc = [];
+    let withOrderDate = 0, withOrderNotCancelled = 0, billedNotCancelled = 0;
+    const dupInv = [], dupBillSvc = [], nullOrderRows = [];
     for (const r of rows) {
       if (r.billNo != null && String(r.billNo).trim() !== '') withBillNo += 1;
-      if (!r.proposedDate) nullOrderDate += 1;
+      const st = [r.billingStatus, r.appointmentStatus, r.risOrderStatus, r.risStatus, r.cancelRemarks].filter(Boolean).join(' ');
+      const cancelled = cancelRe.test(st);
+      const hasOrder = !!r.proposedDate;
+      if (!hasOrder) { nullOrderDate += 1; if (nullOrderRows.length < 20) nullOrderRows.push({ mrno: String(r.mrno || ''), service: _risServiceOf(r), billNo: r.billNo != null ? r.billNo : null, billDate: r.billDate || null, billingStatus: r.billingStatus || null }); }
       if (!r.billDate) nullBillDate += 1;
+      if (hasOrder) withOrderDate += 1;
+      if (hasOrder && !cancelled) withOrderNotCancelled += 1;
+      if (String(r.billingStatus) === 'Billed' && !cancelled) billedNotCancelled += 1;
       if (inWin(_ksaDay(r.proposedDate || r.billDate))) orderInWin += 1;
       if (inWin(_ksaDay(r.billDate || r.proposedDate))) billInWin += 1;
-      const st = [r.billingStatus, r.appointmentStatus, r.risOrderStatus, r.risStatus, r.cancelRemarks].filter(Boolean).join(' ');
       const bs = String(r.billingStatus || '∅'); statusHist[bs] = (statusHist[bs] || 0) + 1;
-      if (cancelRe.test(st)) cancelledLike += 1;
+      if (cancelled) cancelledLike += 1;
       const invK = r.invPatBillingId != null ? String(r.invPatBillingId) : '';
       if (invK) { if (seenInv.has(invK)) dupInv.push({ mrno: String(r.mrno || ''), service: _risServiceOf(r), invPatBillingId: invK }); else seenInv.set(invK, 1); }
       const bsK = `${r.billNo}|${r.invMastServiceId}`;
@@ -3350,8 +3356,11 @@ app.get('/diag/panel-dates', requireAuth, async (req, res) => {
     }
     return res.json({ ok: true, build: CONNECTOR_BUILD, site, from, to,
       rowCount: rows.length,
+      // candidates: which exclusion rule reproduces the report's count.
+      candidates: { withOrderDate, withOrderDateNotCancelled: withOrderNotCancelled, billedStatusNotCancelled: billedNotCancelled },
       composition: { withBillNo, nullOrderDate, nullBillDate, orderDateInWindow: orderInWin, billDateInWindow: billInWin,
         cancelledLike, dupByInvPatBillingId: dupInv.length, dupByBillNoService: dupBillSvc.length, billingStatus: statusHist },
+      nullOrderRows,
       dupSamples: { byInvPatBillingId: dupInv.slice(0, 10), byBillNoService: dupBillSvc.slice(0, 10) },
       allFields, dateFields, sample });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
