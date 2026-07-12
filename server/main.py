@@ -9207,15 +9207,9 @@ def _rad_live_done_day(date):
                 manual_done.add(int(r["gen_pat_billing_id"]))
             except Exception:
                 pass
-    from datetime import timedelta
     ordered = done = unverifiable = 0
     mods = {}
     for it in items:
-        # Count by ORDER date (proposedDate), matching the Overview: the board fetched exams
-        # billed on `date`; keep only those actually ORDERED on `date` so the two agree.
-        od = _rad_ts(it.get("orderDate") or it.get("orderedDate"))
-        if not od or (od + timedelta(hours=3)).date().isoformat() != date:
-            continue
         stage = (it.get("stage") or "").lower()
         try:
             gpb = int(it.get("genPatBillingId"))
@@ -9313,14 +9307,9 @@ async def radiology_done_day(request: Request, user=Depends(require_admin)):
                 manual_done.add(int(r["gen_pat_billing_id"]))
             except Exception:
                 pass
-    from datetime import timedelta
     orders = []
     done = 0
     for it in items:
-        # Order-date basis (matches the Overview + done-history): keep only exams ORDERED on `date`.
-        od = _rad_ts(it.get("orderDate") or it.get("orderedDate"))
-        if not od or (od + timedelta(hours=3)).date().isoformat() != date:
-            continue
         stage = (it.get("stage") or "").lower()
         try:
             gpb = int(it.get("genPatBillingId"))
@@ -13054,10 +13043,9 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
         bname = it.get("branchName") or it.get("siteName") or it.get("branch") or (f"Branch {site}" if site is not None else "—")
         b = by_branch.setdefault(str(site), {"site": site, "name": bname, "ordered": 0, "performed": 0, "notPerformed": 0, "aged": 0, "unverifiable": 0})
         b["ordered"] += 1
-        # Attribute this order to the DAY IT WAS ORDERED (KSA) — the true CPOE order date
-        # (orderDate = proposedDate), matching the Overview's order-date basis and Siratech's
-        # ORDER DATE column. Falls back to the bill date only if the order date is absent.
-        od = _rad_ts(it.get("orderDate") or it.get("orderedDate"))
+        # Attribute this order to its BILL DAY (KSA) — matches the Overview and Siratech's
+        # bill-date-filtered report, so a late exam corrects that day's `done` on a future re-run.
+        od = _rad_ts(it.get("orderedDate"))
         dkey = (od + timedelta(hours=3)).date().isoformat() if od else None
         mod = (it.get("modality") or "Other").strip().upper() or "Other"
         dd = by_day.setdefault(dkey, {"ordered": 0, "done": 0, "unverifiable": 0, "mods": {}}) if dkey else None
