@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelexams-2026-07-12ae';
+const CONNECTOR_BUILD = 'panelmodality-2026-07-12af';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -4434,22 +4434,33 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     }
   }
 
-  // EXACT exam/procedure count from the SAME source as the worklist + reconciliation
-  // (FetchRISPanel — one row per exam). The Overview "Exams" tile uses this so it matches
-  // "Ordered vs Done" exactly; the bill-read modality.exams stays a sampled estimate used only
-  // for the modality MIX. Best-effort + cached via buildWorklistRis's own cache.
-  let panelExams = null;
+  // EXACT exam/procedure count AND modality mix from the SAME source as the worklist +
+  // reconciliation (FetchRISPanel — one row per exam). The Overview "Exams" tile and the
+  // modality donut both use this, so every "exams" number agrees exactly AND paints instantly
+  // (no waiting for the slow, SAMPLED bill-read pass — which is kept only for revenue). Cached
+  // via buildWorklistRis's own cache.
+  let panelExams = null, panelModality = null;
   try {
     const _wlx = await buildWorklistRis({ sites: wantSites, from, to, ready: false, noCache });
-    panelExams = ((_wlx && _wlx.items) || []).length;
-  } catch (_e) { panelExams = null; }
+    const _items = (_wlx && _wlx.items) || [];
+    panelExams = _items.length;
+    const _mix = new Map();
+    for (const it of _items) {
+      const mod = friendlyModality(it.modality || it.exam || '') || 'Other';
+      _mix.set(mod, (_mix.get(mod) || 0) + 1);
+    }
+    panelModality = {
+      exams: panelExams, exact: true, source: 'panel',
+      mix: [..._mix.entries()].map(([modality, count]) => ({ modality, count })).sort((a, b) => b.count - a.count),
+    };
+  } catch (_e) { panelExams = null; panelModality = null; }
 
   const result = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
     sites: { requested: wantSites, returned, failed },
     branches: siteList,
     total,
-    panelExams,
+    panelExams, panelModality,
     patients: patientSet.size,
     requests, requestsTruncated, requestKeys,
     byBranch: tallyList(byBranch).map((e) => ({ site: Number(e.key), name: e.name, count: e.count })),
