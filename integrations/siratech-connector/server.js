@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'donelive-2026-07-12ar';
+const CONNECTOR_BUILD = 'deptfromspanel-2026-07-12as';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2315,6 +2315,7 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
         mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
         age: null, gender: null,
         doctorName: (r.providerName || '').trim(), department: '',
+        providerId: r.providerId != null ? String(r.providerId) : null,
         doctorPhone: null,
         emergency: er, priority: er ? 'Emergency' : 'Routine',
         billNo: billNo || null, genPatBillingId: orderKey,
@@ -4360,6 +4361,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
 
   const returned = [], failed = [], flat = [];
   const byBranch = new Map(), byDept = new Map(), byDoctor = new Map();
+  const provDept = new Map();   // providerId -> departmentName (from RadiologySearch), to resolve the panel's physician department
   const patientSet = new Set();
   const daily = new Map();
   const hourly = new Array(24).fill(0);   // peak-hours: orders per hour-of-day (0..23)
@@ -4383,7 +4385,10 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     returned.push({ site: s.site, count: s.rows.length });
     for (const r of s.rows) {
       flat.push({ r, site: s.site });
-      tallyPush(byDept, r.departmentName, r.departmentName);
+      // Build the physician -> department lookup (the panel carries providerId but not the
+      // department name; RadiologySearch has both). byDepartment is then tallied from the SAME
+      // filtered panel set as byBranch, so the two agree and sum to Exams.
+      if (r.providerId != null && r.departmentName) provDept.set(String(r.providerId), String(r.departmentName).trim());
       const g = r.gender ?? r.sex ?? r.patientGender ?? r.genderName;
       if (g != null && String(g).trim() !== '') { const gv = String(g).trim(); tallyPush(byGender, gv, gv); }
     }
@@ -4601,6 +4606,10 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     for (const it of _wlxItems) {
       tallyPush(byBranch, it.site, branchLabel(it.site));
       tallyPush(byDoctor, it.doctorName || 'Unknown', (it.doctorName || '').trim() || 'Unknown');
+      // By ordering department — resolved from the physician via the RadiologySearch lookup, tallied
+      // over the SAME filtered panel set. Only when the lookup is present (the dept/finance pass ran);
+      // on the base call it stays empty and fills in when the Operations tab loads it.
+      if (provDept.size) { const dep = (it.providerId && provDept.get(it.providerId)) || 'Unknown'; tallyPush(byDept, dep, dep); }
       if (it.emergency) emergency += 1; else routine += 1;
       const t = parseHisDate(it.orderedDate);
       const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA bill-day
