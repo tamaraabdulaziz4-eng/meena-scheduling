@@ -35,7 +35,7 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
                 // and the left-panel filters (modality set / priority / doctor / sort).
                 tab: 'ordered', density: 'compact',
                 selMrns: new Set(), openRows: new Set(),
-                fMods: new Set(), fPrio: '', fDoc: '', fSort: 'wait',
+                fMods: new Set(), fPrio: '', fDoc: '', fSort: 'recent',
                 _docSig: null, mobFilters: false,
                 statusRatchet: new Map() };
 
@@ -93,9 +93,9 @@ function wlTodayLocal() {
   const d = new Date(Date.now() + 3 * 3600 * 1000);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
-// Default board window starts the PRIOR day so an order placed late and still pending
-// across KSA midnight stays visible instead of silently dropping off at the rollover.
-function wlDefaultFrom() { return _wlAddDays(wlTodayLocal(), -1); }
+// Default board = TODAY only (day-by-day). Use the From/To pickers or the ‹ › day-step
+// arrows to look at another day or a wider window.
+function wlDefaultFrom() { return wlTodayLocal(); }
 // The board shows a date RANGE [from, to], defaulting to today only. Widen it with
 // the From/To pickers, or step the whole window a day at a time.
 // Leaving a search: changing range/branch must drop any active on-board filter or
@@ -115,16 +115,21 @@ function wlShiftDay(delta) {   // step the whole [from,to] window by a day
   wlState.to = _wlAddDays(wlState.to, delta);
   wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
 }
+// Editing From/To only STAGES the change — the board reloads when you press Apply (so
+// setting a range doesn't fire a fetch on each keystroke/pick).
 function wlSetFrom(v) {
   if (!v) return;
   wlState.from = v;
   if (wlState.to < v) wlState.to = v;                       // keep from <= to
-  wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
+  wlSyncDayControls();
 }
 function wlSetTo(v) {
   if (!v) return;
   wlState.to = v;
   if (v < wlState.from) wlState.from = v;
+  wlSyncDayControls();
+}
+function wlApplyDates() {
   wlState.seenEmerg = null; wlExitSearch(); wlSyncDayControls(); wlSwitchReload();
 }
 function wlTodayRange() {
@@ -195,7 +200,7 @@ async function renderWorklistPage() {
   // selected/expanded, no left-panel filters.
   wlState.tab = 'ordered'; wlState.density = 'compact';
   wlState.selMrns.clear(); wlState.openRows.clear();
-  wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = ''; wlState.fSort = 'wait';
+  wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = ''; wlState.fSort = 'recent';
   wlState._docSig = null; wlState.mobFilters = false;
   wlState.site = '';   // reset branch scope to match the freshly-rebuilt "All branches" dropdown
   // A "Open in Worklist" jump from the Orders page pre-seeds this — land straight on
@@ -239,6 +244,7 @@ async function renderWorklistPage() {
           <span class="dl">To</span>
           <input type="date" id="wl-to" value="${wlState.to}" onchange="wlSetTo(this.value)" title="To date">
           <button class="ctrl icon" onclick="wlShiftDay(1)" title="Next day">›</button>
+          <button class="ctrl tbtn today" onclick="wlApplyDates()" title="Apply the selected date range">Apply</button>
         </div>
       </div>
 
@@ -256,9 +262,9 @@ async function renderWorklistPage() {
           </div>
           <div class="fgrp"><span class="fh4">Doctor</span><select class="fsel" id="rw-docsel" onchange="wlSetDoc(this.value)"><option value="">All doctors</option></select></div>
           <div class="fgrp"><span class="fh4">Sort</span><select class="fsel" id="rw-sortsel" onchange="wlSetSort(this.value)">
-            <option value="wait">Oldest first</option>
-            <option value="prio">Priority first</option>
-            <option value="recent">Most recent order</option>
+            <option value="recent"${wlState.fSort === 'recent' ? ' selected' : ''}>Most recent order</option>
+            <option value="wait"${wlState.fSort === 'wait' ? ' selected' : ''}>Oldest first</option>
+            <option value="prio"${wlState.fSort === 'prio' ? ' selected' : ''}>Priority first</option>
           </select></div>
           <button class="fclear" onclick="wlResetFilters()">Clear filters</button>
         </div>
@@ -651,7 +657,7 @@ async function wlEnrich(silent, force) {
     // "not on open" behaviour (its ready pass is the slow per-patient work we defer).
     const _isRis = !!(wlState.data && wlState.data.source === 'ris');
     const _firstReady = wlState.lastReady == null;
-    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 180000)) || (_isRis && _firstReady);
+    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 90000)) || (_isRis && _firstReady);
     if (readyDue) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
@@ -832,10 +838,16 @@ function wlStatus(it) {
     wlState.statusRatchet.set(k, { rank: rawRank, low: 0 });
     return raw;
   }
-  // raw is BELOW the furthest-along status seen. Hold it to smooth a transient poll blip,
-  // BUT a genuine revert (an order re-opened, a report un-verified) stays lower across polls
-  // — so if it persists for a few consecutive reads, accept it instead of pinning the row at
-  // the stale higher status forever (the forward-only lock's old failure mode).
+  // raw is BELOW the furthest-along status seen. A bare FAST poll cannot see PACS, so an
+  // imaged row (Pending Report) reads back as 'ordered' every ~30s between the throttled DePACS
+  // passes — that is NOT a genuine revert, and counting it is exactly what made Pending Report
+  // flash in then DISAPPEAR. So only count a lower read toward the revert when it is
+  // DePACS-GROUNDED (the ready pass ran → readyToFile is defined) or a terminal cancel; on a
+  // plain fast poll, HOLD the higher status without counting it.
+  const grounded = (it.readyToFile !== undefined && it.readyToFile !== null) || it.localStatus === 'cancelled';
+  if (!grounded) return _WL_ST_BY_RANK[r.rank];         // fast poll can't demote — hold
+  // A genuine revert (order re-opened, report un-verified) stays lower across GROUNDED reads —
+  // accept it after a few so the row isn't pinned at a stale higher status forever.
   const low = (r.low || 0) + 1;
   if (low >= 3) { wlState.statusRatchet.set(k, { rank: rawRank, low: 0 }); return raw; }
   wlState.statusRatchet.set(k, { rank: r.rank, low });
