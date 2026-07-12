@@ -1105,29 +1105,25 @@ function rsModalityInner() {
 const rsSAR = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' SAR';
 function rsFinancialSub() {
   const f = radstats.finData;
-  if (!f) return 'insurance vs cash — click to load';
+  if (!f) return 'net revenue — click to load';
   return f.truncated ? `≈ estimate · read ${rsNum(f.sampled)} of ${rsNum(f.ofTotal)} bills` : `all ${rsNum(f.ofTotal || 0)} bills read · exact`;
 }
 function rsFinancialInner() {
-  if (radstats.finLoading) return rsLoadingBlock('Reading bills…', 'Totting up revenue and the insurance-vs-cash split from each bill.');
+  if (radstats.finLoading) return rsLoadingBlock('Reading bills…', 'Totting up net revenue from each bill.');
   if (radstats.finError) return `<div class="rs-empty">${escapeHtml(radstats.finError)} <button class="ghost" onclick="rsLoadFinancial()">Retry</button></div>`;
   const f = radstats.finData;
   if (!f) {
     return `<div class="rs-modcta">
       <span class="rs-modcta-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
-      <p>Radiology revenue &amp; insurance-vs-cash split — read per order, so it loads on demand.<br>
-      <span style="opacity:.75">Note: your radiology is almost all insurance; this is billed revenue, not collected/settled.</span></p>
+      <p>Radiology net revenue — read per order, so it loads on demand.<br>
+      <span style="opacity:.75">Billed (net of discount) — not collected/settled.</span></p>
       <button class="open pri" style="width:auto" onclick="rsLoadFinancial()">Load revenue</button>
     </div>`;
   }
-  if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — revenue &amp; payer split can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
-  const PAYER_COLOR = { 'Insurance': 'var(--accent,#6b4eff)', 'Cash / self-pay': '#22c55e', 'Insurance + copay': '#f59e0b' };
-  const payerSegs = (f.byPayer || []).map((p) => ({ label: p.type, count: p.count, color: PAYER_COLOR[p.type] || '#94a3b8' }));
-  const payerDonut = rsDonut(payerSegs, { centerVal: f.requests || 0, centerLabel: 'requests' });
-  const revDonut = rsDonut([
-    { label: 'Insurance', count: Math.round(f.sponsor || 0), color: 'var(--accent,#6b4eff)' },
-    { label: 'Cash / copay', count: Math.round(f.patient || 0), color: '#22c55e' },
-  ], { centerVal: Math.round(f.revenue || 0), centerLabel: 'SAR' });
+  if (f.catalogLoaded === false) return `<div class="rs-empty">Exam catalog temporarily unavailable — net revenue can't be computed right now. <button class="ghost" onclick="rsLoad(false, true)">Refresh</button></div>`;
+  const canDrill = !rsIsLead() && !radstats.leadLocked;
+  const branchRev = (f.byBranch || []).filter((b) => (b.revenue || 0) > 0)
+    .map((b) => ({ label: b.name || ('Branch ' + b.site), count: Math.round(b.revenue), site: b.site }));
   // If some bill reads failed (VPS timeouts), the revenue is an UNDERCOUNT — say so
   // loudly with a one-tap retry, instead of showing a silently-halved figure as final.
   const missWarn = (f.billsFailed > 0)
@@ -1137,11 +1133,12 @@ function rsFinancialInner() {
     ${missWarn}
     <div class="rs-fin-head">
       <div class="rs-fin-total"><div class="rs-fin-n rs-count" data-count="${Number(f.requests) || 0}" data-key="rs-fin-req">0</div><div class="rs-fin-l">radiology requests priced</div></div>
-      <div class="rs-fin-total"><div class="rs-fin-n">${f.estimated ? '≈ ' : ''}${rsSAR(f.revenue)}</div><div class="rs-fin-l">total revenue (billed)${f.estimated ? ' · estimated' : ''}</div></div>
+      <div class="rs-fin-total">
+        <div class="rs-fin-n">${f.estimated ? '≈ ' : ''}${rsSAR(f.revenue)}</div>
+        <div class="rs-fin-l">billed net revenue${f.estimated ? ' · estimated' : ''}</div>
+        <div class="rs-fin-note">net of discount · billed, not collected</div>
+      </div>
     </div>
-    <div class="rs-grid2" style="margin:0">
-      <div><div class="rs-subhead">Requests by payer (count)</div>${payerDonut}</div>
-      <div><div class="rs-subhead">Revenue: insurance vs cash</div>${revDonut}</div>
-    </div>
+    ${branchRev.length ? `<div class="rs-subhead">Net revenue by branch (SAR)</div>${rsBarRows(branchRev, 'var(--accent)', 0, { drill: canDrill })}` : ''}
   </div>`;
 }
