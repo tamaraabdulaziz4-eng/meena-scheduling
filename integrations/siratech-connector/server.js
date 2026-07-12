@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelexcl-2026-07-12ap';
+const CONNECTOR_BUILD = 'ordered-only-2026-07-12aq';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2262,10 +2262,13 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
       if (billNo == null) continue;
       const er = String(r.encounter || '').trim().toUpperCase() === 'ER';
       const billDate = r.billDate || r.appoinmentDate || r.proposedDate || null;
-      // The TRUE order date (CPOE proposed time) — Siratech's "Radiology Timeline for Images"
-      // ORDER DATE column. proposedDate is the order instant; billDate is when it was billed
-      // (usually minutes later, sometimes days). Stats count by this for accuracy.
-      const orderDate = r.proposedDate || r.billDate || null;
+      // orderDate = the CPOE order instant (proposedDate) ONLY — no bill-date fallback. A billed
+      // exam with no proposedDate had no formal order (e.g. a walk-in XR), which Siratech's
+      // order-based report excludes; keeping this strictly null lets the stats count match.
+      const orderDate = r.proposedDate || null;
+      // Cancelled/void order — Siratech's report excludes these; flag so the stats count can too.
+      const cancelled = /cancel|void|delet|reject/i.test(
+        [r.billingStatus, r.risOrderStatus, r.risStatus, r.appointmentStatus, r.cancelRemarks].map((x) => x == null ? '' : x).join(' '));
       const bt = parseHisDate(billDate);
       const ageHours = Number.isFinite(bt) ? Math.max(0, Math.round((now - bt) / 36e5)) : null;
       const svc = _risServiceOf(r);
@@ -2313,7 +2316,7 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
         doctorPhone: null,
         emergency: er, priority: er ? 'Emergency' : 'Routine',
         billNo: billNo || null, genPatBillingId: orderKey,
-        orderedDate: billDate, orderDate, ageHours, tatStatus: null,
+        orderedDate: billDate, orderDate, cancelled, ageHours, tatStatus: null,
         exam: svc || null,
         modality: (svc && results.normMod(svc)) || null,
         svcId: r.invMastServiceId != null ? r.invMastServiceId : null,
@@ -4564,7 +4567,12 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   let panelExams = null, panelModality = null, _wlxItems = [];
   const _wlx = await _panelPromise;
   if (_wlx && Array.isArray(_wlx.items)) {
-    _wlxItems = _wlx.items;
+    // Match Siratech's "Radiology Timeline for Images": count only exams that HAVE a CPOE order
+    // (an order date) and are NOT cancelled. Our raw panel also carries walk-in / directly-billed
+    // exams with no order (no proposedDate) and cancelled orders — verified as the exact per-branch
+    // over-count (e.g. Almalqa +8 = 7 no-order XR + 1 cancelled). Excluded from the COUNT only; the
+    // operational board (buildWorklistRis `kept`) still shows them for follow-up.
+    _wlxItems = _wlx.items.filter((it) => it.orderDate && !it.cancelled);
     panelExams = _wlxItems.length;
     const _mix = new Map();
     for (const it of _wlxItems) {
