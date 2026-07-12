@@ -9151,6 +9151,22 @@ async def radiology_reconcile_diagnose(request: Request, user=Depends(require_su
     qs = ("?" + _up.urlencode(q_)) if q_ else ""
     return await run_in_threadpool(lambda: _bridge_request("/his/diag/reconcile-branch" + qs, timeout=240))
 
+@app.api_route("/api/radiology/panel-dates", methods=["GET", "POST"])
+async def radiology_panel_dates(request: Request, user=Depends(require_superadmin)):
+    """Read-only probe: dump the RIS panel's raw date fields + our row count for one branch/window,
+    so we can map the ORDER date field vs the BILL date and compare counts against Siratech's
+    report. Forwards to the connector's /diag/panel-dates. Params: site, from, to, limit, mrno."""
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    p = request.query_params
+    q_ = {}
+    for k in ("site", "from", "to", "limit", "mrno"):
+        v = (p.get(k) or "").strip()
+        if v:
+            q_[k] = v
+    qs = ("?" + _up.urlencode(q_)) if q_ else ""
+    return await run_in_threadpool(lambda: _bridge_request("/his/diag/panel-dates" + qs, timeout=120))
+
 @app.post("/api/radiology/reconcile/run")
 def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
     """Run the reconciliation on demand (testing / an immediate check instead of waiting for

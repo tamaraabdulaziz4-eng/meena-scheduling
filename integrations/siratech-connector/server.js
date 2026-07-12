@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'examscoped-2026-07-12ak';
+const CONNECTOR_BUILD = 'paneldates-2026-07-12al';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3287,6 +3287,42 @@ app.get('/diag/reconcile-branch', requireAuth, async (req, res) => {
     else verdict = `MIXED — ${agg.noStudyAtAll} no-study · ${agg.sameModMatch} unlinked same-mod · ${agg.otherStudiesOnly} other-studies-only`;
     return res.json({ ok: true, build: CONNECTOR_BUILD, site: site || 'all', from, to, sample, matchAfterH,
                       orderedTotal: items.length, notPerformed: notPerf.length, performedRate, aggregate: agg, verdict, rows });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Panel date-field probe (read-only) ──────────────────────────────────────────────────
+// Dumps the RAW FetchRISPanel date fields for one branch + window, plus the connector's own
+// row count, so we can (a) compare our count against Siratech's report, and (b) map which field
+// is the ORDER date vs the BILL date against known rows from the report. No writes, no PHI beyond
+// the mrno/service already on the board.
+app.get('/diag/panel-dates', requireAuth, async (req, res) => {
+  try {
+    const site = Number(String(req.query.site || '').trim());
+    if (!Number.isFinite(site) || site <= 0) return res.status(400).json({ ok: false, error: 'site required' });
+    const from = String(req.query.from || '').trim() || new Date(Date.now() - 11 * 864e5).toISOString().slice(0, 10);
+    const to = String(req.query.to || '').trim() || new Date().toISOString().slice(0, 10);
+    const limit = Math.max(1, Math.min(40, Number(req.query.limit) || 15));
+    const mrnoFilter = String(req.query.mrno || '').trim();
+    await getToken();
+    const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+      mrno: '', fromDate: from + 'T00:00:00', toDate: to + 'T23:59:59',
+      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+      serviceCategoryId: 0, emrPatRisPanelId: 0,
+      userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+    } });
+    const rows = (rp.json && rp.json.data) || [];
+    const allFields = rows.length ? Object.keys(rows[0]) : [];
+    const dateRe = /\d{4}-\d{2}-\d{2}|\d{2}[-/][A-Za-z]{3}[-/]\d{4}|\d{2}\/\d{2}\/\d{4}/;
+    const dateFields = allFields.filter((k) => /date|time/i.test(k)
+      || rows.some((r) => typeof r[k] === 'string' && dateRe.test(r[k])));
+    const src = mrnoFilter ? rows.filter((r) => String(r.mrno) === mrnoFilter) : rows;
+    const sample = src.slice(0, limit).map((r) => {
+      const o = { mrno: String(r.mrno || ''), service: _risServiceOf(r), billNo: r.billNo != null ? r.billNo : null };
+      for (const k of dateFields) o[k] = r[k];
+      return o;
+    });
+    return res.json({ ok: true, build: CONNECTOR_BUILD, site, from, to,
+      rowCount: rows.length, allFields, dateFields, sample });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
