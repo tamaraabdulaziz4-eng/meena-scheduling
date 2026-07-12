@@ -166,6 +166,33 @@
 }
 @keyframes rsRail { 0%,100% { filter:brightness(1); opacity:.9; } 50% { filter:brightness(1.4); opacity:1; } }
 
+/* ── Living charts: every chart keeps a gentle continuous motion at rest, not just an
+   entrance animation — so the whole board reads as live. All suppressed for reduced-motion. */
+/* Trend line: a bright pulse travels the path; the fill breathes; the latest day beacons. */
+.rs-line-flow { display:none; stroke:#fff; stroke-width:3.4; stroke-linecap:round; opacity:.85;
+  stroke-dasharray:.14 .86; filter:drop-shadow(0 0 4px var(--accent)); }
+.rs-dot-live { fill:var(--accent); filter:drop-shadow(0 0 3px var(--accent)); }
+@keyframes rsFlow { from { stroke-dashoffset:1; } to { stroke-dashoffset:0; } }
+@keyframes rsAreaBreathe { 0%,100% { opacity:.85; } 50% { opacity:1; } }
+@keyframes rsBeacon { 0%,100% { r:3; } 50% { r:5.4; } }
+@keyframes rsDonutBreathe { 0%,100% { transform:scale(1); } 50% { transform:scale(1.025); } }
+@keyframes rsArcBreathe { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.14); } }
+@keyframes rsSheen { 0% { transform:translateX(-120%); } 60%,100% { transform:translateX(320%); } }
+@media (prefers-reduced-motion: no-preference) {
+  .rs-line-flow { display:block; animation:rsFlow 2.8s linear infinite; }
+  .rs-area-fill { animation:rsAreaBreathe 3.4s ease-in-out infinite; }
+  /* Latest day beacons: its radius gently pulses so the eye lands on "now". */
+  .rs-dot-live { animation:rsBeacon 1.9s ease-in-out infinite; }
+  /* Donut gently breathes and its arcs brighten in a slow pulse. */
+  .rs-donut { transform-box:fill-box; transform-origin:center; animation:rsDonutBreathe 3.6s ease-in-out infinite; }
+  .rs-arc { animation:rsArcBreathe 3.6s ease-in-out infinite; }
+  /* Horizontal bars get a slow light sheen sweeping across the fill. */
+  .rs-bar-fill { position:relative; }
+  .rs-bar-fill::after { content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    background:linear-gradient(100deg, transparent 30%, rgba(255,255,255,.45) 50%, transparent 70%);
+    width:40%; animation:rsSheen 3.2s ease-in-out infinite; }
+}
+
 /* Chart bars: grow-in on first paint (staggered via inline animation-delay), the peak
    bar keeps a gentle pulse. On a silent auto-refresh the .cc-still root suppresses the
    grow so it doesn't flicker; the peak keeps pulsing. Bars are clickable (drill). */

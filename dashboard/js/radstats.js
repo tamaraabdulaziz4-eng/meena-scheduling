@@ -619,13 +619,15 @@ function rsArea(daily) {
     const y = H - pad - f * (H - 2 * pad);
     return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" class="rs-grid"/><text x="${pad - 6}" y="${y + 3}" text-anchor="end" class="rs-axis">${Math.round(max * f)}</text>`;
   }).join('');
-  const dots = daily.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="9" class="rs-dot-hit" data-tip="${escapeHtml(`<b>${escapeHtml(x.date)}</b><br>${rsNum(x.count)} requests`)}"/><circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="3" class="rs-dot"/>`).join('');
+  const dots = daily.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="9" class="rs-dot-hit" data-tip="${escapeHtml(`<b>${escapeHtml(x.date)}</b><br>${rsNum(x.count)} requests`)}"/><circle cx="${X(i).toFixed(1)}" cy="${Y(x.count).toFixed(1)}" r="3" class="rs-dot${i === n - 1 ? ' rs-dot-live' : ''}"/>`).join('');
   const idxs = [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
   const xl = idxs.map((i) => `<text x="${X(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" class="rs-axis">${escapeHtml(daily[i].date.slice(5))}</text>`).join('');
+  // rs-line-flow = a bright pulse that travels the exact trend path (pathLength=1 normalises
+  // the dash math to any range length). Hidden under reduced-motion. rs-area-fill breathes.
   return `<svg viewBox="0 0 ${W} ${H}" class="rs-area">
     <defs><linearGradient id="rsg" x1="0" x2="0" y1="0" y2="1">
       <stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
-    ${grid}<path d="${area}" fill="url(#rsg)"/><path d="${line}" class="rs-line"/>${dots}${xl}
+    ${grid}<path d="${area}" fill="url(#rsg)" class="rs-area-fill"/><path d="${line}" class="rs-line"/><path d="${line}" class="rs-line-flow" pathLength="1" fill="none"/>${dots}${xl}
   </svg>`;
 }
 
