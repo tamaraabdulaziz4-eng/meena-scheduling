@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'paneldates-2026-07-12al';
+const CONNECTOR_BUILD = 'orderdate-2026-07-12am';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2262,6 +2262,10 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
       if (billNo == null) continue;
       const er = String(r.encounter || '').trim().toUpperCase() === 'ER';
       const billDate = r.billDate || r.appoinmentDate || r.proposedDate || null;
+      // The TRUE order date (CPOE proposed time) — Siratech's "Radiology Timeline for Images"
+      // ORDER DATE column. proposedDate is the order instant; billDate is when it was billed
+      // (usually minutes later, sometimes days). Stats count by this for accuracy.
+      const orderDate = r.proposedDate || r.billDate || null;
       const bt = parseHisDate(billDate);
       const ageHours = Number.isFinite(bt) ? Math.max(0, Math.round((now - bt) / 36e5)) : null;
       const svc = _risServiceOf(r);
@@ -2309,7 +2313,7 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
         doctorPhone: null,
         emergency: er, priority: er ? 'Emergency' : 'Routine',
         billNo: billNo || null, genPatBillingId: orderKey,
-        orderedDate: billDate, ageHours, tatStatus: null,
+        orderedDate: billDate, orderDate, ageHours, tatStatus: null,
         exam: svc || null,
         modality: (svc && results.normMod(svc)) || null,
         svcId: r.invMastServiceId != null ? r.invMastServiceId : null,
@@ -4525,6 +4529,20 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   const _wlx = await _panelPromise;
   if (_wlx && Array.isArray(_wlx.items)) {
     _wlxItems = _wlx.items;
+    // Keep only exams whose ORDER date (proposedDate) lands inside the requested KSA window — this
+    // is the "more accurate" order-date basis. The widened bill-window fetch above pulled in exams
+    // ordered in-window but billed a few days later; drop the rest (ordered before/after the window,
+    // or with no usable order date).
+    {
+      const _wf = from || fromISO.slice(0, 10);
+      const _wt = to || toISO.slice(0, 10);
+      _wlxItems = _wlxItems.filter((it) => {
+        const ts = parseHisDate(it.orderDate || it.orderedDate);
+        if (!Number.isFinite(ts)) return false;
+        const day = new Date(ts + 3 * 36e5).toISOString().slice(0, 10);
+        return day >= _wf && day <= _wt;
+      });
+    }
     panelExams = _wlxItems.length;
     const _mix = new Map();
     for (const it of _wlxItems) {
@@ -4552,11 +4570,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       tallyPush(byBranch, it.site, branchLabel(it.site));
       tallyPush(byDoctor, it.doctorName || 'Unknown', (it.doctorName || '').trim() || 'Unknown');
       if (it.emergency) emergency += 1; else routine += 1;
-      const t = parseHisDate(it.orderedDate);
-      const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA order-day (matches reconcile)
+      const t = parseHisDate(it.orderDate || it.orderedDate);
+      const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA ORDER-day
       if (d) daily.set(d, (daily.get(d) || 0) + 1);
-      // Peak-hours from the order timestamp (no timezone shift). Date-only → nonMidnight stays 0.
-      const hm = String(it.orderedDate || '').match(/[T ](\d{2}):(\d{2})/);
+      // Peak-hours from the ORDER timestamp (no timezone shift). Date-only → nonMidnight stays 0.
+      const hm = String(it.orderDate || it.orderedDate || '').match(/[T ](\d{2}):(\d{2})/);
       if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
       if (Number.isFinite(t)) {
         const days = (now - t) / 864e5;
