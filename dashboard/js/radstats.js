@@ -990,6 +990,9 @@ function rsRenderBody() {
   const rtn = (d.priority && d.priority.routine) || 0;
   const aged = (d.aging && d.aging['>7d']) || 0;
   const sitesFail = (d.sites && d.sites.failed && d.sites.failed.length) || 0;
+  // Distributions (priority / by-branch / daily / aging) are EXAM-scoped and sum to the exam total,
+  // so use exams — not requests — as their denominator/center. Requests stays the orders count.
+  const exams = d.panelExams != null ? d.panelExams : (emg + rtn);
 
   // Exams = individual procedures. The EXACT panel-based count (one FetchRISPanel row per exam —
   // the same source as the worklist + "Ordered vs Done", so the numbers agree, and it paints
@@ -1012,7 +1015,7 @@ function rsRenderBody() {
       ${rsKpi('d', 'var(--accent,#6B4EFF)', patients != null ? rsNum(patients) : '—', 'Patients')}
       ${rsKpi('b', 'var(--blue,#3BA0FF)', rsNum(total), 'Requests')}
       ${rsKpi('c', 'var(--green,#00C896)', examsVal, 'Exams')}
-      ${rsKpi('a', 'var(--danger,#E25555)', rsNum(emg), 'Emergency', total ? rsPct(emg, total) + '% of requests' : '')}
+      ${rsKpi('a', 'var(--danger,#E25555)', rsNum(emg), 'Emergency', exams ? rsPct(emg, exams) + '% of exams' : '')}
       ${rsKpi('a', 'var(--yellow,#FFBA49)', rsNum(aged), 'Pending &gt; 7 days')}
     </div>`;
 
@@ -1025,7 +1028,7 @@ function rsRenderBody() {
   const prioDonut = rsDonut([
     { label: 'Routine', count: rtn, color: '#22c55e' },
     { label: 'Emergency', count: emg, color: '#ef4444' },
-  ], { centerVal: total, centerLabel: 'requests' });
+  ], { centerVal: exams, centerLabel: 'exams' });
 
   // When a manager has drilled into a single branch, show a clear focus pill
   // with a one-click way back to all branches.
@@ -1058,14 +1061,14 @@ function rsRenderBody() {
     ${kpis}
     ${rsSection('Composition')}
     <div class="rs-grid2">
-      ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
+      ${rsPanel('Priority', prioDonut, exams ? `${rsPct(emg, exams)}% emergency` : 'routine vs emergency')}
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
     </div>`;
 
   const tabOps = `
     ${rsSection('Where the work is')}
     <div class="rs-grid2">
-      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
+      ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `exams per branch · ${branchItems.length} branches · click to focus` : `exams per branch · ${branchItems.length} branches`)}
       ${rsPanel('By ordering department', rsDeptInner(deptItems), radstats.deptLoaded ? `${deptItems.length} departments` : 'loading…')}
     </div>
     ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15', 'rs-wide')}

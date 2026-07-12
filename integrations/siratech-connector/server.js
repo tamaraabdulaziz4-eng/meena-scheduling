@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelfast-2026-07-12aj';
+const CONNECTOR_BUILD = 'examscoped-2026-07-12ak';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -4500,27 +4500,28 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       mix: [..._mix.entries()].map(([modality, count]) => ({ modality, count })).sort((a, b) => b.count - a.count),
     };
 
-    // Headline KPIs — ALWAYS from the panel (one row per exam), so requests / patients / exams and
-    // every distribution agree with the worklist + reconciliation and never depend on the slow
-    // RadiologySearch. Dedup exams to bill (order) level for the order-scoped counts (requests,
-    // by-branch, by-doctor, daily, aging, peak-hours); exams stay per-procedure (panelExams).
-    const _orders = new Map();
+    // Requests = distinct bills (orders); Patients = distinct MRN — the two NON-exam headline tiles.
+    const _orderKeys = new Set();
     for (const it of _wlxItems) {
-      const ok = (it.billNo != null && String(it.billNo) !== '') ? `b:${it.site}:${it.billNo}` : `g:${it.genPatBillingId}`;
-      if (!_orders.has(ok)) _orders.set(ok, it);
-    }
-    for (const it of _orders.values()) {
-      total += 1;
       if (it.mrno) patientSet.add(String(it.mrno));
+      const ok = (it.billNo != null && String(it.billNo) !== '') ? `b:${it.site}:${it.billNo}` : `g:${it.genPatBillingId}`;
+      _orderKeys.add(ok);
+    }
+    total = _orderKeys.size;
+
+    // Every DISTRIBUTION is EXAM-scoped (one row per exam), so by-branch / by-doctor / daily / aging /
+    // peak-hours / priority all SUM TO panelExams and reconcile with the Exams tile, the worklist,
+    // "Ordered vs Done" and Siratech's per-exam reports. (Requests + Patients stay order/person scoped.)
+    for (const it of _wlxItems) {
       tallyPush(byBranch, it.site, branchLabel(it.site));
       tallyPush(byDoctor, it.doctorName || 'Unknown', (it.doctorName || '').trim() || 'Unknown');
       if (it.emergency) emergency += 1; else routine += 1;
-      const d = dayOf(it.orderedDate);
+      const t = parseHisDate(it.orderedDate);
+      const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA order-day (matches reconcile)
       if (d) daily.set(d, (daily.get(d) || 0) + 1);
       // Peak-hours from the order timestamp (no timezone shift). Date-only → nonMidnight stays 0.
       const hm = String(it.orderedDate || '').match(/[T ](\d{2}):(\d{2})/);
       if (hm) { const hh = Number(hm[1]); if (hh >= 0 && hh < 24) { hourly[hh] += 1; if (!(hm[1] === '00' && hm[2] === '00')) nonMidnight += 1; } }
-      const t = parseHisDate(it.orderedDate);
       if (Number.isFinite(t)) {
         const days = (now - t) / 864e5;
         if (days < 1) aging['<1d'] += 1; else if (days < 3) aging['1-3d'] += 1; else if (days < 7) aging['3-7d'] += 1; else aging['>7d'] += 1;
