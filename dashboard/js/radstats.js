@@ -1043,9 +1043,17 @@ function rsRenderBody() {
     ${rsSection('Financial — revenue &amp; payer')}
     ${rsPanel('Revenue & payer', rsFinancialInner(), rsFinancialSub(), 'rs-wide')}`;
 
+  const tabDone = `
+    ${rsSection('Ordered vs Done — daily &amp; monthly')}
+    ${rsPanel('How many ordered, how many done', rsDoneInner(), rsDoneSub(), 'rs-wide')}`;
+
+  // "Ordered vs Done" is an org-wide (all-branch) management view, so it's hidden for a
+  // branch-locked team lead (whose rest-of-page is scoped to their own branch).
+  const _orgView = !rsIsLead() && !radstats.leadLocked;
   const TABS = [
     ['overview', 'Overview', tabOverview],
     ['operations', 'Operations', tabOps],
+    ...(_orgView ? [['done', 'Ordered vs Done', tabDone]] : []),
     ['financial', 'Financial', tabFinancial],
   ];
   if (!radstats.tab || !TABS.some((t) => t[0] === radstats.tab)) radstats.tab = 'overview';
@@ -1061,7 +1069,7 @@ function rsRenderBody() {
   // re-parse) when nothing changed — the 30s Auto poll otherwise repaints twice a minute
   // for zero new information. Signature = the actual data + view state, minus the "updated
   // Xs ago" ticker (which always moves), so a cache-hit poll is a true no-op.
-  const sig = `${(d.generatedAt) || ''}|${radstats.tab}|${radstats.modData ? radstats.modData.exams : ''}|${radstats.finData ? radstats.finData.revenue : ''}|${(radstats.sel ? [...radstats.sel].join(',') : '')}|${radstats.dayFocus && radstats.dayFocus.date || ''}|${radstats.modLoading}|${radstats.finLoading}`;
+  const sig = `${(d.generatedAt) || ''}|${radstats.tab}|${radstats.modData ? radstats.modData.exams : ''}|${radstats.finData ? radstats.finData.revenue : ''}|${(radstats.sel ? [...radstats.sel].join(',') : '')}|${radstats.dayFocus && radstats.dayFocus.date || ''}|${radstats.modLoading}|${radstats.finLoading}|${radstats.doneLoading}|${radstats.doneData ? (radstats.doneData.daily || []).length : ''}`;
   if (sig === radstats._bodySig && body.firstChild) {
     // just refresh the "updated Xs ago" footer text, skip the full rebuild
     const f = body.querySelector('.rs-foot'); if (f) f.innerHTML = foot.replace(/^<div class="rs-foot">/, '').replace(/<\/div>$/, '');
@@ -1079,7 +1087,89 @@ function rsSetTab(name) {
   radstats.tab = name;
   radstats._paintedOnce = false;
   if (name === 'financial' && !radstats.finData && !radstats.finLoading) rsLoadFinancial();
+  if (name === 'done' && !radstats.doneData && !radstats.doneLoading) rsLoadDone();
   rsRenderBody();
+}
+
+// ── Ordered vs Done — daily & monthly, self-correcting for late exams ──────────
+// The counts are attributed to the ORDER date and re-checked nightly by the server, so a
+// patient who does the exam days later makes that original day's "done" rise. Org-wide.
+async function rsLoadDone(force) {
+  radstats.doneLoading = true; radstats.doneError = '';
+  if (!radstats.doneData) rsRenderBody();
+  try {
+    radstats.doneData = await API.get('/radiology/stats/done-history?days=45&months=6');
+  } catch (e) {
+    radstats.doneError = (e && e.message) || 'Could not load ordered-vs-done';
+  } finally {
+    radstats.doneLoading = false; rsRenderBody();
+  }
+}
+function rsDoneSub() {
+  const d = radstats.doneData;
+  if (!d) return 'daily & monthly — click to load';
+  return 'attributed to order date · self-corrects as late exams complete';
+}
+const _rsPct = (done, ord) => (ord ? Math.round((done / ord) * 100) : 0);
+function _rsDoneTable(rows, keyLabel, keyField, opts) {
+  const clickable = opts && opts.dayClick;
+  const bar = (done, ord) => `<div class="rs-donebar"><span style="width:${_rsPct(done, ord)}%"></span></div>`;
+  const body = rows.map((r) => {
+    const ord = r.ordered || 0, done = r.done || 0;
+    const unv = r.unverifiable ? `<span class="rs-done-unv">+${rsNum(r.unverifiable)} DEXA</span>` : '';
+    const attrs = clickable ? ` class="rs-done-row rs-bar-click" onclick="rsDoneDay('${escapeHtml(String(r[keyField]))}')"` : ' class="rs-done-row"';
+    return `<tr${attrs}>
+      <td>${escapeHtml(String(r[keyField]))}${clickable ? ' <span class="rs-bar-go">›</span>' : ''}</td>
+      <td class="rs-done-n">${rsNum(ord)}</td>
+      <td class="rs-done-n" style="font-weight:800;color:var(--green-ink,#15803d)">${rsNum(done)}</td>
+      <td class="rs-done-n">${_rsPct(done, ord)}%</td>
+      <td>${bar(done, ord)}${unv}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="rs-done-tbl"><thead><tr><th>${escapeHtml(keyLabel)}</th><th class="rs-done-n">Ordered</th><th class="rs-done-n">Done</th><th class="rs-done-n">%</th><th></th></tr></thead><tbody>${body}</tbody></table>`;
+}
+function rsDoneInner() {
+  if (radstats.doneLoading && !radstats.doneData) return rsLoadingBlock('Loading ordered vs done…', 'Daily & monthly, self-corrected for late exams.');
+  if (radstats.doneError && !radstats.doneData) return `<div class="rs-empty">${escapeHtml(radstats.doneError)} <button class="ghost" onclick="rsLoadDone(true)">Retry</button></div>`;
+  const d = radstats.doneData;
+  if (!d) {
+    return `<div class="rs-modcta">
+      <p>How many radiology orders were placed, and how many actually got done — by day and by month.<br>
+      <span style="opacity:.75">Confirmed from PACS, attributed to the order date, self-correcting for exams done a few days later.</span></p>
+      <button class="open pri" style="width:auto" onclick="rsLoadDone(true)">Load</button></div>`;
+  }
+  const monthly = d.monthly || [], daily = d.daily || [], mods = d.byModality || [];
+  if (!monthly.length && !daily.length) {
+    return `<div class="rs-empty">No data yet — the nightly job builds this up. Ask an admin to run a reconciliation, or check back tomorrow.</div>`;
+  }
+  const monthTbl = monthly.length ? `<div class="rs-subhead">By month</div>${_rsDoneTable(monthly, 'Month', 'month')}` : '';
+  const dayTbl = daily.length ? `<div class="rs-subhead" style="margin-top:16px">By day${d.currentMonth ? ' · ' + escapeHtml(d.currentMonth) : ''} <span style="font-weight:600;color:var(--muted)">(tap a day for the patient list)</span></div>${_rsDoneTable(daily, 'Day', 'date', { dayClick: true })}` : '';
+  const modTbl = mods.length ? `<div class="rs-subhead" style="margin-top:16px">By exam type (this month)</div>${_rsDoneTable(mods.map((m) => ({ month: m.modality, ordered: m.ordered, done: m.done })), 'Exam', 'month')}` : '';
+  return `<div id="rs-done-drill"></div>${monthTbl}${dayTbl}${modTbl}`;
+}
+
+// Drill one day → the patient-level list (MRN + exam + done). Management-only endpoint.
+async function rsDoneDay(date) {
+  const box = document.getElementById('rs-done-drill');
+  if (!box) return;
+  box.innerHTML = `<div class="rs-done-drillcard"><div class="rs-done-drillhead"><b>${escapeHtml(date)}</b><span class="mini-spin"></span> loading patients…</div></div>`;
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  let d;
+  try { d = await API.get('/radiology/stats/done-day?date=' + encodeURIComponent(date)); }
+  catch (e) { box.innerHTML = `<div class="rs-done-drillcard rs-empty">${escapeHtml((e && e.message) || 'Could not load')}</div>`; return; }
+  const orders = (d && d.orders) || [];
+  const rows = orders.map((o) => `<div class="rs-done-prow ${o.done ? 'is-done' : 'not-done'}">
+      <span class="rs-done-dot"></span>
+      <div style="flex:1;min-width:0">
+        <div class="rs-done-pname">${escapeHtml(o.name || o.mrno || '—')}</div>
+        <div class="rs-done-pmeta">${escapeHtml(o.exam || o.modality || '')}${o.branch ? ' · ' + escapeHtml(o.branch) : ''} · MRN ${escapeHtml(o.mrno || '')}</div>
+      </div>
+      <span class="rs-done-tag">${o.done ? (o.reported ? 'Reported' : 'Done') : 'Not done'}</span>
+    </div>`).join('') || `<div class="rs-empty">No orders that day.</div>`;
+  box.innerHTML = `<div class="rs-done-drillcard">
+    <div class="rs-done-drillhead"><b>${escapeHtml(date)}</b> — ${rsNum(d.done)}/${rsNum(d.ordered)} done
+      <button class="ghost" style="margin-inline-start:auto" onclick="document.getElementById('rs-done-drill').innerHTML=''">✕ close</button></div>
+    <div class="rs-done-plist">${rows}</div></div>`;
 }
 
 function rsSection(title) { return `<div class="rs-section">${title}</div>`; }

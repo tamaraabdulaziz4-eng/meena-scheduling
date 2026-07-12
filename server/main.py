@@ -920,6 +920,21 @@ def init_schema():
                     captured_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
 
+            # ── Ordered-vs-Done by DAY, attributed to the ORDER date. Re-written every night
+            # for the whole trailing window, so a patient who does the exam several days after
+            # ordering makes that ORIGINAL day's `done` count go up (self-correcting — a day is
+            # never frozen until it scrolls past the reconcile window, by when ~all exams are in).
+            # by_modality holds {mod: {ordered, done}} for the exam-type breakdown.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_done_daily (
+                    stat_date     DATE PRIMARY KEY,
+                    ordered       INTEGER NOT NULL DEFAULT 0,
+                    done          INTEGER NOT NULL DEFAULT 0,
+                    unverifiable  INTEGER NOT NULL DEFAULT 0,
+                    by_modality   JSONB NOT NULL DEFAULT '{}',
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+
             # ── RIS Phase 2: per-order lifecycle state + turnaround (TAT) + the durable
             # study binding. One row per radiology order (gen_pat_billing_id). Populated
             # from the live worklist (ordered → reported) and stamped 'filed' with the
@@ -9152,6 +9167,96 @@ def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmi
     notified = _rad_reconcile_notify(summary) if (p.get("notify") == "1") else 0
     return {"ok": True, "notified": notified, **summary}
 
+@app.get("/api/radiology/stats/done-history")
+def radiology_done_history(request: Request, user=Depends(require_admin)):
+    """Daily + monthly ORDERED vs DONE, attributed to the order date and self-corrected for
+    late exams (a patient who does the exam days after ordering makes that original day's `done`
+    rise on the nightly re-run). Reads the accumulated scheduling.radiology_done_daily table.
+    Org-wide (no per-branch split), so management-only."""
+    if user.get("role") not in ("manager", "superadmin"):
+        raise HTTPException(403, "Available to management only")
+    p = request.query_params
+    try:
+        days = max(7, min(120, int(p.get("days") or "45")))
+        months = max(1, min(24, int(p.get("months") or "6")))
+    except Exception:
+        days, months = 45, 6
+    daily = q("""SELECT stat_date::text AS date, ordered, done, unverifiable, by_modality, updated_at
+                 FROM scheduling.radiology_done_daily
+                 WHERE stat_date >= (CURRENT_DATE - %s::int)
+                 ORDER BY stat_date DESC""", (days,)) or []
+    monthly = q("""SELECT to_char(stat_date,'YYYY-MM') AS month,
+                          SUM(ordered)::int AS ordered, SUM(done)::int AS done,
+                          SUM(unverifiable)::int AS unverifiable
+                   FROM scheduling.radiology_done_daily
+                   WHERE stat_date >= (CURRENT_DATE - (%s * 31)::int)
+                   GROUP BY 1 ORDER BY 1 DESC""", (months,)) or []
+    # Exam-type (modality) breakdown for the CURRENT KSA month, summed from the daily JSON.
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    ksa_month = (_dt.now(_tz.utc) + _td(hours=3)).strftime("%Y-%m")
+    mods = {}
+    for r in daily:
+        if not str(r.get("date", "")).startswith(ksa_month):
+            continue
+        for mod, v in (r.get("by_modality") or {}).items():
+            m = mods.setdefault(mod, {"ordered": 0, "done": 0})
+            m["ordered"] += (v or {}).get("ordered", 0)
+            m["done"] += (v or {}).get("done", 0)
+    by_modality = [{"modality": k, **v} for k, v in sorted(mods.items(), key=lambda kv: -kv[1]["ordered"])]
+    return {"ok": True, "daily": daily, "monthly": monthly, "byModality": by_modality, "currentMonth": ksa_month}
+
+@app.get("/api/radiology/stats/done-day")
+async def radiology_done_day(request: Request, user=Depends(require_admin)):
+    """The order-level list behind one day's ordered/done — patient (MRN) + exam + done flag.
+    On-demand (sweeps DePACS for that day with the wide late-exam window). Management-only
+    because it carries patient identifiers."""
+    if user.get("role") not in ("manager", "superadmin"):
+        raise HTTPException(403, "Management only")
+    date = (request.query_params.get("date") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    match_after_h = min(720, max(96, RAD_RECON_FLAG_DAYS * 24))
+    qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
+    data = await run_in_threadpool(lambda: _bridge_request("/his/worklist?" + qs, timeout=240))
+    items = (data or {}).get("items") or []
+    gpbs = []
+    for it in items:
+        try:
+            gpbs.append(int(it.get("genPatBillingId")))
+        except Exception:
+            pass
+    manual_done = set()
+    if gpbs:
+        for r in (q("""SELECT gen_pat_billing_id FROM scheduling.radiology_orders
+                        WHERE gen_pat_billing_id = ANY(%s)
+                          AND (completed_at IS NOT NULL OR local_status = 'completed')""", (gpbs,)) or []):
+            try:
+                manual_done.add(int(r["gen_pat_billing_id"]))
+            except Exception:
+                pass
+    orders = []
+    done = 0
+    for it in items:
+        stage = (it.get("stage") or "").lower()
+        try:
+            gpb = int(it.get("genPatBillingId"))
+        except Exception:
+            gpb = None
+        is_done = stage in ("imaged", "draft", "reported") or (gpb in manual_done)
+        if is_done:
+            done += 1
+        orders.append({
+            "mrno": str(it.get("mrno") or ""), "name": (it.get("patientName") or "").strip(),
+            "exam": it.get("exam") or "", "modality": it.get("modality") or "",
+            "branch": it.get("branch") or "", "orderedDate": it.get("orderedDate"),
+            "done": is_done, "stage": stage or "ordered",
+            "reported": stage == "reported",
+        })
+    orders.sort(key=lambda o: (o["done"], o["modality"]))
+    return {"ok": True, "date": date, "ordered": len(orders), "done": done, "orders": orders}
+
 @app.get("/api/radiology/results/match/{file_no}")
 def radiology_results_match(file_no: str, request: Request, user=Depends(require_radiology)):
     """Reverse handoff: match a patient's radiology order(s)/test(s) to the
@@ -12850,6 +12955,7 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
     performed = not_performed = awaiting = reported = aged = performed_manual = unverifiable = 0
     aged_list = []
     by_branch = {}
+    by_day = {}   # ORDER-date → {ordered, done, unverifiable, mods:{mod:{ordered,done}}}
     for it in items:
         stage = (it.get("stage") or "").lower()
         site = it.get("site")
@@ -12860,10 +12966,21 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
         bname = it.get("branchName") or it.get("siteName") or it.get("branch") or (f"Branch {site}" if site is not None else "—")
         b = by_branch.setdefault(str(site), {"site": site, "name": bname, "ordered": 0, "performed": 0, "notPerformed": 0, "aged": 0, "unverifiable": 0})
         b["ordered"] += 1
+        # Attribute this order to the DAY IT WAS ORDERED (KSA), so a late exam corrects that
+        # original day's `done` on a future re-run — not the day it was finally imaged.
+        od = _rad_ts(it.get("orderedDate"))
+        dkey = (od + timedelta(hours=3)).date().isoformat() if od else None
+        mod = (it.get("modality") or "Other").strip().upper() or "Other"
+        dd = by_day.setdefault(dkey, {"ordered": 0, "done": 0, "unverifiable": 0, "mods": {}}) if dkey else None
+        mm = dd["mods"].setdefault(mod, {"ordered": 0, "done": 0}) if dd else None
+        if dd:
+            dd["ordered"] += 1; mm["ordered"] += 1
         pacs_perf = stage in ("imaged", "draft", "reported")
         manual_perf = gpb in manual_done
         if pacs_perf or manual_perf:
             performed += 1; b["performed"] += 1
+            if dd:
+                dd["done"] += 1; mm["done"] += 1
             if stage == "reported":
                 reported += 1
             elif pacs_perf:
@@ -12874,9 +12991,10 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
             # DEXA / bone-density: never lands in PACS, so "not performed" here is meaningless —
             # bucket separately (confirm via report or the manual button, not PACS).
             unverifiable += 1; b["unverifiable"] += 1
+            if dd:
+                dd["unverifiable"] += 1
         else:
             not_performed += 1; b["notPerformed"] += 1
-            od = _rad_ts(it.get("orderedDate"))
             days_waiting = int((now - od).total_seconds() // 86400) if od else None
             if days_waiting is not None and days_waiting >= flag_days:
                 aged += 1; b["aged"] += 1
@@ -12886,9 +13004,26 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
                     "department": it.get("department") or "", "orderedDate": it.get("orderedDate"),
                     "daysWaiting": days_waiting, "modality": it.get("modality") or "",
                 })
+    # Upsert the per-DAY ordered/done so the "daily & monthly" view self-corrects for late exams.
+    for dkey, dv in by_day.items():
+        try:
+            q("""INSERT INTO scheduling.radiology_done_daily (stat_date, ordered, done, unverifiable, by_modality, updated_at)
+                 VALUES (%s,%s,%s,%s,%s, NOW())
+                 ON CONFLICT (stat_date) DO UPDATE SET
+                     ordered=EXCLUDED.ordered, done=EXCLUDED.done, unverifiable=EXCLUDED.unverifiable,
+                     by_modality=EXCLUDED.by_modality, updated_at=NOW()""",
+              (dkey, dv["ordered"], dv["done"], dv["unverifiable"], json.dumps(dv["mods"])),
+              exec_only=True)
+        except Exception:
+            pass
     aged_list.sort(key=lambda x: x.get("daysWaiting") or 0, reverse=True)
     aged_list = aged_list[:300]
     ordered_total = len(items)
+    # Today + this-month ordered/done totals (from the per-day tally) for the report headline.
+    ksa_month = to_d.strftime("%Y-%m")
+    month_ordered = sum(d["ordered"] for k, d in by_day.items() if k and k.startswith(ksa_month))
+    month_done = sum(d["done"] for k, d in by_day.items() if k and k.startswith(ksa_month))
+    today_dv = by_day.get(to_d.isoformat()) or {"ordered": 0, "done": 0}
     payload = {
         "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(), "flagDays": flag_days,
         "performedManual": performed_manual, "unverifiable": unverifiable,
@@ -12913,7 +13048,9 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
             "flagDays": flag_days, "orderedTotal": ordered_total, "performed": performed,
             "performedManual": performed_manual, "unverifiable": unverifiable,
             "notPerformed": not_performed, "notPerformedAged": aged, "awaitingReport": awaiting,
-            "reported": reported, "byBranch": payload["byBranch"], "agedList": aged_list}
+            "reported": reported, "byBranch": payload["byBranch"], "agedList": aged_list,
+            "todayOrdered": today_dv.get("ordered", 0), "todayDone": today_dv.get("done", 0),
+            "monthOrdered": month_ordered, "monthDone": month_done, "month": ksa_month}
 
 def _rad_reconcile_notify(summary):
     """Push the end-of-day reconciliation summary (+ top follow-up patients) to management.
@@ -12921,8 +13058,15 @@ def _rad_reconcile_notify(summary):
     aged = summary.get("agedList") or []
     manual = summary.get("performedManual") or 0
     unverifiable = summary.get("unverifiable") or 0
+    _pct = lambda done, ordered: (round(done / ordered * 100) if ordered else 0)
+    t_ord, t_done = summary.get("todayOrdered", 0), summary.get("todayDone", 0)
+    m_ord, m_done = summary.get("monthOrdered", 0), summary.get("monthDone", 0)
     lines = [
-        f"🩻 End-of-day reconciliation ({summary['windowFrom']} → {summary['windowTo']})",
+        f"🩻 Radiology — ordered vs done",
+        f"📅 Today: {t_done}/{t_ord} done ({_pct(t_done, t_ord)}%)",
+        f"🗓️ This month ({summary.get('month','')}): {m_done}/{m_ord} done ({_pct(m_done, m_ord)}%)",
+        "",
+        f"— reconciliation window {summary['windowFrom']} → {summary['windowTo']} —",
         f"✅ Performed: {summary['performed']}" + (f" (incl. {manual} marked manually)" if manual else ""),
         f"⚠️ Billed but NOT performed >{summary['flagDays']}d: {summary['notPerformedAged']} — needs follow-up",
         f"🕓 Performed, not reported: {summary['awaitingReport']}",
