@@ -9167,6 +9167,22 @@ async def radiology_panel_dates(request: Request, user=Depends(require_superadmi
     qs = ("?" + _up.urlencode(q_)) if q_ else ""
     return await run_in_threadpool(lambda: _bridge_request("/his/diag/panel-dates" + qs, timeout=120))
 
+@app.api_route("/api/radiology/done-signal", methods=["GET", "POST"])
+async def radiology_done_signal(request: Request, user=Depends(require_superadmin)):
+    """Read-only: classify every ordered+non-cancelled exam by HOW it reads done — Siratech report
+    (works without PACS: the early manual/non-integrated period), matched PACS study, DEXA, or
+    truly nothing — with a per-day series. Forwards to the connector's /diag/done-signal."""
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    p = request.query_params
+    q_ = {}
+    for k in ("site", "from", "to", "matchAfterH"):
+        v = (p.get(k) or "").strip()
+        if v:
+            q_[k] = v
+    qs = ("?" + _up.urlencode(q_)) if q_ else ""
+    return await run_in_threadpool(lambda: _bridge_request("/his/diag/done-signal" + qs, timeout=240))
+
 @app.post("/api/radiology/reconcile/run")
 def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
     """Run the reconciliation on demand (testing / an immediate check instead of waiting for
