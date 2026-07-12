@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelmodality-2026-07-12af';
+const CONNECTOR_BUILD = 'panelbackfill-2026-07-12ag';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -4439,13 +4439,13 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // modality donut both use this, so every "exams" number agrees exactly AND paints instantly
   // (no waiting for the slow, SAMPLED bill-read pass — which is kept only for revenue). Cached
   // via buildWorklistRis's own cache.
-  let panelExams = null, panelModality = null;
+  let panelExams = null, panelModality = null, _wlxItems = [];
   try {
     const _wlx = await buildWorklistRis({ sites: wantSites, from, to, ready: false, noCache });
-    const _items = (_wlx && _wlx.items) || [];
-    panelExams = _items.length;
+    _wlxItems = (_wlx && _wlx.items) || [];
+    panelExams = _wlxItems.length;
     const _mix = new Map();
-    for (const it of _items) {
+    for (const it of _wlxItems) {
       const mod = friendlyModality(it.modality || it.exam || '') || 'Other';
       _mix.set(mod, (_mix.get(mod) || 0) + 1);
     }
@@ -4453,7 +4453,49 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       exams: panelExams, exact: true, source: 'panel',
       mix: [..._mix.entries()].map(([modality, count]) => ({ modality, count })).sort((a, b) => b.count - a.count),
     };
-  } catch (_e) { panelExams = null; panelModality = null; }
+  } catch (_e) { panelExams = null; panelModality = null; _wlxItems = []; }
+
+  // Panel backfill — RadiologySearch is SLOW and, on wide ranges, times out or fails for
+  // every branch (a 30-day all-branch fan-out is its worst case). When that happens the base
+  // tallies (total/patients/priority/daily/aging/byBranch/byDoctor) all read 0 and the Overview
+  // shows alarming false zeros ("REQUESTS 0, PATIENTS 0, branches unavailable: 1-14") even though
+  // the reliable FetchRISPanel board returned thousands of exams. So when RadiologySearch didn't
+  // deliver, recompute those core KPIs from the panel items we already fetched — one row per exam,
+  // deduped to bill level for order-scoped counts. byDepartment/byGender stay whatever
+  // RadiologySearch gave (the panel carries neither) and may be empty; that's honest, not a zero.
+  const _rsFailedAll = failed.length >= wantSites.length && wantSites.length > 0;
+  if (_wlxItems.length && (total === 0 || _rsFailedAll)) {
+    // Dedup panel exams to bill (order) level — several exam rows share one billNo; requests are
+    // orders, not procedures, so byBranch/byDoctor/daily/aging must count each order once.
+    const _orders = new Map();   // billNo (or genPatBillingId fallback) -> representative item
+    for (const it of _wlxItems) {
+      const ok = (it.billNo != null && String(it.billNo) !== '') ? `b:${it.billNo}` : `g:${it.genPatBillingId}`;
+      if (!_orders.has(ok)) _orders.set(ok, it);
+    }
+    // Reset the base tallies (they're all zero/empty when RadiologySearch failed) and rebuild.
+    total = 0; emergency = 0; routine = 0;
+    patientSet.clear(); daily.clear();
+    aging['<1d'] = 0; aging['1-3d'] = 0; aging['3-7d'] = 0; aging['>7d'] = 0;
+    byBranch.clear(); byDoctor.clear();
+    for (const site of wantSites) byBranch.set(String(site), { key: String(site), name: branchLabel(site), count: 0 });
+    for (const it of _orders.values()) {
+      total += 1;
+      if (it.mrno) patientSet.add(String(it.mrno));
+      tallyPush(byBranch, it.site, branchLabel(it.site));
+      tallyPush(byDoctor, it.doctorName || 'Unknown', (it.doctorName || '').trim() || 'Unknown');
+      if (it.emergency) emergency += 1; else routine += 1;
+      const d = dayOf(it.orderedDate);
+      if (d) daily.set(d, (daily.get(d) || 0) + 1);
+      const t = parseHisDate(it.orderedDate);
+      if (Number.isFinite(t)) {
+        const days = (now - t) / 864e5;
+        if (days < 1) aging['<1d'] += 1; else if (days < 3) aging['1-3d'] += 1; else if (days < 7) aging['3-7d'] += 1; else aging['>7d'] += 1;
+      }
+    }
+    // The base counts are now sourced from the panel, so the branches DID resolve — clear the
+    // "branches unavailable" alarm the (failed) RadiologySearch fan-out would otherwise raise.
+    failed.length = 0;
+  }
 
   const result = {
     range: { from: fromISO.slice(0, 10), to: toISO.slice(0, 10) },
