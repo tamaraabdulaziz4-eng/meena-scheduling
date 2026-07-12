@@ -12781,11 +12781,17 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
     from_d = to_d - timedelta(days=window_days)
     # Fetch the DePACS-confirmed board in WEEKLY chunks so each connector call stays under its
     # ready-pass ceiling (a single 30-day ready=1 sweep would blow the timeout).
+    # matchAfterH: count a PACS study as this order's exam up to `flag_days` AFTER the order,
+    # so a study performed MANUALLY / LATE (days after the order, when the modality worklist
+    # never showed it) still links instead of reading as "not performed". Bounded to the
+    # connector's 720h (30-day) ceiling.
+    match_after_h = min(720, max(96, flag_days * 24))
     by_key = {}
     chunk_start = from_d
     while chunk_start <= to_d:
         chunk_end = min(chunk_start + timedelta(days=6), to_d)
-        qs = urllib.parse.urlencode({"from": chunk_start.isoformat(), "to": chunk_end.isoformat(), "ready": "1"})
+        qs = urllib.parse.urlencode({"from": chunk_start.isoformat(), "to": chunk_end.isoformat(),
+                                     "ready": "1", "matchAfterH": match_after_h})
         try:
             data = _bridge_request("/his/worklist?" + qs, timeout=240)
         except Exception as e:

@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'bugfixes-2026-07-12ab';
+const CONNECTOR_BUILD = 'reconwindow-2026-07-12ac';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2076,12 +2076,16 @@ const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'ris').toLowerCase();
 // items in place; best-effort — a failed/missing lookup leaves the row's preliminary stage
 // untouched. Only ever fills the middle of the pipeline; the caller keeps any authoritative
 // "reported" it already knows (RIS resultStatus) so a DePACS window-miss can't demote it.
-async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
+async function enrichStagesFromDepacs(items, { noCache = false, matchAfterH = 96 } = {}) {
   if (!items || !items.length) return 0;
   const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
-  // Match ONE row against a candidate study list (already filtered to this patient): set the
-  // stage from PACS reality (imaged / draft / reported) or 'ordered' when nothing matches its
-  // modality + time window. Shared by the fast bulk path and the per-patient fallback.
+  // matchAfterH = how many hours AFTER the order a study still counts as this order's exam.
+  // The live board uses the default 96h (recent accuracy); the nightly reconciliation passes a
+  // much wider window (e.g. 14 days) so a study PERFORMED MANUALLY / LATE — days after the
+  // order, when the modality worklist never showed it — still links instead of reading as
+  // "not performed". Matching is modality-only (no body-part), so a manual study with a
+  // generic description still counts (owner's directive: lenient = count as performed).
+  const AFTER_MS = Math.max(96, Number(matchAfterH) || 96) * 36e5;
   const applyMatch = (it, all) => {
     const mod = results.normMod(it.modality || it.exam || '');
     if (!KNOWN_MOD.has(mod)) return;                    // unmappable modality → don't force 'ordered'
@@ -2090,7 +2094,7 @@ async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
       if (results.normMod(s.modality || '') !== mod) return false;
       if (!Number.isFinite(ot)) return true;
       const st = parseHisDate(s.studyDate);
-      return Number.isFinite(st) ? (st >= ot - 24 * 36e5 && st <= ot + 96 * 36e5) : true;
+      return Number.isFinite(st) ? (st >= ot - 24 * 36e5 && st <= ot + AFTER_MS) : true;
     });
     if (!matched.length) { it.stage = 'ordered'; it.readyToFile = false; return; }
     const reportedHit = matched.find((s) => results.isReported(s.status));
@@ -2108,7 +2112,11 @@ async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
   const times = items.map((it) => parseHisDate(it.orderedDate)).filter(Number.isFinite);
   const toDay = (ms) => new Date(ms).toISOString().slice(0, 10);
   const startDay = toDay((times.length ? Math.min(...times) : Date.now()) - 3 * DAY);
-  const endDay = toDay((times.length ? Math.max(...times) : Date.now()) + 3 * DAY);
+  // Extend the sweep end past the LATEST order by the match window (+ buffer) so a study
+  // performed days after that order is actually fetched — else a wide matchAfterH would look
+  // for studies the sweep never pulled.
+  const endPad = Math.ceil(AFTER_MS / DAY) + 3;
+  const endDay = toDay((times.length ? Math.max(...times) : Date.now()) + endPad * DAY);
   let bulk = null;
   try { bulk = await results.depacsRecentStudies({ startDate: startDay, endDate: endDay, noCache }); }
   catch (e) { bulk = null; }
@@ -2156,8 +2164,8 @@ async function enrichStagesFromDepacs(items, { noCache = false } = {}) {
 // the instant panel board: the first paint is Ordered vs Reported (from the panel's
 // resultStatus), then a few seconds later imaged exams move to the Completed lane and any
 // PACS-verified report is confirmed — WITHOUT slowing the first paint.
-async function buildWorklistRis({ sites, from, to, ready = false, noCache = false }) {
-  const key = JSON.stringify({ src: 'ris', sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready: !!ready });
+async function buildWorklistRis({ sites, from, to, ready = false, noCache = false, matchAfterH = 96 }) {
+  const key = JSON.stringify({ src: 'ris', sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready: !!ready, matchAfterH });
   // The ready pass (DePACS enrichment) keeps the long TTL — its per-patient PACS lookups are
   // the heavy part; the fast panel board stays on the short TTL so it refreshes often.
   const _ttl = ready ? WORKLIST_CACHE_TTL : WORKLIST_FAST_CACHE_TTL;
@@ -2296,7 +2304,7 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
   let _readyChecked = 0;
   if (ready && kept.length) {
     _tmark.beforeReady = Date.now();
-    try { _readyChecked = await enrichStagesFromDepacs(kept, { noCache }); } catch (_e) { /* best-effort */ }
+    try { _readyChecked = await enrichStagesFromDepacs(kept, { noCache, matchAfterH }); } catch (_e) { /* best-effort */ }
     for (const it of kept) { if (it.hisReported && it.stage !== 'reported') { it.stage = 'reported'; it.readyToFile = true; } }
     _tmark.afterReady = Date.now();
   }
@@ -2327,13 +2335,13 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
   return data;
 }
 
-async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false, source = null }) {
+async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, modality = false, pay = false, noCache = false, source = null, matchAfterH = 96 }) {
   // RIS-panel board (flag or ?src=ris): it already carries exam, modality, and the
   // reported/in-progress status, so we route EVERY pass to it — the client's background
   // ready/modality passes then hit the same fast, same-keyed board instead of the slow
   // search. (Payment isn't in the panel, so the pay overlay is simply absent on this board.)
   if ((source || WORKLIST_SOURCE) === 'ris') {
-    return await buildWorklistRis({ sites, from, to, ready, noCache });
+    return await buildWorklistRis({ sites, from, to, ready, noCache, matchAfterH });
   }
   const key = JSON.stringify({ sites: (sites || []).slice().sort((a, b) => a - b), from, to, ready, readyLimit, modality, pay });
   // Fast board pass refreshes on the short TTL; the heavy ready/modality pass keeps the
@@ -2799,7 +2807,11 @@ app.get('/worklist', requireAuth, async (req, res) => {
     const pay = String(req.query.pay || '') === '1';
     const noCache = String(req.query.nocache || '') === '1';
     const source = String(req.query.src || '').trim().toLowerCase() || null;   // 'ris' to test the fast board
-    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache, source })) });
+    // Widen the "study counts as this order's exam" window (hours after the order). Default 96h
+    // for the live board; the nightly reconciliation passes up to ~30 days so late/manual studies
+    // link. Bounded 96h..720h (30 days).
+    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 96));
+    return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache, source, matchAfterH })) });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
