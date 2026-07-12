@@ -1096,7 +1096,9 @@ function rsSetTab(name) {
   radstats.tab = name;
   radstats._paintedOnce = false;
   if (name === 'financial' && !radstats.finData && !radstats.finLoading) rsLoadFinancial();
-  if (name === 'done' && !radstats.doneData && !radstats.doneLoading) rsLoadDone();
+  // Ordered vs Done: refresh on EVERY open so TODAY is live — keeps showing the cached numbers
+  // while the fresh ones load underneath (no blank flash).
+  if (name === 'done' && !radstats.doneLoading) rsLoadDone();
   rsRenderBody();
 }
 
@@ -1117,7 +1119,7 @@ async function rsLoadDone(force) {
 function rsDoneSub() {
   const d = radstats.doneData;
   if (!d) return 'daily & monthly — click to load';
-  return 'counts are exams (procedures) · by order date · self-corrects as late exams complete';
+  return 'exams (procedures) · today is live · earlier days self-correct as late exams complete';
 }
 const _rsPct = (done, ord) => (ord ? Math.round((done / ord) * 100) : 0);
 function _rsDoneTable(rows, keyLabel, keyField, opts) {
