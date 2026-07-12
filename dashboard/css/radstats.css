@@ -421,18 +421,43 @@ body.dark .rsr-table td { background:rgba(255,255,255,.03); }
 
 
 /* ── Ordered vs Done tab ──────────────────────────────────────────────────────── */
-.rs-done-tbl { width:100%; border-collapse:collapse; font-size:13px; }
-.rs-done-tbl th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em;
-  color:var(--muted); font-weight:700; padding:6px 10px; border-bottom:1px solid var(--border); }
-.rs-done-tbl td { padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+/* Headline cards: this month + last month, done / ordered at a glance. */
+.rs-done-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; max-width:720px; margin-bottom:18px; }
+@media (max-width:520px){ .rs-done-cards { grid-template-columns:1fr; } }
+.rs-done-card { border:1px solid var(--border); border-radius:16px; padding:16px 18px; background:var(--card);
+  box-shadow:var(--shadow); }
+.rs-done-card-l { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.rs-done-card-v { font-size:30px; font-weight:800; color:var(--green-ink,#15803d); letter-spacing:-.02em; margin-top:6px; line-height:1; }
+.rs-done-card-of { font-size:16px; font-weight:700; color:var(--muted); letter-spacing:0; }
+.rs-done-card-b { height:8px; border-radius:6px; background:var(--table-row-hover,rgba(0,0,0,.06)); overflow:hidden; margin:12px 0 8px; }
+.rs-done-card-b > span { display:block; height:100%; border-radius:6px; background:var(--green,#22c55e);
+  transition:width .6s cubic-bezier(.2,.8,.2,1); }
+.rs-done-card-p { font-size:12px; font-weight:600; color:var(--text); }
+/* Capped-width, bordered, zebra-striped tables with fixed compact number columns, so the
+   figures sit close together and read at a glance instead of spreading across the page. */
+.rs-done-tbl { width:100%; max-width:720px; border-collapse:collapse; font-size:13px; table-layout:fixed;
+  border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-top:8px; }
+.rs-done-tbl th { text-align:right; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--muted); font-weight:700; padding:9px 14px; background:var(--card-alt,rgba(107,78,255,.045));
+  border-bottom:1px solid var(--border); white-space:nowrap; }
+.rs-done-tbl th:first-child { text-align:left; }
+.rs-done-tbl td { padding:9px 14px; border-bottom:1px solid var(--border); vertical-align:middle; }
+.rs-done-tbl tbody tr:last-child td { border-bottom:none; }
+.rs-done-tbl tbody tr:nth-child(even) td { background:rgba(107,78,255,.028); }
+.rs-done-tbl td:first-child { font-weight:600; white-space:nowrap; }
+/* columns: label | ordered | done | % | bar (fixed layout → widths set on the header row) */
+.rs-done-tbl th:nth-child(2), .rs-done-tbl th:nth-child(3) { width:80px; }
+.rs-done-tbl th:nth-child(4) { width:56px; }
+.rs-done-tbl th:nth-child(5) { width:184px; }
 .rs-done-n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .rs-done-row.rs-bar-click { cursor:pointer; transition:background .12s; }
-.rs-done-row.rs-bar-click:hover { background:rgba(107,78,255,.07); }
-.rs-donebar { display:inline-block; width:120px; max-width:38vw; height:9px; border-radius:6px;
+.rs-done-row.rs-bar-click:hover td { background:rgba(107,78,255,.09); }
+.rs-donebar { display:inline-block; width:100%; max-width:150px; height:9px; border-radius:6px;
   background:var(--table-row-hover,rgba(0,0,0,.06)); overflow:hidden; vertical-align:middle; }
 .rs-donebar > span { display:block; height:100%; border-radius:6px; background:var(--green,#22c55e);
   transition:width .5s cubic-bezier(.2,.8,.2,1); }
-.rs-done-unv { font-size:10.5px; color:var(--muted); margin-inline-start:8px; }
+.rs-done-unv { font-size:10px; color:var(--muted); margin-inline-start:8px; white-space:nowrap; }
+@media (max-width:640px){ .rs-done-tbl th:nth-child(5) { width:96px; } .rs-done-unv { display:none; } }
 
 .rs-done-drillcard { border:1px solid var(--border); border-radius:12px; background:var(--card);
   margin-bottom:14px; overflow:hidden; box-shadow:var(--shadow); }

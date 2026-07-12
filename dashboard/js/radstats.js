@@ -1142,10 +1142,18 @@ function rsDoneInner() {
   if (!monthly.length && !daily.length) {
     return `<div class="rs-empty">No data yet — the nightly job builds this up. Ask an admin to run a reconciliation, or check back tomorrow.</div>`;
   }
+  // Glanceable headline cards: this month + last month done/ordered.
+  const card = (m, lbl) => m ? `<div class="rs-done-card">
+      <div class="rs-done-card-l">${lbl} · ${escapeHtml(m.month)}</div>
+      <div class="rs-done-card-v">${rsNum(m.done)}<span class="rs-done-card-of"> / ${rsNum(m.ordered)}</span></div>
+      <div class="rs-done-card-b"><span style="width:${_rsPct(m.done, m.ordered)}%"></span></div>
+      <div class="rs-done-card-p">${_rsPct(m.done, m.ordered)}% done${m.unverifiable ? ` · +${rsNum(m.unverifiable)} DEXA` : ''}</div>
+    </div>` : '';
+  const cards = (monthly[0] || monthly[1]) ? `<div class="rs-done-cards">${card(monthly[0], 'This month')}${card(monthly[1], 'Last month')}</div>` : '';
   const monthTbl = monthly.length ? `<div class="rs-subhead">By month</div>${_rsDoneTable(monthly, 'Month', 'month')}` : '';
-  const dayTbl = daily.length ? `<div class="rs-subhead" style="margin-top:16px">By day${d.currentMonth ? ' · ' + escapeHtml(d.currentMonth) : ''} <span style="font-weight:600;color:var(--muted)">(tap a day for the patient list)</span></div>${_rsDoneTable(daily, 'Day', 'date', { dayClick: true })}` : '';
-  const modTbl = mods.length ? `<div class="rs-subhead" style="margin-top:16px">By exam type (this month)</div>${_rsDoneTable(mods.map((m) => ({ month: m.modality, ordered: m.ordered, done: m.done })), 'Exam', 'month')}` : '';
-  return `<div id="rs-done-drill"></div>${monthTbl}${dayTbl}${modTbl}`;
+  const dayTbl = daily.length ? `<div class="rs-subhead" style="margin-top:18px">By day${d.currentMonth ? ' · ' + escapeHtml(d.currentMonth) : ''} <span style="font-weight:600;color:var(--muted)">(tap a day for the patient list)</span></div>${_rsDoneTable(daily, 'Day', 'date', { dayClick: true })}` : '';
+  const modTbl = mods.length ? `<div class="rs-subhead" style="margin-top:18px">By exam type (this month)</div>${_rsDoneTable(mods.map((m) => ({ month: m.modality, ordered: m.ordered, done: m.done })), 'Exam', 'month')}` : '';
+  return `<div id="rs-done-drill"></div>${cards}${monthTbl}${dayTbl}${modTbl}`;
 }
 
 // Drill one day → the patient-level list (MRN + exam + done). Management-only endpoint.
