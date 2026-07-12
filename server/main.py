@@ -899,6 +899,27 @@ def init_schema():
                     captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
 
+            # ── End-of-day "billed vs actually-performed" reconciliation snapshot.
+            # Each night we sweep the trailing window's orders and check DePACS (PACS =
+            # proof the exam was physically performed). One row per run_date. The `payload`
+            # holds the aged "billed but not performed" follow-up list (patient + exam +
+            # days-waiting) plus the by-branch breakdown.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.radiology_reconcile_daily (
+                    run_date            DATE PRIMARY KEY,
+                    window_from         DATE,
+                    window_to           DATE,
+                    flag_days           INTEGER NOT NULL DEFAULT 14,
+                    ordered_total       INTEGER NOT NULL DEFAULT 0,
+                    performed           INTEGER NOT NULL DEFAULT 0,
+                    not_performed       INTEGER NOT NULL DEFAULT 0,
+                    not_performed_aged  INTEGER NOT NULL DEFAULT 0,
+                    awaiting_report     INTEGER NOT NULL DEFAULT 0,
+                    reported            INTEGER NOT NULL DEFAULT 0,
+                    payload             JSONB NOT NULL DEFAULT '{}',
+                    captured_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+
             # ── RIS Phase 2: per-order lifecycle state + turnaround (TAT) + the durable
             # study binding. One row per radiology order (gen_pat_billing_id). Populated
             # from the live worklist (ordered → reported) and stamped 'filed' with the
@@ -9083,6 +9104,36 @@ def radiology_stats_snapshot(date: str = Query(...), user=Depends(require_admin)
         raise HTTPException(502, f"Snapshot failed: {e}")
     return {"ok": True, "date": date, "total": total}
 
+@app.get("/api/radiology/reconcile/latest")
+def radiology_reconcile_latest(user=Depends(require_admin)):
+    """The latest end-of-day billed-vs-performed reconciliation snapshot (counts + the
+    aged 'billed but not performed' follow-up list). Read-only. Management-only — the
+    payload carries org-wide patient names, so branch-locked leads are excluded."""
+    if user.get("role") not in ("manager", "superadmin"):
+        raise HTTPException(403, "Reconciliation is available to management only")
+    row = q("""SELECT run_date, window_from, window_to, flag_days, ordered_total, performed,
+                      not_performed, not_performed_aged, awaiting_report, reported, payload, captured_at
+               FROM scheduling.radiology_reconcile_daily ORDER BY run_date DESC LIMIT 1""", one=True)
+    if not row:
+        return {"ok": True, "empty": True}
+    return {"ok": True, **row}
+
+@app.post("/api/radiology/reconcile/run")
+def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
+    """Run the reconciliation on demand (testing / an immediate check instead of waiting for
+    the nightly job). SLOW — it sweeps the trailing window from DePACS in weekly chunks, so the
+    request can take a few minutes. `?notify=1` also pushes the summary to management."""
+    p = request.query_params
+    wd = (p.get("window_days") or "").strip()
+    fd = (p.get("flag_days") or "").strip()
+    try:
+        summary = _rad_reconcile_run(window_days=int(wd) if wd else None,
+                                     flag_days=int(fd) if fd else None)
+    except Exception as e:
+        raise HTTPException(502, f"Reconciliation failed: {e}")
+    notified = _rad_reconcile_notify(summary) if (p.get("notify") == "1") else 0
+    return {"ok": True, "notified": notified, **summary}
+
 @app.get("/api/radiology/results/match/{file_no}")
 def radiology_results_match(file_no: str, request: Request, user=Depends(require_radiology)):
     """Reverse handoff: match a patient's radiology order(s)/test(s) to the
@@ -12642,6 +12693,7 @@ def start_scheduler():
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()
     threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
     threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
+    threading.Thread(target=_rad_reconcile_loop, daemon=True).start()   # nightly billed-vs-performed reconciliation
     threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
     threading.Thread(target=_radiology_autostamp_loop, daemon=True).start()
     threading.Thread(target=_radiology_stage_sweep_loop, daemon=True).start()   # keeps store stage/ledger warm viewer-independently
@@ -12701,6 +12753,155 @@ def _radiology_snapshot_loop():
                     print(f"[radstats] snapshot {day} failed: {e}")
         except Exception as e:
             print(f"[radstats] loop error: {e}")
+        time.sleep(3600)
+
+RAD_RECON_WINDOW_DAYS = int(os.environ.get("RAD_RECON_WINDOW_DAYS", "30"))
+RAD_RECON_FLAG_DAYS    = int(os.environ.get("RAD_RECON_FLAG_DAYS", "14"))
+
+def _rad_reconcile_run(window_days=None, flag_days=None):
+    """End-of-day BILLED vs ACTUALLY-PERFORMED reconciliation.
+
+    Sweeps the trailing window's orders via the ready=1 worklist (whose `stage` is
+    DePACS-CONFIRMED — a real PACS study = the exam was physically performed) and buckets
+    each order:
+      • performed        — stage imaged/draft/reported (a PACS study exists)
+      • awaiting_report  — imaged/draft but not yet reported
+      • not_performed    — stage 'ordered' (no PACS study)
+      • aged             — not_performed AND ordered >= flag_days ago → the follow-up list
+
+    A patient who legitimately comes in a few days later is NOT flagged (only orders past
+    flag_days). Stores a daily snapshot and returns the summary. Read-only w.r.t. HIS."""
+    import urllib.parse
+    from datetime import datetime, timezone, timedelta
+    window_days = int(window_days or RAD_RECON_WINDOW_DAYS)
+    flag_days = int(flag_days or RAD_RECON_FLAG_DAYS)
+    now = datetime.now(timezone.utc)
+    ksa = now + timedelta(hours=3)
+    to_d = ksa.date()
+    from_d = to_d - timedelta(days=window_days)
+    # Fetch the DePACS-confirmed board in WEEKLY chunks so each connector call stays under its
+    # ready-pass ceiling (a single 30-day ready=1 sweep would blow the timeout).
+    by_key = {}
+    chunk_start = from_d
+    while chunk_start <= to_d:
+        chunk_end = min(chunk_start + timedelta(days=6), to_d)
+        qs = urllib.parse.urlencode({"from": chunk_start.isoformat(), "to": chunk_end.isoformat(), "ready": "1"})
+        try:
+            data = _bridge_request("/his/worklist?" + qs, timeout=240)
+        except Exception as e:
+            print(f"[reconcile] chunk {chunk_start}..{chunk_end} failed: {e}")
+            data = None
+        for it in ((data or {}).get("items") or []):
+            gpb = it.get("genPatBillingId")
+            key = str(gpb) if gpb else f"{it.get('mrno')}|{it.get('exam')}|{it.get('orderedDate')}"
+            by_key[key] = it   # last-wins; chunks don't overlap, this just de-dupes edge cases
+        chunk_start = chunk_end + timedelta(days=1)
+    items = list(by_key.values())
+    performed = not_performed = awaiting = reported = aged = 0
+    aged_list = []
+    by_branch = {}
+    for it in items:
+        stage = (it.get("stage") or "").lower()
+        site = it.get("site")
+        bname = it.get("branchName") or it.get("siteName") or it.get("branch") or (f"Branch {site}" if site is not None else "—")
+        b = by_branch.setdefault(str(site), {"site": site, "name": bname, "ordered": 0, "performed": 0, "notPerformed": 0, "aged": 0})
+        b["ordered"] += 1
+        if stage in ("imaged", "draft", "reported"):
+            performed += 1; b["performed"] += 1
+            if stage == "reported":
+                reported += 1
+            else:
+                awaiting += 1
+        else:
+            not_performed += 1; b["notPerformed"] += 1
+            od = _rad_ts(it.get("orderedDate"))
+            days_waiting = int((now - od).total_seconds() // 86400) if od else None
+            if days_waiting is not None and days_waiting >= flag_days:
+                aged += 1; b["aged"] += 1
+                aged_list.append({
+                    "mrno": str(it.get("mrno") or ""), "name": (it.get("patientName") or "").strip(),
+                    "exam": it.get("exam") or it.get("modality") or "", "branch": bname,
+                    "department": it.get("department") or "", "orderedDate": it.get("orderedDate"),
+                    "daysWaiting": days_waiting, "modality": it.get("modality") or "",
+                })
+    aged_list.sort(key=lambda x: x.get("daysWaiting") or 0, reverse=True)
+    aged_list = aged_list[:300]
+    ordered_total = len(items)
+    payload = {
+        "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(), "flagDays": flag_days,
+        "byBranch": sorted(by_branch.values(), key=lambda x: x["ordered"], reverse=True),
+        "aged": aged_list, "generatedAt": now.isoformat(),
+    }
+    run_date = to_d.isoformat()
+    q("""INSERT INTO scheduling.radiology_reconcile_daily
+             (run_date, window_from, window_to, flag_days, ordered_total, performed,
+              not_performed, not_performed_aged, awaiting_report, reported, payload, captured_at)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW())
+         ON CONFLICT (run_date) DO UPDATE SET
+             window_from=EXCLUDED.window_from, window_to=EXCLUDED.window_to, flag_days=EXCLUDED.flag_days,
+             ordered_total=EXCLUDED.ordered_total, performed=EXCLUDED.performed,
+             not_performed=EXCLUDED.not_performed, not_performed_aged=EXCLUDED.not_performed_aged,
+             awaiting_report=EXCLUDED.awaiting_report, reported=EXCLUDED.reported,
+             payload=EXCLUDED.payload, captured_at=NOW()""",
+      (run_date, from_d.isoformat(), to_d.isoformat(), flag_days, ordered_total, performed,
+       not_performed, aged, awaiting, reported, json.dumps(payload)),
+      exec_only=True)
+    return {"runDate": run_date, "windowFrom": from_d.isoformat(), "windowTo": to_d.isoformat(),
+            "flagDays": flag_days, "orderedTotal": ordered_total, "performed": performed,
+            "notPerformed": not_performed, "notPerformedAged": aged, "awaitingReport": awaiting,
+            "reported": reported, "byBranch": payload["byBranch"], "agedList": aged_list}
+
+def _rad_reconcile_notify(summary):
+    """Push the end-of-day reconciliation summary (+ top follow-up patients) to management.
+    In-app + email (no WhatsApp — the list is long). Best-effort per recipient."""
+    aged = summary.get("agedList") or []
+    lines = [
+        f"🩻 End-of-day reconciliation ({summary['windowFrom']} → {summary['windowTo']})",
+        f"✅ Performed (PACS-confirmed): {summary['performed']}",
+        f"⚠️ Billed but NOT performed >{summary['flagDays']}d: {summary['notPerformedAged']} — needs follow-up",
+        f"🕓 Performed, not reported: {summary['awaitingReport']}",
+        f"Ordered total (window): {summary['orderedTotal']}",
+    ]
+    if aged:
+        lines.append("")
+        lines.append("Top not-performed (days waiting):")
+        for a in aged[:15]:
+            nm = a.get("name") or a.get("mrno") or "—"
+            lines.append(f"• {nm} · {a.get('exam') or a.get('modality') or ''} · {a.get('branch') or ''} · {a.get('daysWaiting')}d")
+        if len(aged) > 15:
+            lines.append(f"…and {len(aged) - 15} more")
+    msg = "\n".join(lines)
+    recips = q("SELECT id FROM scheduling.users WHERE role = ANY(%s)", (["manager", "superadmin"],)) or []
+    for u in recips:
+        try:
+            notify(u["id"], msg, link=None, ntype="radiology", whatsapp=False)
+        except Exception:
+            pass
+    return len(recips)
+
+def _rad_reconcile_loop():
+    """Once a day at end-of-day (>=22:00 KSA), run the billed-vs-performed reconciliation.
+    Claim-gated on app_settings so it fires exactly once across gunicorn workers."""
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            if _bridge_base():
+                ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+                if ksa.hour >= 22:
+                    claimed = q("""INSERT INTO scheduling.app_settings (key, value) VALUES (%s, %s)
+                                   ON CONFLICT (key) DO NOTHING RETURNING key""",
+                                (f"rad_reconcile:{ksa.strftime('%Y-%m-%d')}", ksa.isoformat()), one=True)
+                    if claimed:
+                        try:
+                            s = _rad_reconcile_run()
+                            n = _rad_reconcile_notify(s)
+                            print(f"[reconcile] {s['runDate']}: performed={s['performed']} "
+                                  f"not-performed>{s['flagDays']}d={s['notPerformedAged']} → {n} managers")
+                        except Exception as e:
+                            print(f"[reconcile] run failed: {e}")
+        except Exception as e:
+            print(f"[reconcile] loop error: {e}")
         time.sleep(3600)
 
 def _credential_reminder_loop():
