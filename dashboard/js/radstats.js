@@ -427,7 +427,7 @@ async function rsLoad(silent, force) {
   // A non-silent load = the selection changed (branch / preset / dates / first open).
   // The old modality+revenue belong to the PREVIOUS selection, so drop them — they'll
   // reload in the background for the new selection below.
-  if (!silent) { radstats.modData = null; radstats.finData = null; radstats.modError = ''; radstats.finError = ''; radstats._bodySig = ''; }
+  if (!silent) { radstats.modData = null; radstats.finData = null; radstats.modError = ''; radstats.finError = ''; radstats.deptLoaded = false; radstats.deptError = ''; radstats._bodySig = ''; }
   const q = new URLSearchParams();
   if (radstats.from) q.set('from', radstats.from);
   if (radstats.to) q.set('to', radstats.to);
@@ -456,11 +456,12 @@ async function rsLoad(silent, force) {
       rsHideOverlay();                  // base data in → dismiss the full-screen loader, paint KPIs NOW
       rsRenderControls();
       rsRenderBody();
-      // Instant paint done. Fill the heavy enrichment in the BACKGROUND — only when it's
-      // missing (first open / selection change) or the user forced a live refresh; a
-      // silent auto-refresh keeps the existing numbers (they're within the cache window).
-      if (!radstats.lastError && (force || !radstats.modData || !radstats.finData)) {
-        rsLoadEnrichment({ seq: myReq, force });
+      // The Overview is now FULLY panel-sourced (KPIs + modality donut come from the base call),
+      // so there's no heavy background pass here anymore — that's what makes it instant. The two
+      // things that still need the slower RadiologySearch/bill reads load ONLY on their own tab:
+      // department on Operations (rsLoadDept) and revenue on Financial (rsLoadFinancial).
+      if (!radstats.lastError && radstats.tab === 'operations' && !radstats.deptLoaded && !radstats.deptLoading) {
+        rsLoadDept({ seq: myReq, force });
       }
     }
   }
@@ -560,6 +561,43 @@ async function rsLoadFinancial(opts) {
     radstats.finLoading = false;   // unconditional — a superseded call must not leave the spinner stuck
     if (myReq === radstats._reqSeq) { rsPersist(); rsRenderBody(); }
   }
+}
+
+// "By ordering department" is the ONLY Operations panel the fast panel can't supply (FetchRISPanel
+// carries no department), so it's fetched with a LIGHT dept=1 call — RadiologySearch only, no bill
+// reads — and merged onto the base data. Loads lazily the first time the Operations tab is opened
+// (per selection), so the default Overview never pays for it.
+async function rsLoadDept(opts) {
+  opts = opts || {};
+  const myReq = (opts.seq != null) ? opts.seq : radstats._reqSeq;
+  radstats.deptLoading = true; radstats.deptError = '';
+  if (!(radstats.data && radstats.data.byDepartment && radstats.data.byDepartment.length)) rsRenderBody();
+  const q = new URLSearchParams();
+  if (radstats.from) q.set('from', radstats.from);
+  if (radstats.to) q.set('to', radstats.to);
+  const _s = rsSitesParam(); if (_s) q.set('sites', _s);
+  q.set('dept', '1');
+  if (opts.force) q.set('nocache', '1');
+  try {
+    const d = await API.get('/radiology/stats?' + q.toString());
+    if (myReq !== radstats._reqSeq) return;   // superseded — don't overwrite a newer selection
+    if (radstats.data && d.byDepartment) radstats.data.byDepartment = d.byDepartment;
+    radstats.deptLoaded = true;
+  } catch (e) {
+    if (myReq !== radstats._reqSeq) return;
+    radstats.deptError = (e && e.message) || 'Could not load departments';
+  } finally {
+    radstats.deptLoading = false;
+    if (myReq === radstats._reqSeq) { rsPersist(); rsRenderBody(); }
+  }
+}
+
+function rsDeptInner(deptItems) {
+  if (deptItems && deptItems.length) return rsBarRows(deptItems, 'var(--accent2,#8358fd)');
+  if (radstats.deptLoading) return rsLoadingBlock('Loading departments…', 'Reading ordering department across all branches.');
+  if (radstats.deptError) return `<div class="rs-empty">${escapeHtml(radstats.deptError)} <button class="ghost" onclick="rsLoadDept({force:true})">Retry</button></div>`;
+  if (radstats.deptLoaded) return `<div class="rs-empty">No department data</div>`;
+  return rsLoadingBlock('Loading departments…', '');
 }
 
 // ── rendering ─────────────────────────────────────────────────────────────────
@@ -944,6 +982,7 @@ function rsRenderBody() {
   // dates or tabs never leaves an empty/stale panel. The loading guards prevent any loop.
   if (radstats.tab === 'financial' && !radstats.finData && !radstats.finLoading && !radstats.finError) rsLoadFinancial();
   else if (radstats.tab === 'done' && !radstats.doneData && !radstats.doneLoading && !radstats.doneError) rsLoadDone();
+  else if (radstats.tab === 'operations' && !radstats.deptLoaded && !radstats.deptLoading && !radstats.deptError) rsLoadDept();
 
   const total = d.total || 0;
   const patients = d.patients != null ? d.patients : null;
@@ -952,10 +991,10 @@ function rsRenderBody() {
   const aged = (d.aging && d.aging['>7d']) || 0;
   const sitesFail = (d.sites && d.sites.failed && d.sites.failed.length) || 0;
 
-  // Exams = individual procedures. Prefer the EXACT panel-based count (one FetchRISPanel row
-  // per exam — the same source as the worklist + "Ordered vs Done", so the numbers agree).
-  // Only if that's unavailable, fall back to the sampled/estimated bill-read count (modData).
-  const m = radstats.modData, f = radstats.finData;
+  // Exams = individual procedures. The EXACT panel-based count (one FetchRISPanel row per exam —
+  // the same source as the worklist + "Ordered vs Done", so the numbers agree, and it paints
+  // instantly). Falls back to the sampled bill-read count only if the panel is unavailable.
+  const m = radstats.modData;
   let examsVal;
   if (d.panelExams != null) {
     examsVal = rsNum(d.panelExams);                 // exact — matches Ordered vs Done, shows instantly
@@ -965,29 +1004,14 @@ function rsRenderBody() {
   } else {
     examsVal = '<span class="rs-pending">…</span>';
   }
-  // Insurance-covered: exact when everything was priced, else scaled to the total
-  // (a sample of 800 vs 1,118 must NOT read as "the rest are unpaid").
-  let coveredVal = '<span class="rs-pending">…</span>', coveredSub = '';
-  if (f) {
-    if (f.catalogLoaded === false) { coveredVal = '—'; coveredSub = 'catalog unavailable'; }
-    else {
-      const priced = f.requests || 0;
-      // "Insurance-covered" = insurance paid AT LEAST part, so include the copay bucket
-      // (insurance + patient copay), not just the pure-insurance one — else copay requests
-      // are wrongly dropped from the covered count and %.
-      const cov = (f.byPayer || []).reduce((a, p) => a + ((p.type === 'Insurance' || p.type === 'Insurance + copay') ? (p.count || 0) : 0), 0);
-      const share = priced ? cov / priced : 0;
-      if (f.truncated) { coveredVal = '≈' + rsNum(Math.round(total * share)); coveredSub = Math.round(share * 100) + '% · est'; }
-      else { coveredVal = rsNum(cov); coveredSub = rsPct(cov, priced) + '%'; }
-    }
-  }
 
+  // Insurance-covered was removed from the Overview — it needed the slow per-bill payer read on
+  // every load. Revenue + payer split still live in the dedicated Financial tab (loaded on demand).
   const kpis = `
     <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
       ${rsKpi('d', 'var(--accent,#6B4EFF)', patients != null ? rsNum(patients) : '—', 'Patients')}
       ${rsKpi('b', 'var(--blue,#3BA0FF)', rsNum(total), 'Requests')}
       ${rsKpi('c', 'var(--green,#00C896)', examsVal, 'Exams')}
-      ${rsKpi('b', 'var(--blue,#3BA0FF)', coveredVal, 'Insurance-covered', coveredSub)}
       ${rsKpi('a', 'var(--danger,#E25555)', rsNum(emg), 'Emergency', total ? rsPct(emg, total) + '% of requests' : '')}
       ${rsKpi('a', 'var(--yellow,#FFBA49)', rsNum(aged), 'Pending &gt; 7 days')}
     </div>`;
@@ -1036,14 +1060,13 @@ function rsRenderBody() {
     <div class="rs-grid2">
       ${rsPanel('Priority', prioDonut, total ? `${rsPct(emg, total)}% emergency` : 'routine vs emergency')}
       ${rsPanel('Modality mix (exams)', rsModalityInner(), rsModalitySub())}
-    </div>
-    ${d.byGender ? rsPanel('Gender split', rsGender(d.byGender), 'by order — a patient can have several', 'rs-wide') : ''}`;
+    </div>`;
 
   const tabOps = `
     ${rsSection('Where the work is')}
     <div class="rs-grid2">
       ${rsPanel('By branch', rsBarRows(branchItems, 'var(--accent)', 0, { drill: canDrill }), canDrill ? `${branchItems.length} branches · click to focus` : `${branchItems.length} branches`)}
-      ${rsPanel('By ordering department', rsBarRows(deptItems, 'var(--accent2,#8358fd)'), `${deptItems.length} departments`)}
+      ${rsPanel('By ordering department', rsDeptInner(deptItems), radstats.deptLoaded ? `${deptItems.length} departments` : 'loading…')}
     </div>
     ${rsPanel('Top ordering doctors', rsBarRows(docItems, '#0ea5e9'), 'top 15', 'rs-wide')}
     ${rsSection('Timing')}
@@ -1085,7 +1108,7 @@ function rsRenderBody() {
   // re-parse) when nothing changed — the 30s Auto poll otherwise repaints twice a minute
   // for zero new information. Signature = the actual data + view state, minus the "updated
   // Xs ago" ticker (which always moves), so a cache-hit poll is a true no-op.
-  const sig = `${(d.generatedAt) || ''}|${radstats.tab}|${radstats.modData ? radstats.modData.exams : ''}|${radstats.finData ? radstats.finData.revenue : ''}|${(radstats.sel ? [...radstats.sel].join(',') : '')}|${radstats.dayFocus && radstats.dayFocus.date || ''}|${radstats.modLoading}|${radstats.finLoading}|${radstats.doneLoading}|${radstats.doneData ? (radstats.doneData.daily || []).length : ''}`;
+  const sig = `${(d.generatedAt) || ''}|${radstats.tab}|${radstats.modData ? radstats.modData.exams : ''}|${radstats.finData ? radstats.finData.revenue : ''}|${(radstats.sel ? [...radstats.sel].join(',') : '')}|${radstats.dayFocus && radstats.dayFocus.date || ''}|${radstats.modLoading}|${radstats.finLoading}|${radstats.doneLoading}|${radstats.doneData ? (radstats.doneData.daily || []).length : ''}|${radstats.deptLoading}|${radstats.deptLoaded}|${(d.byDepartment || []).length}`;
   if (sig === radstats._bodySig && body.firstChild) {
     // just refresh the "updated Xs ago" footer text, skip the full rebuild
     const f = body.querySelector('.rs-foot'); if (f) f.innerHTML = foot.replace(/^<div class="rs-foot">/, '').replace(/<\/div>$/, '');
@@ -1103,6 +1126,8 @@ function rsSetTab(name) {
   radstats.tab = name;
   radstats._paintedOnce = false;
   if (name === 'financial' && !radstats.finData && !radstats.finLoading) rsLoadFinancial();
+  // Department (Operations tab) loads lazily the first time it's opened for the current selection.
+  if (name === 'operations' && !radstats.deptLoaded && !radstats.deptLoading) rsLoadDept();
   // Ordered vs Done: refresh on EVERY open so TODAY is live — keeps showing the cached numbers
   // while the fresh ones load underneath (no blank flash).
   if (name === 'done' && !radstats.doneLoading) rsLoadDone();

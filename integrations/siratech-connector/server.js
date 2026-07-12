@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'panelprimary-2026-07-12ai';
+const CONNECTOR_BUILD = 'panelfast-2026-07-12aj';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2210,39 +2210,47 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
   const _tasks = [];
   for (const site of wantSites) for (const [cf, ct] of _chunks) _tasks.push({ site, cf, ct });
   const _chunkRes = await pool(_tasks, STATS_SITE_CONCURRENCY, async ({ site, cf, ct }) => {
-    try {
-      const _tc = Date.now();
-      const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
-        mrno: '', fromDate: cf + 'T00:00:00', toDate: ct + 'T23:59:59',
-        invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
-        serviceCategoryId: 0, emrPatRisPanelId: 0,
-        userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
-      } });
-      _callMs.panel.push(Date.now() - _tc);
-      const rows = (rp.json && rp.json.data) || [];
-      if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
-      return { site, ok: true, rows };
-    } catch (e) { return { site, ok: false, rows: [] }; }
+    // Retry a failed chunk once — a single blip on the 2 GB box must not silently drop a whole
+    // WEEK of a branch's exams. If it still fails, the branch is flagged incomplete (below).
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const _tc = Date.now();
+        const rp = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+          mrno: '', fromDate: cf + 'T00:00:00', toDate: ct + 'T23:59:59',
+          invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+          serviceCategoryId: 0, emrPatRisPanelId: 0,
+          userId: String(HIS_USER).padStart(8, '0'), hospitalId: site,
+        } });
+        _callMs.panel.push(Date.now() - _tc);
+        const rows = (rp.json && rp.json.data) || [];
+        if (!_panelFields && rows.length) _panelFields = Object.keys(rows[0]);
+        return { site, ok: true, rows };
+      } catch (e) { if (attempt === 1) return { site, ok: false, rows: [] }; }
+    }
+    return { site, ok: false, rows: [] };
   });
   // Regroup chunks → per-branch, deduping across chunk edges on the per-exam id (unique per exam),
-  // falling back to billNo+service. A branch counts as fetched if ANY of its chunks returned.
+  // falling back to billNo+service+index. A branch is only "ok" if EVERY one of its week-chunks
+  // returned — a partially-fetched branch would silently undercount (missing a whole week) with
+  // no signal, so it's surfaced as failed instead of quietly short.
   const _bySite = new Map();
-  for (const site of wantSites) _bySite.set(site, { site, ok: false, rows: [], _seen: new Set() });
+  for (const site of wantSites) _bySite.set(site, { site, anyOk: false, anyFail: false, rows: [], _seen: new Set() });
   for (const cr of _chunkRes) {
     if (!cr) continue;
     const g = _bySite.get(cr.site); if (!g) continue;
-    if (!cr.ok) continue;
-    g.ok = true;
+    if (!cr.ok) { g.anyFail = true; continue; }
+    g.anyOk = true;
+    let _i = 0;
     for (const r of cr.rows) {
       const k = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
         ? 'i:' + r.invPatBillingId
-        : 'b:' + r.billNo + '|' + (r.invMastServiceId != null ? r.invMastServiceId : '');
+        : 'b:' + r.billNo + '|' + (r.invMastServiceId != null ? r.invMastServiceId : '') + '|' + (cr.site) + ':' + (_i++);
       if (g._seen.has(k)) continue;
       g._seen.add(k);
       g.rows.push(r);
     }
   }
-  const perSite = wantSites.map((site) => { const g = _bySite.get(site); return { site, ok: g.ok, rows: g.rows }; });
+  const perSite = wantSites.map((site) => { const g = _bySite.get(site); return { site, ok: g.anyOk && !g.anyFail, rows: g.rows }; });
   _tmark.afterBulk = Date.now();
 
   const items = [], failed = [], _hist = {};
@@ -4226,9 +4234,9 @@ const STATS_LIST_CAP = Number(process.env.STATS_LIST_CAP || 1500);
 // How many unique bills we read to fill in exam names for the drill-down list.
 // Bounds latency on a wide date range; today's per-branch volume is well under this.
 const STATS_LIST_ENRICH_CAP = Number(process.env.STATS_LIST_ENRICH_CAP || 120);
-async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, withList = false, topDoctors = 15, noCache = false }) {
+async function radiologyStats({ from, to, sites, withModality = false, withFinance = false, withList = false, withDept = false, topDoctors = 15, noCache = false }) {
   const sortedSites = (sites || []).slice().sort((a, b) => a - b);
-  const cacheKey = JSON.stringify({ from, to, sites: sortedSites, withModality, withFinance, withList });
+  const cacheKey = JSON.stringify({ from, to, sites: sortedSites, withModality, withFinance, withList, withDept });
   if (!noCache) {
     const cached = statsCacheGet(cacheKey);
     if (cached) return cached;
@@ -4255,7 +4263,7 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // solely when the caller asks for finance or the drill-down list — never on the base Overview
   // call, which must paint fast.
   const _panelPromise = buildWorklistRis({ sites: wantSites, from, to, ready: false, noCache }).catch(() => null);
-  const needRS = withFinance || withList;
+  const needRS = withFinance || withList || withDept;
   const perSite = needRS ? await pool(wantSites, STATS_SITE_CONCURRENCY, async (site) => {
     try {
       const sr = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
@@ -4306,8 +4314,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
   // modality and revenue come back together and faster. Bounded to the most
   // recent N orders. Only radiology line items are counted (labs on the same
   // bill are skipped).
+  // Modality mix now comes from the FAST panel (panelModality), so the heavy per-bill read runs
+  // ONLY for revenue/payer (withFinance). A modality-only request no longer triggers ~2,400 bill
+  // reads on the small box.
   let modality = null, financial = null;
-  if ((withModality || withFinance) && flat.length) {
+  if (withFinance && flat.length) {
     // Dedup by bill (GenPatBillingId) BEFORE the fan-out: several worklist rows can
     // share one visit bill, and each bill read returns ALL its radiology line items.
     // Reading the same bill once per row would count its exams/revenue/payer split
@@ -4518,6 +4529,11 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     // "Branches unavailable" reflects PANEL fetch failures only — the headline's real source.
     failed.length = 0;
     for (const s of (_wlx.sites && _wlx.sites.failed) || []) failed.push(s);
+  } else {
+    // Panel fetch failed OUTRIGHT (e.g. an auth blip rejected buildWorklistRis) — do NOT emit a
+    // convincing all-zero board. Mark every branch unavailable so the dashboard shows its
+    // reconnecting/error state instead of "0 exams · all branches available".
+    for (const site of wantSites) if (!failed.includes(site)) failed.push(site);
   }
 
   const result = {
@@ -4563,8 +4579,9 @@ app.get('/stats/radiology', requireAuth, async (req, res) => {
     const withModality = full || String(req.query.modality || '') === '1';
     const withFinance = full || String(req.query.financial || '') === '1';
     const withList = String(req.query.list || '') === '1';     // drill-down request rows
+    const withDept = String(req.query.dept || '') === '1';     // light: department demographics only (no bill reads)
     const noCache = String(req.query.nocache || '') === '1';   // Refresh button → truly live
-    const data = await radiologyStats({ from, to, sites, withModality, withFinance, withList, noCache });
+    const data = await radiologyStats({ from, to, sites, withModality, withFinance, withList, withDept, noCache });
     return res.json({ ok: true, ...data });
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
