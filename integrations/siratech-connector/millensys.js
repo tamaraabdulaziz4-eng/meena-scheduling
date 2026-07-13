@@ -197,12 +197,16 @@ async function matchMriReport({ nationalId, orderDate, serviceName } = {}) {
     return days >= -0.5 && days <= FORWARD_DAYS;
   };
 
+  const _t = { start: Date.now() };
   const patients = await searchByNationalId(nationalId);
-  if (!patients.length) return { decision: 'no_patient', nationalId, reason: 'no RadCare patient with this national ID' };
+  _t.searchMs = Date.now() - _t.start;
+  if (!patients.length) return { decision: 'no_patient', nationalId, reason: 'no RadCare patient with this national ID', _timings: _t };
   const patient = patients[0];
   const patientId = patient.PatientId;
 
+  let _te = Date.now();
   const encounters = await encountersFor(patientId);
+  _t.encountersMs = Date.now() - _te; _te = Date.now();
   // Fan out across encounters (and each encounter's visits) in parallel — the chain used
   // to be fully sequential, which is the main latency. Each encounter yields its candidates.
   const perEnc = await Promise.all(encounters.map(async (enc) => {
@@ -231,6 +235,9 @@ async function matchMriReport({ nationalId, orderDate, serviceName } = {}) {
     });
   }));
   const candidates = perEnc.flat();
+  _t.servicesReportsMs = Date.now() - _te;
+  _t.totalMs = Date.now() - _t.start;
+  _t.encounters = encounters.length;
 
   // Prefer a candidate that HAS a report AND is dated after the order. If order date is
   // unknown, fall back to any MRI/CT with a report.
@@ -244,6 +251,7 @@ async function matchMriReport({ nationalId, orderDate, serviceName } = {}) {
     patient: { patientId, patientCode: patient.PatientCode, mrn: patient.MRN, encounters: encounters.length },
     matched: chosen,
     candidates,
+    _timings: _t,
   };
 }
 
