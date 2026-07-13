@@ -3150,6 +3150,63 @@ app.get('/diag/schema-dump', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// ── /diag/patient-id — WHERE does the national ID / Iqama live? (READ-ONLY) ─────
+// The connector reads saudiid||iqamaId||passportId off Patient/Search, but some records
+// leave those null even though registration captured the ID. This probes the patient
+// DEMOGRAPHIC endpoints the connector never calls (Demographics, PatientBannerInfo,
+// ELMData = Saudi national-identity/Absher record, PatientData modes) and returns any
+// field holding an ID-shaped value (1/2 + 9 digits) or an id-named field, WITH its real
+// value, so we can pinpoint the endpoint+field to wire. Read-only; only GET/lookup calls.
+app.get('/diag/patient-id', requireAuth, async (req, res) => {
+  try {
+    await getToken();
+    const uid = String(HIS_USER).padStart(8, '0');
+    const empId = currentEmpId() || '0';
+    const mrno = String(req.query.mrno || '').trim();
+    if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
+    const siteList = await getSites().catch(() => []);
+    const site = (siteList[0] && siteList[0].siteId) || 1;
+    const P = '/patient-api/api/v1';
+    const ID_VAL = /^[12]\d{9}$/;                                              // Saudi ID (1…) / Iqama (2…)
+    const ID_KEY = /(^|[._])(id|identity|iqama|saudi|national|civil|document|border|passport)/i;
+    // Collect { path: value } for any leaf that looks like an ID (by value) or an id-named field.
+    const idFields = (root) => {
+      const out = {};
+      const walk = (o, pre) => {
+        if (o == null) return;
+        if (Array.isArray(o)) { o.slice(0, 5).forEach((x, i) => walk(x, `${pre}[${i}]`)); return; }
+        if (typeof o === 'object') { for (const [k, v] of Object.entries(o)) walk(v, pre ? `${pre}.${k}` : k); return; }
+        const s = String(o); const key = pre.split('.').pop().replace(/\[\d+\]$/, '');
+        if (ID_VAL.test(s) || (ID_KEY.test(key) && s && s !== '0' && s !== 'null' && s.length >= 4 && s.length <= 30)) out[pre] = o;
+      };
+      walk(root, '');
+      return out;
+    };
+    const hit = async (name, method, path, body) => {
+      try {
+        const r = await hisFetch(path, { method, body });
+        const j = r.json;
+        const arr = (j && (j.data || j.Data)) || (Array.isArray(j) ? j : null);
+        const sample = Array.isArray(arr) ? arr[0] : j;
+        return { name, method, path: path.split('?')[0], status: r.status,
+          idFields: sample != null ? idFields(sample) : {},
+          nonJson: j == null ? String(r.text || '').slice(0, 120) : undefined };
+      } catch (e) { return { name, method, path: path.split('?')[0], error: String(e.message || e) }; }
+    };
+    const probes = [];
+    probes.push(await hit('Demographics (POST)', 'POST', P + '/Patient/Demographics', { mrno, mrNo: mrno, hospitalId: site, userId: uid, empId }));
+    probes.push(await hit('Demographics (GET)', 'GET', P + '/Patient/Demographics?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site));
+    probes.push(await hit('PatientBannerInfo', 'POST', P + '/Patient/PatientBannerInfo', { mrno, mrNo: mrno, hospitalId: site, userId: uid, empId }));
+    probes.push(await hit('ELMData (POST)', 'POST', P + '/Patient/ELMData', { mrno, mrNo: mrno, hospitalId: site }));
+    probes.push(await hit('ELMData (GET)', 'GET', P + '/Patient/ELMData?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site));
+    for (const mode of [0, 1, 2, 3]) {
+      probes.push(await hit('PatientData mode=' + mode, 'GET', P + '/Patient/PatientData?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site + '&mode=' + mode));
+    }
+    const summary = probes.map((p) => `${p.status != null ? 'HTTP ' + p.status : 'ERR'} · ${p.name} · ${p.idFields ? Object.keys(p.idFields).length + ' id-field(s)' : (p.error || '—')}`);
+    return res.json({ ok: true, mrno, site, summary, probes });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 // ── Downloadable reference (token in the URL, browser/phone friendly) ──────────
 // Serves the schema-dump as a DOWNLOAD (Content-Disposition attachment) so it can be
 // opened straight from a phone browser — the token goes in the query string instead of
