@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'donesignal2-2026-07-12au';
+const CONNECTOR_BUILD = 'reconbranch-filt-2026-07-12av';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3258,7 +3258,8 @@ app.get('/diag/reconcile-branch', requireAuth, async (req, res) => {
     const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
     const sites = (site && Number.isFinite(site)) ? [site] : [];
     const wl = await buildWorklist({ sites, from, to, ready: true, matchAfterH });
-    const items = (wl && wl.items) || [];
+    // Same population as the counts: ordered (has an order date) and non-cancelled exams only.
+    const items = ((wl && wl.items) || []).filter((it) => it.orderDate && !it.cancelled);
     const notPerf = items.filter((it) => String(it.stage || '').toLowerCase() === 'ordered');
     // One representative not-performed order per unique MRN, bounded to `sample`.
     const seen = new Set(); const picks = [];
