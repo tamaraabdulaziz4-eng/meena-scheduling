@@ -111,7 +111,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'latematch-2026-07-13be';
+const CONNECTOR_BUILD = 'latematch-2026-07-13bf';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3789,20 +3789,44 @@ app.get('/diag/not-done', requireAuth, async (req, res) => {
       if (studies === null) return { mrno: m, name: it.patientName, exam: it.exam || it.modality, branch: it.branch, orderedDate: it.orderedDate, ageBand, scanned: !!it.scanned, class: 'lookupFailed' };
       const mine = studies.filter((s) => results.sameMrn(s.patId, m));
       const ot = parseHisDate(it.orderedDate);
-      const sameModNear = mine.filter((s) => {
-        if (results.normMod(s.modality || '') !== mod) return false;
+      const sameModAll = mine.filter((s) => results.normMod(s.modality || '') === mod);
+      const sameModNear = sameModAll.filter((s) => {
         const st = parseHisDate(s.studyDate);
         return (!Number.isFinite(ot) || !Number.isFinite(st)) ? true : (st >= ot - 24 * 36e5 && st <= ot + AFTER_MS);
       });
+      // Signed day-delta (study - order) of the same-modality study CLOSEST to the order, ignoring
+      // the window — tells us WHY an existing same-mod study didn't link: negative = performed
+      // BEFORE the bill (walk-in / retro-bill), > matchAfterH = performed very late, huge = unrelated.
+      let nearestSameModDays = null;
+      if (sameModAll.length && Number.isFinite(ot)) {
+        let best = null;
+        for (const s of sameModAll) { const st = parseHisDate(s.studyDate); if (!Number.isFinite(st)) continue; const dd = (st - ot) / 864e5; if (best === null || Math.abs(dd) < Math.abs(best)) best = dd; }
+        nearestSameModDays = best === null ? null : Math.round(best);
+      }
       const cls = !mine.length ? 'noStudyAtAll' : (sameModNear.length ? 'sameModMatch' : 'otherStudiesOnly');
       const studyMods = [...new Set(mine.map((s) => results.normMod(s.modality || '')).filter(Boolean))];
       return { mrno: m, name: it.patientName, exam: it.exam || it.modality, modality: mod, branch: it.branch, site: it.site,
-               orderedDate: it.orderedDate, ageBand, scanned: !!it.scanned, studies: mine.length, sameModNear: sameModNear.length, studyMods, class: cls };
+               orderedDate: it.orderedDate, ageBand, scanned: !!it.scanned, studies: mine.length, sameModNear: sameModNear.length,
+               sameModAll: sameModAll.length, nearestSameModDays, studyMods, class: cls };
     });
     const agg = { sampled: rows.length, noStudyAtAll: 0, sameModMatch: 0, otherStudiesOnly: 0, lookupFailed: 0 };
     for (const r of rows) { agg[r.class] = (agg[r.class] || 0) + 1; }
     const classByAge = {};
     for (const r of rows) { const k = r.ageBand; const c = classByAge[k] = classByAge[k] || { noStudyAtAll: 0, sameModMatch: 0, otherStudiesOnly: 0, lookupFailed: 0 }; c[r.class] += 1; }
+    // Of the otherStudiesOnly rows that DO have a same-modality study (just not in-window), WHERE
+    // does that study sit relative to the order? This is the decisive cut: a pile at "before order"
+    // = walk-in / retro-bill (extend the backward window); a pile just past matchAfterH = still too
+    // tight; a spread into 90d+ = unrelated prior imaging (genuinely not this order).
+    const sameModTiming = { beforeOrder_gt1d: 0, within_window: 0, after_window_le90d: 0, after_90d: 0, noSameMod: 0 };
+    for (const r of rows) {
+      if (r.class !== 'otherStudiesOnly') continue;
+      const d = r.nearestSameModDays;
+      if (d == null) { sameModTiming.noSameMod += 1; continue; }
+      if (d < -1) sameModTiming.beforeOrder_gt1d += 1;
+      else if (d <= matchAfterH / 24) sameModTiming.within_window += 1;   // shouldn't happen (would be sameModMatch)
+      else if (d <= 90) sameModTiming.after_window_le90d += 1;
+      else sameModTiming.after_90d += 1;
+    }
     const decided = (agg.noStudyAtAll + agg.sameModMatch + agg.otherStudiesOnly) || 1;
     const estimate = {
       genuineNoShows: Math.round(notDone.length * agg.noStudyAtAll / decided),
@@ -3816,7 +3840,7 @@ app.get('/diag/not-done', requireAuth, async (req, res) => {
     else verdict = `MIXED — sample: ${agg.noStudyAtAll} no-study · ${agg.sameModMatch} unlinked same-mod · ${agg.otherStudiesOnly} other-mod-only → est. ${estimate.genuineNoShows} no-shows / ${estimate.matchingGap} matching-gap / ${estimate.otherModalityOnly} other`;
     return res.json({ ok: true, build: CONNECTOR_BUILD, from, to, matchAfterH, sample,
       totalOrdered: items.length, notDone: notDone.length, scannedButNotDone,
-      byBranch, byModality, byAge, sampleAggregate: agg, classByAge, estimate, verdict,
+      byBranch, byModality, byAge, sampleAggregate: agg, classByAge, sameModTiming, estimate, verdict,
       note: 'byBranch/byModality/byAge are EXACT over all not-done. sampleAggregate/classByAge/estimate come from a DePACS-verified sample of up to `sample` unique MRNs, projected onto the full count. scannedButNotDone = Siratech recorded an exam start/end but no report/PACS (started, never filed) — chase these, not the no-shows.', rows });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
