@@ -59,6 +59,9 @@ function normMod(m) {
   if (/\bCT\b|COMPUT\w*\s+TOMOG/.test(s)) return 'CT';
   if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
   if (/MAMMOG|\bMG\b/.test(s)) return 'MG';
+  // "Paranasal Sinus" with NO modality word is a plain X-ray at these centers (confirmed by the
+  // operators). Placed AFTER the CT/MR checks, so an explicit "CT Paranasal Sinus" still reads CT.
+  if (/PARANASAL/.test(s)) return 'XR';
   return s;
 }
 
