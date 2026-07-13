@@ -17,7 +17,16 @@
 // (default the RadCare host). Without a cookie every call throws a clear error.
 
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { createRequire } = require('module');
+
+// Persist the session cookie across connector restarts so we don't pay the ~15s headless
+// login on the first call after every deploy. Stored 0600 in a temp file (session cookie,
+// not credentials). Cleared/refreshed automatically when it expires (the 401 re-login path).
+const COOKIE_FILE = process.env.MILLENSYS_COOKIE_FILE || path.join(os.tmpdir(), 'millensys-session.cookie');
+function _saveCookie(c) { try { if (c) fs.writeFileSync(COOKIE_FILE, c, { mode: 0o600 }); else fs.rmSync(COOKIE_FILE, { force: true }); } catch (_e) { /* best effort */ } }
+function _loadCookie() { try { return (fs.readFileSync(COOKIE_FILE, 'utf8') || '').trim() || null; } catch (_e) { return null; } }
 
 const BASE = (process.env.MILLENSYS_BASE || 'https://mill.radcarehealth.com/MILLENSYS/MiClinic').replace(/\/+$/, '');
 // Auth: EITHER a ready session cookie (MILLENSYS_COOKIE) OR credentials the connector
@@ -31,11 +40,11 @@ const PASS = process.env.MILLENSYS_PASS || '';
 // within this many days after it (a report is produced after the exam, never before).
 const FORWARD_DAYS = Number(process.env.MILLENSYS_FORWARD_DAYS || 120);
 
-let _cookie = process.env.MILLENSYS_COOKIE || null;   // current session cookie header
+let _cookie = process.env.MILLENSYS_COOKIE || _loadCookie() || null;   // current session cookie header
 let _loginInFlight = null;
 
 function configured() { return !!(_cookie || (USER && PASS)); }
-function setCookie(c) { _cookie = c || null; }
+function setCookie(c) { _cookie = c || null; _saveCookie(_cookie); }
 
 function loadPuppeteer() {
   const tries = [
@@ -98,7 +107,7 @@ async function loginWithBrowser() {
 async function ensureCookie() {
   if (_cookie) return _cookie;
   if (USER && PASS) {
-    if (!_loginInFlight) _loginInFlight = loginWithBrowser().then((c) => { _cookie = c; return c; }).finally(() => { _loginInFlight = null; });
+    if (!_loginInFlight) _loginInFlight = loginWithBrowser().then((c) => { _cookie = c; _saveCookie(c); return c; }).finally(() => { _loginInFlight = null; });
     return _loginInFlight;
   }
   throw new Error('MILLENSYS auth: set MILLENSYS_COOKIE, or MILLENSYS_USER + MILLENSYS_PASS for browser login.');
@@ -140,7 +149,7 @@ async function call(method, pathName, { query, form } = {}, _retried = false) {
   const text = await r.text();
   let json = null; try { json = JSON.parse(text); } catch (_e) { /* HTML/plain */ }
   const res = { status: r.status, json, text };
-  if (looksUnauth(res) && !_retried && USER && PASS) { _cookie = null; return call(method, pathName, { query, form }, true); }
+  if (looksUnauth(res) && !_retried && USER && PASS) { _cookie = null; _saveCookie(null); return call(method, pathName, { query, form }, true); }
   return res;
 }
 
@@ -194,25 +203,21 @@ async function matchMriReport({ nationalId, orderDate, serviceName } = {}) {
   const patientId = patient.PatientId;
 
   const encounters = await encountersFor(patientId);
-  const candidates = [];
-  for (const enc of encounters) {
+  // Fan out across encounters (and each encounter's visits) in parallel — the chain used
+  // to be fully sequential, which is the main latency. Each encounter yields its candidates.
+  const perEnc = await Promise.all(encounters.map(async (enc) => {
     const services = await servicesFor(enc.EncounterId);
     const mrct = services.filter((s) => isMrOrCt(s.ClinicName, s.ServiceName));
-    if (!mrct.length) continue;
-    // Reports for this encounter's visit(s). Services carry the real VisitId.
-    const seenVisits = new Set();
-    const reps = [];
-    for (const s of mrct) {
-      const vid = s.VisitId || enc.VisitId || 0;
-      if (seenVisits.has(vid)) continue; seenVisits.add(vid);
-      reps.push(...await reportsFor({ patientId, visitId: vid, encounterId: enc.EncounterId }));
-    }
-    for (const s of mrct) {
+    if (!mrct.length) return [];
+    const visits = [...new Set(mrct.map((s) => s.VisitId || enc.VisitId || 0))];
+    const repsArr = await Promise.all(visits.map((v) => reportsFor({ patientId, visitId: v, encounterId: enc.EncounterId }).catch(() => [])));
+    const reps = repsArr.flat();
+    return mrct.map((s) => {
       const rep = reps.find((x) => String(x.AccountServiceId) === String(s.AccountServiceId));
       const repMs = rep ? parseMsDate(rep.ReportStatusDate) : null;
       const svcMs = parseMsDate(s.ServiceDate);
       const dateMs = repMs != null ? repMs : svcMs;
-      candidates.push({
+      return {
         encounterId: enc.EncounterId,
         accountServiceId: s.AccountServiceId,
         serviceName: s.ServiceName, clinic: s.ClinicName,
@@ -222,9 +227,10 @@ async function matchMriReport({ nationalId, orderDate, serviceName } = {}) {
         reportName: rep ? rep.ReportName : null,
         filePath: rep ? rep.FilePath : null,
         afterOrder: afterOrder(dateMs),
-      });
-    }
-  }
+      };
+    });
+  }));
+  const candidates = perEnc.flat();
 
   // Prefer a candidate that HAS a report AND is dated after the order. If order date is
   // unknown, fall back to any MRI/CT with a report.
@@ -254,7 +260,7 @@ async function downloadReportPdf(filePath, newFileName, _retried = false) {
   const url = `${BASE}/Report/DownloadReportFilePdf?file=${q(pdfPath)}&newFileName=${q(newFileName || 'report')}`;
   const r = await fetch(url, { headers: { Cookie: cookie, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/pdf,*/*' }, redirect: 'manual' });
   const ct = r.headers.get('content-type') || '';
-  if ((r.status >= 300 || /text\/html/i.test(ct)) && !_retried && USER && PASS) { _cookie = null; return downloadReportPdf(filePath, newFileName, true); }
+  if ((r.status >= 300 || /text\/html/i.test(ct)) && !_retried && USER && PASS) { _cookie = null; _saveCookie(null); return downloadReportPdf(filePath, newFileName, true); }
   const buffer = Buffer.from(await r.arrayBuffer());
   return { status: r.status, contentType: ct, buffer };
 }

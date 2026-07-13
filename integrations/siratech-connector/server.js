@@ -1209,56 +1209,96 @@ app.get('/patient/:file/national-id', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
-// Cross-system MRI/CT report match against RadCare MILLENSYS. Resolves the patient's
-// national ID + earliest MRI/CT order date from Siratech, then finds the matching report
-// in MILLENSYS (report must be dated on/after the order). READ-ONLY. Requires MILLENSYS_COOKIE.
+// ── Cross-system MRI/CT report match against RadCare MILLENSYS ─────────────────
+// Resolve national ID + earliest MRI/CT order date from Siratech, then find the matching
+// report in MILLENSYS (dated on/after the order). READ-ONLY. Requires MILLENSYS auth.
+//
+// Cached per MRN (short TTL) and concurrent calls collapse to one — so the page load and
+// the follow-up "download PDF" click reuse the SAME resolved match instead of re-running
+// the whole Siratech + RadCare chain. `?nocache=1` forces a fresh resolve.
+const _msMatchCache = new Map();     // mrn -> { ts, data }
+const _msMatchInFlight = new Map();  // mrn -> Promise
+const MS_MATCH_TTL = Number(process.env.MILLENSYS_MATCH_TTL_MS || 600000);   // 10 min
+const _pdfCache = new Map();         // mrn -> { ts, filename, base64 }
+const MS_PDF_TTL = Number(process.env.MILLENSYS_PDF_TTL_MS || 600000);
+
+async function _resolveMillensys(file) {
+  await getToken();
+  const [nid, orders] = await Promise.all([
+    patientNationalId(file),
+    hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
+  ]);
+  if (!nid) return { ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.' };
+  const mrct = orders.filter((o) => ['MR', 'CT'].includes(results.normMod(o.serviceName || o.modality || o.categoryName)));
+  // The ORDER date (FetchRadiologyDetails names it `orderedDate`) — never reportDate.
+  const orderDates = mrct.map((o) => o.orderedDate || o.orderDate || o.proposedDate || o.creationDate || o.billDate).filter(Boolean);
+  const orderDate = orderDates.length ? orderDates.slice().sort()[0] : null;
+  const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
+  return { ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, fetchedAt: new Date().toISOString() };
+}
+
+function millensysMatch(file, noCache) {
+  if (!noCache) {
+    const hit = _msMatchCache.get(file);
+    if (hit && Date.now() - hit.ts < MS_MATCH_TTL) return Promise.resolve(hit.data);
+    const inflight = _msMatchInFlight.get(file);
+    if (inflight) return inflight;
+  }
+  const p = _resolveMillensys(file)
+    .then((data) => {
+      _msMatchCache.set(file, { ts: Date.now(), data });
+      // Pre-warm the PDF in the background while the user reads the result, so the
+      // "download" click is instant. Fire-and-forget; failures just fall back to on-click.
+      const m = data && data.matched;
+      if (m && m.filePath && !_pdfCache.has(file)) {
+        const name = `${file}_${String(m.serviceName || 'MRI').replace(/[^A-Za-z0-9]+/g, '_')}`;
+        millensys.downloadReportPdf(m.filePath, name).then((dl) => {
+          if (dl.status === 200 && /pdf/i.test(dl.contentType) && dl.buffer.length) {
+            _pdfCache.set(file, { ts: Date.now(), filename: `${name}.pdf`, base64: dl.buffer.toString('base64') });
+          }
+        }).catch(() => {});
+      }
+      return data;
+    })
+    .finally(() => { _msMatchInFlight.delete(file); });
+  _msMatchInFlight.set(file, p);
+  return p;
+}
+
 app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
-  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS_COOKIE not set — cannot reach RadCare MILLENSYS.' });
+  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS auth not set — cannot reach RadCare MILLENSYS.' });
   try {
-    await getToken();
-    // National ID (the cross-system join key) + the patient's MRI/CT orders.
-    const [nid, orders] = await Promise.all([
-      patientNationalId(file),
-      hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
-    ]);
-    if (!nid) return res.json({ ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.' });
-    const mrct = orders.filter((o) => results.normMod(o.serviceName || o.modality || o.categoryName) === 'MR' || results.normMod(o.serviceName || o.modality || o.categoryName) === 'CT');
-    // The ORDER date (not the report date) — FetchRadiologyDetails names it `orderedDate`;
-    // fall back to other date fields, never to reportDate (that's the result, not the order).
-    const orderDates = mrct.map((o) => o.orderedDate || o.orderDate || o.proposedDate || o.creationDate || o.billDate).filter(Boolean);
-    const orderDate = orderDates.length ? orderDates.slice().sort()[0] : null;
-    const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
-    return res.json({ ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, fetchedAt: new Date().toISOString() });
+    return res.json(await millensysMatch(file, String(req.query.nocache || '') === '1'));
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
 // The matched RadCare MRI/CT report as a PDF, returned base64 in JSON (so it passes the
-// JSON-only bridge). The dashboard decodes it and streams application/pdf. READ-ONLY.
+// JSON-only bridge). Reuses the cached match (no re-run) and caches the PDF itself, so a
+// repeat click is instant. The dashboard decodes it and streams application/pdf. READ-ONLY.
 app.get('/patient/:file/millensys-report-pdf', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
-  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS_COOKIE not set — cannot reach RadCare MILLENSYS.' });
+  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS auth not set — cannot reach RadCare MILLENSYS.' });
+  const noCache = String(req.query.nocache || '') === '1';
   try {
-    await getToken();
-    const [nid, orders] = await Promise.all([
-      patientNationalId(file),
-      hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
-    ]);
-    if (!nid) return res.status(404).json({ ok: false, error: 'no national ID on the Siratech record' });
-    const mrct = orders.filter((o) => ['MR', 'CT'].includes(results.normMod(o.serviceName || o.modality || o.categoryName)));
-    const orderDates = mrct.map((o) => o.orderedDate || o.orderDate || o.proposedDate || o.creationDate || o.billDate).filter(Boolean);
-    const orderDate = orderDates.length ? orderDates.slice().sort()[0] : null;
-    const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
-    const m = match.matched;
-    if (!m || !m.filePath) return res.status(404).json({ ok: false, error: 'no matched RadCare report to download', decision: match.decision });
+    if (!noCache) {
+      const hit = _pdfCache.get(file);
+      if (hit && Date.now() - hit.ts < MS_PDF_TTL) return res.json({ ok: true, file, filename: hit.filename, contentType: 'application/pdf', base64: hit.base64, cached: true });
+    }
+    const match = await millensysMatch(file, noCache);   // cached — instant after the page loaded
+    const m = match && match.matched;
+    if (!m || !m.filePath) return res.status(404).json({ ok: false, error: 'no matched RadCare report to download', decision: match && match.decision });
     const name = `${file}_${String(m.serviceName || 'MRI').replace(/[^A-Za-z0-9]+/g, '_')}`;
     const dl = await millensys.downloadReportPdf(m.filePath, name);
     if (dl.status !== 200 || !/pdf/i.test(dl.contentType) || !dl.buffer.length) {
       return res.status(502).json({ ok: false, error: `RadCare PDF download failed (HTTP ${dl.status}, ${dl.contentType || 'no content-type'})` });
     }
-    return res.json({ ok: true, file, filename: `${name}.pdf`, contentType: 'application/pdf', clinicalReportId: m.clinicalReportId, base64: dl.buffer.toString('base64') });
+    const base64 = dl.buffer.toString('base64');
+    _pdfCache.set(file, { ts: Date.now(), filename: `${name}.pdf`, base64 });
+    if (_pdfCache.size > 50) _pdfCache.delete(_pdfCache.keys().next().value);
+    return res.json({ ok: true, file, filename: `${name}.pdf`, contentType: 'application/pdf', clinicalReportId: m.clinicalReportId, base64 });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
