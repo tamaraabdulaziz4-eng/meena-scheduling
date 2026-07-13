@@ -9195,6 +9195,23 @@ async def radiology_mrn_depacs(request: Request, user=Depends(require_superadmin
     qs = "?" + _up.urlencode({"mrno": mrno})
     return await run_in_threadpool(lambda: _bridge_request("/his/diag/mrn-depacs" + qs, timeout=120))
 
+@app.api_route("/api/radiology/studies-vs-done", methods=["GET", "POST"])
+async def radiology_studies_vs_done(request: Request, user=Depends(require_superadmin)):
+    """Read-only: reconcile raw DePACS study count against our done-order count for a window.
+    Explains why "N studies in DePACS" != "M done orders": studies are deduped by studyId then by
+    (mrn+modality+studyDate) to strip re-files, and each is cross-referenced to a billed order so
+    walk-ins/no-order studies are separated out. Forwards to the connector's /diag/studies-vs-done."""
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    p = request.query_params
+    q_ = {}
+    for k in ("from", "to", "matchAfterH"):
+        v = (p.get(k) or "").strip()
+        if v:
+            q_[k] = v
+    qs = ("?" + _up.urlencode(q_)) if q_ else ""
+    return await run_in_threadpool(lambda: _bridge_request("/his/diag/studies-vs-done" + qs, timeout=300))
+
 @app.post("/api/radiology/reconcile/run")
 def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
     """Run the reconciliation on demand (testing / an immediate check instead of waiting for

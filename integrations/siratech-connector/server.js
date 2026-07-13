@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'dexa-pacs-2026-07-13bb';
+const CONNECTOR_BUILD = 'dexa-pacs-2026-07-13bc';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3464,6 +3464,65 @@ app.get('/diag/mrn-depacs', requireAuth, async (req, res) => {
     return res.json({ ok: true, build: CONNECTOR_BUILD, mrno,
       studyCount: studyRows.length, distinctStudyPatIds: [...new Set(studyRows.map((s) => s.patId))],
       studies: studyRows, orderCount: orders.length, orders });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Studies-vs-Done reconciliation (read-only) ───────────────────────────────────────────
+// Explains why "DePACS total studies" != "done orders" for a range. Cross-references the ordered+
+// non-cancelled worklist against the DePACS studies and buckets both sides: orders by how they read
+// done (PACS study / Siratech report / unverifiable / not done), and studies by whether they map to
+// an order at all (matched vs walk-in/no-order) and how many are duplicate re-files. No writes.
+app.get('/diag/studies-vs-done', requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || '').trim() || null;
+    const to = String(req.query.to || '').trim() || null;
+    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const wl = await buildWorklist({ sites: [], from, to, ready: true, matchAfterH });
+    const items = (wl.items || []).filter((it) => it.orderDate && !it.cancelled);
+    const NONPACS = /dexa|\bbmd\b|bone\s*densit|densitom|electromyog|\bemg\b/i;
+    // ORDERS side — how each reads done.
+    let doneViaPacs = 0, doneViaReport = 0, unverifiable = 0, notDone = 0;
+    const ordByMrn = new Map();
+    for (const it of items) {
+      const isDone = ['imaged', 'draft', 'reported'].includes(it.stage);
+      if (it.hisReported) doneViaReport += 1;
+      else if (isDone) doneViaPacs += 1;
+      else if (NONPACS.test(`${it.exam || ''} ${it.modality || ''}`)) unverifiable += 1;
+      else notDone += 1;
+      const m = String(it.mrno || '').trim();
+      if (m) { if (!ordByMrn.has(m)) ordByMrn.set(m, []); ordByMrn.get(m).push(it); }
+    }
+    const doneTotal = doneViaPacs + doneViaReport;
+    // STUDIES side.
+    const DAY = 864e5;
+    const pad = Math.ceil(matchAfterH / 24) + 3;
+    const endPad = to ? new Date(new Date(to + 'T00:00:00Z').getTime() + pad * DAY).toISOString().slice(0, 10) : to;
+    let studies = [];
+    try { studies = (await results.depacsRecentStudies({ startDate: from, endDate: endPad })) || []; } catch (_e) { studies = []; }
+    const byId = new Map();
+    for (const s of studies) if (s.studyId != null) byId.set(String(s.studyId), s);
+    const distinct = [...byId.values()];
+    const digitsOf = (v) => (String(v == null ? '' : v).match(/\d{5,}/) || [''])[0];
+    const examKey = (s) => `${digitsOf(s.patId)}|${results.normMod(s.modality || '')}|${String(s.studyDate || '').slice(0, 16)}`;
+    const uniqExams = new Set(distinct.map(examKey));
+    let matchedToOrder = 0, unmatched = 0;
+    for (const s of distinct) {
+      const sm = results.normMod(s.modality || '');
+      const st = parseHisDate(s.studyDate);
+      const cand = ordByMrn.get(digitsOf(s.patId)) || [];
+      const hit = cand.some((it) => {
+        if (results.normMod(it.modality || it.exam || '') !== sm) return false;
+        const ot = parseHisDate(it.orderedDate);
+        if (!Number.isFinite(ot) || !Number.isFinite(st)) return true;
+        return st >= ot - 24 * 36e5 && st <= ot + matchAfterH * 36e5;
+      });
+      if (hit) matchedToOrder += 1; else unmatched += 1;
+    }
+    return res.json({ ok: true, build: CONNECTOR_BUILD, from, to, matchAfterH,
+      orders: { total: items.length, doneTotal, doneViaPacs, doneViaReport, unverifiable, notDone },
+      studies: { totalRaw: studies.length, distinctById: distinct.length, uniqueExams: uniqExams.size,
+        duplicateRefiles: distinct.length - uniqExams.size, matchedToAnOrder: matchedToOrder, unmatchedNoOrder: unmatched },
+      note: 'done = doneViaPacs + doneViaReport (+ manual, added server-side). DePACS totalRaw includes duplicate re-files and walk-in/no-order studies; distinctById dedupes re-opens by studyId; uniqueExams dedupes manual re-files by (mrn+modality+studyDate). matchedToAnOrder = studies that line up with a billed order; unmatchedNoOrder = studies with no order in this window (walk-ins / different-date / non-radiology-billed).' });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
