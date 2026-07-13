@@ -17,44 +17,31 @@
  *   HALF 1 — Siratech (fully working). Given ANY identifier (national ID / Iqama /
  *            MRN / name), it resolves the patient and lists their MRI/CT orders with
  *            the national ID and order date. This is the KEY you search MILLENSYS with.
- *   HALF 2 — MILLENSYS (off until you configure it). If MILLENSYS_BASE is set, it
- *            calls MILLENSYS with the national ID and prints what came back so you can
- *            compare. The exact search/report endpoints are NOT yet known (they were
- *            not in the ClinicWorklist dump), so they are env-configurable — see below.
+ *   HALF 2 — MILLENSYS (runs when MILLENSYS_COOKIE is set). Uses millensys.js — the
+ *            CONFIRMED read chain (GetPatients by SsnNumber → EncouterDataGetById →
+ *            EncouterServicesId → GetResaultsGridData) — to find the matching MRI/CT
+ *            report by national ID, enforcing the report-after-order rule.
  *
  * It reuses the connector's OWN local HTTP API (localhost, Bearer CONNECTOR_TOKEN), so
  * it obeys the "log in once, read specific endpoints" rule. It WRITES NOTHING.
  *
  *   cd /root/meena-scheduling/integrations/siratech-connector
  *   node tools/mri-match-test.js <nationalId | iqama | MRN | name>
+ *   # for the MILLENSYS half, export MILLENSYS_COOKIE (a logged-in MiClinic session cookie)
  *
  * Output contains patient data — run it on the VPS, for your eyes only. When sharing
  * with me, the NATIONAL ID / EXAM / DATE lines are enough; redact the name.
  */
 const http = require('http');
 const https = require('https');
+// millensys.js sits one dir up in the connector; fall back if run from elsewhere.
+let millensys = null;
+try { millensys = require('../millensys.js'); } catch (_e) { try { millensys = require('./millensys.js'); } catch (_e2) { millensys = null; } }
 
 // ── config ────────────────────────────────────────────────────────────────────
 // The connector's own local API (already running on the VPS).
 const CONNECTOR_BASE = (process.env.CONNECTOR_BASE || 'http://127.0.0.1:3005').replace(/\/+$/, '');
 const CONNECTOR_TOKEN = process.env.CONNECTOR_TOKEN || '';
-
-// MILLENSYS MiClinic (the OTHER company). All OPTIONAL — half 2 is skipped if unset.
-//   MILLENSYS_BASE       e.g. https://miclinic.<their-host>/MILLENSYS/MiClinic
-//   MILLENSYS_COOKIE     a logged-in session cookie, OR
-//   MILLENSYS_BEARER     a bearer token — whichever their SPA uses.
-//   MILLENSYS_SEARCH     path that accepts a patient search (national ID). UNKNOWN yet —
-//                        the ClinicWorklist dump only had status endpoints. Once you find
-//                        their patient/worklist search, set it here, e.g.
-//                        /ClinicWorklist/GetPatientWorklist  (GET/POST — see METHOD)
-//   MILLENSYS_SEARCH_METHOD  GET | POST      (default POST)
-//   MILLENSYS_SEARCH_PARAM   the field name their search expects the ID in (default nationalId)
-const MS_BASE = (process.env.MILLENSYS_BASE || '').replace(/\/+$/, '');
-const MS_COOKIE = process.env.MILLENSYS_COOKIE || '';
-const MS_BEARER = process.env.MILLENSYS_BEARER || '';
-const MS_SEARCH = process.env.MILLENSYS_SEARCH || '';
-const MS_METHOD = (process.env.MILLENSYS_SEARCH_METHOD || 'POST').toUpperCase();
-const MS_PARAM = process.env.MILLENSYS_SEARCH_PARAM || 'nationalId';
 
 const arg = String(process.argv[2] || '').trim();
 if (!arg) {
@@ -155,54 +142,43 @@ async function siratechSide() {
   return { nationalId, mrn, name: p.name || '', orders: mrct };
 }
 
-// ── HALF 2 — MILLENSYS: search by national ID, show the candidate report(s) ─────
+// ── HALF 2 — MILLENSYS: confirmed chain (national ID → matched MRI/CT report) ────
+// Uses millensys.js: GetPatients(SsnNumber) → EncouterDataGetById(patid) →
+// EncouterServicesId(EncounterId) → GetResaultsGridData. Enforces report-after-order.
 async function millensysSide(nationalId, orders) {
-  if (!MS_BASE || !MS_SEARCH) {
-    console.log('\n── MILLENSYS ── SKIPPED (set MILLENSYS_BASE + MILLENSYS_SEARCH to enable).');
-    console.log('   To finish the accuracy test, search MILLENSYS MANUALLY with the national ID above');
-    console.log('   and confirm the exam/date matches one of the MRI/CT orders listed. Send me their');
-    console.log('   patient-search + report endpoints and I will wire the auto-compare here.');
+  if (!millensys || !millensys.configured()) {
+    console.log('\n── MILLENSYS ── SKIPPED (set MILLENSYS_COOKIE to enable the auto-compare).');
+    console.log('   Export a logged-in MiClinic session cookie:  export MILLENSYS_COOKIE="<cookie>"');
+    console.log('   (optional MILLENSYS_BASE, default https://mill.radcarehealth.com/MILLENSYS/MiClinic).');
+    console.log(`   Then it searches RadCare by SsnNumber=${nationalId || '<national ID>'} and confirms the report.`);
     return;
   }
   if (!nationalId) { console.log('\n── MILLENSYS ── skipped: no national ID on the Siratech record to search with.'); return; }
-  console.log(`\n── MILLENSYS ── searching ${MS_BASE}${MS_SEARCH} by ${MS_PARAM}=${nationalId}`);
-  const headers = {};
-  if (MS_COOKIE) headers.Cookie = MS_COOKIE;
-  if (MS_BEARER) headers.Authorization = `Bearer ${MS_BEARER}`;
-  const url = `${MS_BASE}${MS_SEARCH}`;
-  let r;
-  try {
-    r = MS_METHOD === 'GET'
-      ? await req('GET', `${url}?${encodeURIComponent(MS_PARAM)}=${encodeURIComponent(nationalId)}`, { headers })
-      : await req('POST', url, { headers, body: { [MS_PARAM]: nationalId } });
-  } catch (e) {
-    console.log(`  MILLENSYS request errored: ${e.message}`);
-    return;
-  }
-  console.log(`  HTTP ${r.status}`);
-  if (!r.json) { console.log('  non-JSON response (first 400 chars):\n  ' + String(r.text).slice(0, 400)); return; }
-  // Their worklist rows usually live under Data/data/rows — print the shape so we can
-  // pin the report/exam/date fields on the next pass.
-  const rows = r.json.Data || r.json.data || r.json.rows || (Array.isArray(r.json) ? r.json : null);
-  if (Array.isArray(rows)) {
-    console.log(`  ${rows.length} row(s) returned. First row fields: ${rows[0] ? Object.keys(rows[0]).slice(0, 40).join(', ') : '—'}`);
-    // Earliest Siratech MRI/CT order date — the report must land on/after this.
-    const orderDates = orders.map((x) => x.orderedDate).filter(Boolean);
-    const earliestOrder = orderDates.length ? orderDates.reduce((a, b) => (Date.parse(a) < Date.parse(b) ? a : b)) : null;
-    rows.slice(0, 10).forEach((row, i) => {
-      const svc = row.ServiceName || row.serviceName || row.StudyDescription || '';
-      // A report/verification date — NOT the order date — is what we compare against.
-      const reportDate = row.ReportDate || row.VerifiedDate || row.ResultDate || row.StudyDate || row.CreationDate || '';
-      const pid = row.PatientCode || row.PatientId || row.MRN || '';
-      const after = earliestOrder ? reportIsAfterOrder(earliestOrder, reportDate) : null;
-      const tag = after === true ? '✓ after order' : after === false ? '✗ BEFORE order (reject)' : '? date unknown';
-      console.log(`    [${i + 1}] pid=${pid}  "${svc}"  report=${reportDate || '—'}   [${tag}]`);
-    });
-    console.log(`\n  → COMPARE: a genuine match is same patient + same exam, with the MILLENSYS`);
-    console.log(`     report dated ON OR AFTER the Siratech order (${earliestOrder || 'order date unknown'}),`);
-    console.log(`     within ${FWD_WINDOW_DAYS} days. Rows flagged "BEFORE order" are not this order's report.`);
+  // The report must land on/after the EARLIEST Siratech MRI/CT order date.
+  const orderDates = orders.map((x) => x.orderedDate).filter(Boolean);
+  const earliestOrder = orderDates.length ? orderDates.reduce((a, b) => (Date.parse(a) < Date.parse(b) ? a : b)) : null;
+  console.log(`\n── MILLENSYS ── ${millensys.BASE}  ·  SsnNumber=${nationalId}  ·  order=${earliestOrder || 'unknown'}`);
+  let res;
+  try { res = await millensys.matchMriReport({ nationalId, orderDate: earliestOrder }); }
+  catch (e) { console.log('  MILLENSYS error: ' + e.message); return; }
+  if (res.decision === 'no_patient') { console.log('  ✗ no RadCare patient with this national ID.'); return; }
+  console.log(`  patient: RadCare PatientId ${res.patient.patientId} (code ${res.patient.patientCode})  ·  ${res.patient.encounters} encounter(s)`);
+  const iso = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
+  if (!res.candidates.length) { console.log('  no MRI/CT services found at RadCare for this patient.'); }
+  res.candidates.forEach((c, i) => {
+    const tag = c.afterOrder === true ? '✓ report after order' : c.afterOrder === false ? '✗ BEFORE order (reject)' : (c.hasReport ? '? date unknown' : '· no report yet');
+    console.log(`    [${i + 1}] "${c.serviceName}" (${c.clinic})  svc=${iso(c.serviceDate)} report=${iso(c.reportDate)}  reportId=${c.clinicalReportId || '—'}  [${tag}]`);
+  });
+  if (res.decision === 'match') {
+    console.log(`\n  ✅ MATCH: "${res.matched.serviceName}" report (ClinicalReportId ${res.matched.clinicalReportId}, ${res.matched.reportName})`);
+    console.log(`     dated ${iso(res.matched.reportDate || res.matched.serviceDate)} — on/after the order ${earliestOrder}.`);
+    if (res.matched.filePath) console.log(`     file: ${res.matched.filePath}`);
+  } else if (res.decision === 'mrct_no_report') {
+    console.log('\n  ⏳ MRI/CT found at RadCare but no report filed yet.');
+  } else if (res.decision === 'report_before_order') {
+    console.log('\n  ⚠ MRI/CT reports exist but all predate the order — not this order\'s report.');
   } else {
-    console.log('  response was JSON but not a row array — dumping keys: ' + Object.keys(r.json).slice(0, 40).join(', '));
+    console.log('\n  — no MRI/CT match at RadCare for this patient.');
   }
 }
 

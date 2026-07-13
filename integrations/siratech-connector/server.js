@@ -22,6 +22,7 @@ const fs = require('fs');
 const zlib = require('zlib');
 const puppeteer = require('puppeteer');
 const results = require('./results');
+const millensys = require('./millensys');   // RadCare MILLENSYS cross-system report match (read-only)
 
 const PORT = Number(process.env.PORT || 3005);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -1205,6 +1206,29 @@ app.get('/patient/:file/national-id', requireAuth, async (req, res) => {
     await getToken();
     const nationalId = await patientNationalId(file);
     return res.json({ ok: true, file, nationalId, source: nationalId ? 'PatientBannerInfo' : null, fetchedAt: new Date().toISOString() });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// Cross-system MRI/CT report match against RadCare MILLENSYS. Resolves the patient's
+// national ID + earliest MRI/CT order date from Siratech, then finds the matching report
+// in MILLENSYS (report must be dated on/after the order). READ-ONLY. Requires MILLENSYS_COOKIE.
+app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS_COOKIE not set — cannot reach RadCare MILLENSYS.' });
+  try {
+    await getToken();
+    // National ID (the cross-system join key) + the patient's MRI/CT orders.
+    const [nid, orders] = await Promise.all([
+      patientNationalId(file),
+      hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
+    ]);
+    if (!nid) return res.json({ ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.' });
+    const mrct = orders.filter((o) => results.normMod(o.serviceName || o.modality || o.categoryName) === 'MR' || results.normMod(o.serviceName || o.modality || o.categoryName) === 'CT');
+    const orderDates = mrct.map((o) => o.reportDate || o.orderDate || o.billDate).filter(Boolean);
+    const orderDate = orderDates.length ? orderDates.sort()[0] : null;
+    const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
+    return res.json({ ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, fetchedAt: new Date().toISOString() });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
