@@ -35,6 +35,7 @@ async function renderOrdersPage() {
           <input type="checkbox" id="od-live" checked onchange="odToggleLive()"> Live
         </label>
         <button class="open" style="width:auto" onclick="odLoad(true)">↻ Refresh</button>
+        <button class="ghost" style="width:auto" title="Download the orders currently shown as a CSV" onclick="odExportCSV()">⬇ CSV</button>
         <span id="od-count" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
     </div>
@@ -211,6 +212,44 @@ function odRender() {
 
   if (!orders.length) { body.innerHTML = `<div class="empty" style="padding:26px"><p>No orders${odState.state ? ' in this state' : ''} yet. The store fills as the worklist is viewed.</p></div>`; return; }
   body.innerHTML = orders.map(odRow).join('');
+}
+
+// The orders currently on screen, mirroring odRender's tab logic: the 'attention' tab is a
+// client-side filter over the whole loaded set; every other tab is already server-filtered.
+function odVisibleOrders() {
+  const orders = (odState.data && odState.data.orders) || [];
+  return odState.state === 'attention' ? orders.filter((o) => odAttention(o)) : orders;
+}
+
+// Export the orders in the current view (branch · state · search) as a CSV — the same rows
+// the board shows, so a manager can pull a turnaround/backlog snapshot into a spreadsheet.
+function odExportCSV() {
+  const orders = odVisibleOrders();
+  if (!orders.length) { toast('No orders to export in this view', 'err'); return; }
+  const esc = (s) => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+  const round2 = (n) => (n == null ? '' : Math.round(n * 100) / 100);
+  const header = ['patient_name', 'mrno', 'bill_no', 'department', 'doctor', 'modality',
+    'emergency', 'state', 'study_id', 'accession', 'filed_source',
+    'ordered_at', 'reported_at', 'filed_at',
+    'tat_order_to_report_h', 'tat_report_to_filed_h', 'tat_total_h'];
+  const rows = [header];
+  for (const o of orders) {
+    rows.push([o.patientName, o.mrno, o.billNo, o.department, o.doctor, o.modality,
+      o.emergency ? 'yes' : 'no', o.state, o.studyId, o.accession, o.filedSource,
+      o.orderedAt, o.reportedAt, o.filedAt,
+      round2(o.tatReportH), round2(o.tatFileH), round2(o.tatTotalH)]);
+  }
+  const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n');
+  // Leading BOM so Excel opens UTF-8 (Arabic names) correctly — same as the other CSV exports.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const label = (OD_STATES.find((s) => s.key === odState.state) || {}).label || 'orders';
+  const tag = String(label).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'orders';
+  a.download = `radiology-orders-${tag}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`Exported ${orders.length} order(s)`);
 }
 
 // How long an in-flight order has been waiting at its current stage (hours) — drives the
