@@ -56,6 +56,25 @@ So `SsnNumber` (MILLENSYS) === national ID (Siratech) is a reliable 1:1 join key
 
 > Worklist grid is SignalR (server-filtered by `SSN`) — not needed; `GetPatients` over HTTP is the clean path.
 
+## CONFIRMED chain: national ID → report (all read-only, verified live)
+
+```
+1. POST CommonPages/GetPatients        SsnNumber=<nid> & PSearchCriteria=4   → PatientId
+2. POST CommonPages/EncouterDataGetById  patid=<PatientId> & branchid=0       → EncounterId (+VisitId, CreationDate)
+3. GET  CommonPages/EncouterServicesId?EncounterId=<id>                       → services:
+        ServiceName, ClinicName, ServiceDate, AccountServiceId, ClinicReportsCount, VisitId, ClinicId
+4. GET  PatientSummaryPrintSetting/GetResaultsGridData?PatientId=&VisitId=&EncounterId=
+                                                                              → ClinicalReportId, ReportName,
+                                                                                 FilePath (.docx), ReportStatusDate
+5. GET  Report/DownloadReportFilePdf / Reports/ReportPage  (by ClinicalReportId) → the report file
+```
+
+Verified for national ID `1129532634` (Lina): Siratech MRN `25179690` = RadCare PatientId `21614`
+→ Encounter `23432` → service "Lumbar Spine MRI" (`AccountServiceId 60468`, `ClinicReportsCount 1`,
+ServiceDate ~2026-07-10 **after** the 2026-06-28 order) → report `ClinicalReportId 22792`
+(`Report_60468_1.docx`). The report renders via MiViewer
+(`.../Millensys/MiViewer/ReportPopup/CReport.Millensys`, `ReportService.asmx`).
+
 ## Report / document (the thing we fetch)
 
 | Route | Likely use |
