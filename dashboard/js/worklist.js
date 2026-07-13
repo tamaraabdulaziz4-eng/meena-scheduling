@@ -45,7 +45,7 @@ let wlState = { branches: [], site: '', data: null, loading: false, timer: null,
 // shares one connector-cached fetch across all viewers, and the html-exact repaint guard
 // (wlRender) makes an unchanged tick a no-op. Hidden tabs don't poll (see wlStartTimer),
 // and the heavy DePACS pass stays throttled (~3 min on the silent timer).
-const WL_REFRESH_MS = 20000;
+const WL_REFRESH_MS = 12000;
 
 // Board data source override (preview): localStorage['wl:src']='ris' renders the fast
 // RIS-panel board for THIS browser only, so it can be verified before flipping the default.
@@ -599,7 +599,7 @@ async function wlEnrich(silent, force) {
   // short-window + cached on the connector, so this is cheap. The ratchet in
   // wlMergeEnrich guarantees a row never moves backward, so more-frequent checks
   // only ever fill in progress, never cause flicker.
-  if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 30000)) return;
+  if (silent && !anyMissing && (Date.now() - (wlState.lastEnrich || 0) < 12000)) return;
   _wlEnrichBusy = true;
   const myEnrich = ++_wlEnrichSeq;   // this pass owns the lock/shimmer only while it's the latest
   // Tie this enrich to the load generation that started it: if the operator switches
@@ -657,7 +657,7 @@ async function wlEnrich(silent, force) {
     // "not on open" behaviour (its ready pass is the slow per-patient work we defer).
     const _isRis = !!(wlState.data && wlState.data.source === 'ris');
     const _firstReady = wlState.lastReady == null;
-    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 90000)) || (_isRis && _firstReady);
+    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 25000)) || (_isRis && _firstReady);
     if (readyDue) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
