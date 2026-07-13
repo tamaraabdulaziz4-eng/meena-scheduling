@@ -25,13 +25,36 @@ In MILLENSYS the patient national ID / Iqama is the **`SSN`** field (Kendo filte
 the model also exposes **`Ssnumber`**. This is the field we match the Siratech national ID
 (`PatientBannerInfo.nationalId`, e.g. `1129532634`) against.
 
-## Patient search (national ID → their patient)
+## Patient search (national ID → their patient) — CONFIRMED WORKING
 
-| Route | Notes |
-|---|---|
-| `CommonPages/PatientSearch?searchkey={value}` | simple GET, `searchkey` — candidate for national-ID lookup |
-| `CommonPages/GetPatients` | patient list |
-| Worklist grid (SignalR `read`) | server-filtered by `SSN`; appears as SignalR hub traffic, not a REST URL |
+`CommonPages/PatientSearch` returns the search *page*; the data comes from the
+**`CommonPages/GetPatients`** Kendo grid read. It does NOT use Kendo `filter[]` — it sends
+FLAT params built by the page's `getpatientfilterdata()` function:
+
+```
+POST /MILLENSYS/MiClinic/CommonPages/GetPatients
+Content-Type: application/x-www-form-urlencoded
+X-Requested-With: XMLHttpRequest        (must be an AJAX request)
+
+sort=&page=1&pageSize=30&group=&filter=
+&SsnNumber=<NATIONAL_ID>        ← national ID / Iqama goes here
+&PSearchCriteria=4             ← match operator: 0 Quick · 1 StartsWith · 2 Contains · 3 EndsWith · 4 Exact
+&PatientCode=&PatientName=&MRN=&PatientDateBirth=&Gender=
+&PersonalMobileNumber=&HomePhoneNumber=&TypeOfPatientName=&GivenName=&MiddleName=&FamilyName=
+```
+
+Response: `{"Data":[ <patient> ],"Total":n}`. Key row fields:
+`PatientId`, `PatientCode`, `MRN`, `SsnNumber`, `EncounterId`, `AnyEncountersOpened`,
+`PatientDateBirth`, `PersonId`.
+
+### ✅ Cross-system join PROVEN
+National ID **`1129532634`** resolves to the SAME person in both systems:
+- Siratech MRN **`25179690`** (via `PatientBannerInfo.nationalId`)
+- RadCare MILLENSYS **`PatientId 21614`** (via `GetPatients` `SsnNumber` exact search, `Total=1`)
+
+So `SsnNumber` (MILLENSYS) === national ID (Siratech) is a reliable 1:1 join key.
+
+> Worklist grid is SignalR (server-filtered by `SSN`) — not needed; `GetPatients` over HTTP is the clean path.
 
 ## Report / document (the thing we fetch)
 
