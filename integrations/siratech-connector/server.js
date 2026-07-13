@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'reconbranch-filt-2026-07-12av';
+const CONNECTOR_BUILD = 'reconbranch-mods-2026-07-12aw';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3284,11 +3284,19 @@ app.get('/diag/reconcile-branch', requireAuth, async (req, res) => {
         return (!Number.isFinite(ot) || !Number.isFinite(st)) ? true : (st >= ot - 24 * 36e5 && st <= ot + AFTER_MS);
       });
       const cls = !mine.length ? 'noStudyAtAll' : (sameModNear.length ? 'sameModMatch' : 'otherStudiesOnly');
+      const studyMods = [...new Set(mine.map((s) => results.normMod(s.modality || '')).filter(Boolean))];
       return { mrno: m, name: it.patientName, exam: it.exam || it.modality, modality: mod, branch: it.branch, site: it.site,
-               orderedDate: it.orderedDate, studies: mine.length, sameModNear: sameModNear.length, class: cls };
+               orderedDate: it.orderedDate, studies: mine.length, sameModNear: sameModNear.length, studyMods, class: cls };
     });
     const agg = { notPerformed: notPerf.length, sampled: rows.length, noStudyAtAll: 0, sameModMatch: 0, otherStudiesOnly: 0, lookupFailed: 0 };
     for (const r of rows) { agg[r.class] = (agg[r.class] || 0) + 1; }
+    // Which MODALITIES are the not-done? (all of them, not just the sample) — spots a modality that
+    // systematically doesn't reach this PACS (a coverage gap like DEXA) vs a real no-show.
+    const notPerfByModality = {};
+    for (const it of notPerf) { const mm = results.normMod(it.modality || it.exam || '') || 'other'; notPerfByModality[mm] = (notPerfByModality[mm] || 0) + 1; }
+    // For the sampled otherStudiesOnly, show order-modality → what studies the patient DID get.
+    const otherStudiesDetail = rows.filter((r) => r.class === 'otherStudiesOnly')
+      .map((r) => ({ modality: r.modality, exam: r.exam, studyMods: r.studyMods })).slice(0, 30);
     const decided = (agg.noStudyAtAll + agg.sameModMatch + agg.otherStudiesOnly) || 1;
     const performedRate = items.length ? Math.round(((items.length - notPerf.length) / items.length) * 100) : null;
     let verdict;
@@ -3297,7 +3305,8 @@ app.get('/diag/reconcile-branch', requireAuth, async (req, res) => {
     else if (agg.noStudyAtAll / decided >= 0.7) verdict = `NO PACS STUDIES — ${agg.noStudyAtAll}/${agg.sampled} sampled not-performed patients have no study in this PACS at all → genuine no-shows OR this branch's imaging is on a different PACS (coverage gap)`;
     else verdict = `MIXED — ${agg.noStudyAtAll} no-study · ${agg.sameModMatch} unlinked same-mod · ${agg.otherStudiesOnly} other-studies-only`;
     return res.json({ ok: true, build: CONNECTOR_BUILD, site: site || 'all', from, to, sample, matchAfterH,
-                      orderedTotal: items.length, notPerformed: notPerf.length, performedRate, aggregate: agg, verdict, rows });
+                      orderedTotal: items.length, notPerformed: notPerf.length, performedRate, aggregate: agg, verdict,
+                      notPerfByModality, otherStudiesDetail, rows });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
