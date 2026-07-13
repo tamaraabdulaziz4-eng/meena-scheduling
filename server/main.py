@@ -11338,6 +11338,28 @@ def public_radcare_match(request: Request):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/millensys-report", timeout=120)
 
+@app.get("/api/public/radcare/pdf")
+def public_radcare_pdf(request: Request):
+    """The matched RadCare MRI/CT report as a PDF (public link, same token as /reports).
+    The connector returns it base64 over the JSON bridge; we decode and stream it."""
+    from fastapi import Response
+    import base64, urllib.parse
+    _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _reports_throttle()
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    d = _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/millensys-report-pdf", timeout=150)
+    if not d.get("ok") or not d.get("base64"):
+        raise HTTPException(404, d.get("error") or "No RadCare PDF report available for this patient.")
+    try:
+        data = base64.b64decode(d["base64"])
+    except Exception:
+        raise HTTPException(502, "Corrupt PDF from the connector.")
+    fname = d.get("filename") or "radcare_report.pdf"
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
 @app.get("/api/public/reports/lookup")
 def public_reports_lookup(request: Request):
     """List a patient's DePACS studies (newest first) for the public link."""

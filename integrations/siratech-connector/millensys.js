@@ -241,8 +241,26 @@ async function matchMriReport({ nationalId, orderDate, serviceName } = {}) {
   };
 }
 
+// Download the report as PDF. The report is stored as a .docx on the RadCare file share;
+// the DownloadReportFilePdf endpoint takes the SAME path with a .pdf extension and converts
+// it server-side. Param is `file` (the UNC path), plus an optional friendly `newFileName`.
+// Returns { status, contentType, buffer }. Re-logs in once if the session expired.
+async function downloadReportPdf(filePath, newFileName, _retried = false) {
+  if (!filePath) throw new Error('no report filePath to download');
+  const cookie = await ensureCookie();
+  const pdfPath = String(filePath).replace(/\.docx?$/i, '.pdf');
+  // Mirror the app's own request shape: raw backslashes, spaces as %20 (paths have no & ? #).
+  const q = (s) => String(s).replace(/ /g, '%20');
+  const url = `${BASE}/Report/DownloadReportFilePdf?file=${q(pdfPath)}&newFileName=${q(newFileName || 'report')}`;
+  const r = await fetch(url, { headers: { Cookie: cookie, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/pdf,*/*' }, redirect: 'manual' });
+  const ct = r.headers.get('content-type') || '';
+  if ((r.status >= 300 || /text\/html/i.test(ct)) && !_retried && USER && PASS) { _cookie = null; return downloadReportPdf(filePath, newFileName, true); }
+  const buffer = Buffer.from(await r.arrayBuffer());
+  return { status: r.status, contentType: ct, buffer };
+}
+
 module.exports = {
   configured, setCookie, ensureCookie, loginWithBrowser, BASE, FORWARD_DAYS,
   parseMsDate, isMrOrCt,
-  searchByNationalId, encountersFor, servicesFor, reportsFor, matchMriReport,
+  searchByNationalId, encountersFor, servicesFor, reportsFor, matchMriReport, downloadReportPdf,
 };
