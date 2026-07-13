@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'mrndepacs-2026-07-12ba';
+const CONNECTOR_BUILD = 'dexa-pacs-2026-07-13bb';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2078,7 +2078,7 @@ const WORKLIST_SOURCE = (process.env.WORKLIST_SOURCE || 'ris').toLowerCase();
 // "reported" it already knows (RIS resultStatus) so a DePACS window-miss can't demote it.
 async function enrichStagesFromDepacs(items, { noCache = false, matchAfterH = 96 } = {}) {
   if (!items || !items.length) return 0;
-  const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
+  const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG', 'BMD']);   // BMD = DEXA studies DO reach this PACS
   // matchAfterH = how many hours AFTER the order a study still counts as this order's exam.
   // The live board uses the default 96h (recent accuracy); the nightly reconciliation passes a
   // much wider window (e.g. 14 days) so a study PERFORMED MANUALLY / LATE — days after the
@@ -2732,7 +2732,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
     await pool(mrns, DEPACS_STAGE_CONCURRENCY, async (m) => {
       try { studiesBy.set(m, await results.depacsStudies(m, { light: true, noCache })); } catch (e) { /* leave unknown */ }
     });
-    const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG']);
+    const KNOWN_MOD = new Set(['CT', 'MR', 'US', 'XR', 'MG', 'BMD']);   // BMD = DEXA studies DO reach this PACS
     for (const it of items) {
       if (!studiesBy.has(it.mrno)) continue;         // DePACS lookup failed → keep preliminary stage
       // MRN GATE: DePACS matches patient_id as a SUBSTRING, so the raw result can include
