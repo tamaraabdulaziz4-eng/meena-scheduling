@@ -1245,24 +1245,24 @@ function millensysMatch(file, noCache) {
     if (inflight) return inflight;
   }
   const p = _resolveMillensys(file)
-    .then((data) => {
-      _msMatchCache.set(file, { ts: Date.now(), data });
-      // Pre-warm the PDF in the background while the user reads the result, so the
-      // "download" click is instant. Fire-and-forget; failures just fall back to on-click.
-      const m = data && data.matched;
-      if (m && m.filePath && !_pdfCache.has(file)) {
-        const name = `${file}_${String(m.serviceName || 'MRI').replace(/[^A-Za-z0-9]+/g, '_')}`;
-        millensys.downloadReportPdf(m.filePath, name).then((dl) => {
-          if (dl.status === 200 && /pdf/i.test(dl.contentType) && dl.buffer.length) {
-            _pdfCache.set(file, { ts: Date.now(), filename: `${name}.pdf`, base64: dl.buffer.toString('base64') });
-          }
-        }).catch(() => {});
-      }
-      return data;
-    })
+    .then((data) => { _msMatchCache.set(file, { ts: Date.now(), data }); return data; })
     .finally(() => { _msMatchInFlight.delete(file); });
   _msMatchInFlight.set(file, p);
   return p;
+}
+
+// Fetch the matched report PDF into the cache (background, best-effort) so a doctor's
+// "download" click is instant. Called on real lookups only — not by the warmer.
+function prewarmPdf(file, data) {
+  const m = data && data.matched;
+  if (!m || !m.filePath || _pdfCache.has(file)) return;
+  const name = `${file}_${String(m.serviceName || 'MRI').replace(/[^A-Za-z0-9]+/g, '_')}`;
+  millensys.downloadReportPdf(m.filePath, name).then((dl) => {
+    if (dl.status === 200 && /pdf/i.test(dl.contentType) && dl.buffer.length) {
+      _pdfCache.set(file, { ts: Date.now(), filename: `${name}.pdf`, base64: dl.buffer.toString('base64') });
+      if (_pdfCache.size > 50) _pdfCache.delete(_pdfCache.keys().next().value);
+    }
+  }).catch(() => {});
 }
 
 app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
@@ -1270,7 +1270,9 @@ app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS auth not set — cannot reach RadCare MILLENSYS.' });
   try {
-    return res.json(await millensysMatch(file, String(req.query.nocache || '') === '1'));
+    const data = await millensysMatch(file, String(req.query.nocache || '') === '1');
+    prewarmPdf(file, data);   // warm the PDF for this real lookup so the download is instant
+    return res.json(data);
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
@@ -5250,8 +5252,48 @@ async function warmDefaultWorklist() {
   return _warmWlInFlight;
 }
 
+// Pre-match RadCare reports for patients with recent MRI/CT exams, so a doctor opening the
+// shared /radcare link and typing that MRN gets an INSTANT (cached) result. Match-only (no
+// PDF) to keep RadCare load modest — the PDF warms on the doctor's actual lookup. Best-effort.
+const MS_WARM = String(process.env.MILLENSYS_WARM || '1') === '1';
+const MS_WARM_CAP = Number(process.env.MILLENSYS_WARM_CAP || 120);
+const MS_WARM_CONC = Number(process.env.MILLENSYS_WARM_CONC || 3);
+let _warmMsInFlight = null;
+async function warmMillensysMatches() {
+  if (!MS_WARM || !millensys.configured() || _warmMsInFlight) return _warmMsInFlight;
+  _warmMsInFlight = (async () => {
+    const t0 = Date.now();
+    try {
+      await millensys.ensureCookie().catch(() => {});   // keep the RadCare session hot (no 15s login on first lookup)
+      const wl = await buildWorklist({ sites: [], from: null, to: null, ready: false }).catch(() => null);
+      const mrns = [...new Set(((wl && wl.items) || [])
+        .filter((i) => ['MR', 'CT'].includes(results.normMod(i.exam || i.modality || '')))
+        .map((i) => String(i.mrno || '').trim()).filter(Boolean))]
+        .filter((m) => { const h = _msMatchCache.get(m); return !(h && Date.now() - h.ts < MS_MATCH_TTL); })
+        .slice(0, MS_WARM_CAP);
+      let idx = 0, matched = 0;
+      const worker = async () => {
+        while (idx < mrns.length) {
+          const mrn = mrns[idx++];
+          try { const d = await millensysMatch(mrn, false); if (d && d.decision === 'match') matched++; } catch (_e) { /* skip */ }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(MS_WARM_CONC, mrns.length) }, worker));
+      if (mrns.length) console.log(`[warm] millensys: ${matched} matched of ${mrns.length} MRI/CT patients in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+    } catch (e) { console.error('[warm] millensys failed:', e && e.message); }
+  })().finally(() => { _warmMsInFlight = null; });
+  return _warmMsInFlight;
+}
+
 app.listen(PORT, HOST, () => {
   console.log(`Siratech connector listening on ${HOST}:${PORT}`);
+  // Warm the RadCare login immediately so the first doctor lookup never pays the ~15s login.
+  if (MS_WARM && millensys.configured()) {
+    setTimeout(() => { millensys.ensureCookie().then(() => console.log('[warm] millensys session ready')).catch((e) => console.error('[warm] millensys login:', e && e.message)); }, 5000);
+    setTimeout(() => { warmMillensysMatches().catch(() => {}); }, 20000);
+    const reWarmMs = () => setTimeout(async () => { await warmMillensysMatches(); reWarmMs(); }, 420000);   // every 7 min (< 10 min cache TTL)
+    reWarmMs();
+  }
   // Warm branch list + radiology catalog, then keep the default views warm.
   setTimeout(() => {
     getSites().then((s) => console.log(`[warm] sites: ${s.length}`)).catch(() => {});
