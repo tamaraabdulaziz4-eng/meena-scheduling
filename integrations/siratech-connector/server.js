@@ -111,7 +111,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'dexa-pacs-2026-07-13bc';
+const CONNECTOR_BUILD = 'dexa-pacs-2026-07-13bd';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3650,6 +3650,104 @@ app.get('/diag/studies-vs-done', requireAuth, async (req, res) => {
       studies: { totalRaw: studies.length, distinctById: distinct.length, uniqueExams: uniqExams.size,
         duplicateRefiles: distinct.length - uniqExams.size, matchedToAnOrder: matchedToOrder, unmatchedNoOrder: unmatched },
       note: 'done = doneViaPacs + doneViaReport (+ manual, added server-side). DePACS totalRaw includes duplicate re-files and walk-in/no-order studies; distinctById dedupes re-opens by studyId; uniqueExams dedupes manual re-files by (mrn+modality+studyDate). matchedToAnOrder = studies that line up with a billed order; unmatchedNoOrder = studies with no order in this window (walk-ins / different-date / non-radiology-billed).' });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Not-done proof (read-only) ───────────────────────────────────────────────
+// Dissects EXACTLY the orders that read "not done" (the same population studies-vs-done
+// counts as notDone: ordered + non-cancelled, no PACS-done stage, no Siratech report, and
+// NOT a non-PACS modality like DEXA/EMG). Three exact cuts over ALL of them (no DePACS calls
+// needed — straight off the panel item): by branch (+performed rate), by modality, by AGE
+// (a not-done order that is 6h old is "pending / not imaged yet", one 15d old is a real
+// no-show). Then a DePACS-verified SAMPLE that classifies each not-done patient:
+//   • noStudyAtAll     — zero studies in this PACS  ⇒ genuine no-show (or coverage gap)
+//   • sameModMatch     — a same-modality study IS near the order but didn't link ⇒ matching bug
+//   • otherStudiesOnly — patient imaged, but different modality/time ⇒ ambiguous
+// and cross-tabs class × age, so "old + noStudyAtAll" = provably a no-show, and projects the
+// sample rates onto the full not-done count. Also counts `scannedButNotDone` — orders Siratech
+// itself stamped an exam start/end on but that still have no report/PACS (tech started, never
+// filed) — a distinct, actionable bucket from a true no-show.
+app.get('/diag/not-done', requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || '').trim() || null;
+    const to = String(req.query.to || '').trim() || null;
+    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const sample = Math.max(1, Math.min(150, Number(req.query.sample) || 80));
+    const wl = await buildWorklist({ sites: [], from, to, ready: true, matchAfterH });
+    const items = ((wl && wl.items) || []).filter((it) => it.orderDate && !it.cancelled);
+    const NONPACS = /dexa|\bbmd\b|bone\s*densit|densitom|electromyog|\bemg\b/i;
+    const isDoneStage = (it) => ['imaged', 'draft', 'reported'].includes(it.stage);
+    const notDone = items.filter((it) => !it.hisReported && !isDoneStage(it)
+      && !NONPACS.test(`${it.exam || ''} ${it.modality || ''}`));
+    const bandOf = (h) => {
+      if (h == null || !Number.isFinite(h)) return 'unknown';
+      if (h < 24) return '0-1d (pending)';
+      if (h < 48) return '1-2d';
+      if (h < 72) return '2-3d';
+      if (h < 168) return '3-7d';
+      if (h < 336) return '7-14d';
+      return '14d+ (stale)';
+    };
+    // Exact cuts over ALL not-done — no sampling, no DePACS.
+    const byBranchMap = {};
+    for (const it of items) { const b = it.branch || '(unknown)'; (byBranchMap[b] = byBranchMap[b] || { ordered: 0, notDone: 0 }).ordered += 1; }
+    const byModality = {}, byAge = {};
+    let scannedButNotDone = 0;
+    for (const it of notDone) {
+      byBranchMap[it.branch || '(unknown)'].notDone += 1;
+      const mm = results.normMod(it.modality || it.exam || '') || 'other';
+      byModality[mm] = (byModality[mm] || 0) + 1;
+      const bd = bandOf(it.ageHours);
+      byAge[bd] = (byAge[bd] || 0) + 1;
+      if (it.scanned) scannedButNotDone += 1;
+    }
+    const byBranch = Object.entries(byBranchMap)
+      .map(([branch, v]) => ({ branch, ordered: v.ordered, notDone: v.notDone,
+        performedRate: v.ordered ? Math.round(((v.ordered - v.notDone) / v.ordered) * 100) : null }))
+      .filter((b) => b.notDone > 0)
+      .sort((a, b) => (a.performedRate ?? 999) - (b.performedRate ?? 999) || b.notDone - a.notDone);
+    // DePACS-verified sample — one representative not-done order per unique MRN.
+    const seen = new Set(), picks = [];
+    for (const it of notDone) { const m = String(it.mrno || '').trim(); if (!m || seen.has(m)) continue; seen.add(m); picks.push(it); if (picks.length >= sample) break; }
+    const AFTER_MS = matchAfterH * 36e5;
+    const rows = await pool(picks, DEPACS_STAGE_CONCURRENCY, async (it) => {
+      const m = String(it.mrno || '').trim();
+      const mod = results.normMod(it.modality || it.exam || '');
+      const ageBand = bandOf(it.ageHours);
+      let studies = null;
+      try { studies = (await results.depacsStudies(m, { light: true })) || []; } catch (_e) { studies = null; }
+      if (studies === null) return { mrno: m, name: it.patientName, exam: it.exam || it.modality, branch: it.branch, orderedDate: it.orderedDate, ageBand, scanned: !!it.scanned, class: 'lookupFailed' };
+      const mine = studies.filter((s) => results.sameMrn(s.patId, m));
+      const ot = parseHisDate(it.orderedDate);
+      const sameModNear = mine.filter((s) => {
+        if (results.normMod(s.modality || '') !== mod) return false;
+        const st = parseHisDate(s.studyDate);
+        return (!Number.isFinite(ot) || !Number.isFinite(st)) ? true : (st >= ot - 24 * 36e5 && st <= ot + AFTER_MS);
+      });
+      const cls = !mine.length ? 'noStudyAtAll' : (sameModNear.length ? 'sameModMatch' : 'otherStudiesOnly');
+      const studyMods = [...new Set(mine.map((s) => results.normMod(s.modality || '')).filter(Boolean))];
+      return { mrno: m, name: it.patientName, exam: it.exam || it.modality, modality: mod, branch: it.branch, site: it.site,
+               orderedDate: it.orderedDate, ageBand, scanned: !!it.scanned, studies: mine.length, sameModNear: sameModNear.length, studyMods, class: cls };
+    });
+    const agg = { sampled: rows.length, noStudyAtAll: 0, sameModMatch: 0, otherStudiesOnly: 0, lookupFailed: 0 };
+    for (const r of rows) { agg[r.class] = (agg[r.class] || 0) + 1; }
+    const classByAge = {};
+    for (const r of rows) { const k = r.ageBand; const c = classByAge[k] = classByAge[k] || { noStudyAtAll: 0, sameModMatch: 0, otherStudiesOnly: 0, lookupFailed: 0 }; c[r.class] += 1; }
+    const decided = (agg.noStudyAtAll + agg.sameModMatch + agg.otherStudiesOnly) || 1;
+    const estimate = {
+      genuineNoShows: Math.round(notDone.length * agg.noStudyAtAll / decided),
+      matchingGap: Math.round(notDone.length * agg.sameModMatch / decided),
+      otherModalityOnly: Math.round(notDone.length * agg.otherStudiesOnly / decided),
+    };
+    let verdict;
+    if (!agg.sampled) verdict = 'no not-done orders in this window';
+    else if (agg.sameModMatch / decided >= 0.15) verdict = `MATCHING GAP — ${agg.sameModMatch}/${agg.sampled} sampled not-done patients HAVE a same-modality study near the order that failed to link (≈${estimate.matchingGap} of ${notDone.length} — an accuracy bug to fix)`;
+    else if (agg.noStudyAtAll / decided >= 0.7) verdict = `GENUINE NO-SHOWS — ${agg.noStudyAtAll}/${agg.sampled} sampled not-done patients have NO study in this PACS at all (≈${estimate.genuineNoShows} of ${notDone.length}); ${scannedButNotDone} were exam-started in Siratech but never filed`;
+    else verdict = `MIXED — sample: ${agg.noStudyAtAll} no-study · ${agg.sameModMatch} unlinked same-mod · ${agg.otherStudiesOnly} other-mod-only → est. ${estimate.genuineNoShows} no-shows / ${estimate.matchingGap} matching-gap / ${estimate.otherModalityOnly} other`;
+    return res.json({ ok: true, build: CONNECTOR_BUILD, from, to, matchAfterH, sample,
+      totalOrdered: items.length, notDone: notDone.length, scannedButNotDone,
+      byBranch, byModality, byAge, sampleAggregate: agg, classByAge, estimate, verdict,
+      note: 'byBranch/byModality/byAge are EXACT over all not-done. sampleAggregate/classByAge/estimate come from a DePACS-verified sample of up to `sample` unique MRNs, projected onto the full count. scannedButNotDone = Siratech recorded an exam start/end but no report/PACS (started, never filed) — chase these, not the no-shows.', rows });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
