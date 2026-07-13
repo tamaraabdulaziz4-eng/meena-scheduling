@@ -9250,7 +9250,7 @@ def _rad_live_done_day(date):
     grounded) — so the current day isn't frozen at the last nightly snapshot. Returns the
     per-day dict {date, ordered, done, unverifiable, by_modality}. Blocking (bridge call)."""
     import urllib.parse as _up
-    match_after_h = min(720, max(96, RAD_RECON_FLAG_DAYS * 24))
+    match_after_h = min(1080, max(96, RAD_RECON_MATCH_DAYS * 24))
     qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
     data = _bridge_request("/his/worklist?" + qs, timeout=240)
     items = (data or {}).get("items") or []
@@ -9362,7 +9362,7 @@ async def radiology_done_day(request: Request, user=Depends(require_admin)):
         raise HTTPException(400, "date must be YYYY-MM-DD")
     import urllib.parse as _up
     from starlette.concurrency import run_in_threadpool
-    match_after_h = min(720, max(96, RAD_RECON_FLAG_DAYS * 24))
+    match_after_h = min(1080, max(96, RAD_RECON_MATCH_DAYS * 24))
     qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
     data = await run_in_threadpool(lambda: _bridge_request("/his/worklist?" + qs, timeout=240))
     items = (data or {}).get("items") or []
@@ -13027,6 +13027,12 @@ def _radiology_snapshot_loop():
 
 RAD_RECON_WINDOW_DAYS = int(os.environ.get("RAD_RECON_WINDOW_DAYS", "30"))
 RAD_RECON_FLAG_DAYS    = int(os.environ.get("RAD_RECON_FLAG_DAYS", "14"))
+# How many days AFTER the order a PACS study still counts as THIS order's exam. Decoupled from
+# FLAG_DAYS (the aged-follow-up threshold): operator confirms exams are routinely performed weeks
+# late — an order billed on day 1 but scanned ~a month later. A 14-day match window read those as
+# "not performed"; 35 days lets the late study link so the exam correctly reads DONE. Env-tunable;
+# bounded to the connector's 45-day ceiling.
+RAD_RECON_MATCH_DAYS   = int(os.environ.get("RAD_RECON_MATCH_DAYS", "35"))
 # Auto-notification KILL SWITCH. Default OFF: the reconciliation still runs nightly to populate
 # the dashboard tables, but it sends NO email / in-app notification to anyone. This exists because
 # the report was reaching managers' inboxes with numbers that aren't validated yet. Nothing goes
@@ -13063,11 +13069,12 @@ def _rad_reconcile_run(window_days=None, flag_days=None):
     from_d = to_d - timedelta(days=window_days)
     # Fetch the DePACS-confirmed board in WEEKLY chunks so each connector call stays under its
     # ready-pass ceiling (a single 30-day ready=1 sweep would blow the timeout).
-    # matchAfterH: count a PACS study as this order's exam up to `flag_days` AFTER the order,
-    # so a study performed MANUALLY / LATE (days after the order, when the modality worklist
-    # never showed it) still links instead of reading as "not performed". Bounded to the
-    # connector's 720h (30-day) ceiling.
-    match_after_h = min(720, max(96, flag_days * 24))
+    # matchAfterH: count a PACS study as this order's exam up to RAD_RECON_MATCH_DAYS AFTER the
+    # order (default 35d), so a study performed MANUALLY / LATE — weeks after the order, when the
+    # modality worklist never showed it — still links instead of reading as "not performed". This
+    # is DECOUPLED from flag_days (the aged-follow-up threshold). Bounded to the connector's 45-day
+    # ceiling.
+    match_after_h = min(1080, max(96, RAD_RECON_MATCH_DAYS * 24))
     by_key = {}
     chunk_start = from_d
     while chunk_start <= to_d:

@@ -111,7 +111,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'dexa-pacs-2026-07-13bd';
+const CONNECTOR_BUILD = 'latematch-2026-07-13be';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -2939,7 +2939,7 @@ app.get('/worklist', requireAuth, async (req, res) => {
     // Widen the "study counts as this order's exam" window (hours after the order). Default 96h
     // for the live board; the nightly reconciliation passes up to ~30 days so late/manual studies
     // link. Bounded 96h..720h (30 days).
-    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 96));
+    const matchAfterH = Math.max(96, Math.min(1080, Number(req.query.matchAfterH) || 96));
     return res.json({ ok: true, ...(await buildWorklist({ sites, from, to, ready, readyLimit, modality, pay, noCache, source, matchAfterH })) });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
@@ -3382,7 +3382,7 @@ app.get('/diag/reconcile-branch', requireAuth, async (req, res) => {
     const siteQ = String(req.query.site || '').trim();
     const site = siteQ ? Number(siteQ) : null;
     const sample = Math.max(1, Math.min(60, Number(req.query.sample) || 30));
-    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const matchAfterH = Math.max(96, Math.min(1080, Number(req.query.matchAfterH) || 840));
     const sites = (site && Number.isFinite(site)) ? [site] : [];
     const wl = await buildWorklist({ sites, from, to, ready: true, matchAfterH });
     // Same population as the counts: ordered (has an order date) and non-cancelled exams only.
@@ -3523,7 +3523,7 @@ app.get('/diag/done-signal', requireAuth, async (req, res) => {
     const site = Number(String(req.query.site || '').trim()) || null;
     const from = String(req.query.from || '').trim() || null;
     const to = String(req.query.to || '').trim() || null;
-    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const matchAfterH = Math.max(96, Math.min(1080, Number(req.query.matchAfterH) || 840));
     const sites = site ? [site] : [];
     const wl = await buildWorklist({ sites, from, to, ready: true, matchAfterH });
     const items = (wl.items || []).filter((it) => it.orderDate && !it.cancelled);
@@ -3603,7 +3603,7 @@ app.get('/diag/studies-vs-done', requireAuth, async (req, res) => {
   try {
     const from = String(req.query.from || '').trim() || null;
     const to = String(req.query.to || '').trim() || null;
-    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const matchAfterH = Math.max(96, Math.min(1080, Number(req.query.matchAfterH) || 840));
     const wl = await buildWorklist({ sites: [], from, to, ready: true, matchAfterH });
     const items = (wl.items || []).filter((it) => it.orderDate && !it.cancelled);
     const NONPACS = /dexa|\bbmd\b|bone\s*densit|densitom|electromyog|\bemg\b/i;
@@ -3671,7 +3671,7 @@ app.get('/diag/not-done', requireAuth, async (req, res) => {
   try {
     const from = String(req.query.from || '').trim() || null;
     const to = String(req.query.to || '').trim() || null;
-    const matchAfterH = Math.max(96, Math.min(720, Number(req.query.matchAfterH) || 336));
+    const matchAfterH = Math.max(96, Math.min(1080, Number(req.query.matchAfterH) || 840));
     const sample = Math.max(1, Math.min(150, Number(req.query.sample) || 80));
     const wl = await buildWorklist({ sites: [], from, to, ready: true, matchAfterH });
     const items = ((wl && wl.items) || []).filter((it) => it.orderDate && !it.cancelled);
