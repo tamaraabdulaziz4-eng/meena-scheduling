@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'modclass-2026-07-12ax';
+const CONNECTOR_BUILD = 'paranasal-xr-2026-07-12ay';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
