@@ -2443,6 +2443,16 @@ def serve_reports_public():
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
+@app.get("/radcare")
+def serve_radcare_public():
+    """Public, login-free RadCare (MILLENSYS) MRI/CT report-match page (shared link).
+    Uses the same access token as /reports."""
+    return FileResponse(
+        os.path.join(DASHBOARD, "radcare-public.html"),
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
 @app.get("/cdupload")
 def serve_cdupload_public():
     """Public, login-free radiology-CD upload page (shared link for a branch)."""
@@ -11314,6 +11324,19 @@ def _report_html_to_text(html):
     t = _re.sub(r"\n[ \t]+", "\n", t)
     t = _re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()
+
+@app.get("/api/public/radcare/match")
+def public_radcare_match(request: Request):
+    """Public link: match a Meena (Siratech) MRI/CT order to the RadCare MILLENSYS report
+    by national ID, confirming the report is dated after the order. Read-only. Same token
+    as /reports; proxies to the connector's /patient/{file}/millensys-report."""
+    _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _reports_throttle()
+    import urllib.parse
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/millensys-report", timeout=120)
 
 @app.get("/api/public/reports/lookup")
 def public_reports_lookup(request: Request):
