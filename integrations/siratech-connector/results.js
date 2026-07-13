@@ -59,6 +59,10 @@ function normMod(m) {
   if (/\bCT\b|COMPUT\w*\s+TOMOG/.test(s)) return 'CT';
   if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
   if (/MAMMOG|\bMG\b/.test(s)) return 'MG';
+  // DEXA / bone-density → BMD (the DICOM modality DePACS uses, e.g. "DXA EXAM" with modality "BMD").
+  // Classifying the order the same way lets a DEXA order match its BMD study — DEXA studies DO reach
+  // this PACS, so they can be confirmed done instead of always reading "unverifiable".
+  if (/DEXA|\bDXA\b|\bBMD\b|BONE\s*MIN|BONE\s*DENSIT|DENSITOM/.test(s)) return 'BMD';
   // "Paranasal Sinus" with NO modality word is a plain X-ray at these centers (confirmed by the
   // operators). Placed AFTER the CT/MR checks, so an explicit "CT Paranasal Sinus" still reads CT.
   if (/PARANASAL/.test(s)) return 'XR';
