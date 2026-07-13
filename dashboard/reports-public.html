@@ -174,6 +174,57 @@ async function lookup(){
   try { const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file)); stop(); renderList(d); }
   catch(e){ stop(); $('results').innerHTML=''; showMsg(e.message || 'Search failed'); }
   finally { $('go').disabled=false; }
+  appendRadcare(file);
+}
+
+// ── RadCare (MILLENSYS) MRI/CT report — optional cross-system check on the same file ──
+const RC_DECISION = {
+  match:               ['#00A87D','✅ RadCare report found — matches an MRI/CT order'],
+  mrct_no_report:      ['#C98A00','⏳ MRI/CT at RadCare, no report filed yet'],
+  report_before_order: ['#C98A00','⚠️ RadCare report(s) exist but predate the order'],
+  no_mrct:             ['#7c7a99','No MRI/CT for this patient at RadCare'],
+  no_patient:          ['#7c7a99','No RadCare patient with this national ID'],
+  no_national_id:      ['#7c7a99','No national ID on the Meena record'],
+};
+function appendRadcare(file){
+  if (!file) return;
+  const box = document.createElement('div');
+  box.className='card'; box.id='rc-card';
+  box.innerHTML = `<label>RadCare (MRI / CT) report</label>
+    <div class="hint" style="margin:0 0 10px">Some MRI/CT exams are done at RadCare, not on Meena's PACS. Check there too.</div>
+    <button class="btn2" id="rc-go" style="width:100%" onclick="checkRadcare('${esc(file)}')">Check RadCare MRI/CT report</button>
+    <div id="rc-out"></div>`;
+  $('results').appendChild(box);
+}
+async function checkRadcare(file){
+  const btn=$('rc-go'); if(btn){ btn.disabled=true; btn.textContent='Checking RadCare…'; }
+  $('rc-out').innerHTML = loaderHTML('rc-ld');
+  const stop = cycle('rc-ld', ['Searching RadCare…','Matching by national ID…','Reading the report…','Almost there…']);
+  try {
+    const d = await api('/api/public/radcare/match?file=' + encodeURIComponent(file));
+    stop(); renderRadcare(d);
+  } catch(e){ stop(); $('rc-out').innerHTML = '<div class="sm" style="color:#E25555;margin-top:10px">'+esc(e.message||'RadCare check failed')+'</div>'; }
+  finally { if(btn){ btn.disabled=false; btn.textContent='Re-check RadCare'; } }
+}
+function rcMs(ms){ if(!ms) return '—'; const d=new Date(Number(ms)); return isNaN(d)?'—':d.toISOString().slice(0,10); }
+function renderRadcare(d){
+  const [col,txt] = RC_DECISION[d.decision] || ['#7c7a99', esc(d.decision||'—')];
+  const cands = d.candidates || [];
+  let h = `<div style="margin-top:12px;padding:11px 13px;border-radius:12px;font-weight:800;font-size:14px;background:${col}22;color:${col}">${txt}</div>`;
+  h += `<div class="sm" style="margin-top:8px">National ID: ${esc(d.nationalId||'—')} · Order: ${esc(String(d.siratechOrderDate||'—').split(' ')[0])} · RadCare Id: ${esc((d.patient&&d.patient.patientId)||'—')}</div>`;
+  cands.forEach(c=>{
+    const tag = c.afterOrder===true?['#00A87D','report after order']:c.afterOrder===false?['#E25555','before order']:c.hasReport?['#C98A00','date unknown']:['#C98A00','no report yet'];
+    h += `<div style="border:1px solid var(--border);border-radius:12px;padding:11px 12px;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>${esc(c.serviceName||'—')}</b>
+      <span style="font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;background:${tag[0]}22;color:${tag[0]};white-space:nowrap">${tag[1]}</span></div>
+      <div class="sm" style="margin-top:5px">${esc(c.clinic||'')} · exam ${esc(rcMs(c.serviceDate))} · report ${esc(rcMs(c.reportDate))}${c.clinicalReportId?(' · #'+esc(c.clinicalReportId)):''}</div></div>`;
+  });
+  const m = d.matched;
+  if (d.decision==='match' && m && m.clinicalReportId){
+    const pdf = '/api/public/radcare/pdf?file=' + encodeURIComponent(d.file) + '&t=' + encodeURIComponent(TOKEN);
+    h += `<a class="btn2" style="display:block;text-align:center;text-decoration:none;margin-top:12px" href="${pdf}" target="_blank" rel="noopener">📄 Download RadCare report PDF</a>`;
+  }
+  $('rc-out').innerHTML = h;
 }
 
 function patientPanel(s){
