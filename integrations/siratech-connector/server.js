@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'livelier-wl-2026-07-12az';
+const CONNECTOR_BUILD = 'mrndepacs-2026-07-12ba';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3427,6 +3427,43 @@ app.get('/diag/done-signal', requireAuth, async (req, res) => {
       doneIfScannedCounts: donePlusScanned, doneIfScannedCountsPct: total ? Math.round(donePlusScanned / total * 100) : 0,
       note: 'hisReported = a Siratech report exists (done even w/o PACS). pacs = matched DePACS study. scannedNoPacs = Siratech recorded the scan performed (examStart/End) but no PACS study + no report — the manual/non-integrated period, currently counted NOT done. notDone = no report, no PACS, no recorded scan.',
       daily });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── Per-MRN DePACS dump (read-only) ──────────────────────────────────────────────────────
+// For one patient, dump BOTH sides so we can see a matching problem directly: every DePACS study
+// (raw patId / modality / studyDate / desc / accession / status, + whether its patId matches the
+// mrno and how normMod reads it) and the patient's radiology orders. Diagnoses "sometimes gets
+// like this" for a specific MRN. No writes; management-only patient data.
+app.get('/diag/mrn-depacs', requireAuth, async (req, res) => {
+  try {
+    const mrno = String(req.query.mrno || '').trim();
+    if (!mrno) return res.status(400).json({ ok: false, error: 'mrno required' });
+    await getToken();
+    const empId = currentEmpId() || '0';
+    const today = new Date();
+    const toISO = `${today.toISOString().slice(0, 10)}T23:59:59.000Z`;
+    const fromISO = `${new Date(today.getTime() - 120 * 864e5).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    let studies = null;
+    try { studies = (await results.depacsStudies(mrno, { light: true, noCache: true })) || []; } catch (_e) { studies = null; }
+    const studyRows = (studies || []).map((s) => ({
+      patId: s.patId, matchesMrn: results.sameMrn(s.patId, mrno),
+      modality: s.modality, normMod: results.normMod(s.modality || ''),
+      studyDate: s.studyDate, desc: s.desc, accession: s.accession, status: s.status,
+      reported: results.isReported(s.status),
+    }));
+    let orders = [];
+    try {
+      const r = await hisFetch('/investigation-api/api/v1/ResultEntryRadiology/RadiologySearch', {
+        body: results.radiologySearchBody({ mrno, hospitalId: 0, empId, filterResult: '0', fromDate: fromISO, toDate: toISO }) });
+      orders = (((r && r.json && r.json.data) || [])).map((x) => ({
+        serviceName: x.serviceName, normMod: results.normMod(x.serviceName || ''),
+        billDate: x.billDate, billNo: x.billNo, hospitalId: x.hospitalId, resultEntry: x.resultEntry,
+      }));
+    } catch (_e) { orders = []; }
+    return res.json({ ok: true, build: CONNECTOR_BUILD, mrno,
+      studyCount: studyRows.length, distinctStudyPatIds: [...new Set(studyRows.map((s) => s.patId))],
+      studies: studyRows, orderCount: orders.length, orders });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
