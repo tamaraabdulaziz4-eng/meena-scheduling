@@ -9212,6 +9212,23 @@ async def radiology_studies_vs_done(request: Request, user=Depends(require_super
     qs = ("?" + _up.urlencode(q_)) if q_ else ""
     return await run_in_threadpool(lambda: _bridge_request("/his/diag/studies-vs-done" + qs, timeout=300))
 
+@app.api_route("/api/radiology/not-done", methods=["GET", "POST"])
+async def radiology_not_done(request: Request, user=Depends(require_superadmin)):
+    """Read-only: dissect the exact orders that read "not done" — by branch (+performed rate),
+    by modality, and by AGE (fresh/pending vs stale/no-show) over ALL of them, plus a
+    DePACS-verified sample that classifies each (genuine no-show vs matching gap vs other-modality)
+    and projects onto the full count. Forwards to the connector's /diag/not-done."""
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    p = request.query_params
+    q_ = {}
+    for k in ("from", "to", "matchAfterH", "sample"):
+        v = (p.get(k) or "").strip()
+        if v:
+            q_[k] = v
+    qs = ("?" + _up.urlencode(q_)) if q_ else ""
+    return await run_in_threadpool(lambda: _bridge_request("/his/diag/not-done" + qs, timeout=300))
+
 @app.post("/api/radiology/reconcile/run")
 def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
     """Run the reconciliation on demand (testing / an immediate check instead of waiting for
