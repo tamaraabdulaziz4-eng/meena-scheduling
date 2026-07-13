@@ -1234,6 +1234,34 @@ app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// The matched RadCare MRI/CT report as a PDF, returned base64 in JSON (so it passes the
+// JSON-only bridge). The dashboard decodes it and streams application/pdf. READ-ONLY.
+app.get('/patient/:file/millensys-report-pdf', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS_COOKIE not set — cannot reach RadCare MILLENSYS.' });
+  try {
+    await getToken();
+    const [nid, orders] = await Promise.all([
+      patientNationalId(file),
+      hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
+    ]);
+    if (!nid) return res.status(404).json({ ok: false, error: 'no national ID on the Siratech record' });
+    const mrct = orders.filter((o) => ['MR', 'CT'].includes(results.normMod(o.serviceName || o.modality || o.categoryName)));
+    const orderDates = mrct.map((o) => o.orderedDate || o.orderDate || o.proposedDate || o.creationDate || o.billDate).filter(Boolean);
+    const orderDate = orderDates.length ? orderDates.slice().sort()[0] : null;
+    const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
+    const m = match.matched;
+    if (!m || !m.filePath) return res.status(404).json({ ok: false, error: 'no matched RadCare report to download', decision: match.decision });
+    const name = `${file}_${String(m.serviceName || 'MRI').replace(/[^A-Za-z0-9]+/g, '_')}`;
+    const dl = await millensys.downloadReportPdf(m.filePath, name);
+    if (dl.status !== 200 || !/pdf/i.test(dl.contentType) || !dl.buffer.length) {
+      return res.status(502).json({ ok: false, error: `RadCare PDF download failed (HTTP ${dl.status}, ${dl.contentType || 'no content-type'})` });
+    }
+    return res.json({ ok: true, file, filename: `${name}.pdf`, contentType: 'application/pdf', clinicalReportId: m.clinicalReportId, base64: dl.buffer.toString('base64') });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
