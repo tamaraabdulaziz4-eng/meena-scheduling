@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meena — RadCare MRI/CT Report Match</title>
+<link rel="icon" href="/meena_logo.png" type="image/png">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --primary:#2e2a48; --accent:#6b4eff; --accent2:#8358fd; --muted:#7c7a99;
+          --border:#e0dcf5; --card:#ffffff; --bg:#f4f1fe; --ok:#00A87D; --red:#E25555; --amber:#C98A00; }
+  @media (prefers-color-scheme:dark){ :root{ --primary:#e9e7f5; --muted:#9b98c0; --border:#262340; --card:#17152b; --bg:#0d0b1a; } }
+  * { box-sizing:border-box; }
+  body { font-family:'Poppins',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary); -webkit-text-size-adjust:100%; }
+  .wrap { max-width:620px; margin:0 auto; padding:18px 16px 48px; }
+  .head { display:flex; align-items:center; gap:12px; margin:8px 0 16px; }
+  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.18); }
+  .head .t { font-size:17px; font-weight:800; }
+  .head .s { font-size:12px; color:var(--muted); font-weight:600; }
+  .verify-banner { display:flex; gap:10px; align-items:flex-start; background:#FFF7E6; border:1.5px solid #F4D48A;
+                   color:#8a6100; border-radius:14px; padding:12px 14px; font-size:12.5px; font-weight:600; line-height:1.6; margin-bottom:14px; }
+  @media (prefers-color-scheme:dark){ .verify-banner{ background:#2a2410; color:#e6c877; border-color:#5a4a1a; } }
+  .verify-banner .ic { font-size:18px; line-height:1; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
+          box-shadow:0 12px 34px rgba(15,42,107,.08); margin-bottom:14px; }
+  label { display:block; font-size:13px; font-weight:700; margin:0 0 6px; }
+  .row { display:flex; gap:8px; }
+  input { flex:1; width:100%; padding:12px 13px; font-size:16px; font-family:inherit; color:var(--primary);
+         border:1.5px solid var(--border); border-radius:11px; background:var(--card); outline:none; }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(107,78,255,.14); }
+  .btn2 { padding:12px 20px; font-size:15px; font-weight:700; font-family:inherit; color:#fff; border:none;
+         border-radius:12px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
+         box-shadow:0 8px 20px rgba(107,78,255,.32); white-space:nowrap; }
+  .btn2:disabled { opacity:.6; cursor:default; }
+  .hint { font-size:12px; color:var(--muted); margin-top:8px; font-weight:500; }
+  .msg { display:none; margin:12px 0; padding:12px 14px; border-radius:12px; font-size:13.5px; font-weight:600; }
+  .msg.show { display:block; background:#FDECEC; color:#9c2b2b; border:1.5px solid #f3b7b7; }
+  @media (prefers-color-scheme:dark){ .msg.show{ background:#2c1414; color:#f0a9a9; border-color:#5a2020; } }
+  .pgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin-top:4px; }
+  .pgi b { display:block; font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.3px; }
+  .pgi span { font-size:15px; font-weight:600; }
+  .decision { display:inline-flex; align-items:center; gap:7px; font-size:15px; font-weight:800; padding:9px 14px; border-radius:12px; margin-bottom:4px; }
+  .d-ok { background:rgba(0,168,125,.12); color:var(--ok); }
+  .d-warn { background:rgba(201,138,0,.14); color:var(--amber); }
+  .d-no { background:rgba(226,85,85,.12); color:var(--red); }
+  .svc { border:1px solid var(--border); border-radius:14px; padding:13px 14px; margin-top:10px; }
+  .svc .sh { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .svc .nm { font-size:15px; font-weight:700; }
+  .svc .sm { font-size:12.5px; color:var(--muted); margin-top:5px; font-weight:500; line-height:1.7; }
+  .pill { font-size:11.5px; font-weight:800; padding:4px 10px; border-radius:999px; white-space:nowrap; }
+  .pill.ok { background:rgba(0,168,125,.14); color:var(--ok); }
+  .pill.wait { background:rgba(201,138,0,.16); color:var(--amber); }
+  .pill.no { background:rgba(226,85,85,.14); color:var(--red); }
+  .loader { text-align:center; color:var(--muted); font-size:13.5px; font-weight:600; padding:22px; }
+  .spin { width:26px; height:26px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; margin:0 auto 12px; animation:sp 0.8s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="/meena_logo.png" alt="Meena" onerror="this.style.display='none'">
+    <div><div class="t">RadCare Report Match</div><div class="s">MRI / CT — cross-system report lookup</div></div>
+  </div>
+
+  <div class="verify-banner"><span class="ic">⚠️</span>
+    <span>Matches a Meena (Siratech) MRI/CT order to the report at RadCare by <b>national ID</b>, confirming the report is dated <b>after</b> the order. Always confirm the patient and exam before relying on it.</span>
+  </div>
+
+  <div class="card">
+    <label for="file">Patient file number (MRN)</label>
+    <div class="row">
+      <input id="file" inputmode="numeric" placeholder="e.g. 25179690" autocomplete="off">
+      <button id="go" class="btn2" onclick="lookup()">Match</button>
+    </div>
+    <div class="hint">Enter the Meena MRN. We resolve the national ID and find the matching RadCare report.</div>
+  </div>
+
+  <div id="msg" class="msg"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('t') || params.get('token') || '';
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showMsg(t){ const m=$('msg'); m.textContent=t; m.className='msg show'; }
+function clearMsg(){ $('msg').className='msg'; }
+
+function fmtMs(ms){ if(!ms) return '—'; const d=new Date(Number(ms)); if(isNaN(d)) return '—'; return d.toISOString().slice(0,10); }
+function fmtOrder(s){ if(!s) return '—'; const d=new Date(s); if(!isNaN(d)) return d.toISOString().slice(0,10); return String(s).split(' ')[0]; }
+
+async function api(path){
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(path + sep + 't=' + encodeURIComponent(TOKEN));
+  if (!r.ok){ let d; try{d=await r.json()}catch(e){d={}} throw new Error(d.detail || ('HTTP '+r.status)); }
+  return r.json();
+}
+
+const DECISION = {
+  match:               ['d-ok',  '✅ Report found — matches this order'],
+  mrct_no_report:      ['d-warn','⏳ MRI/CT found at RadCare, no report filed yet'],
+  report_before_order: ['d-warn','⚠️ Report(s) exist but predate the order'],
+  no_mrct:             ['d-no',  '— No MRI/CT for this patient at RadCare'],
+  no_patient:          ['d-no',  '— No RadCare patient with this national ID'],
+  no_national_id:      ['d-no',  '— No national ID on the Meena record to search with'],
+};
+
+function svcRow(c){
+  const tag = c.afterOrder === true ? '<span class="pill ok">report after order</span>'
+            : c.afterOrder === false ? '<span class="pill no">before order</span>'
+            : c.hasReport ? '<span class="pill wait">date unknown</span>'
+            : '<span class="pill wait">no report yet</span>';
+  const rep = c.clinicalReportId ? ` · report #${esc(c.clinicalReportId)}${c.reportName?(' ('+esc(c.reportName)+')'):''}` : '';
+  return `<div class="svc"><div class="sh"><span class="nm">${esc(c.serviceName||'—')}</span>${tag}</div>
+    <div class="sm">Clinic: ${esc(c.clinic||'—')} · Exam ${esc(fmtMs(c.serviceDate))} · Report ${esc(fmtMs(c.reportDate))}${rep}</div></div>`;
+}
+
+function render(d){
+  const [cls,text] = DECISION[d.decision] || ['d-no', esc(d.decision||'—')];
+  const p = d.patient || {};
+  const cands = d.candidates || [];
+  let html = `<div class="card">
+    <div class="decision ${cls}">${text}</div>
+    <div class="pgrid pgi" style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:10px">
+      <div class="pgi"><b>Meena MRN</b><span>${esc(d.file||'—')}</span></div>
+      <div class="pgi"><b>National ID</b><span>${esc(d.nationalId||'—')}</span></div>
+      <div class="pgi"><b>Order date</b><span>${esc(fmtOrder(d.siratechOrderDate))}</span></div>
+      <div class="pgi"><b>RadCare PatientId</b><span>${esc(p.patientId||'—')}</span></div>
+    </div>`;
+  if (cands.length){
+    html += `<div style="margin-top:12px;font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.3px">MRI/CT at RadCare (${cands.length})</div>`;
+    html += cands.map(svcRow).join('');
+  }
+  html += `</div>`;
+  $('results').innerHTML = html;
+}
+
+async function lookup(){
+  const file = ($('file').value||'').trim();
+  clearMsg();
+  if (!file) return;
+  if (!TOKEN){ showMsg('Link is missing its access code. Ask the team for a valid link.'); return; }
+  $('go').disabled = true;
+  $('results').innerHTML = '<div class="card loader"><div class="spin"></div>Searching RadCare…<br>(first lookup logs in — can take ~15s)</div>';
+  try { const d = await api('/api/public/radcare/match?file=' + encodeURIComponent(file)); render(d); }
+  catch(e){ $('results').innerHTML=''; showMsg(e.message || 'Match failed'); }
+  finally { $('go').disabled = false; }
+}
+
+$('file').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+if (!TOKEN) showMsg('Link is missing its access code. Ask the team for a valid link.');
+</script>
+</body>
+</html>
