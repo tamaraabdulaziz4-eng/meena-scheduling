@@ -9183,6 +9183,18 @@ async def radiology_done_signal(request: Request, user=Depends(require_superadmi
     qs = ("?" + _up.urlencode(q_)) if q_ else ""
     return await run_in_threadpool(lambda: _bridge_request("/his/diag/done-signal" + qs, timeout=240))
 
+@app.api_route("/api/radiology/mrn-depacs", methods=["GET", "POST"])
+async def radiology_mrn_depacs(request: Request, user=Depends(require_superadmin)):
+    """Read-only: for one MRN, dump its DePACS studies (raw) + radiology orders side by side, to
+    diagnose a specific patient's matching issue. Forwards to the connector's /diag/mrn-depacs."""
+    import urllib.parse as _up
+    from starlette.concurrency import run_in_threadpool
+    mrno = (request.query_params.get("mrno") or "").strip()
+    if not mrno:
+        raise HTTPException(400, "mrno required")
+    qs = "?" + _up.urlencode({"mrno": mrno})
+    return await run_in_threadpool(lambda: _bridge_request("/his/diag/mrn-depacs" + qs, timeout=120))
+
 @app.post("/api/radiology/reconcile/run")
 def radiology_reconcile_run_now(request: Request, user=Depends(require_superadmin)):
     """Run the reconciliation on demand (testing / an immediate check instead of waiting for
