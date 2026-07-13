@@ -53,8 +53,10 @@ function normMod(m) {
   // so the board's ready-pass can't match their study and the row stays stuck on
   // "Scheduled" even after the report is signed. DX/CR/DR are the DICOM XR codes.
   if (/\bXR\b|X-?RAY|RADIOGRAPH|\bDX\b|\bCR\b|\bDR\b/.test(s)) return 'XR';
-  if (/ULTRA\s?SOUND|SONOGRAM|\bUS\b/.test(s)) return 'US';
-  if (/\bCT\b|COMPUTED\s+TOMOG/.test(s)) return 'CT';
+  if (/ULTRA\s?SOUND|SONOGRA(M|PHY)|\bUS\b/.test(s)) return 'US';
+  // COMPUT\w* covers the British "COMPUTERISED TOMOGRAPHY" spelling Siratech uses in its formal
+  // service names (e.g. "SPIRAL ANGIOGRAPHY BY COMPUTERISED TOMOGRAPHY OF …"), not just "COMPUTED".
+  if (/\bCT\b|COMPUT\w*\s+TOMOG/.test(s)) return 'CT';
   if (/\bMRI?\b|MAGNETIC\s+RES/.test(s)) return 'MR';
   if (/MAMMOG|\bMG\b/.test(s)) return 'MG';
   return s;
