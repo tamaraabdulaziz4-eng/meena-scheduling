@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'reconbranch-mods-2026-07-12aw';
+const CONNECTOR_BUILD = 'modclass-2026-07-12ax';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -3400,7 +3400,7 @@ app.get('/diag/done-signal', requireAuth, async (req, res) => {
     const sites = site ? [site] : [];
     const wl = await buildWorklist({ sites, from, to, ready: true, matchAfterH });
     const items = (wl.items || []).filter((it) => it.orderDate && !it.cancelled);
-    const NONPACS = /dexa|\bbmd\b|bone\s*densit|densitom/i;
+    const NONPACS = /dexa|\bbmd\b|bone\s*densit|densitom|electromyog|\bemg\b/i;
     const _ksaDay = (v) => { const t = parseHisDate(v); return Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null; };
     let total = 0, hisReported = 0, pacs = 0, scannedNoPacs = 0, dexa = 0, notDone = 0;
     const byDay = new Map();

@@ -12992,7 +12992,7 @@ RAD_RECON_NOTIFY_ENABLED = os.environ.get("RAD_RECON_NOTIFY", "0") == "1"
 # the /diag/reconcile-branch probe showed the "Digital" branch's low rate was ~all DEXA orders
 # with zero PACS studies (no matching gap). These land in their own PACS-unverifiable bucket;
 # "performed" for them still comes from a filed report (stage='reported') or a manual complete.
-_RAD_NON_PACS_MOD_RE = re.compile(r"dexa|\bbmd\b|bone\s*densit|densitom", re.I)
+_RAD_NON_PACS_MOD_RE = re.compile(r"dexa|\bbmd\b|bone\s*densit|densitom|electromyog|\bemg\b", re.I)
 
 def _rad_reconcile_run(window_days=None, flag_days=None):
     """End-of-day BILLED vs ACTUALLY-PERFORMED reconciliation.
