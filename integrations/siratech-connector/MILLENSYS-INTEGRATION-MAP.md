@@ -16,7 +16,7 @@ publishes no REST API (integration is officially HL7/DICOM/WADO/URL).
 | Tenant | **RadCare Health** |
 | Base | `https://mill.radcarehealth.com/MILLENSYS/MiClinic/` |
 | Branches | King Fahd, East Riyadh, North Riyadh, Home Visit |
-| Auth | web session (cookie) — no bearer/API key surface found |
+| Auth | form login at `Account/LogOn` (fields `username`, `password`, hidden `returnUrl`/`branchId`). Session cookies **`.AspNet.SharedCookie`** + **`MiEmr_SessionId`** are HttpOnly (only Huawei-WAF cookies are readable in-browser), so the connector logs in headless (puppeteer) to obtain them. |
 | Worklist transport | **SignalR** Kendo datasource (`type: signalr`, `server.read: "read"`, `serverFiltering: true`) — NOT clean REST |
 
 ## The join key — national ID is **SSN**
