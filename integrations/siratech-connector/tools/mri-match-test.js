@@ -128,7 +128,13 @@ async function siratechSide() {
   }
   const p = patients[0];
   const mrn = p.mrno || p.file || p.mrNo;
-  const nationalId = p.nationalId || null;
+  let nationalId = p.nationalId || null;
+  // Patient/Search often leaves the ID null even when it exists — it lives on the demographic
+  // record. Backfill from the dedicated endpoint (PatientBannerInfo.nationalId / PatientData.cpr).
+  if (!nationalId) {
+    const n = await req('GET', `${CONNECTOR_BASE}/patient/${encodeURIComponent(mrn)}/national-id`, { headers: auth }).catch(() => null);
+    if (n && n.json && n.json.ok && n.json.nationalId) nationalId = n.json.nationalId;
+  }
   console.log(`  patient: MRN ${mrn}  ${p.name || ''}  (matchedBy: ${s.json.matchedBy || '—'})`);
   console.log(`  NATIONAL ID: ${nationalId || '‹none on record›'}`);
 
@@ -224,7 +230,11 @@ async function findMode(want) {
     checked++;
     const s = await req('GET', `${CONNECTOR_BASE}/search?q=${encodeURIComponent(p.mrno)}`, { headers: auth }).catch(() => null);
     const pat = s && s.json && s.json.ok && (s.json.patients || [])[0];
-    const nid = pat && pat.nationalId;
+    let nid = pat && pat.nationalId;
+    if (!nid) {
+      const n = await req('GET', `${CONNECTOR_BASE}/patient/${encodeURIComponent(p.mrno)}/national-id`, { headers: auth }).catch(() => null);
+      nid = n && n.json && n.json.ok && n.json.nationalId;
+    }
     if (nid) {
       hits.push({ ...p, nationalId: nid, name: pat.name || '' });
       console.log(`  ✓ MRN ${p.mrno}  nid=${nid}  "${p.exam}"  ordered ${p.orderDate || '—'}`);

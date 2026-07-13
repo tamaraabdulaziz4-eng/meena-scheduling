@@ -1011,9 +1011,42 @@ async function buildPatientCard(file) {
   if (patient) {
     if ((patient.age == null || patient.age === '') && _rsAge != null) patient.age = _rsAge;
     if (!patient.gender && _rsGender) patient.gender = _rsGender;
+    // National ID / Iqama is often NULL on the Patient/Search row even though registration
+    // captured it — it lives on the demographic/banner record instead. Backfill from there
+    // (one light call, only when missing) so the card and the MILLENSYS match always have it.
+    if (!patient.nationalId) {
+      const nid = await patientNationalId(file).catch(() => null);
+      if (nid) { patient.nationalId = nid; patient.nationalIdSource = 'PatientBannerInfo'; }
+    }
   }
   const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
   return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() };
+}
+
+// Resolve a patient's national ID / Iqama from the DEMOGRAPHIC record when Patient/Search
+// leaves it null. PatientBannerInfo carries a clean `nationalId`; PatientData.cpr is the
+// same value as a fallback. READ-ONLY. Returns the digits string, or null if truly absent.
+async function patientNationalId(mrno) {
+  const m = String(mrno || '').trim();
+  if (!m) return null;
+  const siteList = await getSites().catch(() => []);
+  const site = (siteList[0] && siteList[0].siteId) || Number(cache.hospitalid) || 1;
+  const clean = (v) => { const s = v == null ? '' : String(v).trim(); return /^[0-9]{6,}$/.test(s) ? s : null; };
+  // 1) PatientBannerInfo — dedicated nationalId field (may or may not be wrapped in data).
+  try {
+    const r = await hisFetch('/patient-api/api/v1/Patient/PatientBannerInfo', { method: 'POST', body: { mrno: m, mrNo: m, hospitalId: site } });
+    const j = r && r.json; const o = (j && (j.data || j.Data)) || j || {};
+    const nid = clean(o.nationalId || o.NationalId || o.cpr || o.CPR);
+    if (nid) return nid;
+  } catch (_e) { /* fall through */ }
+  // 2) PatientData.cpr — same ID, different record.
+  try {
+    const r = await hisFetch('/patient-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(m) + '&hospitalId=' + site + '&mode=0', { method: 'GET' });
+    const j = r && r.json; const o = (j && (j.data || j.Data)) || j || {};
+    const nid = clean((o && (o.cpr || o.CPR || o.nationalId)) || (Array.isArray(o) && o[0] && o[0].cpr));
+    if (nid) return nid;
+  } catch (_e) { /* fall through */ }
+  return null;
 }
 
 app.get('/patient/:file', requireAuth, async (req, res) => {
@@ -1162,6 +1195,19 @@ function _clinVitals(list) {
 const _clinicalCache = new Map();     // mrno -> { ts, data }
 const _clinicalInFlight = new Map();  // mrno -> Promise (collapse concurrent cold builds)
 const CLINICAL_CACHE_TTL = Number(process.env.CLINICAL_CACHE_TTL_MS || 60000);
+// National ID / Iqama for one patient, resolved from the demographic/banner record.
+// READ-ONLY. Used by the MILLENSYS cross-system match (the join key) and anywhere the
+// Patient/Search row leaves the ID null.
+app.get('/patient/:file/national-id', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  try {
+    await getToken();
+    const nationalId = await patientNationalId(file);
+    return res.json({ ok: true, file, nationalId, source: nationalId ? 'PatientBannerInfo' : null, fetchedAt: new Date().toISOString() });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
