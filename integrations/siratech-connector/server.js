@@ -1224,17 +1224,23 @@ const MS_PDF_TTL = Number(process.env.MILLENSYS_PDF_TTL_MS || 600000);
 
 async function _resolveMillensys(file) {
   await getToken();
+  const t = { start: Date.now() };
   const [nid, orders] = await Promise.all([
     patientNationalId(file),
     hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
   ]);
-  if (!nid) return { ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.' };
+  t.siratechMs = Date.now() - t.start;
+  if (!nid) return { ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.', _timings: t };
   const mrct = orders.filter((o) => ['MR', 'CT'].includes(results.normMod(o.serviceName || o.modality || o.categoryName)));
   // The ORDER date (FetchRadiologyDetails names it `orderedDate`) — never reportDate.
   const orderDates = mrct.map((o) => o.orderedDate || o.orderDate || o.proposedDate || o.creationDate || o.billDate).filter(Boolean);
   const orderDate = orderDates.length ? orderDates.slice().sort()[0] : null;
+  const tm = Date.now();
   const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
-  return { ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, fetchedAt: new Date().toISOString() };
+  t.radcareMs = Date.now() - tm;
+  t.totalMs = Date.now() - t.start;
+  if (match._timings) { t.radcare = match._timings; delete match._timings; }
+  return { ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, _timings: t, fetchedAt: new Date().toISOString() };
 }
 
 function millensysMatch(file, noCache) {
