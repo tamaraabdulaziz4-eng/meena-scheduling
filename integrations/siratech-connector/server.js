@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump on every deploy-relevant change so the running version can be read straight from the
 // clinical response — no VPS shell needed to confirm which code is actually live.
-const CONNECTOR_BUILD = 'paranasal-xr-2026-07-12ay';
+const CONNECTOR_BUILD = 'livelier-wl-2026-07-12az';
 
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
@@ -1968,13 +1968,13 @@ app.post('/results/match', requireAuth, async (req, res) => {
 // oldest-first, with a turnaround (TAT) age in hours. Optionally (?ready=1) the top
 // N distinct patients are matched against DePACS so the board flags which orders
 // already have a VERIFIED report ready to file. READ-ONLY.
-const WORKLIST_CACHE_TTL = Number(process.env.WORKLIST_CACHE_TTL_MS || 60000);
+const WORKLIST_CACHE_TTL = Number(process.env.WORKLIST_CACHE_TTL_MS || 25000);
 // The FAST pass (no ready/modality) is light — one RadiologySearch + one FetchRISPanel
 // per site — so it can refresh far more often to make the board feel live, without
 // touching the heavy per-patient DePACS pass (which keeps the 60s TTL above). HIS load
 // from the fast pass is bounded by this TTL, NOT by the number of open boards, because
 // every viewer shares the one cached fetch per window.
-const WORKLIST_FAST_CACHE_TTL = Number(process.env.WORKLIST_FAST_CACHE_TTL_MS || 12000);
+const WORKLIST_FAST_CACHE_TTL = Number(process.env.WORKLIST_FAST_CACHE_TTL_MS || 7000);
 const worklistCache = new Map();
 
 // Cap on how many worklist rows we enrich with real modality per request. The
