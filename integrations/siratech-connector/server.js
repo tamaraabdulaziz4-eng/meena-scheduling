@@ -1225,8 +1225,10 @@ app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
     ]);
     if (!nid) return res.json({ ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.' });
     const mrct = orders.filter((o) => results.normMod(o.serviceName || o.modality || o.categoryName) === 'MR' || results.normMod(o.serviceName || o.modality || o.categoryName) === 'CT');
-    const orderDates = mrct.map((o) => o.reportDate || o.orderDate || o.billDate).filter(Boolean);
-    const orderDate = orderDates.length ? orderDates.sort()[0] : null;
+    // The ORDER date (not the report date) — FetchRadiologyDetails names it `orderedDate`;
+    // fall back to other date fields, never to reportDate (that's the result, not the order).
+    const orderDates = mrct.map((o) => o.orderedDate || o.orderDate || o.proposedDate || o.creationDate || o.billDate).filter(Boolean);
+    const orderDate = orderDates.length ? orderDates.slice().sort()[0] : null;
     const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
     return res.json({ ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, fetchedAt: new Date().toISOString() });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
