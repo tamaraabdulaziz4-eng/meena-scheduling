@@ -22,6 +22,7 @@ const fs = require('fs');
 const zlib = require('zlib');
 const puppeteer = require('puppeteer');
 const results = require('./results');
+const millensys = require('./millensys');   // RadCare MILLENSYS cross-system report match (read-only)
 
 const PORT = Number(process.env.PORT || 3005);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -1011,9 +1012,42 @@ async function buildPatientCard(file) {
   if (patient) {
     if ((patient.age == null || patient.age === '') && _rsAge != null) patient.age = _rsAge;
     if (!patient.gender && _rsGender) patient.gender = _rsGender;
+    // National ID / Iqama is often NULL on the Patient/Search row even though registration
+    // captured it — it lives on the demographic/banner record instead. Backfill from there
+    // (one light call, only when missing) so the card and the MILLENSYS match always have it.
+    if (!patient.nationalId) {
+      const nid = await patientNationalId(file).catch(() => null);
+      if (nid) { patient.nationalId = nid; patient.nationalIdSource = 'PatientBannerInfo'; }
+    }
   }
   const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
   return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() };
+}
+
+// Resolve a patient's national ID / Iqama from the DEMOGRAPHIC record when Patient/Search
+// leaves it null. PatientBannerInfo carries a clean `nationalId`; PatientData.cpr is the
+// same value as a fallback. READ-ONLY. Returns the digits string, or null if truly absent.
+async function patientNationalId(mrno) {
+  const m = String(mrno || '').trim();
+  if (!m) return null;
+  const siteList = await getSites().catch(() => []);
+  const site = (siteList[0] && siteList[0].siteId) || Number(cache.hospitalid) || 1;
+  const clean = (v) => { const s = v == null ? '' : String(v).trim(); return /^[0-9]{6,}$/.test(s) ? s : null; };
+  // 1) PatientBannerInfo — dedicated nationalId field (may or may not be wrapped in data).
+  try {
+    const r = await hisFetch('/patient-api/api/v1/Patient/PatientBannerInfo', { method: 'POST', body: { mrno: m, mrNo: m, hospitalId: site } });
+    const j = r && r.json; const o = (j && (j.data || j.Data)) || j || {};
+    const nid = clean(o.nationalId || o.NationalId || o.cpr || o.CPR);
+    if (nid) return nid;
+  } catch (_e) { /* fall through */ }
+  // 2) PatientData.cpr — same ID, different record.
+  try {
+    const r = await hisFetch('/patient-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(m) + '&hospitalId=' + site + '&mode=0', { method: 'GET' });
+    const j = r && r.json; const o = (j && (j.data || j.Data)) || j || {};
+    const nid = clean((o && (o.cpr || o.CPR || o.nationalId)) || (Array.isArray(o) && o[0] && o[0].cpr));
+    if (nid) return nid;
+  } catch (_e) { /* fall through */ }
+  return null;
 }
 
 app.get('/patient/:file', requireAuth, async (req, res) => {
@@ -1162,6 +1196,42 @@ function _clinVitals(list) {
 const _clinicalCache = new Map();     // mrno -> { ts, data }
 const _clinicalInFlight = new Map();  // mrno -> Promise (collapse concurrent cold builds)
 const CLINICAL_CACHE_TTL = Number(process.env.CLINICAL_CACHE_TTL_MS || 60000);
+// National ID / Iqama for one patient, resolved from the demographic/banner record.
+// READ-ONLY. Used by the MILLENSYS cross-system match (the join key) and anywhere the
+// Patient/Search row leaves the ID null.
+app.get('/patient/:file/national-id', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  try {
+    await getToken();
+    const nationalId = await patientNationalId(file);
+    return res.json({ ok: true, file, nationalId, source: nationalId ? 'PatientBannerInfo' : null, fetchedAt: new Date().toISOString() });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// Cross-system MRI/CT report match against RadCare MILLENSYS. Resolves the patient's
+// national ID + earliest MRI/CT order date from Siratech, then finds the matching report
+// in MILLENSYS (report must be dated on/after the order). READ-ONLY. Requires MILLENSYS_COOKIE.
+app.get('/patient/:file/millensys-report', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  if (!millensys.configured()) return res.status(503).json({ ok: false, error: 'MILLENSYS_COOKIE not set — cannot reach RadCare MILLENSYS.' });
+  try {
+    await getToken();
+    // National ID (the cross-system join key) + the patient's MRI/CT orders.
+    const [nid, orders] = await Promise.all([
+      patientNationalId(file),
+      hisFetch('/emr-api/api/v1/EMR/FetchRadiologyDetails', { body: { mrno: file } }).then((r) => (r && r.json && r.json.data) || []).catch(() => []),
+    ]);
+    if (!nid) return res.json({ ok: true, file, nationalId: null, decision: 'no_national_id', note: 'No national ID on the Siratech record to search MILLENSYS with.' });
+    const mrct = orders.filter((o) => results.normMod(o.serviceName || o.modality || o.categoryName) === 'MR' || results.normMod(o.serviceName || o.modality || o.categoryName) === 'CT');
+    const orderDates = mrct.map((o) => o.reportDate || o.orderDate || o.billDate).filter(Boolean);
+    const orderDate = orderDates.length ? orderDates.sort()[0] : null;
+    const match = await millensys.matchMriReport({ nationalId: nid, orderDate });
+    return res.json({ ok: true, file, nationalId: nid, siratechOrderDate: orderDate, siratechMrCtOrders: mrct.length, ...match, fetchedAt: new Date().toISOString() });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
 app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
@@ -3153,6 +3223,63 @@ app.get('/diag/schema-dump', requireAuth, async (req, res) => {
     }
     const summary = dump.map((d) => `${d.status != null ? 'HTTP ' + d.status : 'ERR'} · ${d.name} · ${d.schema ? (d.schema.kind === 'array' ? d.schema.count + ' rows' : d.schema.kind === 'object' ? 'obj{' + (d.schema.arrays || []).map((a) => a.field + '[' + a.count + ']').join(',') + '}' : d.schema.kind) : 'error'}`);
     return res.json({ ok: true, build: CONNECTOR_BUILD, note: 'Siratech data schema reference — field names + one redacted sample per endpoint', mrno: mrno || null, seededBillId: gpb || null, seededEncounterId: enc || null, summary, dump });
+  } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
+});
+
+// ── /diag/patient-id — WHERE does the national ID / Iqama live? (READ-ONLY) ─────
+// The connector reads saudiid||iqamaId||passportId off Patient/Search, but some records
+// leave those null even though registration captured the ID. This probes the patient
+// DEMOGRAPHIC endpoints the connector never calls (Demographics, PatientBannerInfo,
+// ELMData = Saudi national-identity/Absher record, PatientData modes) and returns any
+// field holding an ID-shaped value (1/2 + 9 digits) or an id-named field, WITH its real
+// value, so we can pinpoint the endpoint+field to wire. Read-only; only GET/lookup calls.
+app.get('/diag/patient-id', requireAuth, async (req, res) => {
+  try {
+    await getToken();
+    const uid = String(HIS_USER).padStart(8, '0');
+    const empId = currentEmpId() || '0';
+    const mrno = String(req.query.mrno || '').trim();
+    if (!mrno) return res.status(400).json({ ok: false, error: 'mrno is required' });
+    const siteList = await getSites().catch(() => []);
+    const site = (siteList[0] && siteList[0].siteId) || 1;
+    const P = '/patient-api/api/v1';
+    const ID_VAL = /^[12]\d{9}$/;                                              // Saudi ID (1…) / Iqama (2…)
+    const ID_KEY = /(^|[._])(id|identity|iqama|saudi|national|civil|document|border|passport)/i;
+    // Collect { path: value } for any leaf that looks like an ID (by value) or an id-named field.
+    const idFields = (root) => {
+      const out = {};
+      const walk = (o, pre) => {
+        if (o == null) return;
+        if (Array.isArray(o)) { o.slice(0, 5).forEach((x, i) => walk(x, `${pre}[${i}]`)); return; }
+        if (typeof o === 'object') { for (const [k, v] of Object.entries(o)) walk(v, pre ? `${pre}.${k}` : k); return; }
+        const s = String(o); const key = pre.split('.').pop().replace(/\[\d+\]$/, '');
+        if (ID_VAL.test(s) || (ID_KEY.test(key) && s && s !== '0' && s !== 'null' && s.length >= 4 && s.length <= 30)) out[pre] = o;
+      };
+      walk(root, '');
+      return out;
+    };
+    const hit = async (name, method, path, body) => {
+      try {
+        const r = await hisFetch(path, { method, body });
+        const j = r.json;
+        const arr = (j && (j.data || j.Data)) || (Array.isArray(j) ? j : null);
+        const sample = Array.isArray(arr) ? arr[0] : j;
+        return { name, method, path: path.split('?')[0], status: r.status,
+          idFields: sample != null ? idFields(sample) : {},
+          nonJson: j == null ? String(r.text || '').slice(0, 120) : undefined };
+      } catch (e) { return { name, method, path: path.split('?')[0], error: String(e.message || e) }; }
+    };
+    const probes = [];
+    probes.push(await hit('Demographics (POST)', 'POST', P + '/Patient/Demographics', { mrno, mrNo: mrno, hospitalId: site, userId: uid, empId }));
+    probes.push(await hit('Demographics (GET)', 'GET', P + '/Patient/Demographics?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site));
+    probes.push(await hit('PatientBannerInfo', 'POST', P + '/Patient/PatientBannerInfo', { mrno, mrNo: mrno, hospitalId: site, userId: uid, empId }));
+    probes.push(await hit('ELMData (POST)', 'POST', P + '/Patient/ELMData', { mrno, mrNo: mrno, hospitalId: site }));
+    probes.push(await hit('ELMData (GET)', 'GET', P + '/Patient/ELMData?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site));
+    for (const mode of [0, 1, 2, 3]) {
+      probes.push(await hit('PatientData mode=' + mode, 'GET', P + '/Patient/PatientData?mrNo=' + encodeURIComponent(mrno) + '&hospitalId=' + site + '&mode=' + mode));
+    }
+    const summary = probes.map((p) => `${p.status != null ? 'HTTP ' + p.status : 'ERR'} · ${p.name} · ${p.idFields ? Object.keys(p.idFields).length + ' id-field(s)' : (p.error || '—')}`);
+    return res.json({ ok: true, mrno, site, summary, probes });
   } catch (e) { return res.status(502).json({ ok: false, error: String(e.message || e) }); }
 });
 
