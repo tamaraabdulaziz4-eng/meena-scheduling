@@ -60,19 +60,46 @@ function psFetchSection(section, mrno, path) {
 // lazy sections — so the eventual click is one paint with no spinners at all.
 // Sections fire only AFTER the lookup lands (the strongest intent signal and the
 // card's own blocking call), keeping a stray hover from bursting the HIS box.
+// Warm the WHOLE card in a single round-trip via the bundled /card endpoint. Each
+// slot (lookup + the four sections) is registered as in-flight so a concurrent card
+// open joins THIS one request instead of firing its own; if the bundle omits or
+// fails a slot, that slot transparently falls back to its individual endpoint — so
+// an older server or a transient error degrades to the old 5-call behaviour, never
+// a broken card. Data is identical and still live from Siratech.
+function psPrefetchCardBundle(mrno) {
+  mrno = String(mrno || '').trim();
+  if (!mrno) return null;
+  const enc = encodeURIComponent(mrno);
+  const okData = (x) => (x && x.ok !== false && (x.status == null || x.status < 400)) ? x.data : undefined;
+  const bundleP = API.get(`/radiology/patient/${enc}/card`);
+  bundleP.catch(() => {});
+  if (!psLookupCache.get(mrno) && !psLookupInflight.has(mrno)) {
+    const lp = bundleP.then((b) => { const d = okData(b && b.patient); return d !== undefined ? d : API.get(`/radiology/lookup/${enc}`); },
+                            () => API.get(`/radiology/lookup/${enc}`))
+      .then((d) => { psLookupCache.set(mrno, { ts: Date.now(), data: d }); psLookupInflight.delete(mrno); return d; },
+            (e) => { psLookupInflight.delete(mrno); throw e; });
+    psLookupInflight.set(mrno, lp); lp.catch(() => {});
+  }
+  [['clinical', 'clinical', 'clinical'], ['visits', 'visits', 'visits'],
+   ['labs', 'labs', 'labs'], ['appts', 'appointments', 'appointments']].forEach(([section, field, seg]) => {
+    const key = `${section}|${mrno}`;
+    if (psSectionCache.get(key) || psSectionInflight.has(key)) return;
+    const path = `/radiology/patient/${enc}/${seg}`;
+    const sp = bundleP.then((b) => { const d = okData(b && b[field]); return d !== undefined ? d : API.get(path); },
+                            () => API.get(path))
+      .then((d) => { psSectionCache.set(key, { ts: Date.now(), data: d }); psSectionInflight.delete(key);
+                     if (section === 'visits') { try { psWarmVisitNotes(mrno, d); } catch (e) {} } return d; },
+            (e) => { psSectionInflight.delete(key); throw e; });
+    psSectionInflight.set(key, sp); sp.catch(() => {});
+  });
+  return bundleP;
+}
+
+// Warm EVERYTHING the card shows for one patient — now a single bundled round-trip.
 function psPrefetchCard(mrno) {
   mrno = String(mrno || '').trim();
   if (!mrno) return null;
-  const p = psPrefetchLookup(mrno);
-  if (!p) return null;
-  return p.then(() => {
-    const enc = encodeURIComponent(mrno);
-    psFetchSection('clinical', mrno, `/radiology/patient/${enc}/clinical`).catch(() => {});
-    psFetchSection('visits', mrno, `/radiology/patient/${enc}/visits`)
-      .then((d) => psWarmVisitNotes(mrno, d)).catch(() => {});
-    psFetchSection('labs', mrno, `/radiology/patient/${enc}/labs`).catch(() => {});
-    psFetchSection('appts', mrno, `/radiology/patient/${enc}/appointments`).catch(() => {});
-  }).catch(() => {});
+  return psPrefetchCardBundle(mrno);
 }
 // Warm the DOCTOR-NOTE renders for the patient's most recent visits at the SERVER/
 // CONNECTOR layer (the connector caches a rendered note for 10 min). The client's own
@@ -205,6 +232,9 @@ async function psOpen(i) {
   if (!p || !p.mrno) return;
   psState.sel = i;
   renderPsResults();
+  // Warm the whole card in ONE bundled round-trip. The lookup + section fetches
+  // below then join these in-flight promises instead of firing 5 separate requests.
+  psPrefetchCardBundle(p.mrno);
   const det = document.getElementById('ps-detail');
   // Skip the loading flash entirely when the patient was prefetched on hover/touch — it's
   // already in hand, so the card paints on the very next line (feels instant).
