@@ -53,9 +53,7 @@
 .rs-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
 .rs-wide { margin-bottom:14px; }
 
-
-/* KPI cards with icon */
-.rs-kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:14px; }
+/* (duplicate .rs-kpis rule removed — the single definition lives at the top of this file) */
 
 /* Donut */
 .rs-donut-wrap { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
