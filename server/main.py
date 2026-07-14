@@ -12819,6 +12819,7 @@ def _autostamp_body_conflict(study, order_service):
 _autostamp_acc_done = set()   # study ids whose accession stamp already ran this process
 _autostamp_hist_done = set()  # study ids whose clinical-history stamp already ran this process
 _autostamp_branch_blocked = set()  # study ids skipped as not-the-scoped-branch (audit once)
+_autostamp_multi_blocked = set()   # multi-exam studies left ambiguous (audit once, not every sweep)
 _autostamp_keys_logged = False     # one-time dump of a DePACS study's field names
 _autostamp_cursor = 0              # rotating start offset so every patient on the board is swept
 
@@ -13089,6 +13090,56 @@ def _radiology_autostamp_sweep():
                                              "order": cand[0].get("exam") or cand[0].get("service")}))
                 else:
                     chosen = cand[0]                              # unambiguous modality 1:1 (fallback)
+            elif smod and cand and (fresh_mod_count.get(smod, 0) > 1 or len(cand) > 1):
+                # MULTI-EXAM RESOLUTION: the patient has several fresh studies and/or several
+                # pending orders of this modality (two CTs the same morning), so neither the
+                # accession key nor the modality 1:1 could resolve — previously these were
+                # silently skipped and every multi-exam patient waited for a human handoff.
+                # Resolve THIS study to its own order by anatomy, and stamp only on an
+                # IDENTICAL match in BOTH directions:
+                #   • the study's body part matches EXACTLY ONE candidate order, AND
+                #   • that order fits NO OTHER fresh sibling study of the same modality —
+                #     a sibling with overlapping anatomy, or with NO readable anatomy at
+                #     all (it could be the true owner and we can't prove otherwise), keeps
+                #     it ambiguous. Fail closed + audit; the human handoff still owns those.
+                s_tok = _as_body_tokens(s.get("study_desc") or s.get("desc") or "")
+                if s_tok:
+                    body_hits = [o for o in cand
+                                 if _as_body_tokens(o.get("exam") or o.get("service") or "") & s_tok]
+                    if len(body_hits) == 1:
+                        o_tok = _as_body_tokens(body_hits[0].get("exam") or body_hits[0].get("service") or "")
+                        sib_conflict = False
+                        for s2 in fresh:
+                            if s2.get("study_id") == sid:
+                                continue
+                            if _AUTOSTAMP_MOD.get(str(s2.get("modality") or "").strip().upper()) != smod:
+                                continue
+                            t2 = _as_body_tokens(s2.get("study_desc") or s2.get("desc") or "")
+                            if not t2 or (t2 & o_tok):
+                                sib_conflict = True
+                                break
+                        # Same accession-mismatch guard as the 1:1 path: a study whose own
+                        # accession names a DIFFERENT order is a different exam, full stop.
+                        _o_acc = _autostamp_order_acc(body_hits[0])
+                        acc_conflict = (_elite_is_real_accession(s_acc) and _elite_is_real_accession(_o_acc)
+                                        and _elite_bare_id(s_acc) != _elite_bare_id(_o_acc))
+                        if not sib_conflict and not acc_conflict:
+                            chosen = body_hits[0]                 # bidirectionally unique — safe to stamp
+                        elif sid not in _autostamp_multi_blocked:
+                            _autostamp_multi_blocked.add(sid)
+                            insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                         json.dumps({"studyId": sid, "reason": "multi_exam_ambiguous",
+                                                     "detail": "sibling_conflict" if sib_conflict else "accession_mismatch",
+                                                     "study_desc": s.get("study_desc") or s.get("desc"),
+                                                     "order": body_hits[0].get("exam") or body_hits[0].get("service")}))
+                    elif sid not in _autostamp_multi_blocked:
+                        _autostamp_multi_blocked.add(sid)
+                        insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP_BLOCKED", str(mrno),
+                                     json.dumps({"studyId": sid, "reason": "multi_exam_ambiguous",
+                                                 "detail": f"{len(body_hits)}_body_matches",
+                                                 "study_desc": s.get("study_desc") or s.get("desc")}))
+                # Blank study_desc in a multi-exam group: no anatomy to resolve by — leave
+                # silently for the human handoff (auditing every such study would be noise).
             if (chosen is not None and not branch_ok
                     and not cur_hist and sid not in _autostamp_hist_done):
                 # Would have stamped, but the study isn't confirmed as the scoped branch.
