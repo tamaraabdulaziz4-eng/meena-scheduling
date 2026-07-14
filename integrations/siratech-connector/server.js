@@ -24,6 +24,36 @@ const puppeteer = require('puppeteer');
 const results = require('./results');
 const millensys = require('./millensys');   // RadCare MILLENSYS cross-system report match (read-only)
 
+// ── Provider → department registry (persistent) ───────────────────────────────
+// The RIS panel rows carry providerId but (as read so far) not the ordering clinic;
+// RadiologySearch carries BOTH but costs ~5s/branch. Doctors rarely change clinics,
+// so we ACCRETE a durable providerId → departmentName map from every RadiologySearch
+// row seen anywhere (stats dept/finance pass, patient-card site discovery, the legacy
+// search board) and use it to stamp the clinic onto the fast board and the stats
+// by-department split instantly — zero extra HIS calls. Persisted to disk so a
+// connector restart keeps everything it has learned.
+const PROV_DEPT_FILE = process.env.PROV_DEPT_FILE || (__dirname + '/.provdept.json');
+const _provDeptReg = new Map();
+try {
+  const raw = JSON.parse(fs.readFileSync(PROV_DEPT_FILE, 'utf8'));
+  for (const [k, v] of Object.entries(raw || {})) if (v) _provDeptReg.set(String(k), String(v));
+  if (_provDeptReg.size) console.log(`[provdept] loaded ${_provDeptReg.size} provider→department mappings`);
+} catch (_e) { /* first boot — starts empty and fills organically */ }
+let _provDeptSaveTimer = null;
+function provDeptLearn(providerId, dept) {
+  const k = providerId != null ? String(providerId).trim() : '';
+  const d = String(dept || '').replace(/\s+/g, ' ').trim();
+  if (!k || !d || _provDeptReg.get(k) === d) return;
+  _provDeptReg.set(k, d);
+  clearTimeout(_provDeptSaveTimer);
+  _provDeptSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(PROV_DEPT_FILE, JSON.stringify(Object.fromEntries(_provDeptReg))); } catch (_e) {}
+  }, 5000);
+}
+function provDeptOf(providerId) {
+  return providerId != null ? (_provDeptReg.get(String(providerId).trim()) || '') : '';
+}
+
 const PORT = Number(process.env.PORT || 3005);
 const HOST = process.env.HOST || '0.0.0.0';
 const API_TOKEN = process.env.CONNECTOR_TOKEN || '';           // callers must send Bearer <this>
@@ -1954,6 +1984,7 @@ async function discoverOrderSites(file, candidateSites) {
             // (+ age/gender). The card path already fetches it here to correct the site, so grab
             // those fields too — the fast RIS board can't carry them, so this restores them on
             // the card/row without any extra HIS call.
+            provDeptLearn(r.providerId, r.departmentName);   // accrete the clinic registry from every card lookup
             if (b && !out.has(b)) out.set(b, {
               siteId: site, site: nameOf.get(site) || `Branch ${site}`,
               department: (r.departmentName || '').trim() || null,
@@ -2235,6 +2266,19 @@ function _risStatusOf(row) {
   }
   return '';
 }
+// The ordering clinic straight off a panel row, if the panel carries it under any of
+// the plausible spellings (the native Siratech RIS screen shows a department per row,
+// so the field very likely exists — the exact name is only observable at runtime via
+// /diag/panel-dates allFields). Falls back to '' so callers can chain the registry.
+function _risDeptOf(row) {
+  for (const k of ['departmentName', 'deptName', 'department', 'referringDepartment',
+                   'orderDepartmentName', 'clinicName', 'clinic', 'specialityName',
+                   'providerDeptName', 'providerDepartment', 'inchargeProviderDept']) {
+    const v = row && row[k];
+    if (v != null && String(v).trim() !== '') return String(v).replace(/\s+/g, ' ').trim();
+  }
+  return '';
+}
 function _risStageOf(status) {
   const s = String(status || '').toLowerCase();
   if (!s) return null;
@@ -2499,11 +2543,17 @@ async function buildWorklistRis({ sites, from, to, ready = false, noCache = fals
       // exam), falling back to billNo. (Wired to the action endpoints in the follow-up step.)
       const orderKey = (r.invPatBillingId != null && String(r.invPatBillingId).trim() !== '')
         ? r.invPatBillingId : billNo;
+      // Ordering clinic: straight from the panel row when it carries one (and LEARN that
+      // provider→department pairing for everyone else), else from the persistent registry
+      // accreted from RadiologySearch — so the Clinic column fills on the FIRST paint
+      // instead of waiting for a per-patient lookup after the row is clicked.
+      const panelDept = _risDeptOf(r);
+      if (panelDept) provDeptLearn(r.providerId, panelDept);
       items.push({
         site: s.site, branch: branchLabel(s.site),
         mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
         age: null, gender: null,
-        doctorName: (r.providerName || '').trim(), department: '',
+        doctorName: (r.providerName || '').trim(), department: panelDept || provDeptOf(r.providerId) || '',
         providerId: r.providerId != null ? String(r.providerId) : null,
         doctorPhone: null,
         emergency: er, priority: er ? 'Emergency' : 'Routine',
@@ -2690,6 +2740,7 @@ async function buildWorklist({ sites, from, to, ready = false, readyLimit = 25, 
       const t = parseHisDate(r.billDate || r.visitDate || '');
       const ageHours = Number.isFinite(t) ? Math.max(0, Math.round((now - t) / 36e5)) : null;
       const emergency = Number(r.isEmergency) === 1 || Number(r.priorityStat) > 0;
+      provDeptLearn(r.providerId, r.departmentName);   // accrete the clinic registry from the search board too
       items.push({
         site: s.site, branch: branchLabel(s.site),
         mrno: String(r.mrno || ''), patientName: (r.patientName || '').trim(),
@@ -4910,7 +4961,10 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
       // Build the physician -> department lookup (the panel carries providerId but not the
       // department name; RadiologySearch has both). byDepartment is then tallied from the SAME
       // filtered panel set as byBranch, so the two agree and sum to Exams.
-      if (r.providerId != null && r.departmentName) provDept.set(String(r.providerId), String(r.departmentName).trim());
+      if (r.providerId != null && r.departmentName) {
+        provDept.set(String(r.providerId), String(r.departmentName).trim());
+        provDeptLearn(r.providerId, r.departmentName);   // accrete the durable registry too
+      }
       const g = r.gender ?? r.sex ?? r.patientGender ?? r.genderName;
       if (g != null && String(g).trim() !== '') { const gv = String(g).trim(); tallyPush(byGender, gv, gv); }
     }
@@ -5128,10 +5182,18 @@ async function radiologyStats({ from, to, sites, withModality = false, withFinan
     for (const it of _wlxItems) {
       tallyPush(byBranch, it.site, branchLabel(it.site));
       tallyPush(byDoctor, it.doctorName || 'Unknown', (it.doctorName || '').trim() || 'Unknown');
-      // By ordering department — resolved from the physician via the RadiologySearch lookup, tallied
-      // over the SAME filtered panel set. Only when the lookup is present (the dept/finance pass ran);
-      // on the base call it stays empty and fills in when the Operations tab loads it.
-      if (provDept.size) { const dep = (it.providerId && provDept.get(it.providerId)) || 'Unknown'; tallyPush(byDept, dep, dep); }
+      // By ordering department — the panel row's own clinic first, then this request's
+      // RadiologySearch lookup, then the persistent provider→department registry. The
+      // registry makes the split available on the INSTANT base call (no dept=1 pass
+      // needed once it has learned the active physicians), fixing the sometimes-empty
+      // By-department panel. Tally only when SOME source can resolve departments, so a
+      // cold registry doesn't paint a useless all-Unknown chart.
+      if (it.department || provDept.size || _provDeptReg.size) {
+        const dep = (it.department && it.department.trim())
+          || (it.providerId && provDept.get(it.providerId))
+          || provDeptOf(it.providerId) || 'Unknown';
+        tallyPush(byDept, dep, dep);
+      }
       if (it.emergency) emergency += 1; else routine += 1;
       const t = parseHisDate(it.orderedDate);
       const d = Number.isFinite(t) ? new Date(t + 3 * 36e5).toISOString().slice(0, 10) : null;   // KSA bill-day
