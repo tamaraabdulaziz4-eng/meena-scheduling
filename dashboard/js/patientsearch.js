@@ -30,6 +30,49 @@ function psPrefetchLookup(mrno) {
   psLookupInflight.set(mrno, pr);
   return pr;
 }
+
+// ── Per-SECTION prefetch cache ────────────────────────────────────────────────
+// Same idea as psLookupCache but for the card's lazy sections (clinical history,
+// visits, labs, appointments): a section warmed here paints with ZERO spinner when
+// the card opens. Keyed `${section}|${mrno}`; single-flight so a hover-warm and the
+// click it precedes share one request (the connector also caches + single-flights
+// these per patient now, so warming is cheap on the HIS box).
+const psSectionCache = new Map();
+const psSectionInflight = new Map();
+const PS_SECTION_TTL = 90000;
+function psFetchSection(section, mrno, path) {
+  const key = `${section}|${mrno}`;
+  const hit = psSectionCache.get(key);
+  if (hit && Date.now() - hit.ts < PS_SECTION_TTL) return Promise.resolve(hit.data);
+  if (psSectionInflight.has(key)) return psSectionInflight.get(key);
+  const pr = API.get(path)
+    .then((d) => {
+      psSectionCache.set(key, { ts: Date.now(), data: d });
+      if (psSectionCache.size > 400) psSectionCache.delete(psSectionCache.keys().next().value);
+      psSectionInflight.delete(key);
+      return d;
+    })
+    .catch((e) => { psSectionInflight.delete(key); throw e; });
+  psSectionInflight.set(key, pr);
+  return pr;
+}
+// Warm EVERYTHING the card shows for one patient — the lookup panel plus the four
+// lazy sections — so the eventual click is one paint with no spinners at all.
+// Sections fire only AFTER the lookup lands (the strongest intent signal and the
+// card's own blocking call), keeping a stray hover from bursting the HIS box.
+function psPrefetchCard(mrno) {
+  mrno = String(mrno || '').trim();
+  if (!mrno) return null;
+  const p = psPrefetchLookup(mrno);
+  if (!p) return null;
+  return p.then(() => {
+    const enc = encodeURIComponent(mrno);
+    psFetchSection('clinical', mrno, `/radiology/patient/${enc}/clinical`).catch(() => {});
+    psFetchSection('visits', mrno, `/radiology/patient/${enc}/visits`).catch(() => {});
+    psFetchSection('labs', mrno, `/radiology/patient/${enc}/labs`).catch(() => {});
+    psFetchSection('appts', mrno, `/radiology/patient/${enc}/appointments`).catch(() => {});
+  }).catch(() => {});
+}
 let psPendingQuery = '';   // set by openPatientLookup() so the page auto-searches on open
 
 // Deep-link into this page for a specific file/MRN (e.g. from the Home drill-down).
@@ -333,7 +376,7 @@ async function psLoadClinical() {
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { box.innerHTML = ''; return; }
   let d;
-  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/clinical`); }
+  try { d = await psFetchSection('clinical', String(p.mrno), `/radiology/patient/${encodeURIComponent(p.mrno)}/clinical`); }
   catch (e) { box.innerHTML = ''; return; }
   const dx = (d && d.diagnoses) || [];
   const al = (d && d.allergies) || {};
@@ -399,7 +442,7 @@ async function psLoadVisits() {
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { box.innerHTML = ''; return; }
   let d;
-  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/visits`); }
+  try { d = await psFetchSection('visits', String(p.mrno), `/radiology/patient/${encodeURIComponent(p.mrno)}/visits`); }
   catch (e) { box.innerHTML = ''; return; }
   const visits = (d && d.visits) || [];
   if (!visits.length) { box.innerHTML = ''; return; }
@@ -524,7 +567,7 @@ async function psLoadAppointments() {
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) { box.innerHTML = ''; return; }
   let d;
-  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/appointments`); }
+  try { d = await psFetchSection('appts', String(p.mrno), `/radiology/patient/${encodeURIComponent(p.mrno)}/appointments`); }
   catch (e) { box.innerHTML = ''; return; }
   const appts = (d && d.appointments) || [];
   if (!appts.length) { box.innerHTML = ''; return; }
@@ -549,7 +592,7 @@ async function psLoadRealLabs() {
   // The shimmering section skeleton (psSectionSkeleton) is already showing — leave it in
   // place while the HIS call returns, then replace it with the results (or clear if none).
   let d;
-  try { d = await API.get(`/radiology/patient/${encodeURIComponent(p.mrno)}/labs`); }
+  try { d = await psFetchSection('labs', String(p.mrno), `/radiology/patient/${encodeURIComponent(p.mrno)}/labs`); }
   catch (e) { box.innerHTML = ''; return; }
   const panels = (d && d.panels) || [];
   const results = (d && d.results) || [];
@@ -896,12 +939,22 @@ function psRepId(o) {
 // Auto-load each exam's report on open — no clicking. Every report is pulled STRAIGHT
 // FROM SIRATECH (FetchRadiologyReport, keyed by the exam's own invPatTestResultId), so
 // there's no DePACS match and no per-file matching pass. One direct call per exam,
-// all fired together. Read-only.
+// through a small concurrency pool (was: ALL fired together — a 15-exam patient burst
+// 15 simultaneous HIS calls on top of the card's section loads). The first exams (the
+// ones on screen) still land first; the tail streams in right behind. Read-only.
 async function psAutoReports(orders) {
   if (!orders || !orders.length) return;
   const p = (psState.lookup && psState.lookup.patient) || {};
   if (!p.mrno) return;
-  for (const o of orders) psLoadReport(o, psRepId(o));
+  const queue = orders.slice();
+  const CONC = 3;
+  const pump = async () => {
+    while (queue.length) {
+      const o = queue.shift();
+      try { await psLoadReport(o, psRepId(o)); } catch (e) { /* per-exam best-effort */ }
+    }
+  };
+  for (let i = 0; i < Math.min(CONC, queue.length); i++) pump();
 }
 // Load THIS exam's native Siratech report (radiologist · date · full text) and, when
 // the structured indication is missing, fill it from the report's own CLINICAL DATA

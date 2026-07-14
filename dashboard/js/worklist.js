@@ -505,7 +505,9 @@ async function wlLoad(force, silent) {
 // rows into psLookupCache so tapping "Full patient card" (or a row) opens INSTANTLY with
 // no spinner. Runs on idle at low concurrency so the 2GB HIS box is never stressed — this
 // only warms the lightweight /radiology/lookup panel (same call the card's first paint
-// makes), not the heavy history sections, which still load lazily inside the card.
+// makes). The first DEEP_WARM rows additionally get their heavy sections (clinical
+// history, visits, labs, appointments) prefetched via psPrefetchCard, and hovering
+// any row warms that patient's full card — so one click opens complete, no spinners.
 let _wlCardWarmGen = 0;
 function wlPrefetchCards() {
   if (typeof psPrefetchLookup !== 'function') return;        // patientsearch.js not loaded — nothing to warm
@@ -522,6 +524,11 @@ function wlPrefetchCards() {
   if (!mrns.length) return;
   const myGen = ++_wlCardWarmGen;                            // a newer board load cancels this sweep
   const CONC = 2; let idx = 0;
+  // Deep-warm budget: the FIRST few rows also get their card's heavy sections
+  // (clinical history, visits, labs, appointments) prefetched, so opening them is one
+  // paint with zero spinners. Kept small — the connector caches + single-flights these
+  // per patient now, but the 2 GB box still shouldn't see 20 patients × 4 sections.
+  const DEEP_WARM = 5; let deep = 0;
   const pump = () => {
     if (myGen !== _wlCardWarmGen) return;                    // superseded — stop warming stale rows
     if (idx >= mrns.length) return;
@@ -533,7 +540,13 @@ function wlPrefetchCards() {
       if (p && typeof p.then === 'function') {
         // As each warm-up lands, backfill the clinic/phone/age/gender the fast board can't carry
         // so the VISIBLE (collapsed) rows show them too — not only expanded ones.
-        p.then((lk) => { try { wlBackfillDetail(mrno, lk); } catch (e) {} }, () => {});
+        p.then((lk) => {
+          try { wlBackfillDetail(mrno, lk); } catch (e) {}
+          if (myGen === _wlCardWarmGen && deep < DEEP_WARM && typeof psPrefetchCard === 'function') {
+            deep++;
+            psPrefetchCard(mrno);                            // sections ride the fresh lookup
+          }
+        }, () => {});
         p.then(next, next);
       } else next();
     } catch (e) { next(); }
@@ -542,6 +555,25 @@ function wlPrefetchCards() {
   if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 1500 });
   else setTimeout(kick, 250);
 }
+
+// HOVER-WARM (instant.page for the board): the moment the operator's pointer settles on
+// a row — a strong "about to open" signal — warm that patient's FULL card (lookup +
+// clinical/visits/labs/appointments). All layers dedupe and single-flight (client
+// section cache → server → connector per-patient caches), so lingering or re-hovering
+// costs nothing, and a hover typically buys 200-600ms of head start before the click.
+let _wlHoverTimer = null, _wlHoverMrn = null;
+document.addEventListener('pointerover', (e) => {
+  const row = e.target && e.target.closest && e.target.closest('.rw-row[data-mrn]');
+  if (!row) return;
+  const mrn = row.getAttribute('data-mrn');
+  if (!mrn || mrn === _wlHoverMrn) return;
+  _wlHoverMrn = mrn;
+  clearTimeout(_wlHoverTimer);
+  // Small settle delay so skimming the pointer down the board doesn't warm every row.
+  _wlHoverTimer = setTimeout(() => {
+    if (typeof psPrefetchCard === 'function') psPrefetchCard(mrn);
+  }, 120);
+}, { passive: true });
 
 // Paint modality/exam AND pipeline stage onto the freshly-loaded board from the
 // persistent caches, so a live refresh shows everything INSTANTLY without waiting on
@@ -1082,7 +1114,7 @@ function wlRowHtml(it) {
   const primaryAct = canReport
     ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" ontouchstart="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
     : `<button class="iconbtn" title="Handoff" onclick="event.stopPropagation();wlOpenHandoff('${jsAttr(mrn)}')">${icon('inbox')}</button>`;
-  return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" onclick="wlToggleRow('${uid}',event)">
+  return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" data-mrn="${escapeHtml(mrn)}" onclick="wlToggleRow('${uid}',event)">
     <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
     <div class="pt">
       <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}${payChip}</div>

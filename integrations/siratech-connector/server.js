@@ -1426,6 +1426,30 @@ app.get('/patient/:file/clinical', requireAuth, async (req, res) => {
   }
 });
 
+// ── Per-patient SECTION cache ─────────────────────────────────────────────────
+// visits / labs / appointments / visit-notes were the only card sections with NO
+// cache anywhere, so every card open AND every warm sweep hit the HIS live for them.
+// Same pattern as _clinicalCache: per-key TTL + single-flight (a hover-prefetch and
+// the click it precedes share ONE upstream call). These are read-only histories that
+// don't change second-to-second, so a short TTL is safe and a real load cut on the
+// 2 GB box — it's what makes client-side prefetching of these sections harmless.
+const _sectionCache = new Map();      // key -> { ts, body }
+const _sectionInFlight = new Map();   // key -> Promise<body>
+const SECTION_CACHE_TTL = Number(process.env.SECTION_CACHE_TTL_MS || 90000);
+async function cachedSection(key, build, ttl = SECTION_CACHE_TTL) {
+  const hit = _sectionCache.get(key);
+  if (hit && Date.now() - hit.ts < ttl) return hit.body;
+  if (_sectionInFlight.has(key)) return _sectionInFlight.get(key);
+  const pr = build().then((body) => {
+    _sectionCache.set(key, { ts: Date.now(), body });
+    if (_sectionCache.size > 800) _sectionCache.delete(_sectionCache.keys().next().value);
+    _sectionInFlight.delete(key);
+    return body;
+  }).catch((e) => { _sectionInFlight.delete(key); throw e; });
+  _sectionInFlight.set(key, pr);
+  return pr;
+}
+
 // ── Patient recent VISITS (READ-ONLY) ─────────────────────────────────────────
 // The patient's clinic visits from Visits/ByFilter (captured live): each carries the
 // date, OP/ER type, in-charge provider + department, branch, and the CHIEF COMPLAINT
@@ -1435,26 +1459,29 @@ app.get('/patient/:file/visits', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   try {
-    await getToken();
     const daysBack = Math.max(1, Math.min(3650, Number(req.query.days) || 365));
-    const from = new Date(Date.now() - daysBack * 864e5).toISOString();
-    const to = new Date(Date.now() + 864e5).toISOString();
-    const r = await hisFetch('/emr-api/api/v1/Visits/ByFilter', { body: {
-      mrno: file, fromDate: from, toDate: to, hospitalId: null, group: 0,
-      empcat: '1,2,3', searchText: '', searchType: 0 } });
-    const rows = (r.json && r.json.data) || [];
-    const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-    const visits = rows.map((v) => ({
-      encounterId: v.patFinEncounterID || null,
-      date: v.startDate || v.admitDate || null,
-      visitType: clean(v.episodeStatusText) || null,          // OP | ER | IP
-      provider: clean(v.inchargeProviderName) || null,
-      department: clean(v.inchargeProviderDept || v.deptName) || null,
-      site: clean(v.siteName) || null,
-      chiefComplaint: clean((v.chiefComplaints || '').replace(/;/g, ' · ')) || null,
-      problems: clean(v.problems) || null,
-    })).sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
-    return res.json({ ok: true, file, visits, fetchedAt: new Date().toISOString() });
+    const body = await cachedSection(`visits|${file}|${daysBack}`, async () => {
+      await getToken();
+      const from = new Date(Date.now() - daysBack * 864e5).toISOString();
+      const to = new Date(Date.now() + 864e5).toISOString();
+      const r = await hisFetch('/emr-api/api/v1/Visits/ByFilter', { body: {
+        mrno: file, fromDate: from, toDate: to, hospitalId: null, group: 0,
+        empcat: '1,2,3', searchText: '', searchType: 0 } });
+      const rows = (r.json && r.json.data) || [];
+      const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+      const visits = rows.map((v) => ({
+        encounterId: v.patFinEncounterID || null,
+        date: v.startDate || v.admitDate || null,
+        visitType: clean(v.episodeStatusText) || null,          // OP | ER | IP
+        provider: clean(v.inchargeProviderName) || null,
+        department: clean(v.inchargeProviderDept || v.deptName) || null,
+        site: clean(v.siteName) || null,
+        chiefComplaint: clean((v.chiefComplaints || '').replace(/;/g, ' · ')) || null,
+        problems: clean(v.problems) || null,
+      })).sort((a, b) => (parseHisDate(b.date || '') || 0) - (parseHisDate(a.date || '') || 0));
+      return { ok: true, file, visits, fetchedAt: new Date().toISOString() };
+    });
+    return res.json(body);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
@@ -1525,29 +1552,32 @@ app.get('/patient/:file/labs', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   try {
-    await getToken();
-    const uid = currentProviderId() || String(HIS_USER).padStart(8, '0');
     const daysBack = Math.max(1, Math.min(3650, Number(req.query.days) || 365));
-    const from = new Date(Date.now() - daysBack * 864e5).toISOString();
-    const to = new Date(Date.now() + 864e5).toISOString();
-    const r = await hisFetch('/emr-api/api/v1/Clinicalreport/ClinicalServiceData', { body: {
-      mrno: file, fromDate: from, toDate: to, invcategoryid: 0, hospitalId: 0,
-      providerId: '', LoggedInUserId: String(uid) } });
-    let payload = {};
-    const blob = r.json && r.json.data;
-    if (typeof blob === 'string' && blob) {
-      try { payload = JSON.parse(zlib.gunzipSync(Buffer.from(blob, 'base64')).toString('utf8')); }
-      catch (_e) { payload = {}; }
-    } else if (blob && typeof blob === 'object') {
-      payload = blob;
-    }
-    const { panels, flat } = _groupLabs(payload.clinicalReportDTOList || []);
-    const counts = { normal: payload.normalCnt || 0, abnormal: payload.abNormalCnt || 0, critical: payload.criticalCnt || 0 };
-    // Most recent result date across the report (for the header).
-    const latest = flat.map((t) => t.date).filter(Boolean)
-      .sort((a, b) => (parseHisDate(b) || 0) - (parseHisDate(a) || 0))[0] || null;
-    return res.json({ ok: true, file, panels, results: flat, counts, latest,
-      dates: payload.distinctDates || [], fetchedAt: new Date().toISOString() });
+    const body = await cachedSection(`labs|${file}|${daysBack}`, async () => {
+      await getToken();
+      const uid = currentProviderId() || String(HIS_USER).padStart(8, '0');
+      const from = new Date(Date.now() - daysBack * 864e5).toISOString();
+      const to = new Date(Date.now() + 864e5).toISOString();
+      const r = await hisFetch('/emr-api/api/v1/Clinicalreport/ClinicalServiceData', { body: {
+        mrno: file, fromDate: from, toDate: to, invcategoryid: 0, hospitalId: 0,
+        providerId: '', LoggedInUserId: String(uid) } });
+      let payload = {};
+      const blob = r.json && r.json.data;
+      if (typeof blob === 'string' && blob) {
+        try { payload = JSON.parse(zlib.gunzipSync(Buffer.from(blob, 'base64')).toString('utf8')); }
+        catch (_e) { payload = {}; }
+      } else if (blob && typeof blob === 'object') {
+        payload = blob;
+      }
+      const { panels, flat } = _groupLabs(payload.clinicalReportDTOList || []);
+      const counts = { normal: payload.normalCnt || 0, abnormal: payload.abNormalCnt || 0, critical: payload.criticalCnt || 0 };
+      // Most recent result date across the report (for the header).
+      const latest = flat.map((t) => t.date).filter(Boolean)
+        .sort((a, b) => (parseHisDate(b) || 0) - (parseHisDate(a) || 0))[0] || null;
+      return { ok: true, file, panels, results: flat, counts, latest,
+        dates: payload.distinctDates || [], fetchedAt: new Date().toISOString() };
+    });
+    return res.json(body);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
@@ -1560,21 +1590,24 @@ app.get('/patient/:file/appointments', requireAuth, async (req, res) => {
   const file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   try {
-    await getToken();
-    const uid = currentProviderId() || String(HIS_USER).padStart(8, '0');
-    const r = await hisFetch('/emr-api/api/v1/Appointments/History/ByPatient', { body: {
-      mrno: file, apptDate: '1900-01-01', providerName: '', genSpecialityId: 0,
-      hospitalId: 0, userId: String(uid), isOutsider: false } });
-    const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-    const rows = ((r.json && r.json.data) || []).map((a) => ({
-      date: a.allocationDate || a.confirmationDate || a.enteredDate || null,
-      speciality: clean(a.specialityName) || null,
-      resource: clean(a.apptResourceName) || null,
-      status: clean(a.apptstatus) || null,
-      site: clean(a.hospitalShortName || a.hospitalName) || null,
-      remarks: clean(a.apptRemarks) || null,
-    })).sort((x, y) => (parseHisDate(y.date || '') || 0) - (parseHisDate(x.date || '') || 0));
-    return res.json({ ok: true, file, appointments: rows, fetchedAt: new Date().toISOString() });
+    const body = await cachedSection(`appts|${file}`, async () => {
+      await getToken();
+      const uid = currentProviderId() || String(HIS_USER).padStart(8, '0');
+      const r = await hisFetch('/emr-api/api/v1/Appointments/History/ByPatient', { body: {
+        mrno: file, apptDate: '1900-01-01', providerName: '', genSpecialityId: 0,
+        hospitalId: 0, userId: String(uid), isOutsider: false } });
+      const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+      const rows = ((r.json && r.json.data) || []).map((a) => ({
+        date: a.allocationDate || a.confirmationDate || a.enteredDate || null,
+        speciality: clean(a.specialityName) || null,
+        resource: clean(a.apptResourceName) || null,
+        status: clean(a.apptstatus) || null,
+        site: clean(a.hospitalShortName || a.hospitalName) || null,
+        remarks: clean(a.apptRemarks) || null,
+      })).sort((x, y) => (parseHisDate(y.date || '') || 0) - (parseHisDate(x.date || '') || 0));
+      return { ok: true, file, appointments: rows, fetchedAt: new Date().toISOString() };
+    });
+    return res.json(body);
   } catch (e) {
     return res.status(502).json({ ok: false, error: String(e.message || e) });
   }
@@ -1637,6 +1670,17 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
   const encounterId = String(req.query.encounterId || '').trim();
   if (!file || !encounterId) return res.status(400).json({ ok: false, error: 'file and encounterId are required' });
   try {
+    // Historical notes don't change — cache them longer (10 min) so the card's
+    // background note-warm and the operator's expand share one upstream render.
+    const body = await cachedSection(`note|${file}|${encounterId}`, () =>
+      _buildVisitNote(file, encounterId), Number(process.env.NOTE_CACHE_TTL_MS || 600000));
+    return res.json(body);
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+async function _buildVisitNote(file, encounterId) {
     await getToken();
     const providerId = currentProviderId() || String(HIS_USER).padStart(8, '0');
     const pd = await hisFetch('/emr-api/api/v1/Patient/PatientData?mrNo=' + encodeURIComponent(file) + '&hospitalId=0&mode=0', { method: 'GET' })
@@ -1696,11 +1740,8 @@ app.get('/patient/:file/visit-note', requireAuth, async (req, res) => {
         });
       } catch (_e) { /* skip a note that fails to render; the others still show */ }
     }
-    return res.json({ ok: true, build: CONNECTOR_BUILD, file, encounterId, notes, fetchedAt: new Date().toISOString() });
-  } catch (e) {
-    return res.status(502).json({ ok: false, error: String(e.message || e) });
-  }
-});
+    return { ok: true, build: CONNECTOR_BUILD, file, encounterId, notes, fetchedAt: new Date().toISOString() };
+}
 
 // ── HIS user privileges (READ-ONLY) ───────────────────────────────────────────
 // Siratech's Security Suite exposes a user's privileges/modules only for READING (there is
