@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meena — TLD staff list</title>
+<link rel="icon" href="/meena_logo.png" type="image/png">
+<style>
+  :root{ --accent:#6B4EFF; --wash:#F0EDFF; --green:#0a8f5b; --danger:#c0261a;
+    --bg:#f4f2fc; --card:#fff; --ink:#1c1930; --muted:#7a7690; --border:#e7e4f0;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  @media (prefers-color-scheme:dark){ :root{ --bg:#12101c; --card:#1a1826; --ink:#eceaf6;
+    --muted:#9691ad; --border:#2c2940; --wash:#241f3d; } }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.5;
+    min-height:100dvh;padding:22px 14px calc(22px + env(safe-area-inset-bottom));display:flex;justify-content:center}
+  .card{width:100%;max-width:560px;background:var(--card);border:1px solid var(--border);
+    border-radius:18px;box-shadow:0 10px 40px rgba(28,25,48,.1);padding:20px;align-self:flex-start}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#9a7bff);
+    display:grid;place-items:center;color:#fff;font-weight:800}
+  h1{font-size:17px;margin:0}
+  .who{background:var(--wash);border-radius:12px;padding:11px 14px;margin:4px 0 14px;font-size:14px}
+  .who b{color:var(--accent)}
+  .row{border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:10px;position:relative}
+  .row input{width:100%;padding:10px 11px;border:1px solid var(--border);border-radius:9px;
+    font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);margin-top:6px}
+  .row input:first-child{margin-top:0}
+  .row .del{position:absolute;top:6px;right:6px;border:0;background:transparent;color:var(--danger);
+    font-size:16px;padding:4px 8px;cursor:pointer}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .btn{margin-top:14px;width:100%;border:0;border-radius:12px;padding:14px;font-size:15px;font-weight:700;
+    font-family:inherit;background:var(--accent);color:#fff;cursor:pointer}
+  .btn[disabled]{opacity:.5}
+  .btn.sec{background:transparent;color:var(--accent);border:1.5px dashed var(--border);margin-top:8px}
+  .name{margin-top:14px;width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:10px;
+    font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)}
+  .lbl{font-size:12.5px;font-weight:700;color:var(--muted);margin:16px 0 6px}
+  .msg{margin-top:14px;font-size:14px;text-align:center}
+  .ok{color:var(--green)} .err{color:var(--danger)}
+  .done{text-align:center;padding:16px 0}
+  .done .big{font-size:44px} .done h2{margin:8px 0 4px;font-size:18px}
+  .foot{margin-top:16px;text-align:center;color:var(--muted);font-size:11.5px}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.4);
+    border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="card" id="root">
+    <div class="brand"><div class="logo">م</div><h1>TLD dosimetry — staff list</h1></div>
+    <div id="body"><div class="msg">Loading…</div></div>
+    <div class="foot">Meena Health · TLD Dosimetry Program · sent to the TLD coordinator for review</div>
+  </div>
+
+<script>
+  var TOKEN = new URLSearchParams(location.search).get('t') || '';
+  var body = document.getElementById('body');
+  var ROWID = 0;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+  async function init(){
+    if(!TOKEN){ body.innerHTML = '<div class="msg err">This link is missing its code. Ask the TLD coordinator for a new one.</div>'; return; }
+    try{
+      var r = await fetch('/api/public/tld/roster?t='+encodeURIComponent(TOKEN));
+      if(!r.ok){ throw new Error((await r.json().catch(function(){return{};})).detail || 'This link is not valid or has expired.'); }
+      var d = await r.json();
+      if(d.already){ showDone(); return; }
+      render(d);
+    }catch(e){ body.innerHTML = '<div class="msg err">'+esc(e.message||'This link is not valid.')+'</div>'; }
+  }
+
+  function rowHtml(e){
+    e = e || {};
+    return '<div class="row" id="row-'+(++ROWID)+'">'+
+      '<button type="button" class="del" onclick="delRow('+ROWID+')" title="Remove">✕</button>'+
+      '<input class="r-name" placeholder="Full name *" maxlength="120" value="'+esc(e.name)+'">'+
+      '<div class="grid2">'+
+        '<input class="r-emp" placeholder="Employee no." maxlength="40" value="'+esc(e.employee_no)+'">'+
+        '<input class="r-nid" placeholder="National ID / Iqama" maxlength="20" inputmode="numeric">'+
+      '</div>'+
+      '<input class="r-title" placeholder="Job title (e.g. Dentist, Dental assistant)" maxlength="80" value="'+esc(e.job_title)+'">'+
+    '</div>';
+  }
+
+  function render(d){
+    var roster = d.roster || [];
+    body.innerHTML =
+      '<div class="who">Staff list for the <b>'+esc(d.deptLabel||'')+'</b> department.<br>'+
+      '<span style="font-size:12.5px;color:var(--muted)">Please review the list below — correct it, remove anyone who left, '+
+      'and add anyone missing. Every person listed will receive a TLD radiation badge each quarter.</span></div>'+
+      '<div class="lbl">Staff members</div>'+
+      '<div id="rows">'+ (roster.length ? roster.map(rowHtml).join('') : rowHtml()) +'</div>'+
+      '<button type="button" class="btn sec" onclick="addRow()">+ Add another staff member</button>'+
+      '<div class="lbl">Your name (department head)</div>'+
+      '<input class="name" id="subname" placeholder="Your full name *" maxlength="120">'+
+      '<button class="btn" id="send" onclick="submitList()">Send to the TLD coordinator</button>'+
+      '<div class="msg" id="msg"></div>';
+  }
+
+  function addRow(){ document.getElementById('rows').insertAdjacentHTML('beforeend', rowHtml()); }
+  function delRow(id){ var el=document.getElementById('row-'+id); if(el) el.remove(); }
+
+  async function submitList(){
+    var msg = document.getElementById('msg'); msg.className='msg'; msg.textContent='';
+    var entries = [];
+    document.querySelectorAll('#rows .row').forEach(function(r){
+      var name = r.querySelector('.r-name').value.trim();
+      if(!name) return;
+      entries.push({ name:name,
+        employee_no: r.querySelector('.r-emp').value.trim(),
+        national_id: r.querySelector('.r-nid').value.trim(),
+        job_title: r.querySelector('.r-title').value.trim() });
+    });
+    if(!entries.length){ msg.className='msg err'; msg.textContent='Add at least one staff member with a name.'; return; }
+    var subname = document.getElementById('subname').value.trim();
+    if(!subname){ msg.className='msg err'; msg.textContent='Please enter your name.'; return; }
+    var btn = document.getElementById('send'); btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>Sending…';
+    try{
+      var r = await fetch('/api/public/tld/roster', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ t: TOKEN, submitted_by_name: subname, entries: entries }) });
+      var d = await r.json().catch(function(){return{};});
+      if(!r.ok){ throw new Error(d.detail || 'Sending failed. Please try again.'); }
+      showDone();
+    }catch(e){
+      btn.disabled=false; btn.textContent='Send to the TLD coordinator';
+      msg.className='msg err'; msg.textContent = e.message || 'Sending failed.';
+    }
+  }
+
+  function showDone(){
+    body.innerHTML = '<div class="done"><div class="big">✅</div>'+
+      '<h2>Staff list received</h2>'+
+      '<div class="msg ok">Thank you — the TLD coordinator will review it and assign the badges.</div>'+
+      '<div style="color:var(--muted);font-size:13px;margin-top:8px">You can close this page. This link has now been used.</div></div>';
+  }
+
+  init();
+</script>
+</body>
+</html>
