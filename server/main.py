@@ -7296,6 +7296,18 @@ def radiology_patient_appointments(file_no: str, user=Depends(require_radiology)
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/appointments", timeout=90)
 
+@app.get("/api/radiology/patient/{file_no}/card")
+def radiology_patient_card(file_no: str, user=Depends(require_radiology)):
+    """Whole patient card — orders + clinical + visits + labs + appointments — in ONE
+    connector round-trip instead of five separate cross-internet calls. The connector
+    fans out to those sections in parallel next to the HIS; data is still live from
+    Siratech. Read-only."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/card", timeout=95)
+
 @app.get("/api/radiology/patient/{file_no}/visit-note")
 def radiology_patient_visit_note(file_no: str, request: Request, user=Depends(require_radiology)):
     """The doctor's clinical note(s) for one encounter, live from Siratech. Read-only."""
