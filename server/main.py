@@ -8209,8 +8209,15 @@ _MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 300.0)     
 _READY_MIRROR_ENABLED = (os.environ.get("WORKLIST_READY_MIRROR", "1") == "1")
 _READY_MIRROR_INTERVAL = float(os.environ.get("WORKLIST_READY_MIRROR_INTERVAL") or 120.0)
 _READY_MIRROR_MAX_INTERVAL = float(os.environ.get("WORKLIST_READY_MIRROR_MAX_INTERVAL") or 900.0)
-_READY_MIRROR_SLOW_SECS = float(os.environ.get("WORKLIST_READY_MIRROR_SLOW_SECS") or 45.0)
-_READY_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_READY_MIRROR_MAX_AGE") or 1200.0)  # must exceed the backoff ceiling so a healthy-but-backed-off mirror still serves
+# A NORMAL ready tick (the bulk DePACS sweep over a busy board) takes 60-120s — only a
+# tick well beyond that means the box is genuinely strained. The old 45s threshold
+# treated every ordinary tick as "slow", ratcheted the cadence straight to the 900s
+# ceiling, and left the mirror ~15 min stale on a healthy system.
+_READY_MIRROR_SLOW_SECS = float(os.environ.get("WORKLIST_READY_MIRROR_SLOW_SECS") or 150.0)
+# Serve the mirror well past the refresh cadence: a stale stage row is PROMOTE-ONLY
+# (it can never demote a row) and infinitely better than falling through to the live
+# 240s per-patient DePACS pass, which is exactly the wait this mirror exists to kill.
+_READY_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_READY_MIRROR_MAX_AGE") or 3600.0)
 
 def _wl_default_from():
     ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
@@ -8311,7 +8318,11 @@ def _worklist_ready_tick():
         pass
     import urllib.parse
     query = "?" + urllib.parse.urlencode({"from": frm, "ready": "1"})
-    data = _bridge_request("/his/worklist" + query, timeout=240)
+    # 300s (not the client-facing 240s): the tick is a background writer with no user
+    # waiting, so give the connector's own ~240s worst case real headroom instead of
+    # aborting a sweep it was about to finish — a tick that always times out means the
+    # mirror never populates and every operator falls back to the slow live path.
+    data = _bridge_request("/his/worklist" + query, timeout=300)
     if not isinstance(data, dict) or data.get("items") is None:
         return True  # reached the connector but nothing usable — keep the last good mirror row
     try:
@@ -8391,11 +8402,16 @@ def _wl_ready_stage_map():
     except Exception:
         return None
 
+_WL_STAGE_RANK = {"ordered": 0, "imaged": 1, "draft": 2, "reported": 3}
+
 def _wl_apply_ready_stages(items):
     """Merge the warm ready-mirror's DePACS stages into a FAST board response, so the
     Pending Report / Imaged lanes are populated on the very first paint instead of waiting
-    for the slow live ready pass. Never overwrites a stage the response already carries,
-    and only ever promotes (imaged/draft/reported). Best-effort — never breaks the board."""
+    for the slow live ready pass. PROMOTE-ONLY by rank: the fast RIS board stamps every
+    row with at least stage='ordered' (its own preliminary read), so a skip-if-present
+    guard would make this whole merge a silent no-op — the exact bug that kept Pending
+    Report off the first paint. A mirror stage only ever moves a row FORWARD; it can
+    never demote what the fresh response asserts. Best-effort — never breaks the board."""
     if not isinstance(items, list) or not items:
         return
     try:
@@ -8404,8 +8420,6 @@ def _wl_apply_ready_stages(items):
             return
         for it in items:
             try:
-                if it.get("stage"):
-                    continue
                 g = it.get("genPatBillingId")
                 if not g:
                     continue
@@ -8413,6 +8427,8 @@ def _wl_apply_ready_stages(items):
                 e = m.get((str(g), svc))
                 if not e:
                     continue
+                if _WL_STAGE_RANK.get(e["stage"], 0) <= _WL_STAGE_RANK.get((it.get("stage") or "ordered"), 0):
+                    continue   # equal or weaker than the row's own stage → leave it
                 it["stage"] = e["stage"]
                 it["stageSeed"] = "ready-mirror"   # debug: where this stage came from
                 if e.get("readyToFile") and it.get("readyToFile") is None:
