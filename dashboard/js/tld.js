@@ -96,7 +96,8 @@ async function _tldLoadRoster(body) {
       ${deptSubs.map(s => `
       <div class="lrow" style="flex-wrap:wrap">
         <div style="flex:1;min-width:160px"><strong>${escapeHtml(s.name)}</strong>
-          <div style="font-size:12px;color:var(--muted)">${escapeHtml([s.employee_no, s.job_title].filter(Boolean).join(' · ') || '—')}</div></div>
+          <div style="font-size:12px;color:var(--muted)">${escapeHtml([s.employee_no, s.national_id, s.job_title].filter(Boolean).join(' · ') || '—')}</div>
+          ${[s.email, s.phone, s.join_date].some(Boolean) ? `<div style="font-size:12px;color:var(--muted)">${escapeHtml([s.email, s.phone, s.join_date && ('joined ' + s.join_date)].filter(Boolean).join(' · '))}</div>` : ''}</div>
         <span class="sc ${s.matched_id ? 'warn' : 'ok'}">${s.matched_id ? 'Updates existing' : 'New'}</span>
         <div style="display:flex;gap:6px">
           <button class="ghost" onclick="tldReviewSub(${s.id}, true)">Approve</button>
@@ -125,7 +126,8 @@ async function _tldLoadRoster(body) {
         <span style="width:120px;text-align:right">Actions</span>
       </div>
       ${rows.map(s => `<div class="lrow" style="flex-wrap:wrap;${s.active ? '' : 'opacity:.55'}">
-        <span style="flex:1;min-width:150px"><strong>${escapeHtml(s.name)}</strong></span>
+        <span style="flex:1;min-width:150px"><strong>${escapeHtml(s.name)}</strong>
+          ${[s.email, s.phone, s.join_date].some(Boolean) ? `<div style="font-size:11.5px;color:var(--muted)">${escapeHtml([s.email, s.phone, s.join_date && ('joined ' + s.join_date)].filter(Boolean).join(' · '))}</div>` : ''}</span>
         <span style="width:110px">${escapeHtml(s.employee_no || '—')}</span>
         <span style="width:150px">${escapeHtml(s.job_title || '—')}</span>
         <span style="width:80px">${s.active ? '<span class="sc ok">Active</span>' : '<span class="sc no">Inactive</span>'}</span>
@@ -153,6 +155,14 @@ function openTldStaffModal(id) {
         <input id="tld-st-nid" class="input" maxlength="20" value="${s ? escapeHtml(s.national_id || '') : ''}" style="width:100%;margin-top:4px"></label>
       <label style="font-size:13px">Job title (optional)
         <input id="tld-st-title" class="input" maxlength="80" value="${s ? escapeHtml(s.job_title || '') : ''}" placeholder="e.g. Radiologic Technologist / Dentist" style="width:100%;margin-top:4px"></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <label style="font-size:13px">Email (optional)
+          <input id="tld-st-email" class="input" type="email" maxlength="120" value="${s ? escapeHtml(s.email || '') : ''}" style="width:100%;margin-top:4px"></label>
+        <label style="font-size:13px">Phone (optional)
+          <input id="tld-st-phone" class="input" type="tel" maxlength="40" value="${s ? escapeHtml(s.phone || '') : ''}" style="width:100%;margin-top:4px"></label>
+      </div>
+      <label style="font-size:13px">Join date (optional)
+        <input id="tld-st-join" class="input" type="date" value="${s ? escapeHtml(s.join_date || '') : ''}" style="width:100%;margin-top:4px"></label>
       ${s ? `<label style="font-size:13px;display:flex;align-items:center;gap:8px">
         <input id="tld-st-active" type="checkbox" ${s.active ? 'checked' : ''}> Active (receives a badge each quarter)</label>` : ''}
     </div>
@@ -164,7 +174,8 @@ function openTldStaffModal(id) {
 
 async function saveTldStaff(id) {
   const v = i => { const e = document.getElementById(i); return e ? e.value.trim() : ''; };
-  const payload = { name: v('tld-st-name'), employee_no: v('tld-st-emp'), national_id: v('tld-st-nid'), job_title: v('tld-st-title') };
+  const payload = { name: v('tld-st-name'), employee_no: v('tld-st-emp'), national_id: v('tld-st-nid'), job_title: v('tld-st-title'),
+    email: v('tld-st-email'), phone: v('tld-st-phone'), join_date: v('tld-st-join') };
   if (!payload.name) { toast('Name is required', 'err'); return; }
   try {
     if (id) {
