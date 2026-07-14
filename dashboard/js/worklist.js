@@ -236,7 +236,7 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="ctrl wl-branchsel" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <button class="ctrl" title="Refresh now" onclick="wlLoad(true)">${icon('refresh')}</button>
+        <button class="ctrl" id="wl-refresh-btn" title="Check for new requests now" onclick="wlManualRefresh()">${icon('refresh')}Update</button>
         <div class="datepop rw-datepop" id="wl-datepop" style="display:none">
           <button class="ctrl icon" onclick="wlShiftDay(-1)" title="Previous day">‹</button>
           <span class="dl">From</span>
@@ -407,7 +407,36 @@ function wlSwitchReload() {
   wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear();
   if (wlState.indCache) wlState.indCache.clear();
   wlState.openRows.clear(); wlState.selMrns.clear();
-  wlLoad(true);                   // force nocache — fresh data for the new scope
+  // Instant repaint for a date window already viewed this session: restore its snapshot
+  // and refresh underneath — stepping days back and forth never blanks the board. A
+  // never-seen window clears the old scope's rows (showing them under a new date would
+  // mislead) and paints the skeleton instead.
+  wlState.data = null;
+  try {
+    const raw = sessionStorage.getItem('wl:board:' + wlScopeKey());
+    if (raw) { const s = JSON.parse(raw); if (s && s.data) wlState.data = s.data; }
+  } catch (e) { /* ignore */ }
+  wlState.lastReady = null;       // new scope → let the ready pass re-fire right away
+  // Ride the warm caches for the switch itself (server mirror / short caches / the
+  // connector's board cache) instead of forcing a fresh HIS fan-out — this is what
+  // made date changes feel slow. The 12s poll's ~30s nocache window still guarantees
+  // HIS-side changes surface within half a minute.
+  wlState.lastFresh = Date.now();
+  wlLoad(false);
+}
+
+// Manual "Update" — the operator's instant check for NEW requests. Forces a fresh
+// connector build (nocache) and re-runs the enrichment passes; the button spins while
+// it works so the click visibly does something.
+async function wlManualRefresh() {
+  const btn = document.getElementById('wl-refresh-btn');
+  if (btn) { btn.disabled = true; btn.classList.add('spin'); }
+  try {
+    await wlLoad(true);
+    if (typeof toast === 'function') toast('Worklist updated');
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('spin'); }
+  }
 }
 
 // Cache key for the persisted board — keyed by the DATE window only. The board always holds

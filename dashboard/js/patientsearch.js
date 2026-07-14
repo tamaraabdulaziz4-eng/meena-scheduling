@@ -68,10 +68,36 @@ function psPrefetchCard(mrno) {
   return p.then(() => {
     const enc = encodeURIComponent(mrno);
     psFetchSection('clinical', mrno, `/radiology/patient/${enc}/clinical`).catch(() => {});
-    psFetchSection('visits', mrno, `/radiology/patient/${enc}/visits`).catch(() => {});
+    psFetchSection('visits', mrno, `/radiology/patient/${enc}/visits`)
+      .then((d) => psWarmVisitNotes(mrno, d)).catch(() => {});
     psFetchSection('labs', mrno, `/radiology/patient/${enc}/labs`).catch(() => {});
     psFetchSection('appts', mrno, `/radiology/patient/${enc}/appointments`).catch(() => {});
   }).catch(() => {});
+}
+// Warm the DOCTOR-NOTE renders for the patient's most recent visits at the SERVER/
+// CONNECTOR layer (the connector caches a rendered note for 10 min). The client's own
+// psNoteCache is reset on every card open, so this is what actually makes expanding a
+// visit instant. Sequential + top-3 only — note rendering is the heaviest per-visit
+// call — and deduped here so the 12s board polls don't re-fire it.
+const _psNoteWarmed = new Map();   // `${mrno}|${enc}` -> ts
+function psWarmVisitNotes(mrno, visitsPayload) {
+  const encs = (((visitsPayload || {}).visits) || []).slice(0, 3)
+    .map((v) => v.encounterId).filter((e) => e != null);
+  const due = encs.filter((e) => {
+    const ts = _psNoteWarmed.get(`${mrno}|${e}`);
+    return !ts || Date.now() - ts > 8 * 60 * 1000;
+  });
+  if (!due.length) return;
+  if (_psNoteWarmed.size > 600) _psNoteWarmed.clear();
+  let i = 0;
+  const pump = () => {
+    if (i >= due.length) return;
+    const e = due[i++];
+    _psNoteWarmed.set(`${mrno}|${e}`, Date.now());
+    API.get(`/radiology/patient/${encodeURIComponent(mrno)}/visit-note?encounterId=${encodeURIComponent(e)}`)
+      .then(pump, pump);
+  };
+  pump();
 }
 let psPendingQuery = '';   // set by openPatientLookup() so the page auto-searches on open
 

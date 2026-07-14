@@ -2117,13 +2117,37 @@ input[type="date"].input { direction: ltr; text-align: left; font-variant-numeri
 .ps-field-l { font-size:10.5px; font-weight:800; color:var(--muted); letter-spacing:.05em; text-transform:uppercase; }
 .ps-field-v { font-size:13.5px; font-weight:600; color:var(--text); margin-top:2px; word-break:break-word; }
 
-/* Divider grouping: each async section reads as its own block, not one dense column */
+/* Panel grouping: each async section is its OWN framed panel with a clear header —
+   a plain divider left the card reading as one scattered column of text. */
 .ps-safety:not(:empty) { margin-bottom:4px; }
 .ps-pt-card #ps-clinical:not(:empty),
 .ps-pt-card #ps-labresults:not(:empty),
 .ps-pt-card #ps-visits:not(:empty),
 .ps-pt-card #ps-appts:not(:empty),
-.ps-pt-card .ps-consent { margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+.ps-pt-card .ps-consent {
+  margin-top:14px; padding:13px 15px 15px;
+  border:1px solid var(--border); border-radius:14px;
+  background:var(--card-alt, var(--surface-2, #fafafe));
+}
+/* The section's first label is its panel HEADER: darker, with an accent tick, and no
+   stray inline top margin (the markup carries margin-top:14px for the old flat flow). */
+.ps-pt-card #ps-clinical > .ps-sec-l:first-child,
+.ps-pt-card #ps-labresults > .ps-sec-l:first-child,
+.ps-pt-card #ps-visits > .ps-sec-l:first-child,
+.ps-pt-card #ps-appts > .ps-sec-l:first-child,
+.ps-pt-card .ps-consent > .ps-sec-l:first-child {
+  margin-top:0 !important; margin-bottom:11px;
+  display:flex; align-items:center; gap:8px;
+  color:var(--text); font-size:11.5px;
+  padding-bottom:9px; border-bottom:1px solid var(--border);
+}
+.ps-pt-card #ps-clinical > .ps-sec-l:first-child::before,
+.ps-pt-card #ps-labresults > .ps-sec-l:first-child::before,
+.ps-pt-card #ps-visits > .ps-sec-l:first-child::before,
+.ps-pt-card #ps-appts > .ps-sec-l:first-child::before,
+.ps-pt-card .ps-consent > .ps-sec-l:first-child::before {
+  content:''; width:3.5px; height:13px; border-radius:2px; background:var(--accent); flex:none;
+}
 
 /* KPI stat tiles — mirror the app .kpi so they're styled inside the modal too */
 .ps-pt-card .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:10px; margin-top:14px; }
