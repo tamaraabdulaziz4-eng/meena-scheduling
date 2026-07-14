@@ -8195,12 +8195,32 @@ _MIRROR_MAX_INTERVAL = float(os.environ.get("WORKLIST_MIRROR_MAX_INTERVAL") or 2
 _MIRROR_SLOW_SECS = float(os.environ.get("WORKLIST_MIRROR_SLOW_SECS") or 6.0)       # a tick slower than this = box strained → back off
 _MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_MIRROR_MAX_AGE") or 300.0)         # older than this → serve live instead (must exceed _MIRROR_MAX_INTERVAL so a backed-off-but-healthy mirror still serves)
 
+# ── READY (DePACS pipeline-stage) mirror ──────────────────────────────────────
+# The Pending Report / Imaged lanes only exist after the per-patient DePACS "ready"
+# pass — historically the ONE piece of the board excluded from every warm path, so
+# it was the part operators felt as "not instant". A second background loop now keeps
+# a warm ?ready=1 board in the same mirror table (scope_key prefixed 'ready:'):
+#   · ready=1 requests are served from it in a few ms (live pass only on miss/stale)
+#   · fast-board serves merge its imaged/draft/reported stages in, so the Pending
+#     Report lane is populated on the very FIRST paint of a cold open.
+# Slower cadence than the fast mirror (the DePACS fan-out is the heavy part) and the
+# same gentle rules: rides the connector's own status cache (no forced fresh), and a
+# circuit-breaker backs off the moment the box is strained.
+_READY_MIRROR_ENABLED = (os.environ.get("WORKLIST_READY_MIRROR", "1") == "1")
+_READY_MIRROR_INTERVAL = float(os.environ.get("WORKLIST_READY_MIRROR_INTERVAL") or 120.0)
+_READY_MIRROR_MAX_INTERVAL = float(os.environ.get("WORKLIST_READY_MIRROR_MAX_INTERVAL") or 900.0)
+_READY_MIRROR_SLOW_SECS = float(os.environ.get("WORKLIST_READY_MIRROR_SLOW_SECS") or 45.0)
+_READY_MIRROR_MAX_AGE = float(os.environ.get("WORKLIST_READY_MIRROR_MAX_AGE") or 1200.0)  # must exceed the backoff ceiling so a healthy-but-backed-off mirror still serves
+
 def _wl_default_from():
     ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
     return (ksa_today - timedelta(days=_RAD_WORKLIST_DAYS_BACK)).isoformat()
 
 def _wl_mirror_key(frm, to):
     return f"{frm or ''}|{to or ''}"
+
+def _wl_ready_mirror_key(frm, to):
+    return "ready:" + _wl_mirror_key(frm, to)
 
 def _worklist_mirror_tick():
     """One GENTLE refresh: read the board the way an operator would — WITHOUT forcing fresh —
@@ -8258,15 +8278,152 @@ def _worklist_mirror_loop():
             except Exception: pass
         _t.sleep(cur * (0.8 + 0.4 * _r.random()))          # ±20% jitter
 
+def _worklist_ready_tick():
+    """One gentle refresh of the READY (DePACS-stage) board. Same shape as the fast tick:
+    no forced fresh (rides the connector's per-patient status cache), skip when a sibling
+    worker just refreshed it, keep the last good row on a bad payload. Also feeds the
+    lifecycle store (state='reported'/reported_at), so the Meena ledger keeps advancing
+    even when no operator has the board open."""
+    frm = _wl_default_from()
+    mkey = _wl_ready_mirror_key(frm, "")
+    try:
+        row = q("SELECT fetched_at FROM scheduling.worklist_mirror WHERE scope_key=%s", (mkey,), one=True)
+        if row and row.get("fetched_at"):
+            age = (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds()
+            if age < _READY_MIRROR_INTERVAL * 0.7:
+                return False  # a sibling worker just refreshed it — don't pile on
+    except Exception:
+        pass
+    import urllib.parse
+    query = "?" + urllib.parse.urlencode({"from": frm, "ready": "1"})
+    data = _bridge_request("/his/worklist" + query, timeout=240)
+    if not isinstance(data, dict) or data.get("items") is None:
+        return True  # reached the connector but nothing usable — keep the last good mirror row
+    try:
+        _rad_persist_async(data.get("items"))   # ready pass carries authoritative stage → advance the ledger
+    except Exception:
+        pass
+    q("""INSERT INTO scheduling.worklist_mirror (scope_key, payload, fetched_at)
+         VALUES (%s, %s::jsonb, NOW())
+         ON CONFLICT (scope_key) DO UPDATE SET payload=EXCLUDED.payload, fetched_at=NOW()""",
+      (mkey, json.dumps(data)), exec_only=True)
+    return True
+
+def _worklist_ready_loop():
+    """Same adaptive circuit-breaker cadence as the fast mirror loop, tuned for the heavier
+    DePACS pass: slower base, higher slow-threshold, higher backoff ceiling."""
+    import time as _t, random as _r
+    _t.sleep(25)                                          # boot after the fast mirror's first pass
+    cur = min(_READY_MIRROR_INTERVAL * 2, _READY_MIRROR_MAX_INTERVAL)
+    while True:
+        t0 = _t.monotonic()
+        try:
+            hit = _worklist_ready_tick()
+            dur = _t.monotonic() - t0
+            if hit and dur > _READY_MIRROR_SLOW_SECS:
+                cur = min(cur * 2, _READY_MIRROR_MAX_INTERVAL)
+                try: print(f"[ready-mirror] slow tick {dur:.1f}s → backing off to {cur:.0f}s", flush=True)
+                except Exception: pass
+            else:
+                cur = max(_READY_MIRROR_INTERVAL, cur * 0.7)
+        except Exception as e:
+            cur = min(max(cur, _READY_MIRROR_INTERVAL) * 2, _READY_MIRROR_MAX_INTERVAL)
+            try: print("[ready-mirror] tick failed → backing off to", round(cur), "s:", str(e)[:160], flush=True)
+            except Exception: pass
+        _t.sleep(cur * (0.8 + 0.4 * _r.random()))          # ±20% jitter
+
+# Parsed {(genPatBillingId, svcId): {stage, readyToFile, accession, accessionSource}} from
+# the freshest ready-mirror row, cached in memory and re-parsed only when the row changes —
+# so merging stages into every fast poll costs one tiny fetched_at read, not a payload parse.
+_ready_stage_cache = {"at": None, "map": None}
+
+def _wl_ready_stage_map():
+    if not _READY_MIRROR_ENABLED:
+        return None
+    mkey = _wl_ready_mirror_key(_wl_default_from(), "")
+    try:
+        row = q("SELECT fetched_at FROM scheduling.worklist_mirror WHERE scope_key=%s", (mkey,), one=True)
+        if not row or not row.get("fetched_at"):
+            return None
+        if (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds() > _READY_MIRROR_MAX_AGE:
+            return None
+        if _ready_stage_cache["at"] == row["fetched_at"] and _ready_stage_cache["map"] is not None:
+            return _ready_stage_cache["map"]
+        full = q("SELECT payload, fetched_at FROM scheduling.worklist_mirror WHERE scope_key=%s", (mkey,), one=True)
+        data = full.get("payload") if full else None
+        if isinstance(data, str):
+            data = json.loads(data)
+        items = (data or {}).get("items")
+        m = {}
+        for it in (items or []):
+            try:
+                g = it.get("genPatBillingId")
+                if not g:
+                    continue
+                svc = str(it.get("svcId") if it.get("svcId") is not None else "").strip()
+                # Only stages that PROMOTE a row matter here ('ordered' is the default lane,
+                # and the client ratchets stages forward anyway).
+                if it.get("stage") in ("imaged", "draft", "reported"):
+                    m[(str(g), svc)] = {"stage": it.get("stage"),
+                                        "readyToFile": bool(it.get("readyToFile")),
+                                        "accession": it.get("accession"),
+                                        "accessionSource": it.get("accessionSource")}
+            except Exception:
+                pass
+        _ready_stage_cache["at"] = row["fetched_at"]
+        _ready_stage_cache["map"] = m
+        return m
+    except Exception:
+        return None
+
+def _wl_apply_ready_stages(items):
+    """Merge the warm ready-mirror's DePACS stages into a FAST board response, so the
+    Pending Report / Imaged lanes are populated on the very first paint instead of waiting
+    for the slow live ready pass. Never overwrites a stage the response already carries,
+    and only ever promotes (imaged/draft/reported). Best-effort — never breaks the board."""
+    if not isinstance(items, list) or not items:
+        return
+    try:
+        m = _wl_ready_stage_map()
+        if not m:
+            return
+        for it in items:
+            try:
+                if it.get("stage"):
+                    continue
+                g = it.get("genPatBillingId")
+                if not g:
+                    continue
+                svc = str(it.get("svcId") if it.get("svcId") is not None else "").strip()
+                e = m.get((str(g), svc))
+                if not e:
+                    continue
+                it["stage"] = e["stage"]
+                it["stageSeed"] = "ready-mirror"   # debug: where this stage came from
+                if e.get("readyToFile") and it.get("readyToFile") is None:
+                    it["readyToFile"] = True
+                if e.get("accession") and not it.get("accession"):
+                    it["accession"] = e["accession"]
+                    if e.get("accessionSource"):
+                        it["accessionSource"] = e["accessionSource"]
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def _start_worklist_mirror():
     if not _MIRROR_ENABLED:
         return
     threading.Thread(target=_worklist_mirror_loop, daemon=True, name="worklist-mirror").start()
+    if _READY_MIRROR_ENABLED:
+        threading.Thread(target=_worklist_ready_loop, daemon=True, name="worklist-ready-mirror").start()
 
-def _serve_worklist_from_mirror(request: Request, mkey: str, scope):
+def _serve_worklist_from_mirror(request: Request, mkey: str, scope, max_age=None, merge_ready=False):
     """Return a _conditional_json Response from the mirror row for `mkey`, or None to signal
     the caller to fall through to the live proxy (mirror missing / stale / disabled). `scope`
-    is a team lead's site (None for org-wide) — the mirror holds every branch, so we filter."""
+    is a team lead's site (None for org-wide) — the mirror holds every branch, so we filter.
+    `merge_ready` stamps the warm DePACS stages onto a FAST board (the ready board already
+    carries its own)."""
     if not _MIRROR_ENABLED:
         return None
     try:
@@ -8275,7 +8432,7 @@ def _serve_worklist_from_mirror(request: Request, mkey: str, scope):
         return None
     if not row or not row.get("payload") or not row.get("fetched_at"):
         return None
-    if (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds() > _MIRROR_MAX_AGE:
+    if (datetime.now(timezone.utc) - row["fetched_at"]).total_seconds() > (max_age or _MIRROR_MAX_AGE):
         return None
     data = row["payload"]
     if isinstance(data, str):                     # some psycopg2 configs return jsonb as text
@@ -8289,6 +8446,8 @@ def _serve_worklist_from_mirror(request: Request, mkey: str, scope):
     # Apply our always-fresh local state now (not at mirror time) so own actions are instant.
     try:
         _rad_seed_confirmed_stages(items)
+        if merge_ready:
+            _wl_apply_ready_stages(items)
         _annotate_worklist_consent(items)
         _annotate_worklist_overlay(items)
     except Exception:
@@ -8340,7 +8499,17 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     _src = (qs.get("src") or "").lower()
     if not heavy and qs.get("nocache") != "1" and _src in ("", "ris"):
         _mkey = _wl_mirror_key(qs.get("from", ""), qs.get("to", ""))
-        _mret = _serve_worklist_from_mirror(request, _mkey, scope)
+        _mret = _serve_worklist_from_mirror(request, _mkey, scope, merge_ready=True)
+        if _mret is not None:
+            return _mret
+    # READY fast-path: the pure ready=1 pass (no modality/pay) is served from the warm
+    # DePACS-stage mirror in a few ms — the live per-patient fan-out runs only when the
+    # mirror is cold/stale (and in the background loop that keeps it warm).
+    if (p.get("ready") == "1" and p.get("modality") != "1" and p.get("pay") != "1"
+            and qs.get("nocache") != "1" and _src in ("", "ris")):
+        _mret = _serve_worklist_from_mirror(
+            request, _wl_ready_mirror_key(qs.get("from", ""), qs.get("to", "")), scope,
+            max_age=_READY_MIRROR_MAX_AGE)
         if _mret is not None:
             return _mret
     # 130s fast-pass ceiling: comfortably above the worst-case headless HIS-login refresh
@@ -8370,6 +8539,9 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             # already carries authoritative stage, so it doesn't need (or want) the seed.
             if not heavy:
                 _rad_seed_confirmed_stages(data.get("items"))
+                # Warm DePACS stages (imaged/draft/reported) from the ready mirror, so even
+                # a live fast build paints the Pending Report lane without the ready pass.
+                _wl_apply_ready_stages(data.get("items"))
             # RESPONSE-MUTATING READS stay inline (the client needs them on this paint):
             # consent-on-file flags and the Meena-local overlay (received/started/completed).
             _annotate_worklist_consent(data.get("items"))
@@ -8393,6 +8565,18 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
             pass
     # Cache the fully-annotated board for the next few seconds of pollers on this scope.
     if isinstance(data, dict):
+        # A successful LIVE ready build also warms the ready mirror, so one operator's
+        # slow pass makes it instant for everyone else. Org-wide builds only — a
+        # branch-scoped board must never overwrite the all-branches mirror row.
+        if (p.get("ready") == "1" and p.get("modality") != "1" and p.get("pay") != "1"
+                and _src in ("", "ris") and "sites" not in qs and data.get("items") is not None):
+            try:
+                q("""INSERT INTO scheduling.worklist_mirror (scope_key, payload, fetched_at)
+                     VALUES (%s, %s::jsonb, NOW())
+                     ON CONFLICT (scope_key) DO UPDATE SET payload=EXCLUDED.payload, fetched_at=NOW()""",
+                  (_wl_ready_mirror_key(qs.get("from", ""), qs.get("to", "")), json.dumps(data)), exec_only=True)
+            except Exception:
+                pass
         _wl_cache[ck] = (_time.monotonic(), data)
         if len(_wl_cache) > 128:                       # bound memory: drop the oldest entry
             try:
