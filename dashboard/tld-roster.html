@@ -6,51 +6,167 @@
 <title>Meena — TLD staff list</title>
 <link rel="icon" href="/meena_logo.png" type="image/png">
 <style>
-  :root{ --accent:#6B4EFF; --wash:#F0EDFF; --green:#0a8f5b; --danger:#c0261a;
-    --bg:#f4f2fc; --card:#fff; --ink:#1c1930; --muted:#7a7690; --border:#e7e4f0;
-    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  @media (prefers-color-scheme:dark){ :root{ --bg:#12101c; --card:#1a1826; --ink:#eceaf6;
-    --muted:#9691ad; --border:#2c2940; --wash:#241f3d; } }
+  :root{
+    --accent:#6B4EFF; --accent2:#8358FD; --accent3:#A78BFF; --wash:#EFEBFF;
+    --green:#0E9F6E; --danger:#E25555;
+    --bg:#F4F1FF; --card:#FFFFFF; --field:#FCFBFF;
+    --ink:#191631; --ink2:#4A4560; --muted:#847FA0; --border:#E9E4F6;
+    --ring:0 0 0 3px rgba(107,78,255,.18);
+    --shadow:0 24px 60px rgba(76,55,180,.16);
+    --glow:rgba(107,78,255,.20);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){ :root{
+    --wash:#26214A; --bg:#0D0B1A; --card:#17152A; --field:#201D38;
+    --ink:#EEECF8; --ink2:#C6C2DC; --muted:#948FB2; --border:#2E2A4A;
+    --shadow:0 24px 60px rgba(0,0,0,.6); --glow:rgba(124,107,255,.28);
+  } }
   *{box-sizing:border-box} html,body{margin:0}
-  body{background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.5;
-    min-height:100dvh;padding:22px 14px calc(22px + env(safe-area-inset-bottom));display:flex;justify-content:center}
-  .card{width:100%;max-width:560px;background:var(--card);border:1px solid var(--border);
-    border-radius:18px;box-shadow:0 10px 40px rgba(28,25,48,.1);padding:20px;align-self:flex-start}
-  .brand{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-  .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#9a7bff);
-    display:grid;place-items:center;color:#fff;font-weight:800}
-  h1{font-size:17px;margin:0}
-  .who{background:var(--wash);border-radius:12px;padding:11px 14px;margin:4px 0 14px;font-size:14px}
-  .who b{color:var(--accent)}
-  .row{border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:10px;position:relative}
-  .row input{width:100%;padding:10px 11px;border:1px solid var(--border);border-radius:9px;
-    font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);margin-top:6px}
-  .row input:first-child{margin-top:0}
-  .row .del{position:absolute;top:6px;right:6px;border:0;background:transparent;color:var(--danger);
-    font-size:16px;padding:4px 8px;cursor:pointer}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-  .btn{margin-top:14px;width:100%;border:0;border-radius:12px;padding:14px;font-size:15px;font-weight:700;
-    font-family:inherit;background:var(--accent);color:#fff;cursor:pointer}
-  .btn[disabled]{opacity:.5}
-  .btn.sec{background:transparent;color:var(--accent);border:1.5px dashed var(--border);margin-top:8px}
-  .name{margin-top:14px;width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:10px;
-    font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)}
-  .lbl{font-size:12.5px;font-weight:700;color:var(--muted);margin:16px 0 6px}
-  .msg{margin-top:14px;font-size:14px;text-align:center}
-  .ok{color:var(--green)} .err{color:var(--danger)}
-  .done{text-align:center;padding:16px 0}
-  .done .big{font-size:44px} .done h2{margin:8px 0 4px;font-size:18px}
-  .foot{margin-top:16px;text-align:center;color:var(--muted);font-size:11.5px}
-  .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.4);
-    border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
-  @keyframes s{to{transform:rotate(360deg)}}
+  body{ background:
+      radial-gradient(1200px 560px at 50% -10%, var(--glow), transparent 62%),
+      radial-gradient(900px 500px at 100% 8%, rgba(163,139,255,.14), transparent 60%),
+      var(--bg);
+    color:var(--ink); font-family:var(--font); line-height:1.5; -webkit-font-smoothing:antialiased;
+    min-height:100dvh; padding:26px 15px calc(30px + env(safe-area-inset-bottom));
+    display:flex; justify-content:center; }
+  .card{ width:100%; max-width:600px; background:var(--card); border:1px solid var(--border);
+    border-radius:26px; box-shadow:var(--shadow); overflow:hidden; align-self:flex-start;
+    animation:cardIn .6s cubic-bezier(.2,.75,.2,1) both; }
+
+  /* ── Header ── */
+  .hd{ position:relative; padding:22px 22px 20px; overflow:hidden;
+    background:linear-gradient(135deg, rgba(107,78,255,.14), rgba(163,139,255,.06) 55%, transparent);
+    border-bottom:1px solid var(--border); }
+  .hd::after{ content:""; position:absolute; top:-70px; right:-50px; width:190px; height:190px;
+    border-radius:50%; background:radial-gradient(circle, rgba(131,88,253,.28), transparent 70%);
+    filter:blur(6px); pointer-events:none; animation:floaty 9s ease-in-out infinite; }
+  .brand{ position:relative; z-index:1; animation:rise .55s ease both; }
+  .logo-chip{ display:inline-flex; align-items:center; background:#fff; border-radius:13px;
+    padding:9px 14px; box-shadow:0 8px 22px rgba(76,55,180,.20); }
+  .logo-chip img{ display:block; height:26px; width:auto; }
+  h1{ position:relative; z-index:1; font-size:20px; margin:15px 0 3px; letter-spacing:-.01em;
+    animation:rise .55s ease both .06s; }
+  .hd-sub{ position:relative; z-index:1; margin:0; font-size:12.5px; font-weight:600; color:var(--accent);
+    animation:rise .55s ease both .1s; }
+
+  /* ── Body ── */
+  .bd{ padding:20px 22px 24px; }
+  .who{ background:linear-gradient(135deg, var(--wash), rgba(163,139,255,.10));
+    border:1px solid var(--border); border-radius:15px; padding:14px 16px; font-size:13.5px;
+    color:var(--ink2); animation:rise .5s ease both .14s; }
+  .who b{ color:var(--accent); font-weight:800; }
+  .who .sub{ display:block; margin-top:5px; font-size:12.5px; color:var(--muted); }
+
+  .seclbl{ display:flex; align-items:baseline; gap:8px; margin:20px 0 11px; animation:rise .5s ease both .18s; }
+  .seclbl h2{ font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--muted); margin:0; }
+
+  /* ── Staff cards (auto-numbered) ── */
+  #rows{ counter-reset:staff; display:flex; flex-direction:column; gap:12px; }
+  .row{ position:relative; border:1px solid var(--border); border-radius:17px; padding:15px 15px 16px;
+    background:var(--card); counter-increment:staff; overflow:hidden;
+    transition:border-color .18s, box-shadow .18s, transform .18s;
+    animation:rowIn .5s cubic-bezier(.2,.75,.2,1) both; }
+  .row:nth-child(1){animation-delay:.20s} .row:nth-child(2){animation-delay:.26s}
+  .row:nth-child(3){animation-delay:.32s} .row:nth-child(4){animation-delay:.38s}
+  .row:nth-child(5){animation-delay:.44s} .row:nth-child(n+6){animation-delay:.48s}
+  .row::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background:linear-gradient(180deg,var(--accent),var(--accent3)); opacity:0; transition:opacity .18s; }
+  .row:focus-within{ border-color:var(--accent); box-shadow:var(--ring); transform:translateY(-1px); }
+  .row:focus-within::before{ opacity:1; }
+  .row.removing{ animation:rowOut .28s ease forwards; pointer-events:none; }
+  .row-head{ display:flex; align-items:center; gap:9px; margin-bottom:12px; }
+  .row-num{ width:25px; height:25px; flex:0 0 auto; border-radius:9px; font-size:12px; font-weight:800;
+    color:#fff; background:linear-gradient(135deg,var(--accent2),var(--accent));
+    display:grid; place-items:center; box-shadow:0 4px 10px rgba(107,78,255,.32); }
+  .row-num::before{ content:counter(staff); }
+  .row-head .rt{ font-size:12.5px; font-weight:700; color:var(--ink2); }
+  .row .del{ margin-inline-start:auto; border:1px solid var(--border); background:var(--field);
+    color:var(--danger); width:29px; height:29px; border-radius:9px; font-size:14px; line-height:1;
+    cursor:pointer; display:grid; place-items:center; transition:all .16s; }
+  .row .del:hover{ background:var(--danger); border-color:var(--danger); color:#fff; transform:rotate(90deg); }
+
+  .field{ display:flex; flex-direction:column; gap:5px; }
+  .field + .field, .grid2 + .field{ margin-top:12px; }
+  .field label{ font-size:11.5px; font-weight:700; color:var(--muted); padding-inline-start:2px; }
+  .field label .rq{ color:var(--danger); font-weight:800; }
+  input.bad{ border-color:var(--danger); background:var(--card);
+    box-shadow:0 0 0 3px rgba(226,85,85,.16); }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:430px){ .grid2{ grid-template-columns:1fr; } }
+  input{ width:100%; padding:12px; border:1px solid var(--border); border-radius:11px;
+    font-size:15px; font-family:inherit; background:var(--field); color:var(--ink);
+    transition:border-color .16s, box-shadow .16s, background .16s; }
+  input::placeholder{ color:var(--muted); opacity:.8; }
+  input:focus{ outline:none; border-color:var(--accent); box-shadow:var(--ring); background:var(--card); }
+
+  .add{ margin-top:12px; width:100%; border:1.5px dashed var(--border); background:transparent;
+    color:var(--accent); border-radius:14px; padding:13px; font-size:14px; font-weight:800;
+    font-family:inherit; cursor:pointer; transition:all .18s; animation:rise .5s ease both .24s; }
+  .add:hover{ border-color:var(--accent); background:var(--wash); transform:translateY(-1px); }
+  .add:active{ transform:scale(.99); }
+
+  .subname{ animation:rise .5s ease both .28s; }
+
+  .btn{ position:relative; margin-top:18px; width:100%; border:0; border-radius:15px; padding:16px;
+    font-size:15.5px; font-weight:800; font-family:inherit; cursor:pointer; color:#fff; overflow:hidden;
+    background:linear-gradient(135deg,var(--accent3),var(--accent2) 45%,var(--accent));
+    box-shadow:0 12px 30px rgba(107,78,255,.38); animation:rise .5s ease both .32s;
+    transition:transform .12s, box-shadow .18s, opacity .18s; }
+  .btn::after{ content:""; position:absolute; top:0; left:-60%; width:45%; height:100%;
+    background:linear-gradient(100deg, transparent, rgba(255,255,255,.45), transparent);
+    transform:skewX(-18deg); animation:shine 3.4s ease-in-out 1.2s infinite; }
+  .btn:hover{ transform:translateY(-2px); box-shadow:0 18px 40px rgba(107,78,255,.48); }
+  .btn:active{ transform:translateY(0) scale(.995); }
+  .btn[disabled]{ opacity:.65; transform:none; box-shadow:none; cursor:default; }
+  .btn[disabled]::after{ display:none; }
+
+  .msg{ margin-top:12px; font-size:13.5px; text-align:center; }
+  .ok{ color:var(--green) } .err{ color:var(--danger) }
+
+  .done{ text-align:center; padding:24px 8px 12px; }
+  .done .big{ width:70px; height:70px; margin:0 auto 16px; border-radius:50%;
+    background:linear-gradient(135deg,#12c98a,#0E9F6E); display:grid; place-items:center;
+    color:#fff; font-size:36px; box-shadow:0 14px 34px rgba(14,159,110,.45);
+    animation:pop .5s cubic-bezier(.2,1.5,.4,1) both; }
+  .done h2{ margin:0 0 6px; font-size:20px; animation:rise .5s ease both .1s; }
+  .done p{ margin:0 auto; max-width:340px; font-size:13.5px; color:var(--ink2); animation:rise .5s ease both .16s; }
+  .done .note{ margin-top:10px; font-size:12.5px; color:var(--muted); animation:rise .5s ease both .22s; }
+
+  .foot{ padding:15px 22px calc(18px + env(safe-area-inset-bottom)); text-align:center;
+    color:var(--muted); font-size:11.5px; border-top:1px solid var(--border); background:var(--field); }
+
+  .spin{ display:inline-block; width:15px; height:15px; border:2px solid rgba(255,255,255,.45);
+    border-top-color:#fff; border-radius:50%; animation:s .7s linear infinite; vertical-align:-2px; margin-right:7px }
+
+  /* ── Motion ── */
+  @keyframes cardIn{ from{opacity:0; transform:translateY(16px) scale(.985)} to{opacity:1; transform:none} }
+  @keyframes rise{ from{opacity:0; transform:translateY(11px)} to{opacity:1; transform:none} }
+  @keyframes rowIn{ from{opacity:0; transform:translateY(12px)} to{opacity:1; transform:none} }
+  @keyframes rowOut{ to{opacity:0; transform:translateX(14px) scale(.96); max-height:0;
+    margin-top:0; margin-bottom:0; padding-top:0; padding-bottom:0; border-width:0} }
+  @keyframes pop{ 0%{opacity:0; transform:scale(.4)} 60%{transform:scale(1.12)} 100%{opacity:1; transform:scale(1)} }
+  @keyframes shine{ 0%{left:-60%} 55%,100%{left:130%} }
+  @keyframes floaty{ 0%,100%{transform:translateY(0)} 50%{transform:translateY(14px)} }
+  @keyframes s{ to{ transform:rotate(360deg) } }
+  @keyframes flash{ 0%{box-shadow:0 0 0 3px rgba(107,78,255,.35)} 100%{box-shadow:0 0 0 3px rgba(107,78,255,0)} }
+  .row.justadded{ animation:rowIn .5s cubic-bezier(.2,.75,.2,1) both, flash 1.1s ease .3s both; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition-duration:.001ms !important; }
+    .btn::after{ display:none; }
+  }
 </style>
 </head>
 <body>
   <div class="card" id="root">
-    <div class="brand"><div class="logo">م</div><h1>TLD dosimetry — staff list</h1></div>
-    <div id="body"><div class="msg">Loading…</div></div>
-    <div class="foot">Meena Health · TLD Dosimetry Program · sent to the TLD coordinator for review</div>
+    <header class="hd">
+      <div class="brand"><span class="logo-chip"><img src="/meena_logo.png" alt="Meena Health"></span></div>
+      <h1>Staff list for radiation badges</h1>
+      <p class="hd-sub">TLD Dosimetry Program</p>
+    </header>
+    <div class="bd" id="body"><div class="msg">Loading…</div></div>
+    <div class="foot">This list is sent securely to the TLD coordinator for review.</div>
   </div>
 
 <script>
@@ -74,48 +190,95 @@
   function rowHtml(e){
     e = e || {};
     return '<div class="row" id="row-'+(++ROWID)+'">'+
-      '<button type="button" class="del" onclick="delRow('+ROWID+')" title="Remove">✕</button>'+
-      '<input class="r-name" placeholder="Full name *" maxlength="120" value="'+esc(e.name)+'">'+
-      '<div class="grid2">'+
-        '<input class="r-emp" placeholder="Employee no." maxlength="40" value="'+esc(e.employee_no)+'">'+
-        '<input class="r-nid" placeholder="National ID / Iqama" maxlength="20" inputmode="numeric">'+
+      '<div class="row-head">'+
+        '<span class="row-num"></span>'+
+        '<span class="rt">Staff member</span>'+
+        '<button type="button" class="del" onclick="delRow('+ROWID+')" aria-label="Remove" title="Remove">✕</button>'+
       '</div>'+
-      '<input class="r-title" placeholder="Job title (e.g. Dentist, Dental assistant)" maxlength="80" value="'+esc(e.job_title)+'">'+
+      '<div class="field"><label>Full name <span class="rq">*</span></label>'+
+        '<input class="r-name" placeholder="e.g. Ahmed Al-Rashid" maxlength="120" value="'+esc(e.name)+'"></div>'+
+      '<div class="grid2">'+
+        '<div class="field"><label>Employee ID <span class="rq">*</span></label>'+
+          '<input class="r-emp" placeholder="e.g. RAD-102" maxlength="40" value="'+esc(e.employee_no)+'"></div>'+
+        '<div class="field"><label>ID / Iqama <span class="rq">*</span></label>'+
+          '<input class="r-nid" placeholder="10 digits" maxlength="20" inputmode="numeric"></div>'+
+      '</div>'+
+      '<div class="grid2">'+
+        '<div class="field"><label>Email <span class="rq">*</span></label>'+
+          '<input class="r-email" type="email" placeholder="name@example.com" maxlength="120" value="'+esc(e.email)+'"></div>'+
+        '<div class="field"><label>Phone <span class="rq">*</span></label>'+
+          '<input class="r-phone" type="tel" inputmode="tel" placeholder="05XXXXXXXX" maxlength="40" value="'+esc(e.phone)+'"></div>'+
+      '</div>'+
+      '<div class="grid2">'+
+        '<div class="field"><label>Join date <span class="rq">*</span></label>'+
+          '<input class="r-join" type="date" value="'+esc(e.join_date)+'"></div>'+
+        '<div class="field"><label>Job title</label>'+
+          '<input class="r-title" placeholder="e.g. Dentist" maxlength="80" value="'+esc(e.job_title)+'"></div>'+
+      '</div>'+
     '</div>';
   }
 
   function render(d){
     var roster = d.roster || [];
     body.innerHTML =
-      '<div class="who">Staff list for the <b>'+esc(d.deptLabel||'')+'</b> department.<br>'+
-      '<span style="font-size:12.5px;color:var(--muted)">Please review the list below — correct it, remove anyone who left, '+
-      'and add anyone missing. Every person listed will receive a TLD radiation badge each quarter.</span></div>'+
-      '<div class="lbl">Staff members</div>'+
+      '<div class="who">Staff list for the <b>'+esc(d.deptLabel||'')+'</b> department.'+
+        '<span class="sub">Add every staff member with their full details — all fields marked <b style="color:var(--danger)">*</b> are required. '+
+        'Remove anyone who left and add anyone missing. Every person listed will receive a TLD radiation badge each quarter.</span></div>'+
+      '<div class="seclbl"><h2>Staff members</h2></div>'+
       '<div id="rows">'+ (roster.length ? roster.map(rowHtml).join('') : rowHtml()) +'</div>'+
-      '<button type="button" class="btn sec" onclick="addRow()">+ Add another staff member</button>'+
-      '<div class="lbl">Your name (department head)</div>'+
-      '<input class="name" id="subname" placeholder="Your full name *" maxlength="120">'+
+      '<button type="button" class="add" onclick="addRow()">+ Add another staff member</button>'+
+      '<div class="seclbl"><h2>Your name (department head)</h2></div>'+
+      '<div class="field subname"><input id="subname" placeholder="Your full name" maxlength="120"></div>'+
       '<button class="btn" id="send" onclick="submitList()">Send to the TLD coordinator</button>'+
       '<div class="msg" id="msg"></div>';
   }
 
-  function addRow(){ document.getElementById('rows').insertAdjacentHTML('beforeend', rowHtml()); }
-  function delRow(id){ var el=document.getElementById('row-'+id); if(el) el.remove(); }
+  function addRow(){
+    var rows = document.getElementById('rows');
+    rows.insertAdjacentHTML('beforeend', rowHtml());
+    var last = rows.lastElementChild;
+    if(last){
+      last.classList.add('justadded');
+      last.scrollIntoView({behavior:'smooth', block:'nearest'});
+      var f = last.querySelector('.r-name'); if(f) f.focus();
+    }
+  }
+  function delRow(id){
+    var el = document.getElementById('row-'+id);
+    if(!el) return;
+    el.classList.add('removing');
+    setTimeout(function(){ if(el && el.parentNode) el.remove(); }, 280);
+  }
+
+  var REQ = [['.r-name','full name'],['.r-emp','employee ID'],['.r-nid','ID / Iqama'],
+             ['.r-email','email'],['.r-phone','phone'],['.r-join','join date']];
 
   async function submitList(){
     var msg = document.getElementById('msg'); msg.className='msg'; msg.textContent='';
-    var entries = [];
-    document.querySelectorAll('#rows .row').forEach(function(r){
-      var name = r.querySelector('.r-name').value.trim();
-      if(!name) return;
-      entries.push({ name:name,
-        employee_no: r.querySelector('.r-emp').value.trim(),
-        national_id: r.querySelector('.r-nid').value.trim(),
-        job_title: r.querySelector('.r-title').value.trim() });
+    document.querySelectorAll('#rows input.bad').forEach(function(i){ i.classList.remove('bad'); });
+    var rows = [].slice.call(document.querySelectorAll('#rows .row')).filter(function(r){ return !r.classList.contains('removing'); });
+    var entries = [], firstBad = null;
+    rows.forEach(function(r){
+      var val = function(s){ var el=r.querySelector(s); return el ? el.value.trim() : ''; };
+      // A completely empty card counts as "not added" — skip it, don't flag it.
+      var hasAny = REQ.some(function(f){ return val(f[0]); }) || val('.r-title');
+      if(!hasAny) return;
+      REQ.forEach(function(f){
+        var el = r.querySelector(f[0]);
+        if(!el.value.trim()){ el.classList.add('bad'); if(!firstBad) firstBad = el; }
+      });
+      var em = r.querySelector('.r-email');
+      if(em.value.trim() && em.value.indexOf('@') < 0){ em.classList.add('bad'); if(!firstBad) firstBad = em; }
+      entries.push({ name:val('.r-name'), employee_no:val('.r-emp'), national_id:val('.r-nid'),
+        email:val('.r-email'), phone:val('.r-phone'), join_date:val('.r-join'), job_title:val('.r-title') });
     });
-    if(!entries.length){ msg.className='msg err'; msg.textContent='Add at least one staff member with a name.'; return; }
+    if(!entries.length){ msg.className='msg err'; msg.textContent='Add at least one staff member.'; return; }
+    if(firstBad){
+      msg.className='msg err'; msg.textContent='Please complete every required field (marked *) for each staff member.';
+      firstBad.scrollIntoView({behavior:'smooth', block:'center'}); firstBad.focus(); return;
+    }
     var subname = document.getElementById('subname').value.trim();
-    if(!subname){ msg.className='msg err'; msg.textContent='Please enter your name.'; return; }
+    if(!subname){ var sn=document.getElementById('subname'); sn.classList.add('bad'); msg.className='msg err'; msg.textContent='Please enter your name.'; sn.focus(); return; }
     var btn = document.getElementById('send'); btn.disabled = true;
     btn.innerHTML = '<span class="spin"></span>Sending…';
     try{
@@ -131,10 +294,10 @@
   }
 
   function showDone(){
-    body.innerHTML = '<div class="done"><div class="big">✅</div>'+
+    body.innerHTML = '<div class="done"><div class="big">✓</div>'+
       '<h2>Staff list received</h2>'+
-      '<div class="msg ok">Thank you — the TLD coordinator will review it and assign the badges.</div>'+
-      '<div style="color:var(--muted);font-size:13px;margin-top:8px">You can close this page. This link has now been used.</div></div>';
+      '<p>Thank you — the TLD coordinator will review it and assign the radiation badges.</p>'+
+      '<div class="note">You can close this page. This link has now been used.</div></div>';
   }
 
   init();

@@ -921,6 +921,11 @@ def init_schema():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_subs_status ON scheduling.tld_roster_submissions(status, department);")
+            # Extra identity fields the department head fills on the intake page.
+            for _tbl in ("tld_staff", "tld_roster_submissions"):
+                cur.execute(f"ALTER TABLE scheduling.{_tbl} ADD COLUMN IF NOT EXISTS email TEXT;")
+                cur.execute(f"ALTER TABLE scheduling.{_tbl} ADD COLUMN IF NOT EXISTS phone TEXT;")
+                cur.execute(f"ALTER TABLE scheduling.{_tbl} ADD COLUMN IF NOT EXISTS join_date DATE;")
             # One cycle per department per quarter; the exchange deadline drives
             # the reminder sweep (reminder_notified = bucket dedup, like pm_notified).
             cur.execute("""
@@ -10786,15 +10791,25 @@ def serve_tld_roster():
     return FileResponse(os.path.join(DASHBOARD, "tld-roster.html"), media_type="text/html",
                         headers={"Cache-Control": "no-cache, must-revalidate"})
 
+def _tld_parse_date(v):
+    """Accept a 'YYYY-MM-DD' string from the intake page; anything else → None."""
+    s = str(v or "").strip()[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return None
+    return s
+
 @app.get("/api/public/tld/roster")
 def public_tld_roster(request: Request):
     """Prefill for the head's page: department + current active roster (names,
-    employee numbers, job titles — national IDs are never sent back out)."""
+    employee numbers, job titles, email, phone, join date — national IDs are
+    never sent back out)."""
     r = _tld_link_by_token(request.query_params.get("t"))
     if r.get("status") == "submitted":
         return {"ok": True, "already": True, "department": r["department"],
                 "deptLabel": _TLD_DEPT_LABELS.get(r["department"], r["department"])}
-    rows = q("""SELECT name, employee_no, job_title FROM scheduling.tld_staff
+    rows = q("""SELECT name, employee_no, job_title, email, phone,
+                       TO_CHAR(join_date,'YYYY-MM-DD') AS join_date
+                FROM scheduling.tld_staff
                 WHERE department=%s AND active=true ORDER BY name""", (r["department"],)) or []
     return {"ok": True, "already": False, "department": r["department"],
             "deptLabel": _TLD_DEPT_LABELS.get(r["department"], r["department"]), "roster": rows}
@@ -10826,12 +10841,17 @@ async def public_tld_roster_submit(request: Request):
             continue
         clean.append((name, str(e.get("employee_no") or "").strip()[:40] or None,
                       str(e.get("national_id") or "").strip()[:20] or None,
-                      str(e.get("job_title") or "").strip()[:80] or None))
+                      str(e.get("job_title") or "").strip()[:80] or None,
+                      str(e.get("email") or "").strip()[:120] or None,
+                      str(e.get("phone") or "").strip()[:40] or None,
+                      _tld_parse_date(e.get("join_date"))))
     if not clean:
         raise HTTPException(400, "Add at least one staff member with a name")
-    for name, emp, nid, title in clean:
-        q("""INSERT INTO scheduling.tld_roster_submissions (link_id, department, name, employee_no, national_id, job_title)
-             VALUES (%s,%s,%s,%s,%s,%s)""", (r["id"], r["department"], name, emp, nid, title), exec_only=True)
+    for name, emp, nid, title, email, phone, join in clean:
+        q("""INSERT INTO scheduling.tld_roster_submissions
+                 (link_id, department, name, employee_no, national_id, job_title, email, phone, join_date)
+             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+          (r["id"], r["department"], name, emp, nid, title, email, phone, join), exec_only=True)
     q("""UPDATE scheduling.tld_roster_links SET status='submitted', submitted_at=NOW(), submitted_by_name=%s
          WHERE id=%s""", (submitted_by[:120], r["id"]), exec_only=True)
     dept = _TLD_DEPT_LABELS.get(r["department"], r["department"])
@@ -12221,7 +12241,8 @@ def tld_list_staff(request: Request, user=Depends(require_perm("admin_tld"))):
     p = request.query_params
     dept = _tld_dept_or_400(p.get("department")) if p.get("department") else None
     include_inactive = p.get("include_inactive") in ("1", "true")
-    rows = q(f"""SELECT id, department, name, employee_no, national_id, job_title, active,
+    rows = q(f"""SELECT id, department, name, employee_no, national_id, job_title,
+                        email, phone, TO_CHAR(join_date,'YYYY-MM-DD') AS join_date, active,
                         TO_CHAR(updated_at,'YYYY-MM-DD') AS updated_at
                  FROM scheduling.tld_staff
                  WHERE (%s::text IS NULL OR department=%s)
@@ -12236,11 +12257,15 @@ async def tld_create_staff(request: Request, user=Depends(require_perm("admin_tl
     name = (b.get("name") or "").strip()[:120]
     if not name:
         raise HTTPException(400, "name is required")
-    row = q("""INSERT INTO scheduling.tld_staff (department, name, employee_no, national_id, job_title, staff_id, created_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+    row = q("""INSERT INTO scheduling.tld_staff
+                 (department, name, employee_no, national_id, job_title, email, phone, join_date, staff_id, created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (dept, name, (b.get("employee_no") or "").strip()[:40] or None,
              (b.get("national_id") or "").strip()[:20] or None,
              (b.get("job_title") or "").strip()[:80] or None,
+             (b.get("email") or "").strip()[:120] or None,
+             (b.get("phone") or "").strip()[:40] or None,
+             _tld_parse_date(b.get("join_date")),
              b.get("staff_id") if isinstance(b.get("staff_id"), int) else None, user["id"]), one=True)
     insert_audit(user, "TLD_STAFF_ADD", f"dept:{dept}", name)
     return {"id": row["id"]}
@@ -12255,10 +12280,13 @@ async def tld_update_staff(sid: int, request: Request, user=Depends(require_perm
     if not name:
         raise HTTPException(400, "name is required")
     q("""UPDATE scheduling.tld_staff SET name=%s, employee_no=%s, national_id=%s, job_title=%s,
-         active=%s, updated_at=NOW() WHERE id=%s""",
+         email=%s, phone=%s, join_date=%s, active=%s, updated_at=NOW() WHERE id=%s""",
       (name, (b.get("employee_no") or "").strip()[:40] or None,
        (b.get("national_id") or "").strip()[:20] or None,
        (b.get("job_title") or "").strip()[:80] or None,
+       (b.get("email") or "").strip()[:120] or None,
+       (b.get("phone") or "").strip()[:40] or None,
+       _tld_parse_date(b.get("join_date")),
        bool(b.get("active", True)), sid), exec_only=True)
     return {"ok": True}
 
@@ -12327,7 +12355,8 @@ def tld_list_submissions(request: Request, user=Depends(require_perm("admin_tld"
     """Pending queue with a match hint: an existing roster member with the same
     employee number, national ID, or exact name → approving updates that row."""
     status = request.query_params.get("status") or "pending"
-    rows = q("""SELECT s.id, s.department, s.name, s.employee_no, s.national_id, s.job_title, s.status,
+    rows = q("""SELECT s.id, s.department, s.name, s.employee_no, s.national_id, s.job_title,
+                       s.email, s.phone, TO_CHAR(s.join_date,'YYYY-MM-DD') AS join_date, s.status,
                        TO_CHAR(s.created_at,'YYYY-MM-DD HH24:MI') AS created_at,
                        l.submitted_by_name,
                        (SELECT t.id FROM scheduling.tld_staff t
@@ -12357,14 +12386,19 @@ def _tld_approve_submission(sub, user):
                employee_no=COALESCE(%s, employee_no),
                national_id=COALESCE(%s, national_id),
                job_title=COALESCE(%s, job_title),
+               email=COALESCE(%s, email),
+               phone=COALESCE(%s, phone),
+               join_date=COALESCE(%s, join_date),
                active=true, updated_at=NOW() WHERE id=%s""",
-          (sub["name"], sub["employee_no"], sub["national_id"], sub["job_title"], match["id"]), exec_only=True)
+          (sub["name"], sub["employee_no"], sub["national_id"], sub["job_title"],
+           sub.get("email"), sub.get("phone"), sub.get("join_date"), match["id"]), exec_only=True)
         tid = match["id"]
     else:
-        row = q("""INSERT INTO scheduling.tld_staff (department, name, employee_no, national_id, job_title, created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
+        row = q("""INSERT INTO scheduling.tld_staff
+                     (department, name, employee_no, national_id, job_title, email, phone, join_date, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (sub["department"], sub["name"], sub["employee_no"], sub["national_id"],
-                 sub["job_title"], user["id"]), one=True)
+                 sub["job_title"], sub.get("email"), sub.get("phone"), sub.get("join_date"), user["id"]), one=True)
         tid = row["id"]
     q("""UPDATE scheduling.tld_roster_submissions SET status='approved', matched_tld_staff_id=%s,
          reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""", (tid, user["id"], sub["id"]), exec_only=True)
