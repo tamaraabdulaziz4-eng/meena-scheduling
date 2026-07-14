@@ -194,43 +194,60 @@ async function tldApproveAll() {
 }
 
 async function openTldShareLink() {
-  showModal('tld-link-modal', `<h3 style="margin:0 0 12px">Intake link — ${escapeHtml(_tldDeptLabel(_tldDept))}</h3><div id="tld-link-body">${LOADING_HTML}</div>
-    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost" onclick="closeModal('tld-link-modal')">Close</button></div>`);
+  showModal('tld-link-modal', `
+    <h3 style="margin:0 0 3px;font-size:17px">Share intake link — ${escapeHtml(_tldDeptLabel(_tldDept))}</h3>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 16px">
+      Send this to the ${escapeHtml(_tldDeptLabel(_tldDept))} department head. They open it on their phone, fill in the
+      staff list, and submit — it lands here for your review. No login needed.</div>
+    <div id="tld-link-body">${LOADING_HTML}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn btn-ghost" onclick="closeModal('tld-link-modal')">Close</button></div>`);
   let d;
   try { d = await API.post('/tld/roster-link', { department: _tldDept }); }
   catch (e) { document.getElementById('tld-link-body').innerHTML = `<div class="rep-empty">${escapeHtml(e.message || 'Failed')}</div>`; return; }
   const waText = `Please open this link and submit the ${_tldDeptLabel(_tldDept)} staff list for the TLD dosimetry badges (valid 7 days): ${d.url}`;
   document.getElementById('tld-link-body').innerHTML = `
-    <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Send this to the ${escapeHtml(_tldDeptLabel(_tldDept))} department head.
-      They open it on their phone, fill in the staff list, and submit — it lands here for your review. The link expires in 7 days.</div>
-    ${d.qr ? `<div style="text-align:center;margin-bottom:10px"><img src="${d.qr}" alt="QR" style="width:180px;height:180px;border-radius:12px"></div>` : ''}
-    <input class="input" readonly value="${escapeHtml(d.url)}" onclick="this.select()" style="width:100%">
+    ${d.qr ? `<div style="display:flex;justify-content:center;margin-bottom:16px">
+      <div style="padding:12px;background:#fff;border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow)">
+        <img src="${d.qr}" alt="QR code for the intake link" style="display:block;width:172px;height:172px">
+      </div></div>` : ''}
+    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">
+      Intake link · expires in 7 days</label>
+    <input class="input" readonly value="${escapeHtml(d.url)}" onclick="this.select()" style="width:100%;font-size:13px">
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-      <button class="btn btn-primary" onclick="navigator.clipboard.writeText('${escapeHtml(d.url)}').then(()=>toast('Copied'))">Copy link</button>
-      <a class="btn btn-ghost" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(waText)}">Share on WhatsApp</a>
+      <button class="btn btn-primary" style="flex:1;min-width:140px" onclick="navigator.clipboard.writeText('${escapeHtml(d.url)}').then(()=>toast('Link copied'))">Copy link</button>
+      <a class="btn btn-ghost" style="flex:1;min-width:140px;text-align:center" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(waText)}">Share on WhatsApp</a>
     </div>`;
 }
 
 async function openTldLinks() {
-  showModal('tld-links-modal', `<h3 style="margin:0 0 12px">Intake links</h3><div id="tld-links-body">${LOADING_HTML}</div>
-    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost" onclick="closeModal('tld-links-modal')">Close</button></div>`);
+  showModal('tld-links-modal', `
+    <h3 style="margin:0 0 3px;font-size:17px">Intake links</h3>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 16px">
+      No-login links you sent to department heads to collect and update their staff lists.</div>
+    <div id="tld-links-body">${LOADING_HTML}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn btn-ghost" onclick="closeModal('tld-links-modal')">Close</button></div>`);
   let d;
   try { d = await API.get('/tld/roster-links'); }
   catch (e) { document.getElementById('tld-links-body').innerHTML = `<div class="rep-empty">${escapeHtml(e.message)}</div>`; return; }
   const rows = d.links || [];
-  document.getElementById('tld-links-body').innerHTML = rows.length ? `<div class="listcard">
+  const pill = (l) => l.status === 'submitted' ? '<span class="sc ok">Submitted</span>'
+    : l.status === 'closed' ? '<span class="sc no">Revoked</span>'
+    : l.expired ? '<span class="sc no">Expired</span>'
+    : '<span class="sc warn">Open</span>';
+  document.getElementById('tld-links-body').innerHTML = rows.length ? `<div class="cc"><div class="listcard">
     ${rows.map(l => {
-      const st = l.status === 'submitted' ? '<span class="sc ok">Submitted</span>'
-        : l.status === 'closed' ? '<span class="sc no">Closed</span>'
-        : l.expired ? '<span class="sc no">Expired</span>' : '<span class="sc warn">Open</span>';
-      return `<div class="lrow" style="flex-wrap:wrap">
-        <span style="width:90px">${escapeHtml(_tldDeptLabel(l.department))}</span>
-        ${st}
-        <span style="flex:1;min-width:140px;font-size:12px;color:var(--muted)">
-          ${escapeHtml(l.created_at || '')}${l.submitted_by_name ? ` · by ${escapeHtml(l.submitted_by_name)}` : ''}${l.pending ? ` · ${l.pending} pending` : ''}</span>
+      const meta = [l.created_at, l.submitted_by_name ? `by ${escapeHtml(l.submitted_by_name)}` : '', l.pending ? `${l.pending} pending` : '']
+        .filter(Boolean).join(' · ');
+      return `<div class="lrow" style="flex-wrap:wrap;gap:10px">
+        <div style="flex:1;min-width:160px;display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <strong>${escapeHtml(_tldDeptLabel(l.department))}</strong>${pill(l)}
+          </div>
+          <div style="font-size:12px;color:var(--muted)">${meta || '—'}</div>
+        </div>
         ${l.status === 'open' && !l.expired ? `<button class="ghost" onclick="tldCloseLink(${l.id})">Revoke</button>` : ''}
       </div>`;
-    }).join('')}</div>` : `<div class="rep-empty">No links yet.</div>`;
+    }).join('')}</div></div>` : `<div class="rep-empty">No intake links yet — use “Share intake link” to send one to a department head.</div>`;
 }
 
 async function tldCloseLink(id) {
