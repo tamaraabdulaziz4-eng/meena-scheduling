@@ -960,7 +960,12 @@ const _patientCardCache = new Map();     // file -> { ts, data }
 const _patientCardInFlight = new Map();  // file -> Promise
 const PATIENT_CARD_TTL_MS = Number(process.env.PATIENT_CARD_TTL_MS || 20000);
 
-async function buildPatientCard(file) {
+async function buildPatientCard(file, opts = {}) {
+  // Fast mode (enrich:false) returns the base card — demographics + the order list —
+  // WITHOUT the RadiologySearch site-correction and per-order RIS-panel enrichment, so
+  // it paints in ~0.2s. The caller fetches the full enriched card in the background and
+  // merges the indication / ordering-branch / doctor / ER fields when they arrive.
+  const enrich = opts.enrich !== false;
   // Accept ANY identifier, not just the MRN: if the input is a mobile / national ID
   // / iqama, resolve it to the real MRN first (the same unified search the lookup
   // page uses), so every search box finds the patient the same way.
@@ -1003,7 +1008,7 @@ async function buildPatientCard(file) {
   // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
   // o.siteId, so once the site is right it finds the order's row and its indication.
   let _rsAge = null, _rsGender = null;   // age/gender salvaged from the RadiologySearch rows below
-  try {
+  if (enrich) try {
     // Only probe the branches this patient's orders actually touch (+ the result
     // site) instead of all 14 — the orders already carry their site, so this keeps
     // the branch correction while cutting the fan-out that made the card slow.
@@ -1028,7 +1033,7 @@ async function buildPatientCard(file) {
   // Enrich each order with its clinical indication + billing/ER status. Bounded pool
   // (not an unbounded Promise.all) so a 20-order patient never opens 20+ sockets to the
   // 2 GB HIS box at once; the RIS panel is deduped per (day,site) inside fetchRisPanel.
-  const ext = await pool(rawOrders, 6, (o) => enrichOrder(file, o));
+  const ext = enrich ? await pool(rawOrders, 6, (o) => enrichOrder(file, o)) : rawOrders.map(() => ({}));
   const orders = rawOrders.map((o, i) => {
     const n = normalizeOrder(o, ext[i]);
     if (o._department) n.department = o._department;      // ordering clinic (RadiologySearch)
@@ -1051,7 +1056,7 @@ async function buildPatientCard(file) {
     }
   }
   const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
-  return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fetchedAt: new Date().toISOString() };
+  return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fast: !enrich, fetchedAt: new Date().toISOString() };
 }
 
 // Resolve a patient's national ID / Iqama from the DEMOGRAPHIC record when Patient/Search
@@ -1084,19 +1089,21 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
   let file = String(req.params.file || '').trim();
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   const noCache = req.query.nocache === '1' || req.query.nocache === 'true';
+  const fast = req.query.fast === '1' || req.query.fast === 'true';   // base card, no enrichment (~0.2s)
+  const cacheKey = fast ? 'fast|' + file : file;   // fast + full are cached separately
   try {
     if (!noCache) {
-      const hit = _patientCardCache.get(file);
+      const hit = _patientCardCache.get(cacheKey);
       if (hit && Date.now() - hit.ts < PATIENT_CARD_TTL_MS) return res.json(hit.data);
     }
-    let p = _patientCardInFlight.get(file);
+    let p = _patientCardInFlight.get(cacheKey);
     if (!p) {
-      p = buildPatientCard(file).then((data) => {
-        _patientCardCache.set(file, { ts: Date.now(), data });
+      p = buildPatientCard(file, { enrich: !fast }).then((data) => {
+        _patientCardCache.set(cacheKey, { ts: Date.now(), data });
         if (_patientCardCache.size > 500) _patientCardCache.delete(_patientCardCache.keys().next().value);
         return data;
-      }).finally(() => { _patientCardInFlight.delete(file); });
-      _patientCardInFlight.set(file, p);
+      }).finally(() => { _patientCardInFlight.delete(cacheKey); });
+      _patientCardInFlight.set(cacheKey, p);
     }
     return res.json(await p);
   } catch (e) {

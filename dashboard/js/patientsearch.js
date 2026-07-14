@@ -31,6 +31,15 @@ function psPrefetchLookup(mrno) {
   return pr;
 }
 
+// Fast base card (no RadiologySearch/RIS-panel enrichment) — used to paint the card in
+// ~0.5s before the full enriched lookup lands. Deliberately NOT cached in psLookupCache
+// (that cache holds the ENRICHED card); this is a transient first-paint fetch.
+function psFetchLookupFast(mrno) {
+  mrno = String(mrno || '').trim();
+  if (!mrno) return Promise.resolve(null);
+  return API.get(`/radiology/lookup-fast/${encodeURIComponent(mrno)}`);
+}
+
 // ── Per-SECTION prefetch cache ────────────────────────────────────────────────
 // Same idea as psLookupCache but for the card's lazy sections (clinical history,
 // visits, labs, appointments): a section warmed here paints with ZERO spinner when
@@ -242,15 +251,24 @@ async function psOpen(i) {
   const warm = cached && Date.now() - cached.ts < PS_LOOKUP_TTL;
   if (det && !warm) det.innerHTML = LOADING_HTML;
   const seq = ++psState.reqSeq;
+  psNoteCache = new Map();   // fresh patient → drop any prefetched notes from the last one
+  psReportStore = {};        // and any stored reports (Print rebuilds from these)
+  // Keep the search-row patient as a fallback when the lookup's own patient block is thin.
+  const paint = (d) => { psState.lookup = { ...d, patient: d.patient || p }; renderPsDetail(); };
   try {
-    // Use the hover/touch-prefetched lookup when it's ready (instant); else fetch now.
-    const d = warm ? cached.data : await psPrefetchLookup(p.mrno);
+    if (warm) { paint(cached.data); return; }
+    // FAST first: paint the base card (~0.5s — no RadiologySearch/RIS-panel enrichment) so the
+    // card is visible immediately, then upgrade to the full enriched card when it lands (fills
+    // in clinical indication, ordering branch, referring doctor, ER flag).
+    let painted = false;
+    const fast = await psFetchLookupFast(p.mrno).catch(() => null);
     if (seq !== psState.reqSeq) return;
-    // Keep the search-row patient as a fallback when the lookup's own patient block is thin.
-    psState.lookup = { ...d, patient: d.patient || p };
-    psNoteCache = new Map();   // fresh patient → drop any prefetched notes from the last one
-    psReportStore = {};        // and any stored reports (Print rebuilds from these)
-    renderPsDetail();
+    if (fast) { paint(fast); painted = true; }
+    try {
+      const full = await psPrefetchLookup(p.mrno);
+      if (seq !== psState.reqSeq) return;
+      paint(full);
+    } catch (e2) { if (!painted) throw e2; }   // enrichment failed but the fast card is up → keep it
   } catch (e) {
     if (seq !== psState.reqSeq) return;
     if (det) det.innerHTML = `<div class="card"><div class="empty" style="padding:22px 16px"><div class="empty-icon">⚠️</div>
