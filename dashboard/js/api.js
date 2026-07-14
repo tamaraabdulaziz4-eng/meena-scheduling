@@ -156,6 +156,10 @@ const API = {
     }
     return data;
   },
+  // Synchronous last-known body for a GET path (from the ETag store), so a page can
+  // paint instantly from the data it already fetched and refresh silently underneath.
+  // Returns undefined if the path was never fetched this session.
+  cached: (path) => { const c = API._cond.get(path); return c ? API._clone(c.data) : undefined; },
   get:    (path)        => API.request('GET',    path),
   post:   (path, body)  => API.request('POST',   path, body),
   put:    (path, body)  => API.request('PUT',    path, body),

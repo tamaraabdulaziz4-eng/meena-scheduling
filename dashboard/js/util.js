@@ -158,6 +158,19 @@ function icon(name) {
     calendar:      '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
     refresh:       '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
     clinic:        '<path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M12 8v6"/><path d="M9 11h6"/>',
+    zap:           '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    settings:      '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+    repeat:        '<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
+    layers:        '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    maximize:      '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
+    plus:          '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    moon:          '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+    sun:           '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+    smartphone:    '<rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>',
+    unlock:        '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+    send:          '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+    eye:           '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+    'corner-up-left': '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   };
   const p = P[name];
   if (!p) return '';
@@ -265,6 +278,72 @@ function skeletonList(n = 6, opts = {}) {
   return `<div class="skel-list">${rows}</div>`;
 }
 
+// ── Stale-while-revalidate page cache ─────────────────────────────────────────
+// Generalises the worklist's "paint the last board instantly, refresh silently"
+// pattern for any page model. In-memory Map for instant back-navigation plus a
+// sessionStorage mirror so a hard reload still paints instantly. Session-scoped
+// only (doLogout clears sessionStorage), bounded, and every storage op is
+// guarded so a full/blocked store can never break a page.
+const PageCache = {
+  _mem: new Map(),
+  MAX_MEM: 40,
+  MAX_AGE_MS: 10 * 60 * 1000,   // after 10 min a cached copy is too stale to paint
+  get(key) {
+    let hit = PageCache._mem.get(key);
+    if (!hit) {
+      try {
+        const raw = sessionStorage.getItem('pc:' + key);
+        if (raw) { hit = JSON.parse(raw); PageCache._mem.set(key, hit); }
+      } catch (_) {}
+    }
+    if (!hit || (Date.now() - hit.t) > PageCache.MAX_AGE_MS) return undefined;
+    return hit.data;
+  },
+  set(key, data) {
+    const entry = { t: Date.now(), data };
+    PageCache._mem.delete(key);
+    PageCache._mem.set(key, entry);
+    if (PageCache._mem.size > PageCache.MAX_MEM) PageCache._mem.delete(PageCache._mem.keys().next().value);
+    try { sessionStorage.setItem('pc:' + key, JSON.stringify(entry)); } catch (_) {}
+  },
+  del(key) {
+    PageCache._mem.delete(key);
+    try { sessionStorage.removeItem('pc:' + key); } catch (_) {}
+  },
+};
+
+// ── Silent-refresh indicator ──────────────────────────────────────────────────
+// A small floating "Refreshing…" chip shown while a page repaints from cache and
+// revalidates in the background. Never dims or blocks anything — the whole point
+// is that the user keeps reading/working over live content. Depth-counted so
+// overlapping refreshes behave.
+let _refreshDepth = 0;
+function setRefreshing(on) {
+  _refreshDepth = Math.max(0, _refreshDepth + (on ? 1 : -1));
+  let el = document.getElementById('refresh-chip');
+  if (_refreshDepth > 0) {
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'refresh-chip';
+      el.innerHTML = '<span class="mini-spin"></span><span>Refreshing…</span>';
+      document.body.appendChild(el);
+    }
+    el.classList.add('show');
+  } else if (el) {
+    el.classList.remove('show');
+  }
+}
+
+// ── Shift / leave code vocabulary ─────────────────────────────────────────────
+// One shared expansion for the terse rota codes so legends, tooltips and pills
+// across the app all say the same thing.
+const CODE_LABEL = {
+  M: 'Morning', N: 'Night', E: 'Evening', D: 'Day',
+  AL: 'Annual Leave', SL: 'Sick Leave', TB: 'Time-Back', OT: 'Overtime',
+  O: 'Off', OFF: 'Off', OC: 'On-Call',
+};
+function codeLabel(code) { return CODE_LABEL[String(code || '').toUpperCase()] || ''; }
+
 // Replay a soft fade+rise on any element (used when a grid/list re-renders, e.g.
 // changing month) so content never just snaps in.
 function animateIn(elOrId) {
@@ -295,7 +374,7 @@ function playPageReveal() {
   void content.offsetWidth;            // force reflow so the animation replays
   content.classList.add('page-reveal');
   clearTimeout(_revealTimer);
-  _revealTimer = setTimeout(() => content.classList.remove('page-reveal'), 900);
+  _revealTimer = setTimeout(() => content.classList.remove('page-reveal'), 400);
 }
 
 // Loader variant that cycles through several messages (for long waits like Generate)
@@ -327,23 +406,13 @@ function showWelcomeSplash(name) {
   const first = (name || 'there').trim().split(/\s+/)[0];
   nameEl.textContent = first.charAt(0).toUpperCase() + first.slice(1);
 
-  const messages = [
-    'Signing you in…',
-    'Preparing your dashboard…',
-    'Syncing live data…',
-    'Almost ready…',
-  ];
+  // A single static status line: the cycling messages ("Signing you in… /
+  // Syncing live data… / Almost ready…") made even a fast login FEEL long.
+  // The splash now clears as soon as the first page has painted.
   splash.style.display = 'flex';
   splash.classList.remove('done');
   window._splashActive = true;   // suppress the busy overlay while the splash is up
-  let i = 0;
-  statusEl.textContent = messages[0];
-  splash._timer = setInterval(() => {
-    i = (i + 1) % messages.length;
-    statusEl.style.animation = 'none'; void statusEl.offsetWidth;
-    statusEl.style.animation = 'wsplashStatusCycle .5s ease';
-    statusEl.textContent = messages[i];
-  }, 1100);
+  statusEl.textContent = 'Preparing your dashboard…';
 }
 function hideWelcomeSplash() {
   window._splashActive = false;
@@ -408,13 +477,13 @@ function _setThemeColor(c) {
 }
 function applyDark() {
   document.body.classList.add('dark');
-  const i = document.getElementById('theme-icon'); if (i) i.textContent = '☀️';
+  const i = document.getElementById('theme-icon'); if (i) i.innerHTML = icon('sun');
   const l = document.getElementById('theme-label'); if (l) l.textContent = 'Light Mode';
   _setThemeColor('#0d0b1a');
 }
 function applyLight() {
   document.body.classList.remove('dark');
-  const i = document.getElementById('theme-icon'); if (i) i.textContent = '🌙';
+  const i = document.getElementById('theme-icon'); if (i) i.innerHTML = icon('moon');
   const l = document.getElementById('theme-label'); if (l) l.textContent = 'Dark Mode';
   _setThemeColor('#f6f5fb');
 }

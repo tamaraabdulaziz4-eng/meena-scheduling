@@ -6,7 +6,7 @@ let portalYear  = new Date().getFullYear();
 let portalMonth = new Date().getMonth() + 1;
 
 async function renderMySchedulePage() {
-  setTopbar('My Schedule', '', `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
+  setTopbar('My Schedule', monthLabel(portalYear, portalMonth), `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
   const c = document.getElementById('content');
   c.innerHTML = `
     <div class="cc">
@@ -67,7 +67,7 @@ async function renderMyDocuments() {
   box.innerHTML = `<div class="hm-card">
     <div class="hm-card-head" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <div class="hm-card-title">My documents (employee file)</div>
-      <button class="btn btn-sm btn-primary" onclick="printMyFile()">🖨️ Print my file</button>
+      <button class="btn btn-sm btn-primary" onclick="printMyFile()">${icon('printer')} Print my file</button>
     </div>
     <div class="hm-muted" style="font-size:12px;margin:4px 0 8px">Fill in your document dates (license, BLS, ID…). You'll be reminded before anything expires.</div>
     ${rows}</div>`;
@@ -236,24 +236,42 @@ async function changePortalMonth(delta) {
   if (portalMonth > 12) { portalMonth = 1; portalYear++; }
   if (portalMonth < 1)  { portalMonth = 12; portalYear--; }
   document.getElementById('portal-month-label').textContent = monthLabel(portalYear, portalMonth);
-  const grid = document.getElementById('portal-grid');
-  if (grid) grid.innerHTML = LOADING_HTML;
+  setTopbar('My Schedule', monthLabel(portalYear, portalMonth), `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
   await loadMySchedule();
-  animateIn('portal-grid');
   renderMyPreferences();
 }
 
 async function loadMySchedule() {
+  // Stale-while-revalidate: repaint a previously-seen month instantly from
+  // cache and refresh silently — stepping months never blanks the grid.
+  const key = `mysched:${portalYear}-${String(portalMonth).padStart(2, '0')}`;
+  const cached = PageCache.get(key);
+  if (cached) {
+    if ((!allShiftTypes || !allShiftTypes.length) && Array.isArray(cached.shiftTypes)) allShiftTypes = cached.shiftTypes;
+    myScheduleData = cached.data;
+    renderPortalGrid();
+    setRefreshing(true);
+  } else {
+    const grid = document.getElementById('portal-grid');
+    if (grid) grid.innerHTML = LOADING_HTML;
+  }
   try {
     // Shift types power the colours/labels; load once.
     if (!allShiftTypes || !allShiftTypes.length) {
       try { allShiftTypes = await API.get('/shift-types'); } catch (e) { allShiftTypes = []; }
     }
-    myScheduleData = await API.get(`/my-schedule?year=${portalYear}&month=${portalMonth}`);
-    renderPortalGrid();
+    const fresh = await API.get(`/my-schedule?year=${portalYear}&month=${portalMonth}`);
+    const changed = !cached || JSON.stringify(fresh) !== JSON.stringify(myScheduleData);
+    myScheduleData = fresh;
+    PageCache.set(key, { data: fresh, shiftTypes: allShiftTypes });
+    if (changed) renderPortalGrid();
   } catch (e) {
-    document.getElementById('portal-grid').innerHTML =
-      `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`;
+    if (!cached) {
+      document.getElementById('portal-grid').innerHTML =
+        `<div class="empty"><p>${escapeHtml(e.message)}</p></div>`;
+    }
+  } finally {
+    if (cached) setRefreshing(false);
   }
 }
 

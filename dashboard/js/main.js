@@ -32,9 +32,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   startKeepalive();   // keep the (serverless) DB warm so loads don't stall
 
-  showLoader('Starting…');
+  // No full-screen "Starting…" spinner for the auth ping — the page shell is
+  // already visible and the check is a single fast round-trip.
   const authed = await checkAuth();
-  hideLoader();
 
   if (!authed) {
     showLoginView();
@@ -123,7 +123,9 @@ async function initApp() {
   // Auto sign-out after a stretch of inactivity.
   if (typeof startIdleWatch === 'function') startIdleWatch();
   // Load org settings (leave cutoff day) so the leave UI can warn early.
-  try { const st = await API.get('/settings'); if (st?.leave_cutoff_day) leaveCutoffDay = st.leave_cutoff_day; } catch (e) {}
+  // Non-blocking: this was a sequential round-trip that held up EVERY login
+  // for a value only the leave form needs.
+  API.get('/settings').then((st) => { if (st?.leave_cutoff_day) leaveCutoffDay = st.leave_cutoff_day; }).catch(() => {});
   // Pre-load the pending-review count so the badge shows on login
   if (isReviewer && typeof loadReviewBadgeCount === 'function') {
     loadReviewBadgeCount();
@@ -167,9 +169,15 @@ async function initApp() {
   // load first — render immediately (skeleton), no blocking spinner card.
   const SELF_FETCHING = ['worklist', 'patientsearch', 'critical', 'orders', 'handoff', 'cdxfer'];
   if (!SELF_FETCHING.includes(landing)) {
-    showLoader('Loading data…');
+    // Roster pages still need the branch/staff globals before their first render,
+    // but wait behind a shimmer skeleton in the content area — not a dimming
+    // "Loading data…" spinner card that blanks the whole app.
+    const content = document.getElementById('content');
+    if (content && typeof skeletonList === 'function') content.innerHTML = `<div class="cc">${skeletonList(7)}</div>`;
+    // The skeleton is on screen — the login splash has done its job. Clearing it
+    // now lets the user watch the app assemble instead of staring at a logo.
+    if (window._splashActive && typeof hideWelcomeSplash === 'function') hideWelcomeSplash();
     await _globalData;
-    hideLoader();
   }
   await showPage(landing);
 }
@@ -315,6 +323,30 @@ function prefetchPageAssets(page) {
   if (assets) assets.forEach((u) => { if (!_loadedAssets.has(u)) _loadAssetOnce(u).catch(() => {}); });
 }
 
+// Stale-while-revalidate for router pages whose module keeps its data in a
+// global (allStaff, allBranches, …): if the data is already in memory, render
+// it INSTANTLY and revalidate in the background — re-rendering only if the
+// payload actually changed, so returning to a page never blanks or flashes.
+// First-ever visit still awaits the fetch (there's nothing to paint yet).
+async function staleRoute(page, getData, load, render) {
+  const cached = getData();
+  const has = Array.isArray(cached) ? cached.length > 0 : !!cached;
+  if (!has) {
+    try { await load(); } catch (e) {}
+    render();
+    return;
+  }
+  const before = JSON.stringify(cached);
+  render();
+  setRefreshing(true);
+  load()
+    .then(() => {
+      if (currentPage === page && JSON.stringify(getData()) !== before) render();
+    })
+    .catch(() => {})
+    .finally(() => setRefreshing(false));
+}
+
 async function renderRoute(page) {
   // Lazy pages: fetch the module before dispatching. showPage already shows the top-bar
   // loading state and awaits this, so there's no extra placeholder to manage.
@@ -326,7 +358,7 @@ async function renderRoute(page) {
     case 'myschedule': await renderMySchedulePage(); break;
     case 'schedule':   await renderSchedulePage(); break;
     case 'review':     await renderReviewPage(); break;
-    case 'staff':      try { await loadStaff(); } catch(e){}  renderStaffPage();
+    case 'staff':      await staleRoute('staff', () => allStaff, loadStaff, renderStaffPage);
                        // Pending registrations load in the background, then fill in.
                        loadRegistrations().then(() => { if (currentPage === 'staff') renderPendingRegs(); }).catch(()=>{});
                        break;
@@ -350,9 +382,10 @@ async function renderRoute(page) {
     case 'cdxfer':     await renderCdxferPage(); break;
     case 'announcements': renderAnnouncementsPage(); break;
     case 'messages':   await renderMessagesPage(); break;
-    case 'branches':   try { await loadBranches(); } catch(e){}  renderBranchesPage(); break;
-    case 'shifts':     try { await Promise.all([loadBranches(), loadAllShiftTypesRaw()]); } catch(e){}  renderShiftsPage(); break;
-    case 'users':      try { await loadUsers(); } catch(e){}  renderUsersPage(); break;
+    case 'branches':   await staleRoute('branches', () => allBranches, loadBranches, renderBranchesPage); break;
+    case 'shifts':     await staleRoute('shifts', () => allShiftTypesRaw,
+                         () => Promise.all([loadBranches(), loadAllShiftTypesRaw()]), renderShiftsPage); break;
+    case 'users':      await staleRoute('users', () => allUsers, loadUsers, renderUsersPage); break;
     case 'hisaccess':  renderHisAccessPage(); break;
     case 'audit':      await renderAuditPage(); break;
     default:
@@ -416,7 +449,7 @@ async function showPage(requested) {
   } catch (e) {
     console.error('Page render error:', e);
     if (seq === _navSeq) {
-      content.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>
+      content.innerHTML = `<div class="empty"><div class="empty-icon">${icon('alert')}</div>
         <p>Couldn't load this page. Please try again.</p>
         <button class="btn btn-sm" style="margin-top:12px" onclick="showPage('${page}')">Retry</button></div>`;
     }
@@ -431,9 +464,15 @@ async function showPage(requested) {
     if (window.__perf) window.__perf.record({ path: 'page:' + page, ms, ok: true, bytes: null, at: Date.now() });
     if (ms > 800) console.debug(`[nav] ${page} rendered in ${ms}ms`);
   } catch (_) {}
-  // Premium entrance motion for the freshly rendered page.
-  playPageReveal();
+  // Entrance motion only the FIRST time a page is opened this session. Replaying
+  // the blur/rise on every navigation made instant cached repaints look like a
+  // full reload — the "everything is always loading" feeling.
+  if (!_seenPages.has(page)) {
+    _seenPages.add(page);
+    playPageReveal();
+  }
 }
+const _seenPages = new Set();
 
 // Close shift picker when clicking outside
 document.addEventListener('click', (e) => {
