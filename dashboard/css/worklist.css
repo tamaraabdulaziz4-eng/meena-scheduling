@@ -290,6 +290,9 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 .rw .ctrl:hover, .rw .tbtn:hover { border-color: var(--accent); color: var(--accent); }
 .rw .ctrl svg, .rw .tbtn svg { width: 15px; height: 15px; }
 .rw .ctrl.icon { padding: 0 10px; }
+/* Manual "Update" button: the icon spins while the fresh fetch runs. */
+.rw .ctrl.spin svg { animation: rwSpin .8s linear infinite; }
+@keyframes rwSpin { to { transform: rotate(360deg); } }
 .rw .tbtn.today { border-color: var(--accent); color: var(--accent); background: var(--violet-wash); }
 .rw select.ctrl { padding-right: 8px; }
 .rw .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; }
