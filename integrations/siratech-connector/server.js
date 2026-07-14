@@ -1643,6 +1643,28 @@ app.get('/patient/:file/appointments', requireAuth, async (req, res) => {
   }
 });
 
+// ── Bundled patient card (ONE call = one cross-internet round-trip) ────────────
+// The cloud app used to fetch lookup + clinical + visits + labs + appointments as
+// FIVE separate requests, each crossing the internet to reach this connector. This
+// route fans out to those same handlers IN PARALLEL locally (next to the HIS) and
+// returns a single payload, so the cloud makes one round-trip instead of five. Each
+// part degrades independently — a failing section never sinks the others. All data
+// is still live from Siratech (this only changes the transport, not the source).
+app.get('/patient/:file/card', requireAuth, async (req, res) => {
+  const file = String(req.params.file || '').trim();
+  if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
+  const auth = req.headers.authorization || (API_TOKEN ? 'Bearer ' + API_TOKEN : '');
+  const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+  const part = (sub) => fetch(`http://127.0.0.1:${PORT}/patient/${encodeURIComponent(file)}${sub}${qs}`,
+    { headers: auth ? { Authorization: auth } : {} })
+    .then(async (r) => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => null) }))
+    .catch((e) => ({ ok: false, status: 0, error: String((e && e.message) || e) }));
+  const [patient, clinical, visits, labs, appointments] = await Promise.all([
+    part(''), part('/clinical'), part('/visits'), part('/labs'), part('/appointments'),
+  ]);
+  res.json({ ok: true, file, bundledAt: new Date().toISOString(), patient, clinical, visits, labs, appointments });
+});
+
 // ── Visit clinical NOTE (READ-ONLY) ───────────────────────────────────────────
 // The doctor's note(s) for ONE encounter: Visits/DetailsByGroup lists the note
 // templates on the visit, then EMRCore/EmrHtmlPreview renders each — we strip its
