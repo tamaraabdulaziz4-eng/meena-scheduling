@@ -655,9 +655,13 @@ async function wlEnrich(silent, force) {
     // exams → Completed lane) that the panel alone can't see. So fire it once on the first RIS
     // load, then throttle to ~3 min like the live timer. The legacy search board keeps its
     // "not on open" behaviour (its ready pass is the slow per-patient work we defer).
-    const _isRis = !!(wlState.data && wlState.data.source === 'ris');
+    // The server now keeps a warm ready-mirror (the DePACS stage board refreshed by a
+    // background loop), so a ready request normally returns from the DB in a few ms —
+    // fire it unconditionally right after the FIRST paint on any board so the Pending
+    // Report lane fills instantly, and keep the usual throttle afterwards. When the
+    // mirror is cold it simply costs what the first-load pass always cost.
     const _firstReady = wlState.lastReady == null;
-    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 25000)) || (_isRis && _firstReady);
+    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 25000)) || _firstReady;
     if (readyDue) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
