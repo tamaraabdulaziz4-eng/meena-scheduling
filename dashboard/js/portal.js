@@ -6,8 +6,25 @@ let portalYear  = new Date().getFullYear();
 let portalMonth = new Date().getMonth() + 1;
 
 async function renderMySchedulePage() {
-  setTopbar('My Schedule', monthLabel(portalYear, portalMonth), `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
   const c = document.getElementById('content');
+  // Accounts not linked to a staff record (e.g. admin/superadmin) have no personal
+  // schedule — every /my-* endpoint 403s for them. Show an empty state instead of
+  // firing those calls and surfacing a console error + failed requests.
+  if (!currentUser?.staff_id) {
+    setTopbar('My Schedule', monthLabel(portalYear, portalMonth));
+    c.innerHTML = `
+      <div class="cc">
+      ${pageHero(`Welcome, ${currentUser?.username || ''}`, 'My Schedule', 'Your shifts, leave and swaps')}
+      <div class="listcard"><div class="lrow" style="flex-direction:column;align-items:flex-start;gap:8px;padding:26px">
+        <strong>No personal schedule for this account</strong>
+        <div style="font-size:13px;color:var(--muted)">This account isn't linked to a staff member, so there are no
+          personal shifts, leave or swaps to show. Admin accounts manage rosters from the
+          <a href="#/schedule" style="color:var(--accent);font-weight:600">Schedule</a> page instead.</div>
+      </div></div>
+      </div>`;
+    return;
+  }
+  setTopbar('My Schedule', monthLabel(portalYear, portalMonth), `<button class="btn btn-sm" onclick="openLeaveModal()">Request Leave</button>`);
   c.innerHTML = `
     <div class="cc">
     ${pageHero(`Welcome, ${currentUser?.username || ''}`, 'My Schedule', 'Your shifts, leave and swaps')}
