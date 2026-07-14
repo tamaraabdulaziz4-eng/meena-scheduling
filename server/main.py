@@ -6597,22 +6597,30 @@ def radiology_find(request: Request, user=Depends(require_radiology)):
 
 def _rad_scope_site(user):
     """Branch isolation for radiology ("كل فرع لفرعه"). Returns the HIS site id a
-    branch-locked team lead is confined to, or None for organisation-wide access.
+    branch-locked team lead is confined to, or None for TRULY organisation-wide roles.
 
     · superadmin / manager  → None (see every branch — they run the whole group)
-    · everyone else (admin team lead) → their branch's siratech_site_id, IF mapped.
-      If the branch has no site id yet (owner hasn't confirmed the number), we can't
-      safely narrow them, so return None rather than lock them out of everything —
-      the restriction switches on per branch the moment its site id is set."""
+    · everyone else (admin team lead) → their branch's siratech_site_id.
+
+    SECURITY — fail CLOSED. `None` here means "no site restriction", so it must NEVER
+    be returned as a fallback for a branch-confined user: doing so silently promotes a
+    single-branch team lead to org-wide access over every branch's PHI (the callers
+    pin `sites=<scope>` only when scope is not None, and otherwise fall through to the
+    client's picker / all sites). So a confined user whose branch is unlinked or
+    unmapped is DENIED, never widened. The only legitimate `None` is manager/superadmin."""
     role = (user or {}).get("role")
     if role in ("superadmin", "manager"):
         return None
     bid = (user or {}).get("branch_id")
     if not bid:
-        return None
+        raise HTTPException(403, "Your account isn't linked to a branch — radiology access is disabled. Ask an admin.")
     row = q("SELECT siratech_site_id FROM scheduling.branches WHERE id=%s", (bid,), one=True)
     sid = row and row.get("siratech_site_id")
-    return int(sid) if sid else None
+    if not sid:
+        # Branch not yet mapped to a HIS site → we CANNOT isolate this user, so we must
+        # not hand back org-wide access. Deny until an admin sets the branch's site id.
+        raise HTTPException(403, "Your branch isn't linked to a radiology site yet — ask an admin to set it before using radiology.")
+    return int(sid)
 
 @app.get("/api/radiology/stats")
 def radiology_stats(
