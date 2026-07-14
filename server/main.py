@@ -8222,6 +8222,21 @@ def _wl_mirror_key(frm, to):
 def _wl_ready_mirror_key(frm, to):
     return "ready:" + _wl_mirror_key(frm, to)
 
+def _wl_mirror_serve_keys(frm, to, ready=False):
+    """Candidate mirror scope keys for a request range. The dashboard pins its range
+    explicitly (from=yesterday&to=TODAY) while the mirror loops store the open-ended
+    default board (to='') — the SAME live board. Without this alias the exact-key
+    lookup always missed for real client requests and every poll fell through to the
+    live proxy. Try the exact key first, then the open-ended key when `to` is KSA
+    today."""
+    mk = _wl_ready_mirror_key if ready else _wl_mirror_key
+    keys = [mk(frm, to)]
+    if to:
+        ksa_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date().isoformat()
+        if to == ksa_today:
+            keys.append(mk(frm, ""))
+    return keys
+
 def _worklist_mirror_tick():
     """One GENTLE refresh: read the board the way an operator would — WITHOUT forcing fresh —
     so it rides the connector's existing cache (near-zero HIS load when the board is already
@@ -8498,20 +8513,19 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
     # slow board escape hatch) bypasses it so it isn't served the wrong board.
     _src = (qs.get("src") or "").lower()
     if not heavy and qs.get("nocache") != "1" and _src in ("", "ris"):
-        _mkey = _wl_mirror_key(qs.get("from", ""), qs.get("to", ""))
-        _mret = _serve_worklist_from_mirror(request, _mkey, scope, merge_ready=True)
-        if _mret is not None:
-            return _mret
+        for _mkey in _wl_mirror_serve_keys(qs.get("from", ""), qs.get("to", "")):
+            _mret = _serve_worklist_from_mirror(request, _mkey, scope, merge_ready=True)
+            if _mret is not None:
+                return _mret
     # READY fast-path: the pure ready=1 pass (no modality/pay) is served from the warm
     # DePACS-stage mirror in a few ms — the live per-patient fan-out runs only when the
     # mirror is cold/stale (and in the background loop that keeps it warm).
     if (p.get("ready") == "1" and p.get("modality") != "1" and p.get("pay") != "1"
             and qs.get("nocache") != "1" and _src in ("", "ris")):
-        _mret = _serve_worklist_from_mirror(
-            request, _wl_ready_mirror_key(qs.get("from", ""), qs.get("to", "")), scope,
-            max_age=_READY_MIRROR_MAX_AGE)
-        if _mret is not None:
-            return _mret
+        for _mkey in _wl_mirror_serve_keys(qs.get("from", ""), qs.get("to", ""), ready=True):
+            _mret = _serve_worklist_from_mirror(request, _mkey, scope, max_age=_READY_MIRROR_MAX_AGE)
+            if _mret is not None:
+                return _mret
     # 130s fast-pass ceiling: comfortably above the worst-case headless HIS-login refresh
     # (~90-100s, once per ~55min token lapse) so a token refresh racing a poll shows the
     # board, not the retry card. Steady polls return from the 60s worklist cache anyway.
@@ -8571,10 +8585,13 @@ def radiology_worklist(request: Request, user=Depends(require_radiology)):
         if (p.get("ready") == "1" and p.get("modality") != "1" and p.get("pay") != "1"
                 and _src in ("", "ris") and "sites" not in qs and data.get("items") is not None):
             try:
+                # Store under the CANONICAL key (open-ended when to==today) so live builds
+                # and the background loop maintain the same row the stage-map reads.
+                _store_key = _wl_mirror_serve_keys(qs.get("from", ""), qs.get("to", ""), ready=True)[-1]
                 q("""INSERT INTO scheduling.worklist_mirror (scope_key, payload, fetched_at)
                      VALUES (%s, %s::jsonb, NOW())
                      ON CONFLICT (scope_key) DO UPDATE SET payload=EXCLUDED.payload, fetched_at=NOW()""",
-                  (_wl_ready_mirror_key(qs.get("from", ""), qs.get("to", "")), json.dumps(data)), exec_only=True)
+                  (_store_key, json.dumps(data)), exec_only=True)
             except Exception:
                 pass
         _wl_cache[ck] = (_time.monotonic(), data)
