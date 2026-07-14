@@ -704,11 +704,21 @@
 <div class="modal-overlay" id="holidays-modal-overlay">
   <div class="modal">
     <div class="modal-header">
-      <h3>Settings — Email, Leave &amp; Holidays</h3>
+      <h3>Settings</h3>
       <button class="modal-close" onclick="closeHolidaysModal()">✕</button>
     </div>
     <div class="modal-body">
+      <!-- One topic per tab — the old single scroll crammed leave rules, sign-up
+           links, email, SMS and holidays into one wall. Element IDs unchanged. -->
+      <div class="settings-tabs" id="settings-tabs">
+        <button class="settings-tab on" data-pane="general" onclick="settingsTab('general')">General</button>
+        <button class="settings-tab" data-pane="registration" onclick="settingsTab('registration')">Registration</button>
+        <button class="settings-tab" data-pane="email" onclick="settingsTab('email')">Email</button>
+        <button class="settings-tab" data-pane="sms" onclick="settingsTab('sms')">SMS</button>
+        <button class="settings-tab" data-pane="holidays" onclick="settingsTab('holidays')">Holidays</button>
+      </div>
       <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="settings-pane" data-pane="general">
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
           <label>Leave request cutoff (day of month)</label>
           <div style="display:flex;gap:8px;align-items:center">
@@ -718,22 +728,24 @@
           </div>
           <div class="msg" id="cutoff-msg" style="margin-top:6px"></div>
         </div>
+        </div>
+        <div class="settings-pane" data-pane="registration" hidden>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
           <label>Self-registration links</label>
           <div id="reg-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">Loading…</div>
           <div id="reg-links">
             <div class="reg-link-row" data-role="staff">
-              <span class="reg-link-label">👤 Staff</span>
+              <span class="reg-link-label">Staff</span>
               <input type="text" class="reg-link-input" id="reg-link-staff" readonly placeholder="Registration is off">
               <button class="btn btn-ghost btn-sm" onclick="copyRegLink('staff')">Copy</button>
             </div>
             <div class="reg-link-row" data-role="admin">
-              <span class="reg-link-label">🧑‍💼 Team Lead</span>
+              <span class="reg-link-label">Team Lead</span>
               <input type="text" class="reg-link-input" id="reg-link-admin" readonly placeholder="Registration is off">
               <button class="btn btn-ghost btn-sm" onclick="copyRegLink('admin')">Copy</button>
             </div>
             <div class="reg-link-row" data-role="manager">
-              <span class="reg-link-label">👔 Manager</span>
+              <span class="reg-link-label">Manager</span>
               <input type="text" class="reg-link-input" id="reg-link-manager" readonly placeholder="Registration is off">
               <button class="btn btn-ghost btn-sm" onclick="copyRegLink('manager')">Copy</button>
             </div>
@@ -744,7 +756,9 @@
           <span style="font-size:11px;color:var(--muted);display:block;margin-top:6px">Send each link to the right people. Staff sign-ups go to the branch team lead; team-lead & manager sign-ups need your (superadmin) approval.</span>
           <div class="msg" id="reg-link-msg" style="margin-top:6px"></div>
         </div>
-        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
+        </div>
+        <div class="settings-pane" data-pane="email" hidden>
+        <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px;margin-bottom:14px">
           <label>Send email from your work mailbox (Power Automate)</label>
           <div id="email-webhook-status" style="font-size:11px;color:var(--muted);margin-bottom:6px"></div>
           <input type="url" id="email-webhook-url" placeholder="https://…powerplatform.com/…/invoke?…&sig=…" style="width:100%">
@@ -764,8 +778,10 @@
           </div>
           <div class="msg" id="email-test-msg" style="margin-top:6px"></div>
         </div>
+        </div>
+        <div class="settings-pane" data-pane="sms" hidden>
         <div class="form-field" style="background:var(--card-alt);padding:10px;border-radius:8px">
-          <label>📱 SMS gateway <span style="font-weight:400;color:var(--muted)">(consent links + sign-up OTP)</span></label>
+          <label>SMS gateway <span style="font-weight:400;color:var(--muted)">(consent links + sign-up OTP)</span></label>
           <div id="sms-config-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">Loading…</div>
           <label style="display:flex;gap:7px;align-items:center;font-size:13px;margin-bottom:8px"><input type="checkbox" id="sms-enabled"> Enable SMS sending</label>
           <input type="url" id="sms-url" placeholder="Gateway URL · https://api.provider.com/send" style="width:100%;margin-bottom:6px">
@@ -784,7 +800,9 @@
           </div>
           <div class="msg" id="sms-config-msg" style="margin-top:6px"></div>
         </div>
-        <div style="border-top:1px solid var(--border);padding-top:10px;font-weight:700;font-size:13px">Public Holidays</div>
+        </div>
+        <div class="settings-pane" data-pane="holidays" hidden>
+        <div style="font-weight:700;font-size:13px;margin-bottom:10px">Public Holidays</div>
         <div class="form-row">
           <div class="form-field" style="flex:1">
             <label>Date *</label>
@@ -796,8 +814,9 @@
           </div>
         </div>
         <div class="msg" id="holiday-msg"></div>
-        <button class="btn btn-sm" onclick="saveHoliday()" style="align-self:flex-start">+ Add Holiday</button>
-        <div id="holiday-list" style="max-height:300px;overflow:auto;border-top:1px solid var(--border);margin-top:4px"></div>
+        <button class="btn btn-sm" onclick="saveHoliday()" style="align-self:flex-start;margin-top:8px">+ Add Holiday</button>
+        <div id="holiday-list" style="max-height:300px;overflow:auto;border-top:1px solid var(--border);margin-top:10px"></div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -815,25 +834,8 @@
     </div>
     <div class="modal-body">
       <div style="display:flex;flex-direction:column;gap:14px">
-        <div style="background:rgba(107,78,255,0.07);border:1px solid rgba(107,78,255,0.18);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.7">
-          🤖 The solver will generate a schedule based on your current inputs for this branch and month — including staff count, leaves taken, and the settings below. Only <strong style="color:var(--text)">M</strong> and <strong style="color:var(--text)">N</strong> shifts are auto-assigned; other shifts can be added manually after.<br><br>
-          <span style="font-size:12px">
-            &nbsp;· Coverage per section/day follows your <strong style="color:var(--text)">Section Month Settings</strong> (Min/Max M and Min/Max N per day)<br>
-            &nbsp;· <strong style="color:var(--text)">Max consecutive working days</strong> is enforced per section (default 4). After a full block, the next 2 days are Off (unless AL)<br>
-            &nbsp;· <strong style="color:var(--text)">No isolated Off days</strong> (O) if enabled: Off must be at least 2 consecutive days (configured via <strong style="color:var(--text)">Section Month Settings</strong>)<br>
-            &nbsp;· Half‑month rule: each staff works only <strong style="color:var(--text)">one shift type</strong> in each half (M-only or N-only), then switches in the second half (with required rest days around the mid‑month switch)<br>
-            &nbsp;· Cross‑month rule: the previous month’s ending shifts are considered so you don’t start a new month in an unsafe pattern (e.g. 5 straight work days)<br>
-            &nbsp;· Staff work within their <strong style="color:var(--text)">Staff Month Settings</strong> (Min/Max shifts + Max consecutive) for this month<br>
-            &nbsp;· Annual Leave (<strong style="color:var(--text)">AL</strong>) days are locked in and cannot be scheduled as work<br>
-            &nbsp;· Generation runs <strong style="color:var(--text)">per section</strong>: if one section is infeasible, other sections may still generate (you’ll see diagnostics)
-          </span>
-        </div>
-
-        <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.25);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--muted);line-height:1.6">
-          ⚠️ If the solver cannot find a valid schedule, your constraints are too tight. To resolve:<br>
-          1. Adjust <strong style="color:var(--text)">Staff Month Settings</strong> or <strong style="color:var(--text)">Section Month Settings</strong> via <button onclick="closeGenerateModal();openStaffSettingsModal()" class="btn btn-sm" style="display:inline-flex;vertical-align:middle;padding:2px 10px;font-size:11px;margin:0 3px">⚙️ Open Settings</button><br>
-          2. Reduce the number of leaves (AL) for this month<br>
-          3. Add more staff to the section (common cause: not enough staff to cover daily Min M+N under 4‑on/2‑off)
+        <div style="font-size:13px;color:var(--muted);line-height:1.6">
+          Builds this branch's <strong style="color:var(--text)">M</strong> (Morning) and <strong style="color:var(--text)">N</strong> (Night) shifts automatically for the month, respecting leaves and your section/staff settings. Other shifts can be added manually after.
         </div>
 
         <div id="gen-section-pick" style="display:none">
@@ -870,11 +872,35 @@
         <div style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.2);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--danger,#E25555)" id="gen-overwrite-warning">
         </div>
         <div class="msg" id="gen-msg"></div>
+
+        <details class="explainer">
+          <summary>How generation works</summary>
+          <div style="line-height:1.7;font-size:12px">
+            · Coverage per section/day follows your <strong style="color:var(--text)">Section Month Settings</strong> (Min/Max M and Min/Max N per day)<br>
+            · <strong style="color:var(--text)">Max consecutive working days</strong> is enforced per section (default 4). After a full block, the next 2 days are Off (unless AL)<br>
+            · <strong style="color:var(--text)">No isolated Off days</strong> (O) if enabled: Off must be at least 2 consecutive days (configured via <strong style="color:var(--text)">Section Month Settings</strong>)<br>
+            · Half‑month rule: each staff works only <strong style="color:var(--text)">one shift type</strong> in each half (M-only or N-only), then switches in the second half (with required rest days around the mid‑month switch)<br>
+            · Cross‑month rule: the previous month’s ending shifts are considered so you don’t start a new month in an unsafe pattern (e.g. 5 straight work days)<br>
+            · Staff work within their <strong style="color:var(--text)">Staff Month Settings</strong> (Min/Max shifts + Max consecutive) for this month<br>
+            · Annual Leave (<strong style="color:var(--text)">AL</strong>) days are locked in and cannot be scheduled as work<br>
+            · Generation runs <strong style="color:var(--text)">per section</strong>: if one section is infeasible, other sections may still generate (you’ll see diagnostics)
+          </div>
+        </details>
+
+        <details class="explainer warn">
+          <summary>If generation fails</summary>
+          <div style="line-height:1.6;font-size:12px">
+            The solver couldn't find a valid schedule — the constraints are too tight. To resolve:<br>
+            1. Adjust <strong style="color:var(--text)">Staff Month Settings</strong> or <strong style="color:var(--text)">Section Month Settings</strong> via <button onclick="closeGenerateModal();openStaffSettingsModal()" class="btn btn-sm" style="display:inline-flex;vertical-align:middle;padding:2px 10px;font-size:11px;margin:0 3px">Open Settings</button><br>
+            2. Reduce the number of leaves (AL) for this month<br>
+            3. Add more staff to the section (common cause: not enough staff to cover daily Min M+N under 4‑on/2‑off)
+          </div>
+        </details>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeGenerateModal()">Cancel</button>
-      <button class="btn btn-sm" id="gen-btn" onclick="runGenerate()">⚡ Generate</button>
+      <button class="btn btn-sm" id="gen-btn" onclick="runGenerate()">Generate</button>
     </div>
   </div>
 </div>

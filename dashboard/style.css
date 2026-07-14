@@ -735,6 +735,21 @@ button,
   animation: busySpin .75s linear infinite;
 }
 
+/* ── Silent-refresh chip ── a small floating pill shown while a page that already
+   painted from cached data revalidates in the background. Never blocks or dims. */
+#refresh-chip {
+  position: fixed; top: 74px; right: 18px; z-index: 900;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 20px;
+  background: var(--card); border: 1px solid var(--border);
+  box-shadow: var(--shadow-md, 0 4px 14px rgba(31,25,64,.12));
+  color: var(--muted); font-size: 12px; font-weight: 600;
+  opacity: 0; transform: translateY(-6px); pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+#refresh-chip.show { opacity: 1; transform: none; }
+#refresh-chip .mini-spin { width: 13px; height: 13px; border-width: 2px; }
+
 /* Pulsing "pending" dot (replaces the hourglass emoji) */
 
 @keyframes pendPulse {
@@ -775,11 +790,14 @@ button,
 /* ── Premium page reveal ── */
 /* The whole panel clears from a soft blur + lift; its first blocks rise in a
    gentle stagger for a high-end feel. Restarted on every navigation. */
-.content.page-reveal { animation: pageReveal .5s cubic-bezier(.22,.61,.36,1) both; }
+.content.page-reveal { animation: pageReveal .26s ease-out both; }
 @keyframes pageReveal {
-  0%   { opacity: 0; transform: translateY(14px) scale(.992); filter: blur(7px); }
-  60%  { filter: blur(0); }
-  100% { opacity: 1; transform: none; filter: blur(0); }
+  0%   { opacity: .4; transform: translateY(6px); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .content.page-reveal, .content.page-reveal .table-wrap, .content.page-reveal > .card,
+  .table-reveal tbody tr, .anim-in { animation: none !important; }
 }
 /* Stagger showcase grids (KPI / case cards) for an extra-fancy cascade. */
 
@@ -950,6 +968,36 @@ tr:hover td { background: var(--table-row-hover); }
 }
 .modal-close:hover { background: var(--border); color: var(--text); }
 .modal-body { overflow-y: auto; flex: 1; padding: 20px 24px; }
+
+/* ── Settings-modal tabs ── one topic per pane instead of a single long scroll. */
+.settings-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin-bottom: 16px; padding: 4px;
+  background: var(--card-alt); border: 1px solid var(--border); border-radius: 10px;
+}
+.settings-tab {
+  flex: 1; min-width: 70px; padding: 7px 10px; border: none; border-radius: 7px;
+  background: transparent; color: var(--muted); font-family: inherit;
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.settings-tab:hover { color: var(--text); }
+.settings-tab.on { background: var(--card); color: var(--text); box-shadow: 0 1px 4px rgba(31,25,64,.08); }
+
+/* ── Collapsible explainer (details/summary) ── long help prose stays available
+   but out of the way until the user asks for it. */
+details.explainer {
+  background: rgba(107,78,255,0.06); border: 1px solid rgba(107,78,255,0.16);
+  border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: var(--muted);
+}
+details.explainer summary {
+  cursor: pointer; font-weight: 700; font-size: 12.5px; color: var(--text);
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+details.explainer summary::before { content: '▸'; transition: transform .15s ease; }
+details.explainer[open] summary::before { transform: rotate(90deg); }
+details.explainer[open] summary { margin-bottom: 8px; }
+details.explainer.warn { background: rgba(255,165,0,0.07); border-color: rgba(255,165,0,0.22); }
 .modal-footer {
   padding: 14px 24px; border-top: 1px solid var(--border); flex-shrink: 0;
   display: flex; align-items: center; justify-content: flex-end; gap: 10px;
@@ -1187,6 +1235,8 @@ tr:hover td { background: var(--table-row-hover); }
 /* ── Empty state ── */
 .empty { text-align: center; padding: 70px 20px; color: var(--muted); }
 .empty .empty-icon { font-size: 42px; margin-bottom: 12px; }
+/* SVG empty-state icons (icon() in util.js) — sized/tinted to match the old emoji. */
+.empty .empty-icon svg { width: 42px; height: 42px; color: var(--muted); opacity: .8; }
 .empty p { font-size: 15px; font-weight: 600; }
 .empty small { font-size: 12px; }
 

@@ -54,11 +54,11 @@ async function renderSchedulePage() {
   if (!currentBranchId) {
     setTopbar('Schedule', '', '');
     document.getElementById('content').innerHTML =
-      `<div class="cc"><div class="empty"><div class="empty-icon">🏥</div><p>No branches available yet.</p></div></div>`;
+      `<div class="cc"><div class="empty"><div class="empty-icon">${icon('clinic')}</div><p>No branches available yet.</p></div></div>`;
     return;
   }
 
-  setTopbar('Schedule', '', '');
+  setTopbar('Schedule', monthLabel(scheduleYear, scheduleMonth), '');
 
   const c = document.getElementById('content');
   c.innerHTML = `
@@ -78,19 +78,19 @@ async function renderSchedulePage() {
 
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${['admin','superadmin'].includes(currentUser.role) ? `
-          <button class="open" onclick="openGenerateModal()" id="btn-generate">⚡ Generate</button>
-          <button class="ghost" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">⚙️ Settings</button>
+          <button class="open" onclick="openGenerateModal()" id="btn-generate">${icon('zap')} Generate</button>
+          <button class="ghost" onclick="openStaffSettingsModal()" id="btn-settings" title="Staff shift settings">${icon('settings')} Settings</button>
         ` : ''}
         ${['superadmin','manager'].includes(currentUser.role) ? `
-          <button class="ghost" onclick="openCrossCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">🔁 Cross-branch cover</button>
-          <button class="ghost" onclick="openAutofillModal()" id="btn-autofill" title="Auto-fill this branch from surplus staff at same-city sharing branches">🏗 Fill from other branches</button>
+          <button class="ghost" onclick="openCrossCoverModal()" id="btn-cover" title="Cover a day with a staff member from another branch">${icon('repeat')} Cross-branch cover</button>
+          <button class="ghost" onclick="openAutofillModal()" id="btn-autofill" title="Auto-fill this branch from surplus staff at same-city sharing branches">${icon('layers')} Fill from other branches</button>
         ` : ''}
         ${['admin','superadmin','manager'].includes(currentUser.role) ? `
-          <button class="ghost" onclick="exportXLSX()">📥 Export XLSX</button>
-          <button class="ghost" onclick="exportPDF()">📄 Export PDF</button>
+          <button class="ghost" onclick="exportXLSX()">${icon('download')} Export XLSX</button>
+          <button class="ghost" onclick="exportPDF()">${icon('file-text')} Export PDF</button>
         ` : ''}
-        <button class="ghost" onclick="toggleRotaFullscreen()" title="Full-screen rota">⛶ Full screen</button>
-        <button class="ghost" onclick="printSchedule()">🖨 Print</button>
+        <button class="ghost" onclick="toggleRotaFullscreen()" title="Full-screen rota">${icon('maximize')} Full screen</button>
+        <button class="ghost" onclick="printSchedule()">${icon('printer')} Print</button>
       </div>
     </div>
 
@@ -137,7 +137,6 @@ async function onBranchChange() {
   try { localStorage.setItem('lastBranchId', String(currentBranchId)); } catch (e) {}
   syncScheduleHash();
   await loadScheduleData();
-  animateIn('rota-wrap');
 }
 
 async function changeMonth(delta) {
@@ -150,7 +149,6 @@ async function changeMonth(delta) {
   if (scheduleMonth < 1)  { scheduleMonth = 12; scheduleYear--; }
   document.getElementById('month-label').textContent = monthLabel(scheduleYear, scheduleMonth);
   await loadScheduleData();
-  animateIn('rota-wrap');
 }
 
 // Hide any open schedule modal/picker overlays and the busy loaders. Used when
@@ -249,6 +247,61 @@ function buildScheduleReport() {
 }
 
 let _scheduleLoadToken = 0;
+
+// Cache key for the current branch+month rota model (PageCache in util.js).
+function schedCacheKey() {
+  return `sched:${currentBranchId}:${scheduleYear}-${String(scheduleMonth).padStart(2, '0')}`;
+}
+
+// Snapshot the CURRENT in-memory rota state into the cache. Called after every
+// load AND after local cell edits (via buildEntryMap), so navigating away and
+// back — or stepping months — always repaints exactly what the user last saw.
+function schedCacheSync() {
+  if (!currentBranchId) return;
+  PageCache.set(schedCacheKey(), {
+    staff: scheduleStaff, schedule: currentSchedule, entries: currentEntries,
+    monthSettings: staffMonthSettings, secSettings: sectionMonthSettings,
+    shiftTypes: allShiftTypes, holidays: (typeof holidayMap !== 'undefined' ? holidayMap : {}),
+  });
+}
+
+// Topbar context: which branch, month and status the user is actually looking at.
+function updateScheduleTopbar() {
+  const branchName = ['superadmin', 'manager'].includes(currentUser?.role)
+    ? (allBranches.find(b => b.id === currentBranchId)?.name || '')
+    : (currentUser?.branch_name || '');
+  const status = currentSchedule
+    ? ({ draft: 'Draft', submitted: 'Awaiting review', reviewed: 'Reviewed',
+         approved: 'Approved', returned: 'Returned for edits' }[currentSchedule.status] || currentSchedule.status)
+    : 'No schedule yet';
+  setTopbar('Schedule', [branchName, monthLabel(scheduleYear, scheduleMonth), status].filter(Boolean).join(' · '), '');
+}
+
+// Restore module state from a rota model and paint the whole page chrome.
+function applyScheduleModel(m) {
+  scheduleStaff        = m.staff || [];
+  currentSchedule      = m.schedule || null;
+  currentEntries       = m.entries || [];
+  staffMonthSettings   = m.monthSettings || {};
+  sectionMonthSettings = m.secSettings || {};
+  if (Array.isArray(m.shiftTypes) && m.shiftTypes.length) allShiftTypes = m.shiftTypes;
+  if (m.holidays && typeof holidayMap !== 'undefined') holidayMap = m.holidays;
+  buildEntryMap();
+  updateScheduleTopbar();
+  renderScheduleStatusBar();
+  renderTeamLeadBanner();
+  renderShiftLegend();
+  renderScheduleStats();
+  // No schedule exists for this branch/month yet — show a clear empty state
+  // with an explicit "Create" action instead of a half-built grid.
+  if (!currentSchedule) { renderNoScheduleState(); return; }
+  // renderNoScheduleState (possibly from a previous month) hides the toolbar
+  // Generate button — restore it now that a schedule exists.
+  const tbGen = document.getElementById('btn-generate');
+  if (tbGen) tbGen.style.display = '';
+  renderRotaGrid();
+}
+
 async function loadScheduleData() {
   // Guard against overlapping loads: clicking the month arrows quickly fires
   // several loads at once, and whichever HTTP response lands LAST would win —
@@ -256,11 +309,21 @@ async function loadScheduleData() {
   // (the reported "hangs when I change the month"). Only the newest load is
   // allowed to mutate state and render.
   const token = ++_scheduleLoadToken;
-  // Animated inline loader (no dimming overlay) while the month/branch loads.
-  const wrap = document.getElementById('rota-wrap');
-  if (wrap) wrap.innerHTML = LOADING_HTML;
+  // Stale-while-revalidate: if this branch+month was seen before, paint it
+  // INSTANTLY from cache (no blanking, no spinner) and refresh silently under
+  // the small "Refreshing…" chip. Only a never-seen month shows a loader.
+  const cached = PageCache.get(schedCacheKey());
+  let cachedSig = null;
+  if (cached) {
+    cachedSig = JSON.stringify(cached);
+    applyScheduleModel(cached);
+    setRefreshing(true);
+  } else {
+    const wrap = document.getElementById('rota-wrap');
+    if (wrap) wrap.innerHTML = (typeof skeletonList === 'function') ? skeletonList(7) : LOADING_HTML;
+  }
   try {
-    // These four requests don't depend on each other, so fire them in parallel
+    // These requests don't depend on each other, so fire them in parallel
     // instead of awaiting one after another — much faster, especially on a
     // cold Railway start.
     const [staffData, schedData, , monthSettings, , secSettings] = await Promise.all([
@@ -283,26 +346,65 @@ async function loadScheduleData() {
     if (token !== _scheduleLoadToken) return;
 
     syncScheduleHash();   // keep the URL (branch+month) shareable/refresh-safe
-    sectionMonthSettings = secSettings || {};
-    scheduleStaff   = staffData.filter(s => s.active);
-    currentSchedule = schedData.schedule;
-    currentEntries  = schedData.entries || [];
-    buildEntryMap();
-    staffMonthSettings = monthSettings || {};
-
-    renderScheduleStatusBar();
-    renderTeamLeadBanner();
-    renderShiftLegend();
-    renderScheduleStats();
-    // No schedule exists for this branch/month yet — show a clear empty state
-    // with an explicit "Create" action instead of a half-built grid.
-    if (!currentSchedule) { renderNoScheduleState(); return; }
-    renderRotaGrid();
+    const model = {
+      staff: staffData.filter(s => s.active),
+      schedule: schedData.schedule,
+      entries: schedData.entries || [],
+      monthSettings: monthSettings || {},
+      secSettings: secSettings || {},
+      shiftTypes: allShiftTypes,
+      holidays: (typeof holidayMap !== 'undefined' ? holidayMap : {}),
+    };
+    PageCache.set(schedCacheKey(), model);
+    // If the fresh data matches what's already painted from cache, skip the DOM
+    // rebuild entirely — no flicker, no lost scroll, no closed pickers.
+    if (!(cached && JSON.stringify(model) === cachedSig)) applyScheduleModel(model);
+    // Quietly warm the neighbouring months so the arrows are instant even the
+    // first time they're pressed.
+    setTimeout(() => { if (token === _scheduleLoadToken && currentPage === 'schedule') prefetchAdjacentMonths(); }, 1200);
   } catch (err) {
     if (token !== _scheduleLoadToken) return;
-    document.getElementById('rota-wrap').innerHTML =
-      `<div class="empty"><div class="empty-icon">⚠️</div><p>${escapeHtml(err.message)}</p></div>`;
+    if (cached) {
+      // The cached rota is still on screen — tell the user quietly, don't blank it.
+      toast("Couldn't refresh the schedule — showing the last-loaded version", 'err');
+    } else {
+      document.getElementById('rota-wrap').innerHTML =
+        `<div class="empty"><div class="empty-icon">${icon('alert')}</div><p>${escapeHtml(err.message)}</p>
+         <button class="btn btn-sm" style="margin-top:12px" onclick="loadScheduleData()">Retry</button></div>`;
+    }
+  } finally {
+    if (cached) setRefreshing(false);
   }
+}
+
+// Warm the previous/next month's rota into the cache (fired ~1s after a load
+// settles). Staff and shift types are month-independent, so only the four
+// month-scoped reads are fetched. Never touches the live globals (holidayMap
+// stays owned by the visible month) and never surfaces errors.
+function prefetchAdjacentMonths() {
+  const branchId = currentBranchId;
+  if (!branchId) return;
+  [-1, 1].forEach((delta) => {
+    let y = scheduleYear, m = scheduleMonth + delta;
+    if (m > 12) { m = 1; y++; }
+    if (m < 1)  { m = 12; y--; }
+    const key = `sched:${branchId}:${y}-${String(m).padStart(2, '0')}`;
+    if (PageCache.get(key)) return;   // already warm
+    Promise.all([
+      API.get(`/schedules/lookup?branch_id=${branchId}&year=${y}&month=${m}`),
+      API.get(`/staff-month-settings?branch_id=${branchId}&year=${y}&month=${m}`).catch(() => ({})),
+      API.get(`/holidays?year=${y}&month=${m}`).catch(() => []),
+      API.get(`/section-month-settings?branch_id=${branchId}&year=${y}&month=${m}`).catch(() => ({})),
+    ]).then(([schedData, monthSettings, holidays, secSettings]) => {
+      const holMap = {};
+      (holidays || []).forEach(h => { holMap[h.date] = h.name; });
+      PageCache.set(key, {
+        staff: scheduleStaff, schedule: schedData.schedule, entries: schedData.entries || [],
+        monthSettings: monthSettings || {}, secSettings: secSettings || {},
+        shiftTypes: allShiftTypes, holidays: holMap,
+      });
+    }).catch(() => {});
+  });
 }
 
 // Shown when a branch/month has no schedule yet. Creation is explicit — a team
@@ -326,7 +428,7 @@ function renderNoScheduleState() {
   const label = monthLabel(scheduleYear, scheduleMonth);
   wrap.innerHTML = `
     <div class="empty" style="padding:48px 20px;text-align:center">
-      <div class="empty-icon" style="font-size:40px">🗓️</div>
+      <div class="empty-icon">${icon('calendar')}</div>
       <p style="font-weight:700;margin:8px 0 2px">No schedule for ${label} yet</p>
       <p style="color:var(--muted);font-size:13px;max-width:420px;margin:0 auto 16px">
         ${canBuild
@@ -334,8 +436,8 @@ function renderNoScheduleState() {
           : 'The team lead hasn’t prepared this month’s schedule yet. You’ll be able to review it once it’s submitted.'}
       </p>
       ${canBuild ? `<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-        <button class="open" onclick="createBlankSchedule()">➕ Create blank schedule</button>
-        ${canGenerate ? `<button class="ghost" onclick="openGenerateModal()">⚡ Generate</button>` : ''}
+        <button class="open" onclick="createBlankSchedule()">${icon('plus')} Create blank schedule</button>
+        ${canGenerate ? `<button class="ghost" onclick="openGenerateModal()">${icon('zap')} Generate</button>` : ''}
       </div>` : ''}
     </div>`;
 }
@@ -354,6 +456,10 @@ function buildEntryMap() {
     const dateStr = e.date ? e.date.slice(0,10) : '';
     entryMap[`${e.staff_id}_${dateStr}`] = e;
   }
+  // Every path that changes entries (cell edit, on-call toggle, generate, load)
+  // rebuilds this map — so this is the one write-through point that keeps the
+  // month cache in sync with what's on screen.
+  schedCacheSync();
 }
 
 // ── Team-lead submission status banner ────────────────────────────────────────
@@ -405,35 +511,35 @@ function renderTeamLeadBanner() {
   if (manuallyLocked) {
     // Draft/returned but manually locked: Generate is blocked but there's no
     // review step to withdraw from — surface an Unlock action instead.
-    html = banner('🔒', 'rgba(243,156,18,.15)',
+    html = banner(icon('lock'), 'rgba(243,156,18,.15)',
       'Schedule locked',
       "This schedule is manually locked, so it can't be generated or edited. Unlock it to make changes.",
       '<span class="sc warn">Locked</span>',
-      `<button class="ghost" onclick="toggleScheduleLock()">🔓 Unlock</button>`);
+      `<button class="ghost" onclick="toggleScheduleLock()">${icon('unlock')} Unlock</button>`);
   } else if (status === 'draft' || status === 'returned') {
     const returned = status === 'returned';
-    html = banner(returned ? '↩' : '📝',
+    html = banner(returned ? icon('corner-up-left') : icon('edit'),
       returned ? 'rgba(255,107,107,.15)' : 'rgba(133,133,168,.15)',
       returned ? 'Returned for edits' : 'Draft — not submitted yet',
       returned && note ? 'Manager note: ' + escapeHtml(note) : 'Finish the rota, then send it to your manager for review.',
-      returned ? '<span class="sc warn">↩ Returned</span>' : '<span class="ris scheduled"><span class="rd"></span>Draft</span>',
-      `<button class="ghost" onclick="checkScheduleNow()" title="Check for coverage gaps, overwork, and blanks">🔍 Check</button>
-       <button class="open" onclick="submitScheduleForReview(${sid})">📤 Submit for review</button>`);
+      returned ? '<span class="sc warn">Returned</span>' : '<span class="ris scheduled"><span class="rd"></span>Draft</span>',
+      `<button class="ghost" onclick="checkScheduleNow()" title="Check for coverage gaps, overwork, and blanks">${icon('search')} Check</button>
+       <button class="open" onclick="submitScheduleForReview(${sid})">${icon('send')} Submit for review</button>`);
   } else if (status === 'submitted') {
     // Manager hasn't acted yet — the team lead can still pull it back.
-    html = banner('⏳', 'rgba(255,159,67,.15)',
+    html = banner(icon('clock'), 'rgba(255,159,67,.15)',
       'Pending manager review',
       'The schedule is locked until the manager reviews it.',
       '<span class="ris progress"><span class="rd"></span>Submitted</span>',
-      `<button class="ghost" onclick="withdrawSchedule(${sid})">↩ Withdraw</button>`);
+      `<button class="ghost" onclick="withdrawSchedule(${sid})">${icon('corner-up-left')} Withdraw</button>`);
   } else if (status === 'reviewed') {
     // Manager has already reviewed it — only the manager can reopen it now.
-    html = banner('👀', 'rgba(255,159,67,.15)',
+    html = banner(icon('eye'), 'rgba(255,159,67,.15)',
       'Reviewed by manager — locked',
       note ? 'Manager note: ' + escapeHtml(note) : 'To make changes, ask your manager to return the schedule.',
       '<span class="ris prelim"><span class="rd"></span>Reviewed</span>', '');
   } else if (status === 'approved') {
-    html = banner('✓', 'rgba(0,200,150,.15)',
+    html = banner(icon('check'), 'rgba(0,200,150,.15)',
       'Approved — locked',
       note ? 'Manager note: ' + escapeHtml(note) : 'This schedule is approved. To make changes, ask your manager to return it.',
       '<span class="ris final"><span class="rd"></span>Approved</span>', '');
@@ -497,7 +603,7 @@ function checkScheduleNow() {
   if (!issues.length) { toast('✓ No issues found — looks ready to submit'); return; }
   const list = issues.map(i => `<li style="margin:4px 0">${escapeHtml(i)}</li>`).join('');
   showModal('sched-check-modal', `
-    <div style="font-size:16px;font-weight:800;margin-bottom:6px">🔍 Schedule check — ${issues.length} issue${issues.length>1?'s':''}</div>
+    <div style="font-size:16px;font-weight:800;margin-bottom:6px">${icon('search')} Schedule check — ${issues.length} issue${issues.length>1?'s':''}</div>
     <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--text);max-height:300px;overflow:auto">${list}</ul>
     <div style="display:flex;justify-content:flex-end;margin-top:14px">
       <button class="btn btn-sm" onclick="closeModal('sched-check-modal')">Close</button>
@@ -515,7 +621,7 @@ async function submitScheduleForReview(scheduleId) {
   // conscious choice, not a surprise the manager bounces back.
   const issues = checkScheduleIssues();
   const confirmBody = issues.length
-    ? `${issues.length} issue${issues.length>1?'s were':' was'} found (use the 🔍 Check button to see details). Submit to your manager anyway? It will be locked until reviewed.`
+    ? `${issues.length} issue${issues.length>1?'s were':' was'} found (use the Check button to see details). Submit to your manager anyway? It will be locked until reviewed.`
     : 'Send this schedule to your manager? It will be locked until reviewed.';
   const ok = await showConfirm('Submit for review', confirmBody, issues.length ? 'Submit anyway' : 'Submit');
   if (!ok) return;
@@ -549,10 +655,10 @@ function renderScheduleStatusBar() {
     ${isAdmin ? `
       <button class="ghost" onclick="toggleScheduleLock()"
         title="${s.is_locked ? 'Click to unlock' : 'Click to lock'}">
-        ${s.is_locked ? '🔒 Locked' : '🔓 Unlocked'}
+        ${s.is_locked ? icon('lock') + ' Locked' : icon('unlock') + ' Unlocked'}
       </button>` : `
-      ${s.is_locked ? '<span class="sc warn">🔒 Locked</span>' : ''}`}
-    ${(isReviewer && s.is_locked) ? `<span class="sc ok">✎ You can edit this as a manager</span>` : ''}
+      ${s.is_locked ? `<span class="sc warn">${icon('lock')} Locked</span>` : ''}`}
+    ${(isReviewer && s.is_locked) ? `<span class="sc ok">${icon('edit')} You can edit this as a manager</span>` : ''}
     ${s.created_by_name ? `<span style="font-size:11px;color:var(--muted)">Created by: <strong>${escapeHtml(s.created_by_name)}</strong></span>` : ''}
   `;
 }
@@ -565,9 +671,12 @@ function renderShiftLegend() {
   const workShifts   = allShiftTypes.filter(st => !st.is_off && !st.is_leave && !st.is_oncall && st.code !== 'O');
   const statusShifts = allShiftTypes.filter(st => (st.is_leave || st.is_oncall) && st.code !== 'O');
 
+  // Always spell the code out — "M — Morning (7:00 AM – 3:00 PM)" — so nobody
+  // has to guess what a letter on the rota means.
   function cellText(st) {
-    const t = (st.start_time && st.end_time) ? `(${fmt12(st.start_time)} - ${fmt12(st.end_time)})` : null;
-    return t ? `${st.code}: ${t}` : st.label;
+    const label = st.label || (typeof codeLabel === 'function' ? codeLabel(st.code) : '') || '';
+    const t = (st.start_time && st.end_time) ? ` (${fmt12(st.start_time)} – ${fmt12(st.end_time)})` : '';
+    return `<b>${escapeHtml(st.code)}</b>${label ? ' — ' + escapeHtml(label) : ''}${t}`;
   }
 
   // Colour-coded chips (inline colours from each shift, so the printed report —
@@ -579,11 +688,13 @@ function renderShiftLegend() {
   const workChips = workShifts.map(st =>
     `<span class="sc" style="${chipStyle(st)}">${cellText(st)}</span>`).join('');
   const statusChips = statusShifts.map(st =>
-    `<span class="sc" style="${chipStyle(st)}">${st.code} (${st.label})</span>`).join('');
+    `<span class="sc" style="${chipStyle(st)}">${cellText(st)}</span>`).join('');
 
   leg.innerHTML = `
     <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Shifts</span>
       ${workChips}
+      ${statusChips ? `<span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-left:8px">Leave / status</span>` : ''}
       ${statusChips}
     </div>`;
 }
@@ -604,7 +715,7 @@ function renderScheduleStats() {
     const yr   = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{year:'numeric'}).format(new Date(scheduleYear, scheduleMonth-1, 15));
     const m1 = part(1), m2 = part(nDays);
     const span = (m1 === m2) ? m1 : `${m1}–${m2}`;
-    hijriCaption = `🌙 ${span} ${yr}`;
+    hijriCaption = `${span} ${yr} AH`;
   }
 
   bar.innerHTML = `
@@ -651,7 +762,7 @@ function renderRotaGrid() {
           const holiday = (typeof holidayMap !== 'undefined') ? holidayMap[dateStr] : null;
           const hij = (typeof hijriFull === 'function') ? hijriFull(scheduleYear, scheduleMonth, d) : '';
           const isToday = d===new Date().getDate()&&scheduleMonth===new Date().getMonth()+1&&scheduleYear===new Date().getFullYear();
-          const title = [hij, holiday ? ('🎌 ' + holiday) : ''].filter(Boolean).join(' — ');
+          const title = [hij, holiday ? ('Holiday: ' + holiday) : ''].filter(Boolean).join(' — ');
           const bg = holiday ? 'background:rgba(255,107,107,0.18);' : (dow===5?'background:rgba(107,78,255,0.12);':'');
           return `<th class="${isToday?'is-today':''}" title="${escapeHtml(title)}" style="${bg}${isToday?'border-bottom:2px solid var(--accent);':''}${holiday?'border-top:2px solid var(--danger,#ff6b6b);':''}">${d}${holiday?'<span style="color:var(--danger,#ff6b6b)">•</span>':''}</th>`;
         }).join('')}
@@ -698,7 +809,7 @@ function renderRotaGrid() {
           data-staff="${s.id}" data-date="${dateStr}" data-code="${code}"
           onclick="${cellReadonly?'':'cellClick(this)'}"
           style="background:${bgColor};${weekend?`outline:1px solid rgba(107,78,255,0.15);`:''}"
-          title="${escapeHtml(s.name)} — ${dateStr}${code ? ': '+code : ' (blank)'}${isOC?' + OC':''}${isCross?' (cross)':''}">
+          title="${escapeHtml(s.name)} — ${dateStr}${code ? ': ' + code + (st?.label ? ' (' + escapeHtml(st.label) + ')' : '') : ' (no shift)'}${isOC?' + On-Call':''}${isCross?' (cross-branch cover)':''}">
           <div class="shift-chip${isOC?' has-oc':''}${isCross?' cross':''}" style="color:${txtColor}">
             ${isBlank ? '—' : code}${isCross?'<sup style="font-size:7px">↗</sup>':''}
           </div>
@@ -751,7 +862,7 @@ function visitorRows(nDays) {
   if (!ids.length) return '';
 
   const isReviewer = ['superadmin', 'manager'].includes(currentUser?.role);
-  let rows = `<tr class="rota-section-row"><td colspan="${nDays + 2}">🔁 Cross-branch Cover</td></tr>`;
+  let rows = `<tr class="rota-section-row"><td colspan="${nDays + 2}">Cross-branch Cover</td></tr>`;
   for (const sid of ids) {
     const v = visitors[sid];
     let shiftCount = 0;
@@ -1013,7 +1124,7 @@ async function toggleScheduleLock() {
     renderScheduleStatusBar();
     renderTeamLeadBanner();
     renderRotaGrid();
-    toast(willLock ? '🔒 Schedule locked' : '🔓 Schedule unlocked', 'ok');
+    toast(willLock ? 'Schedule locked' : 'Schedule unlocked', 'ok');
   } catch (err) { toast(err.message, 'err'); }
 }
 
@@ -1177,7 +1288,7 @@ async function openStaffSettingsModal(tab) {
   showModal('staff-settings-modal', `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div>
-        <div style="font-size:16px;font-weight:700">⚙️ Shift Settings</div>
+        <div style="font-size:16px;font-weight:700">${icon('settings')} Shift Settings</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${monthName} ${scheduleYear}</div>
       </div>
       <button onclick="closeModal('staff-settings-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
@@ -1443,7 +1554,7 @@ function openCrossCoverModal() {
   const last = daysInMonth(scheduleYear, scheduleMonth);
   showModal('cover-modal', `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-      <div style="font-size:17px;font-weight:800">🔁 Cover from another branch</div>
+      <div style="font-size:17px;font-weight:800">${icon('repeat')} Cover from another branch</div>
       <button onclick="closeModal('cover-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
     </div>
     <div style="font-size:12px;color:var(--muted);margin-top:4px">Pick a day and a free staff member from another branch to cover it. It won't affect Generate.</div>
@@ -1531,7 +1642,7 @@ function openAutofillModal() {
     .map(s => `<option value="${s.code}"${s.code==='Y3'?' selected':(s.code==='M'?'':'')}>${s.code} — ${escapeHtml(s.label||s.code)}</option>`).join('');
   showModal('autofill-modal', `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-      <div style="font-size:17px;font-weight:800">🏗 Fill from other branches</div>
+      <div style="font-size:17px;font-weight:800">${icon('layers')} Fill from other branches</div>
       <button onclick="closeModal('autofill-modal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
     </div>
     <div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5">
@@ -1672,7 +1783,7 @@ async function runGenerate() {
     }
   } finally {
     hideLoader();
-    btn.disabled = false; btn.textContent = '⚡ Generate';
+    btn.disabled = false; btn.textContent = 'Generate';
   }
 }
 
@@ -1718,7 +1829,7 @@ function openGenerateDiagnosticsModal({ title, solver_status, sections, top_erro
            <ul style="margin:8px 0 0 18px;color:var(--text);line-height:1.5">
              ${fixes.map(f => `<li><strong>${esc(f.setting)}</strong>: ${esc(f.change)}</li>`).join('')}
            </ul>
-           <div style="font-size:11px;color:var(--muted);margin-top:7px">Open ⚙️ Settings → Section Limits to change these for this month.</div>
+           <div style="font-size:11px;color:var(--muted);margin-top:7px">Open Settings → Section Limits to change these for this month.</div>
          </div>`
       : (status === 'INFEASIBLE'
           ? `<div style="margin-top:12px;color:var(--muted);font-size:12px">No single setting change unlocked it — the section is short of staff for this coverage. Add staff, reduce leave, or lower the daily Min M / Min N.</div>`

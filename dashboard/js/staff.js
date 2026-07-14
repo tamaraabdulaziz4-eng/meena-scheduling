@@ -19,7 +19,8 @@ function renderStaffPage() {
   // re-rendering after an edit/delete is instant. Initial data load happens in
   // the router (loadStaff + loadRegistrations).
   const canEdit = ['admin','superadmin','manager'].includes(currentUser?.role);
-  setTopbar('Staff', 'Manage radiology staff',
+  const _active = allStaff.filter(s => s.active !== false).length;
+  setTopbar('Staff', `${allStaff.length} staff · ${_active} active`,
     canEdit ? `<button class="btn btn-sm" onclick="openStaffModal()">+ Add Staff</button>` : ''
   );
 

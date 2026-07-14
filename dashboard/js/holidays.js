@@ -14,7 +14,18 @@ async function loadHolidaysForMonth(year, month) {
 }
 
 // ── Management modal (superadmin) ─────────────────────────────────────────────
+// Settings-modal tab switcher: one topic per pane (General / Registration /
+// Email / SMS / Holidays). Panes stay in the DOM (hidden attr) so every
+// element ID keeps working exactly as before.
+function settingsTab(name) {
+  document.querySelectorAll('#holidays-modal-overlay .settings-pane')
+    .forEach(p => { p.hidden = p.dataset.pane !== name; });
+  document.querySelectorAll('#settings-tabs .settings-tab')
+    .forEach(t => t.classList.toggle('on', t.dataset.pane === name));
+}
+
 async function openHolidaysModal() {
+  settingsTab('general');
   document.getElementById('holiday-msg').textContent = '';
   document.getElementById('holiday-date').value = '';
   document.getElementById('holiday-name').value = '';

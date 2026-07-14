@@ -15,7 +15,7 @@ const STATUS_META = {
 };
 
 async function renderReviewPage() {
-  setTopbar('Review', '', '');
+  setTopbar('Review', `Schedule approvals · ${monthLabel(reviewYear, reviewMonth)}`, '');
   const c = document.getElementById('content');
   c.innerHTML = `
     <div class="cc">
