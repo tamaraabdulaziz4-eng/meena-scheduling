@@ -79,7 +79,7 @@ async function initApp() {
     'nav-orders': 'orders', 'nav-handoff': 'handoff', 'nav-cdxfer': 'cdxfer',
     'nav-radstats': 'radstats', 'nav-peerreview': 'peerreview',
     'nav-branches': 'admin_branches', 'nav-shifts': 'admin_shifts', 'nav-users': 'admin_users',
-    'nav-hisaccess': 'admin_hisaccess', 'nav-audit': 'admin_audit',
+    'nav-hisaccess': 'admin_hisaccess', 'nav-audit': 'admin_audit', 'nav-tld': 'admin_tld',
   };
   for (const [id, key] of Object.entries(NAV_PERM)) {
     const el = document.getElementById(id);
@@ -90,7 +90,7 @@ async function initApp() {
   const canSeeHome = can('home');
   const isReviewer = can('review');
   // Section headers show only when at least one of their children is visible.
-  const anyAdmin = ['admin_branches', 'admin_shifts', 'admin_users', 'admin_hisaccess', 'admin_audit'].some(can);
+  const anyAdmin = ['admin_branches', 'admin_shifts', 'admin_users', 'admin_hisaccess', 'admin_audit', 'admin_tld'].some(can);
   const secAdmin = document.getElementById('nav-section-admin');
   if (secAdmin) secAdmin.style.display = anyAdmin ? 'block' : 'none';
   const radSection = document.getElementById('nav-section-radiology');
@@ -191,7 +191,7 @@ function permsFromRole(role, u) {
   const STAFF = ['myschedule', 'leaves', 'swaps', 'downtime', 'inventory', 'equipment'];
   const ADMIN = STAFF.concat(['home', 'schedule', 'staff', 'reports', 'messages', 'worklist',
     'patientsearch', 'critical', 'orders', 'handoff', 'cdxfer', 'rad_file', 'radstats', 'peerreview']);
-  const ALL = ADMIN.concat(['review', 'admin_branches', 'admin_shifts', 'admin_users', 'admin_hisaccess', 'admin_audit']);
+  const ALL = ADMIN.concat(['review', 'admin_branches', 'admin_shifts', 'admin_users', 'admin_hisaccess', 'admin_audit', 'admin_tld']);
   let base = role === 'superadmin' ? ALL
     : role === 'manager' ? ADMIN.concat(['review'])
     : role === 'admin' ? ADMIN.slice()
@@ -209,7 +209,7 @@ const PAGE_PERM = {
   worklist: 'worklist', patientsearch: 'patientsearch', critical: 'critical', orders: 'orders',
   handoff: 'handoff', cdxfer: 'cdxfer', radstats: 'radstats', peerreview: 'peerreview',
   branches: 'admin_branches', shifts: 'admin_shifts', users: 'admin_users',
-  hisaccess: 'admin_hisaccess', audit: 'admin_audit',
+  hisaccess: 'admin_hisaccess', audit: 'admin_audit', tld: 'admin_tld',
 };
 function resolvePage(page) {
   const perms = (currentUser && currentUser._perms) || new Set(permsFromRole(currentUser?.role, currentUser));
@@ -273,6 +273,7 @@ const PAGE_ASSETS = {
   cdxfer:        ['/js/cdxfer.js'],
   hisaccess:     ['/js/hisaccess.js'],
   swaps:         ['/js/swaps.js'],
+  tld:           ['/js/tld.js'],
 };
 // Cache-buster for injected chunks: the server stamps the content-hash BUILD_ID into
 // <meta name="meena-build"> and rewrites every ?v= in index.html to it, and stamps the
@@ -388,6 +389,7 @@ async function renderRoute(page) {
     case 'users':      await staleRoute('users', () => allUsers, loadUsers, renderUsersPage); break;
     case 'hisaccess':  renderHisAccessPage(); break;
     case 'audit':      await renderAuditPage(); break;
+    case 'tld':        await renderTldPage(); break;
     default:
       document.getElementById('content').innerHTML = `<div class="empty"><p>Page not found</p></div>`;
   }
@@ -401,7 +403,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','worklist','critical','peerreview','patientsearch','radstats','cdxfer','branches','shifts','users','audit']);
+  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','worklist','critical','peerreview','patientsearch','radstats','cdxfer','branches','shifts','users','audit','tld']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;

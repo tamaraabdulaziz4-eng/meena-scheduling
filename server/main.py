@@ -869,6 +869,125 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_maint_equip ON scheduling.maintenance_records(equipment_id, service_date);")
 
+            # ── TLD dosimetry (Radiology + Dental) ──────────────────────────────
+            # Quarterly TLD badge program run by the TLD coordinator: a roster per
+            # department (dental staff are NOT in scheduling.staff, so this is its
+            # own table), badges per quarterly cycle (control badges included),
+            # handover/receiving forms with signatures, and file attachments
+            # (provider dose-report PDF, scanned signed forms) stored as bytea.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_staff (
+                    id SERIAL PRIMARY KEY,
+                    department TEXT NOT NULL CHECK (department IN ('radiology','dental')),
+                    name TEXT NOT NULL,
+                    employee_no TEXT,
+                    national_id TEXT,
+                    job_title TEXT,
+                    staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL,
+                    active BOOLEAN NOT NULL DEFAULT true,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_staff_dept ON scheduling.tld_staff(department, active);")
+            # One-time no-login links the coordinator sends to a department head so
+            # the head submits/updates their staff list from a phone (same trust
+            # model as doc_uploads: unguessable token + expiry + one submission).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_roster_links (
+                    id SERIAL PRIMARY KEY,
+                    department TEXT NOT NULL CHECK (department IN ('radiology','dental')),
+                    token TEXT UNIQUE NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ,
+                    submitted_at TIMESTAMPTZ,
+                    submitted_by_name TEXT
+                );""")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_roster_submissions (
+                    id SERIAL PRIMARY KEY,
+                    link_id INTEGER NOT NULL REFERENCES scheduling.tld_roster_links(id) ON DELETE CASCADE,
+                    department TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    employee_no TEXT,
+                    national_id TEXT,
+                    job_title TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    matched_tld_staff_id INTEGER REFERENCES scheduling.tld_staff(id) ON DELETE SET NULL,
+                    reviewed_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    reviewed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_subs_status ON scheduling.tld_roster_submissions(status, department);")
+            # One cycle per department per quarter; the exchange deadline drives
+            # the reminder sweep (reminder_notified = bucket dedup, like pm_notified).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_cycles (
+                    id SERIAL PRIMARY KEY,
+                    department TEXT NOT NULL CHECK (department IN ('radiology','dental')),
+                    year INTEGER NOT NULL,
+                    quarter SMALLINT NOT NULL CHECK (quarter BETWEEN 1 AND 4),
+                    exchange_deadline DATE,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    reminder_notified TEXT,
+                    notes TEXT,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (department, year, quarter)
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_cycles_deadline ON scheduling.tld_cycles(exchange_deadline);")
+            # A control badge measures background radiation and has no holder.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_badges (
+                    id SERIAL PRIMARY KEY,
+                    cycle_id INTEGER NOT NULL REFERENCES scheduling.tld_cycles(id) ON DELETE CASCADE,
+                    serial TEXT NOT NULL,
+                    tld_staff_id INTEGER REFERENCES scheduling.tld_staff(id) ON DELETE SET NULL,
+                    is_control BOOLEAN NOT NULL DEFAULT false,
+                    status TEXT NOT NULL DEFAULT 'issued',
+                    issued_at DATE,
+                    collected_at DATE,
+                    returned_at DATE,
+                    note TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (cycle_id, serial)
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_badges_cycle ON scheduling.tld_badges(cycle_id, status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_badges_staff ON scheduling.tld_badges(tld_staff_id);")
+            # Handover / receiving forms: the badge list is snapshotted as JSONB so
+            # the printed form is reproducible even after badges are edited later.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_forms (
+                    id SERIAL PRIMARY KEY,
+                    cycle_id INTEGER NOT NULL REFERENCES scheduling.tld_cycles(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL CHECK (kind IN ('handover','receiving')),
+                    form_date DATE NOT NULL,
+                    handed_by TEXT NOT NULL,
+                    received_by TEXT NOT NULL,
+                    handed_sig TEXT,
+                    received_sig TEXT,
+                    badges JSONB NOT NULL DEFAULT '[]',
+                    note TEXT,
+                    created_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_forms_cycle ON scheduling.tld_forms(cycle_id);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.tld_attachments (
+                    id SERIAL PRIMARY KEY,
+                    cycle_id INTEGER NOT NULL REFERENCES scheduling.tld_cycles(id) ON DELETE CASCADE,
+                    form_id INTEGER REFERENCES scheduling.tld_forms(id) ON DELETE SET NULL,
+                    kind TEXT NOT NULL DEFAULT 'other',
+                    name TEXT NOT NULL,
+                    mime TEXT NOT NULL DEFAULT 'application/pdf',
+                    data BYTEA NOT NULL,
+                    uploaded_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tld_attach_cycle ON scheduling.tld_attachments(cycle_id);")
+
             # Performance indexes for the hottest lookups. The UNIQUE constraints
             # already cover (schedule_id,staff_id,date), (branch_id,year,month),
             # (staff_id,date for leaves) and (branch_id,date for cases); these two
@@ -1422,7 +1541,7 @@ PERMISSION_GROUPS = [
     ]),
     ("Admin tools", [
         ("admin_branches", "Branches"), ("admin_shifts", "Shift types"), ("admin_users", "Users & permissions"),
-        ("admin_hisaccess", "HIS access"), ("admin_audit", "Audit log"),
+        ("admin_hisaccess", "HIS access"), ("admin_audit", "Audit log"), ("admin_tld", "TLD / Dosimetry"),
     ]),
 ]
 PERMISSION_KEYS = [k for _grp, items in PERMISSION_GROUPS for k, _lbl in items]
@@ -10641,6 +10760,86 @@ async def doc_submit(request: Request):
         filed = False
     return {"ok": True, "filed": bool(filed)}
 
+# ── TLD roster intake (public, no login) ──────────────────────────────────────
+# The TLD coordinator mints a tokenized link (see /api/tld/roster-link) and sends
+# it to the Radiology/Dental department head, who opens it on a phone and submits
+# their staff list. Same trust model as the doc-upload QR: unguessable token,
+# short expiry, one submission, revocable. National IDs are typed by the head but
+# never echoed back out on this page.
+def _tld_link_by_token(token):
+    token = (token or "").strip()
+    if not token:
+        raise HTTPException(400, "Invalid link")
+    r = q("SELECT * FROM scheduling.tld_roster_links WHERE token=%s", (token,), one=True)
+    if not r:
+        raise HTTPException(404, "This link is not valid.")
+    if r.get("status") == "closed":
+        raise HTTPException(410, "This link was closed. Ask the TLD coordinator for a new one.")
+    exp = r.get("expires_at")
+    if exp is not None and exp < datetime.now(timezone.utc):
+        raise HTTPException(410, "This link has expired. Ask the TLD coordinator for a new one.")
+    return r
+
+@app.get("/tld-roster")
+def serve_tld_roster():
+    """Public, login-free staff-list submission page for a department head."""
+    return FileResponse(os.path.join(DASHBOARD, "tld-roster.html"), media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+@app.get("/api/public/tld/roster")
+def public_tld_roster(request: Request):
+    """Prefill for the head's page: department + current active roster (names,
+    employee numbers, job titles — national IDs are never sent back out)."""
+    r = _tld_link_by_token(request.query_params.get("t"))
+    if r.get("status") == "submitted":
+        return {"ok": True, "already": True, "department": r["department"],
+                "deptLabel": _TLD_DEPT_LABELS.get(r["department"], r["department"])}
+    rows = q("""SELECT name, employee_no, job_title FROM scheduling.tld_staff
+                WHERE department=%s AND active=true ORDER BY name""", (r["department"],)) or []
+    return {"ok": True, "already": False, "department": r["department"],
+            "deptLabel": _TLD_DEPT_LABELS.get(r["department"], r["department"]), "roster": rows}
+
+@app.post("/api/public/tld/roster")
+async def public_tld_roster_submit(request: Request):
+    """Receive the department head's staff list. Each entry lands as a pending
+    submission the coordinator reviews/approves in the admin TLD section."""
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    r = _tld_link_by_token(b.get("t"))
+    if r.get("status") == "submitted":
+        return {"ok": True, "already": True}
+    entries = b.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise HTTPException(400, "Add at least one staff member")
+    if len(entries) > 200:
+        raise HTTPException(400, "Too many entries")
+    submitted_by = (str(b.get("submitted_by_name") or "").strip() or None)
+    if not submitted_by:
+        raise HTTPException(400, "Your name is required")
+    clean = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        name = str(e.get("name") or "").strip()[:120]
+        if not name:
+            continue
+        clean.append((name, str(e.get("employee_no") or "").strip()[:40] or None,
+                      str(e.get("national_id") or "").strip()[:20] or None,
+                      str(e.get("job_title") or "").strip()[:80] or None))
+    if not clean:
+        raise HTTPException(400, "Add at least one staff member with a name")
+    for name, emp, nid, title in clean:
+        q("""INSERT INTO scheduling.tld_roster_submissions (link_id, department, name, employee_no, national_id, job_title)
+             VALUES (%s,%s,%s,%s,%s,%s)""", (r["id"], r["department"], name, emp, nid, title), exec_only=True)
+    q("""UPDATE scheduling.tld_roster_links SET status='submitted', submitted_at=NOW(), submitted_by_name=%s
+         WHERE id=%s""", (submitted_by[:120], r["id"]), exec_only=True)
+    dept = _TLD_DEPT_LABELS.get(r["department"], r["department"])
+    msg = f"TLD: {dept} staff list submitted by {submitted_by} — {len(clean)} entries pending your review."
+    for uid in _tld_admin_user_ids():
+        notify(uid, msg, link="tld", ntype="info")
+    return {"ok": True, "count": len(clean)}
+
 @app.get("/api/public/consent/{token}")
 def public_consent_get(token: str):
     """Prefill data for the patient's phone page (gated by the unguessable token)."""
@@ -11997,6 +12196,566 @@ async def log_maintenance(eid: int, request: Request, user=Depends(require_admin
     insert_audit(user, "MAINTENANCE_LOG", f"equip:{eid}", f"{kind} {service_date}")
     return {"ok": True}
 
+# ── TLD dosimetry (Radiology + Dental) ────────────────────────────────────────
+# Quarterly badge program: roster per department (intake via the public link in
+# the docupload section), badges per cycle, handover/receiving forms, provider
+# report attachments, and a compliance report. All gated on `admin_tld`.
+_TLD_DEPTS = ("radiology", "dental")
+_TLD_DEPT_LABELS = {"radiology": "Radiology", "dental": "Dental"}
+_TLD_BADGE_STATUSES = ("issued", "collected", "returned")
+
+def _tld_dept_or_400(v):
+    v = str(v or "").strip().lower()
+    if v not in _TLD_DEPTS:
+        raise HTTPException(400, "department must be 'radiology' or 'dental'")
+    return v
+
+def _tld_admin_user_ids():
+    """Everyone who works the TLD section: superadmins + explicit admin_tld grants."""
+    rows = q("""SELECT id FROM scheduling.users
+                WHERE role='superadmin' OR (permissions->>'admin_tld')::boolean IS TRUE""") or []
+    return [r["id"] for r in rows]
+
+@app.get("/api/tld/staff")
+def tld_list_staff(request: Request, user=Depends(require_perm("admin_tld"))):
+    p = request.query_params
+    dept = _tld_dept_or_400(p.get("department")) if p.get("department") else None
+    include_inactive = p.get("include_inactive") in ("1", "true")
+    rows = q(f"""SELECT id, department, name, employee_no, national_id, job_title, active,
+                        TO_CHAR(updated_at,'YYYY-MM-DD') AS updated_at
+                 FROM scheduling.tld_staff
+                 WHERE (%s::text IS NULL OR department=%s)
+                   {'' if include_inactive else 'AND active=true'}
+                 ORDER BY department, name""", (dept, dept))
+    return {"staff": rows}
+
+@app.post("/api/tld/staff")
+async def tld_create_staff(request: Request, user=Depends(require_perm("admin_tld"))):
+    b = await request.json()
+    dept = _tld_dept_or_400(b.get("department"))
+    name = (b.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "name is required")
+    row = q("""INSERT INTO scheduling.tld_staff (department, name, employee_no, national_id, job_title, staff_id, created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (dept, name, (b.get("employee_no") or "").strip()[:40] or None,
+             (b.get("national_id") or "").strip()[:20] or None,
+             (b.get("job_title") or "").strip()[:80] or None,
+             b.get("staff_id") if isinstance(b.get("staff_id"), int) else None, user["id"]), one=True)
+    insert_audit(user, "TLD_STAFF_ADD", f"dept:{dept}", name)
+    return {"id": row["id"]}
+
+@app.put("/api/tld/staff/{sid}")
+async def tld_update_staff(sid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    s = q("SELECT id FROM scheduling.tld_staff WHERE id=%s", (sid,), one=True)
+    if not s:
+        raise HTTPException(404, "Not found")
+    b = await request.json()
+    name = (b.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "name is required")
+    q("""UPDATE scheduling.tld_staff SET name=%s, employee_no=%s, national_id=%s, job_title=%s,
+         active=%s, updated_at=NOW() WHERE id=%s""",
+      (name, (b.get("employee_no") or "").strip()[:40] or None,
+       (b.get("national_id") or "").strip()[:20] or None,
+       (b.get("job_title") or "").strip()[:80] or None,
+       bool(b.get("active", True)), sid), exec_only=True)
+    return {"ok": True}
+
+@app.get("/api/tld/staff/prefill")
+def tld_prefill_staff(request: Request, user=Depends(require_perm("admin_tld"))):
+    """Radiology candidates from the app's staff table not yet in the TLD roster
+    (matched by case-insensitive name), so the coordinator imports instead of retyping."""
+    rows = q("""SELECT s.id AS staff_id, s.name, b.name AS branch_name
+                FROM scheduling.staff s
+                LEFT JOIN scheduling.branches b ON b.id=s.branch_id
+                WHERE COALESCE(s.active,true)=true
+                  AND NOT EXISTS (SELECT 1 FROM scheduling.tld_staff t
+                                  WHERE t.department='radiology' AND LOWER(t.name)=LOWER(s.name))
+                ORDER BY s.name""")
+    return {"candidates": rows}
+
+# ── Roster intake links ───────────────────────────────────────────────────────
+@app.post("/api/tld/roster-link")
+async def tld_create_roster_link(request: Request, user=Depends(require_perm("admin_tld"))):
+    """Mint a no-login link the department head opens to submit their staff list."""
+    import secrets
+    b = await request.json()
+    dept = _tld_dept_or_400(b.get("department"))
+    token = secrets.token_urlsafe(24)
+    row = q("""INSERT INTO scheduling.tld_roster_links (department, token, created_by, expires_at)
+               VALUES (%s,%s,%s, NOW() + interval '7 days') RETURNING id""",
+            (dept, token, user["id"]), one=True)
+    base = str(request.base_url).rstrip("/")
+    xf_host = request.headers.get("x-forwarded-host")
+    xf_proto = request.headers.get("x-forwarded-proto") or "https"
+    if xf_host:
+        base = f"{xf_proto}://{xf_host}"
+    url = f"{base}/tld-roster?t={token}"
+    qr = ""
+    try:
+        import segno
+        qr = segno.make(url, error="m").svg_data_uri(scale=5, border=2, dark="#12103a")
+    except Exception:
+        qr = ""
+    insert_audit(user, "TLD_ROSTER_LINK", f"dept:{dept}", json.dumps({"id": row["id"]}))
+    return {"ok": True, "id": row["id"], "url": url, "qr": qr}
+
+@app.get("/api/tld/roster-links")
+def tld_list_roster_links(user=Depends(require_perm("admin_tld"))):
+    rows = q("""SELECT l.id, l.department, l.status, l.submitted_by_name,
+                       TO_CHAR(l.created_at,'YYYY-MM-DD HH24:MI') AS created_at,
+                       TO_CHAR(l.expires_at,'YYYY-MM-DD HH24:MI') AS expires_at,
+                       (l.expires_at IS NOT NULL AND l.expires_at < NOW()) AS expired,
+                       (SELECT COUNT(*) FROM scheduling.tld_roster_submissions s
+                        WHERE s.link_id=l.id AND s.status='pending') AS pending
+                FROM scheduling.tld_roster_links l
+                ORDER BY l.created_at DESC LIMIT 20""")
+    return {"links": rows}
+
+@app.post("/api/tld/roster-links/{lid}/close")
+def tld_close_roster_link(lid: int, user=Depends(require_perm("admin_tld"))):
+    r = q("UPDATE scheduling.tld_roster_links SET status='closed' WHERE id=%s RETURNING id", (lid,), one=True)
+    if not r:
+        raise HTTPException(404, "Not found")
+    insert_audit(user, "TLD_ROSTER_LINK_CLOSE", f"link:{lid}")
+    return {"ok": True}
+
+# ── Pending submissions review ────────────────────────────────────────────────
+@app.get("/api/tld/submissions")
+def tld_list_submissions(request: Request, user=Depends(require_perm("admin_tld"))):
+    """Pending queue with a match hint: an existing roster member with the same
+    employee number, national ID, or exact name → approving updates that row."""
+    status = request.query_params.get("status") or "pending"
+    rows = q("""SELECT s.id, s.department, s.name, s.employee_no, s.national_id, s.job_title, s.status,
+                       TO_CHAR(s.created_at,'YYYY-MM-DD HH24:MI') AS created_at,
+                       l.submitted_by_name,
+                       (SELECT t.id FROM scheduling.tld_staff t
+                        WHERE t.department=s.department AND (
+                              (s.employee_no IS NOT NULL AND t.employee_no=s.employee_no)
+                           OR (s.national_id IS NOT NULL AND t.national_id=s.national_id)
+                           OR LOWER(t.name)=LOWER(s.name))
+                        ORDER BY t.active DESC, t.id LIMIT 1) AS matched_id
+                FROM scheduling.tld_roster_submissions s
+                JOIN scheduling.tld_roster_links l ON l.id=s.link_id
+                WHERE s.status=%s ORDER BY s.department, s.created_at, s.id""", (status,))
+    return {"submissions": rows}
+
+def _tld_approve_submission(sub, user):
+    """Merge one pending submission into the roster: update the matched member
+    or insert a new one. Returns the tld_staff id."""
+    match = q("""SELECT t.id FROM scheduling.tld_staff t
+                 WHERE t.department=%s AND (
+                       (%s::text IS NOT NULL AND t.employee_no=%s)
+                    OR (%s::text IS NOT NULL AND t.national_id=%s)
+                    OR LOWER(t.name)=LOWER(%s))
+                 ORDER BY t.active DESC, t.id LIMIT 1""",
+              (sub["department"], sub["employee_no"], sub["employee_no"],
+               sub["national_id"], sub["national_id"], sub["name"]), one=True)
+    if match:
+        q("""UPDATE scheduling.tld_staff SET name=%s,
+               employee_no=COALESCE(%s, employee_no),
+               national_id=COALESCE(%s, national_id),
+               job_title=COALESCE(%s, job_title),
+               active=true, updated_at=NOW() WHERE id=%s""",
+          (sub["name"], sub["employee_no"], sub["national_id"], sub["job_title"], match["id"]), exec_only=True)
+        tid = match["id"]
+    else:
+        row = q("""INSERT INTO scheduling.tld_staff (department, name, employee_no, national_id, job_title, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (sub["department"], sub["name"], sub["employee_no"], sub["national_id"],
+                 sub["job_title"], user["id"]), one=True)
+        tid = row["id"]
+    q("""UPDATE scheduling.tld_roster_submissions SET status='approved', matched_tld_staff_id=%s,
+         reviewed_by=%s, reviewed_at=NOW() WHERE id=%s""", (tid, user["id"], sub["id"]), exec_only=True)
+    return tid
+
+@app.post("/api/tld/submissions/{sid}/approve")
+def tld_approve_submission(sid: int, user=Depends(require_perm("admin_tld"))):
+    sub = q("SELECT * FROM scheduling.tld_roster_submissions WHERE id=%s AND status='pending'", (sid,), one=True)
+    if not sub:
+        raise HTTPException(404, "Not found or already reviewed")
+    tid = _tld_approve_submission(sub, user)
+    insert_audit(user, "TLD_SUBMISSION_APPROVE", f"sub:{sid}", sub["name"])
+    return {"ok": True, "tld_staff_id": tid}
+
+@app.post("/api/tld/submissions/{sid}/reject")
+def tld_reject_submission(sid: int, user=Depends(require_perm("admin_tld"))):
+    r = q("""UPDATE scheduling.tld_roster_submissions SET status='rejected', reviewed_by=%s, reviewed_at=NOW()
+             WHERE id=%s AND status='pending' RETURNING id""", (user["id"], sid), one=True)
+    if not r:
+        raise HTTPException(404, "Not found or already reviewed")
+    return {"ok": True}
+
+@app.post("/api/tld/submissions/approve-all")
+async def tld_approve_all_submissions(request: Request, user=Depends(require_perm("admin_tld"))):
+    b = await request.json()
+    dept = _tld_dept_or_400(b.get("department"))
+    subs = q("SELECT * FROM scheduling.tld_roster_submissions WHERE department=%s AND status='pending' ORDER BY id",
+             (dept,)) or []
+    for sub in subs:
+        _tld_approve_submission(sub, user)
+    insert_audit(user, "TLD_SUBMISSION_APPROVE_ALL", f"dept:{dept}", str(len(subs)))
+    return {"ok": True, "approved": len(subs)}
+
+# ── Quarterly cycles & badges ─────────────────────────────────────────────────
+@app.get("/api/tld/cycles")
+def tld_list_cycles(request: Request, user=Depends(require_perm("admin_tld"))):
+    year = _int_or_400(request.query_params.get("year") or datetime.now(timezone.utc).year, "year")
+    rows = q("""SELECT c.id, c.department, c.year, c.quarter, c.status, c.notes,
+                       TO_CHAR(c.exchange_deadline,'YYYY-MM-DD') AS exchange_deadline,
+                       (c.exchange_deadline - CURRENT_DATE) AS days_left,
+                       COUNT(b.id) AS badges,
+                       COUNT(b.id) FILTER (WHERE b.status='issued') AS issued,
+                       COUNT(b.id) FILTER (WHERE b.status='collected') AS collected,
+                       COUNT(b.id) FILTER (WHERE b.status='returned') AS returned
+                FROM scheduling.tld_cycles c
+                LEFT JOIN scheduling.tld_badges b ON b.cycle_id=c.id
+                WHERE c.year=%s
+                GROUP BY c.id ORDER BY c.quarter, c.department""", (year,))
+    return {"cycles": rows}
+
+@app.post("/api/tld/cycles")
+async def tld_create_cycle(request: Request, user=Depends(require_perm("admin_tld"))):
+    b = await request.json()
+    dept = _tld_dept_or_400(b.get("department"))
+    year = _int_or_400(b.get("year"), "year")
+    quarter = _int_or_400(b.get("quarter"), "quarter")
+    if not (1 <= quarter <= 4) or not (2020 <= year <= 2100):
+        raise HTTPException(400, "Invalid quarter/year")
+    deadline = _valid_iso_date(b.get("exchange_deadline")) if b.get("exchange_deadline") else None
+    try:
+        row = q("""INSERT INTO scheduling.tld_cycles (department, year, quarter, exchange_deadline, notes, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (dept, year, quarter, deadline, (b.get("notes") or "").strip()[:400] or None, user["id"]), one=True)
+    except Exception:
+        raise HTTPException(409, f"A {dept} cycle for Q{quarter} {year} already exists")
+    insert_audit(user, "TLD_CYCLE_ADD", f"dept:{dept}", f"Q{quarter} {year}")
+    return {"id": row["id"]}
+
+@app.put("/api/tld/cycles/{cid}")
+async def tld_update_cycle(cid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    c = q("SELECT id FROM scheduling.tld_cycles WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    b = await request.json()
+    deadline = _valid_iso_date(b.get("exchange_deadline")) if b.get("exchange_deadline") else None
+    status = b.get("status") if b.get("status") in ("open", "closed") else "open"
+    # Deadline change resets the reminder buckets (same trick as pm_notified).
+    q("""UPDATE scheduling.tld_cycles SET exchange_deadline=%s, status=%s, notes=%s, reminder_notified=NULL
+         WHERE id=%s""", (deadline, status, (b.get("notes") or "").strip()[:400] or None, cid), exec_only=True)
+    return {"ok": True}
+
+@app.get("/api/tld/cycles/{cid}")
+def tld_cycle_detail(cid: int, user=Depends(require_perm("admin_tld"))):
+    c = q("""SELECT id, department, year, quarter, status, notes,
+                    TO_CHAR(exchange_deadline,'YYYY-MM-DD') AS exchange_deadline,
+                    (exchange_deadline - CURRENT_DATE) AS days_left
+             FROM scheduling.tld_cycles WHERE id=%s""", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    badges = q("""SELECT b.id, b.serial, b.tld_staff_id, b.is_control, b.status, b.note,
+                         TO_CHAR(b.issued_at,'YYYY-MM-DD') AS issued_at,
+                         TO_CHAR(b.collected_at,'YYYY-MM-DD') AS collected_at,
+                         TO_CHAR(b.returned_at,'YYYY-MM-DD') AS returned_at,
+                         t.name AS staff_name, t.employee_no, t.job_title
+                  FROM scheduling.tld_badges b
+                  LEFT JOIN scheduling.tld_staff t ON t.id=b.tld_staff_id
+                  WHERE b.cycle_id=%s ORDER BY b.is_control, t.name NULLS LAST, b.serial""", (cid,))
+    forms = q("""SELECT f.id, f.kind, TO_CHAR(f.form_date,'YYYY-MM-DD') AS form_date,
+                        f.handed_by, f.received_by, jsonb_array_length(f.badges) AS badge_count,
+                        u.username AS by_name
+                 FROM scheduling.tld_forms f
+                 LEFT JOIN scheduling.users u ON u.id=f.created_by
+                 WHERE f.cycle_id=%s ORDER BY f.form_date DESC, f.id DESC""", (cid,))
+    attachments = q("""SELECT a.id, a.form_id, a.kind, a.name, a.mime,
+                              TO_CHAR(a.created_at,'YYYY-MM-DD') AS created_at,
+                              u.username AS by_name
+                       FROM scheduling.tld_attachments a
+                       LEFT JOIN scheduling.users u ON u.id=a.uploaded_by
+                       WHERE a.cycle_id=%s ORDER BY a.created_at DESC""", (cid,))
+    # Roster members of this department with no badge in this cycle = not yet covered.
+    missing = q("""SELECT t.id, t.name, t.employee_no FROM scheduling.tld_staff t
+                   WHERE t.department=%s AND t.active=true
+                     AND NOT EXISTS (SELECT 1 FROM scheduling.tld_badges b
+                                     WHERE b.cycle_id=%s AND b.tld_staff_id=t.id)
+                   ORDER BY t.name""", (c["department"], cid))
+    return {"cycle": c, "badges": badges, "forms": forms, "attachments": attachments,
+            "missing": missing}
+
+@app.post("/api/tld/cycles/{cid}/badges")
+async def tld_add_badges(cid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    """Bulk add badges: [{serial, tld_staff_id?, is_control?}]. Duplicate serials
+    within the cycle are rejected (UNIQUE) with a clean 409."""
+    c = q("SELECT id, department FROM scheduling.tld_cycles WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    b = await request.json()
+    items = b.get("badges")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "badges list is required")
+    if len(items) > 500:
+        raise HTTPException(400, "Too many badges")
+    added = 0
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        serial = str(it.get("serial") or "").strip()[:60]
+        if not serial:
+            continue
+        tid = it.get("tld_staff_id") if isinstance(it.get("tld_staff_id"), int) else None
+        is_control = bool(it.get("is_control"))
+        try:
+            q("""INSERT INTO scheduling.tld_badges (cycle_id, serial, tld_staff_id, is_control, status)
+                 VALUES (%s,%s,%s,%s,'issued')""",
+              (cid, serial, None if is_control else tid, is_control), exec_only=True)
+            added += 1
+        except Exception:
+            raise HTTPException(409, f"Badge serial '{serial}' is already in this cycle")
+    insert_audit(user, "TLD_BADGES_ADD", f"cycle:{cid}", str(added))
+    return {"ok": True, "added": added}
+
+@app.put("/api/tld/badges/{bid}")
+async def tld_update_badge(bid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    r = q("SELECT id, status FROM scheduling.tld_badges WHERE id=%s", (bid,), one=True)
+    if not r:
+        raise HTTPException(404, "Not found")
+    b = await request.json()
+    sets, vals = [], []
+    if "serial" in b:
+        serial = str(b.get("serial") or "").strip()[:60]
+        if not serial:
+            raise HTTPException(400, "serial is required")
+        sets.append("serial=%s"); vals.append(serial)
+    if "tld_staff_id" in b:
+        sets.append("tld_staff_id=%s")
+        vals.append(b.get("tld_staff_id") if isinstance(b.get("tld_staff_id"), int) else None)
+    if "note" in b:
+        sets.append("note=%s"); vals.append((b.get("note") or "").strip()[:200] or None)
+    if "status" in b:
+        status = b.get("status")
+        if status not in _TLD_BADGE_STATUSES:
+            raise HTTPException(400, "Invalid status")
+        sets.append("status=%s"); vals.append(status)
+        date_col = {"issued": "issued_at", "collected": "collected_at", "returned": "returned_at"}[status]
+        sets.append(f"{date_col}=CURRENT_DATE")
+    if not sets:
+        return {"ok": True}
+    vals.append(bid)
+    try:
+        q(f"UPDATE scheduling.tld_badges SET {', '.join(sets)} WHERE id=%s", tuple(vals), exec_only=True)
+    except Exception:
+        raise HTTPException(409, "That serial is already used in this cycle")
+    return {"ok": True}
+
+@app.post("/api/tld/cycles/{cid}/badges/status")
+async def tld_bulk_badge_status(cid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    """One-shot status change for a set of badges (e.g. 'all collected → returned'
+    when the batch ships back to the dosimetry provider)."""
+    b = await request.json()
+    status = b.get("status")
+    if status not in _TLD_BADGE_STATUSES:
+        raise HTTPException(400, "Invalid status")
+    ids = [i for i in (b.get("badge_ids") or []) if isinstance(i, int)]
+    if not ids:
+        raise HTTPException(400, "badge_ids is required")
+    date_col = {"issued": "issued_at", "collected": "collected_at", "returned": "returned_at"}[status]
+    q(f"""UPDATE scheduling.tld_badges SET status=%s, {date_col}=CURRENT_DATE
+          WHERE cycle_id=%s AND id = ANY(%s)""", (status, cid, ids), exec_only=True)
+    insert_audit(user, "TLD_BADGES_STATUS", f"cycle:{cid}", f"{status} x{len(ids)}")
+    return {"ok": True}
+
+@app.delete("/api/tld/badges/{bid}")
+def tld_delete_badge(bid: int, user=Depends(require_perm("admin_tld"))):
+    r = q("DELETE FROM scheduling.tld_badges WHERE id=%s RETURNING serial", (bid,), one=True)
+    if not r:
+        raise HTTPException(404, "Not found")
+    insert_audit(user, "TLD_BADGE_DELETE", f"badge:{bid}", r["serial"])
+    return {"ok": True}
+
+# ── Handover / receiving forms ────────────────────────────────────────────────
+@app.post("/api/tld/cycles/{cid}/forms")
+async def tld_create_form(cid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    """Save a handover (distribution) or receiving (collection) form. The badge
+    list is snapshotted into the form for reprinting, and the badges' statuses
+    move in the same request: handover → issued, receiving → collected."""
+    c = q("SELECT id FROM scheduling.tld_cycles WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    b = await request.json()
+    kind = b.get("kind")
+    if kind not in ("handover", "receiving"):
+        raise HTTPException(400, "kind must be 'handover' or 'receiving'")
+    form_date = _valid_iso_date(b.get("form_date"))
+    if not form_date:
+        raise HTTPException(400, "A valid form_date (YYYY-MM-DD) is required")
+    handed_by = (b.get("handed_by") or "").strip()[:120]
+    received_by = (b.get("received_by") or "").strip()[:120]
+    if not handed_by or not received_by:
+        raise HTTPException(400, "Both names are required")
+    ids = [i for i in (b.get("badge_ids") or []) if isinstance(i, int)]
+    if not ids:
+        raise HTTPException(400, "Select at least one badge")
+    badges = q("""SELECT b.id AS badge_id, b.serial, b.is_control, t.name AS staff_name, t.employee_no
+                  FROM scheduling.tld_badges b
+                  LEFT JOIN scheduling.tld_staff t ON t.id=b.tld_staff_id
+                  WHERE b.cycle_id=%s AND b.id = ANY(%s) ORDER BY b.is_control, t.name NULLS LAST""",
+               (cid, ids)) or []
+    if not badges:
+        raise HTTPException(400, "None of the selected badges belong to this cycle")
+    def _sig(v):
+        v = str(v or "")
+        return v if v.startswith("data:image/") and len(v) < 500_000 else None
+    row = q("""INSERT INTO scheduling.tld_forms
+                 (cycle_id, kind, form_date, handed_by, received_by, handed_sig, received_sig, badges, note, created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) RETURNING id""",
+            (cid, kind, form_date, handed_by, received_by, _sig(b.get("handed_sig")), _sig(b.get("received_sig")),
+             json.dumps(badges), (b.get("note") or "").strip()[:400] or None, user["id"]), one=True)
+    new_status = "issued" if kind == "handover" else "collected"
+    date_col = "issued_at" if kind == "handover" else "collected_at"
+    q(f"""UPDATE scheduling.tld_badges SET status=%s, {date_col}=%s
+          WHERE cycle_id=%s AND id = ANY(%s)""",
+      (new_status, form_date, cid, [x["badge_id"] for x in badges]), exec_only=True)
+    insert_audit(user, "TLD_FORM_ADD", f"cycle:{cid}", f"{kind} x{len(badges)}")
+    return {"id": row["id"]}
+
+@app.get("/api/tld/forms/{fid}")
+def tld_form_detail(fid: int, user=Depends(require_perm("admin_tld"))):
+    f = q("""SELECT f.id, f.cycle_id, f.kind, TO_CHAR(f.form_date,'YYYY-MM-DD') AS form_date,
+                    f.handed_by, f.received_by, f.handed_sig, f.received_sig, f.badges, f.note,
+                    c.department, c.year, c.quarter
+             FROM scheduling.tld_forms f
+             JOIN scheduling.tld_cycles c ON c.id=f.cycle_id
+             WHERE f.id=%s""", (fid,), one=True)
+    if not f:
+        raise HTTPException(404, "Not found")
+    return {"form": f}
+
+# ── Attachments (provider dose report PDF, scanned signed forms) ──────────────
+@app.post("/api/tld/cycles/{cid}/attachments")
+async def tld_upload_attachment(cid: int, request: Request, user=Depends(require_perm("admin_tld"))):
+    c = q("SELECT id FROM scheduling.tld_cycles WHERE id=%s", (cid,), one=True)
+    if not c:
+        raise HTTPException(404, "Not found")
+    b = await request.json()
+    kind = b.get("kind") if b.get("kind") in ("dose_report", "form_scan", "other") else "other"
+    form_id = b.get("form_id") if isinstance(b.get("form_id"), int) else None
+    data_url = str(b.get("file") or "")
+    m = re.match(r"data:([^;]+);base64,(.+)$", data_url, re.S)
+    if not m:
+        raise HTTPException(400, "No file was received")
+    mime, b64 = m.group(1), m.group(2)
+    try:
+        import base64 as _b64
+        raw = _b64.b64decode(b64)
+    except Exception:
+        raise HTTPException(400, "The file could not be read")
+    if len(raw) < 100:
+        raise HTTPException(400, "The file is empty")
+    if len(raw) > 15_000_000:
+        raise HTTPException(413, "The file is too large (max ~15 MB)")
+    pdf_bytes = _doc_to_pdf(raw, mime)
+    label = (str(b.get("name") or "Document").strip() or "Document")[:80]
+    if not label.lower().endswith(".pdf"):
+        label += ".pdf"
+    row = q("""INSERT INTO scheduling.tld_attachments (cycle_id, form_id, kind, name, mime, data, uploaded_by)
+               VALUES (%s,%s,%s,%s,'application/pdf',%s,%s) RETURNING id""",
+            (cid, form_id, kind, label, psycopg2.Binary(pdf_bytes), user["id"]), one=True)
+    insert_audit(user, "TLD_ATTACH_ADD", f"cycle:{cid}", f"{kind}: {label}")
+    return {"ok": True, "id": row["id"]}
+
+@app.get("/api/tld/attachments/{aid}")
+def tld_get_attachment(aid: int, user=Depends(require_perm("admin_tld"))):
+    r = q("SELECT name, mime, data FROM scheduling.tld_attachments WHERE id=%s", (aid,), one=True)
+    if not r:
+        raise HTTPException(404, "Not found")
+    return Response(content=bytes(r["data"]), media_type=r["mime"] or "application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{r["name"]}"'})
+
+@app.delete("/api/tld/attachments/{aid}")
+def tld_delete_attachment(aid: int, user=Depends(require_perm("admin_tld"))):
+    r = q("DELETE FROM scheduling.tld_attachments WHERE id=%s RETURNING name", (aid,), one=True)
+    if not r:
+        raise HTTPException(404, "Not found")
+    insert_audit(user, "TLD_ATTACH_DELETE", f"attach:{aid}", r["name"])
+    return {"ok": True}
+
+# ── Quarterly compliance report ───────────────────────────────────────────────
+@app.get("/api/tld/report")
+def tld_report(request: Request, user=Depends(require_perm("admin_tld"))):
+    """Compliance per department/quarter: counts, per-badge rows, and the missing
+    lists (roster members without a badge; badges not yet returned)."""
+    p = request.query_params
+    dept = _tld_dept_or_400(p.get("department"))
+    year = _int_or_400(p.get("year"), "year")
+    quarter = _int_or_400(p.get("quarter"), "quarter")
+    c = q("""SELECT id, status, notes, TO_CHAR(exchange_deadline,'YYYY-MM-DD') AS exchange_deadline
+             FROM scheduling.tld_cycles WHERE department=%s AND year=%s AND quarter=%s""",
+          (dept, year, quarter), one=True)
+    roster_count = (q("SELECT COUNT(*) AS c FROM scheduling.tld_staff WHERE department=%s AND active=true",
+                      (dept,), one=True) or {}).get("c", 0)
+    if not c:
+        return {"exists": False, "department": dept, "deptLabel": _TLD_DEPT_LABELS[dept],
+                "year": year, "quarter": quarter, "roster_count": roster_count}
+    detail = tld_cycle_detail(c["id"], user)
+    badges = detail["badges"]
+    staff_badges = [x for x in badges if not x["is_control"]]
+    summary = {
+        "roster_count": roster_count,
+        "badges_total": len(badges),
+        "controls": sum(1 for x in badges if x["is_control"]),
+        "issued": sum(1 for x in badges if x["status"] == "issued"),
+        "collected": sum(1 for x in badges if x["status"] == "collected"),
+        "returned": sum(1 for x in badges if x["status"] == "returned"),
+        "not_returned": [x for x in staff_badges if x["status"] == "issued"],
+        "no_badge": detail["missing"],
+    }
+    return {"exists": True, "department": dept, "deptLabel": _TLD_DEPT_LABELS[dept],
+            "year": year, "quarter": quarter, "cycle": {**c, **{"id": c["id"]}},
+            "summary": summary, "badges": badges,
+            "forms": detail["forms"], "attachments": detail["attachments"]}
+
+# ── TLD exchange-deadline reminders ───────────────────────────────────────────
+def _send_tld_reminders():
+    """Remind the TLD coordinator before each open cycle's badge-exchange deadline,
+    once per cycle per threshold (overdue / 7d / 14d / 30d)."""
+    rows = q("""SELECT c.id, c.department, c.year, c.quarter, c.reminder_notified,
+                       (c.exchange_deadline - CURRENT_DATE) AS days_left,
+                       (SELECT COUNT(*) FROM scheduling.tld_badges b
+                        WHERE b.cycle_id=c.id AND b.status='issued' AND NOT b.is_control) AS outstanding
+                FROM scheduling.tld_cycles c
+                WHERE c.status='open' AND c.exchange_deadline IS NOT NULL
+                  AND c.exchange_deadline <= CURRENT_DATE + 30""")
+    for r in rows:
+        d = r["days_left"]
+        bucket = "overdue" if d < 0 else ("7" if d <= 7 else ("14" if d <= 14 else "30"))
+        if r["reminder_notified"] == bucket:
+            continue
+        dept = _TLD_DEPT_LABELS.get(r["department"], r["department"])
+        when = (f"is overdue by {abs(d)} day(s)" if d < 0 else
+                ("is due today" if d == 0 else f"is due in {d} day(s)"))
+        out = f" {r['outstanding']} badge(s) not collected yet." if r["outstanding"] else ""
+        msg = f"TLD: {dept} Q{r['quarter']} {r['year']} badge exchange {when}.{out}"
+        for uid in _tld_admin_user_ids():
+            notify(uid, msg, link="tld", ntype="reminder")
+        q("UPDATE scheduling.tld_cycles SET reminder_notified=%s WHERE id=%s", (bucket, r["id"]), exec_only=True)
+    return len(rows)
+
+def _tld_reminder_loop():
+    import time
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            ksa = datetime.now(timezone.utc) + timedelta(hours=3)
+            claimed = q("""INSERT INTO scheduling.app_settings (key,value)
+                           VALUES (%s,%s) ON CONFLICT (key) DO NOTHING RETURNING key""",
+                        (f"tld_sweep:{ksa.strftime('%Y-%m-%d')}", ksa.isoformat()), one=True)
+            if claimed:
+                _send_tld_reminders()
+        except Exception as e:
+            print(f"[tld] {e}")
+        time.sleep(3600)
+
 def _send_maintenance_reminders():
     """Remind branch leads about preventive maintenance due soon (or overdue),
     once per device per threshold (overdue / 7d / 30d)."""
@@ -13316,6 +14075,7 @@ def start_scheduler():
     threading.Thread(target=_shift_check_reminder_loop, daemon=True).start()
     threading.Thread(target=_credential_reminder_loop, daemon=True).start()
     threading.Thread(target=_maintenance_reminder_loop, daemon=True).start()
+    threading.Thread(target=_tld_reminder_loop, daemon=True).start()           # quarterly TLD badge-exchange deadlines
     threading.Thread(target=_radiology_snapshot_loop, daemon=True).start()
     threading.Thread(target=_rad_reconcile_loop, daemon=True).start()   # nightly billed-vs-performed reconciliation
     threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
