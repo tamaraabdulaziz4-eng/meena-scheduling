@@ -727,19 +727,11 @@ async function wlEnrich(silent, force) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
     }
-    // Payment pass — reads each order's bill for the patient's outstanding portion, so the
-    // board can flag "patient payment due". Independent + bounded on the connector. Runs on
-    // an explicit load, once per board, then at most every ~3 min on the silent timer.
-    const payDue = force || !wlState.paidOnce || (silent && (Date.now() - (wlState.lastPay || 0) > 180000));
-    if (payDue) {
-      passes.push(API.get('/radiology/worklist?' + mkQs({ pay: '1' }))
-        .then((d) => {
-          if (wlState._loadGen !== enrichGen) return;
-          wlMergePay(d); wlState.lastPay = Date.now(); wlState.paidOnce = true;
-          if (d && (d.billItemKeys || d.payDiagSample)) { wlState.payDiag = { keys: d.billItemKeys, sample: d.payDiagSample }; }
-          if (d && d.billItemKeys && !wlState._billKeysLogged) { wlState._billKeysLogged = true; console.log('[worklist] bill item keys:', (d.billItemKeys || []).join(',')); }
-        }).catch(() => {}));
-    }
+    // Payment/billing pass removed — the board no longer fetches patient outstanding
+    // balances (bill/revenue isn't needed on the worklist). This also drops the heavy
+    // per-bill GetDueBillDetailsByID fan-out on the connector (hundreds of HIS calls per
+    // board load for heavy-billing patients). The paid/unpaid badge is guarded on
+    // `paymentKnown`, so it simply stops rendering — no other change needed.
     await Promise.all(passes);
     wlState.lastEnrich = Date.now();
   } finally {
