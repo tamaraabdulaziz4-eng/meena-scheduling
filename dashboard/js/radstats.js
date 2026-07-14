@@ -82,7 +82,9 @@ async function renderRadStatsPage(opts) {
     return;
   }
   if (radstats.data) rsRenderBody();   // show the last result instantly on re-open, refresh underneath
-  else if (!embed) rsShowOverlay();    // first load → full-screen branded loader (page only, not embedded)
+  // No full-screen overlay on a cold open anymore: the skeleton below already mirrors the
+  // real layout (and showing BOTH read as two competing loaders). rsHideOverlay stays for
+  // any legacy overlay left visible from an older session.
   if (!isLead) rsLoadBranches();       // managers get the branch picker; leads are pinned
   await rsLoad();
   if (radstats.auto) rsStartAuto();    // live board on by default — poll every 30s
@@ -294,9 +296,9 @@ function rsRenderControls() {
         <div class="rs-ctl-actions">
           <span class="rs-clock" id="rs-clock"><span class="rs-clock-dot"></span><span id="rs-clock-t">${rsClockNow()}</span></span>
           <span id="rs-updated" style="font-size:11.5px;color:var(--muted);white-space:nowrap">${rsAgoText()}</span>
-          <label class="rs-auto" title="Auto-refresh every 30s"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> ${radstats.auto ? '🟢 Live' : 'Live'}</label>
+          <label class="rs-auto" title="Auto-refresh every 30s"><input type="checkbox" id="rs-auto" ${radstats.auto ? 'checked' : ''} onchange="rsToggleAuto()"> Live</label>
           <button class="ghost" onclick="rsOpenReport()" title="Monthly presentation report with comparison to last month">${icon('bar-chart')} Monthly report</button>
-          <button class="open pri" style="width:auto" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : '↻ Refresh (live)'}</button>
+          <button class="open pri" style="width:auto" onclick="rsLoad(false, true)" ${radstats.loading ? 'disabled' : ''} title="Pull fresh data from the hospital system now">${radstats.loading ? 'Loading…' : icon('refresh') + ' Refresh'}</button>
         </div>
       </div>
       ${rsBranchPicker()}
@@ -374,6 +376,7 @@ function rsScopeKey() {
 function rsPersist() {
   const payload = JSON.stringify({
     t: Date.now(), data: radstats.data, modData: radstats.modData, finData: radstats.finData,
+    doneData: radstats.doneData, doneAt: radstats._doneAt,
   });
   const key = rsScopeKey();
   // sessionStorage: freshest, per-tab snapshot for instant paint on soft nav / reload.
@@ -393,6 +396,9 @@ function rsRestore() {
     radstats.data = o.data;
     if (o.modData) radstats.modData = o.modData;
     if (o.finData) radstats.finData = o.finData;
+    // Ordered-vs-Done tables restore too, so that tab paints instantly on reopen
+    // (rsLoadDone still revalidates in the background).
+    if (o.doneData && !radstats.doneData) { radstats.doneData = o.doneData; radstats._doneAt = o.doneAt || 0; }
     return true;
   };
   // 1) Prefer the per-tab sessionStorage snapshot when it's fresh (≤10 min) — treated as
@@ -1077,9 +1083,9 @@ function rsRenderBody() {
       ${rsPanel('Daily trend', rsArea(d.daily || []), `${dayCount} day${dayCount === 1 ? '' : 's'} in range`)}
       ${rsPanel('Pending age', rsBarRows(agingItems, agingColor), 'time since order')}
     </div>
-    ${rsPanel('⏰ Peak hours — when orders come in', rsHourly(d.byHour, d.hourHasTime), 'orders by hour of day · staff to the peak', 'rs-wide')}
-    ${dayCount >= 3 ? rsPanel('📅 Busiest weekdays', rsWeekday(d.daily || []), 'avg orders per weekday · roster to demand', 'rs-wide') : ''}
-    ${dayCount >= 5 ? rsPanel('🗓️ Busiest dates', rsBusyDates(d.daily || []), 'top days by volume in the range', 'rs-wide') : ''}`;
+    ${rsPanel('Peak hours — when orders come in', rsHourly(d.byHour, d.hourHasTime), 'orders by hour of day · staff to the peak', 'rs-wide')}
+    ${dayCount >= 3 ? rsPanel('Busiest weekdays', rsWeekday(d.daily || []), 'avg orders per weekday · roster to demand', 'rs-wide') : ''}
+    ${dayCount >= 5 ? rsPanel('Busiest dates', rsBusyDates(d.daily || []), 'top days by volume in the range', 'rs-wide') : ''}`;
 
   const tabFinancial = `
     ${rsSection('Financial — revenue &amp; payer')}
@@ -1141,14 +1147,35 @@ function rsSetTab(name) {
 // The counts are attributed to the ORDER date and re-checked nightly by the server, so a
 // patient who does the exam days later makes that original day's "done" rise. Org-wide.
 async function rsLoadDone(force) {
+  if (radstats.doneLoading) return;
+  // SWR: the tables in hand paint instantly; skip the refetch entirely when they're
+  // under a minute old (unless forced) — reopening the tab used to refire the slow
+  // fetch every single time.
+  if (!force && radstats.doneData && Date.now() - (radstats._doneAt || 0) < 60000) return;
   radstats.doneLoading = true; radstats.doneError = '';
-  if (!radstats.doneData) rsRenderBody();
+  const had = !!radstats.doneData;
+  if (!had) rsRenderBody();
+  else if (typeof setRefreshing === 'function') setRefreshing(true);
   try {
-    radstats.doneData = await API.get('/radiology/stats/done-history?days=45&months=6');
+    radstats.doneData = await API.get('/radiology/stats/done-history?days=45&months=6' + (force ? '&refresh=1' : ''));
+    radstats._doneAt = Date.now();
+    rsPersist();
+    // The server answered from its stored tables and kicked the current-month DePACS
+    // sweep in the BACKGROUND (refreshing=true). Pull the corrected numbers once the
+    // sweep has had time to land — only if the operator is still on this tab.
+    if (radstats.doneData && radstats.doneData.refreshing) {
+      clearTimeout(radstats._doneRetryTimer);
+      radstats._doneRetryTimer = setTimeout(() => {
+        if (radstats.tab === 'done' && document.getElementById('rs-body')) rsLoadDone(false);
+      }, 75000);
+      radstats._doneAt = 0;   // the follow-up refetch must not be skipped by the TTL gate
+    }
   } catch (e) {
     radstats.doneError = (e && e.message) || 'Could not load ordered-vs-done';
   } finally {
-    radstats.doneLoading = false; rsRenderBody();
+    radstats.doneLoading = false;
+    if (had && typeof setRefreshing === 'function') setRefreshing(false);
+    rsRenderBody();
   }
 }
 function rsDoneSub() {
@@ -1303,7 +1330,7 @@ function rsFinancialInner() {
   // If some bill reads failed (VPS timeouts), the revenue is an UNDERCOUNT — say so
   // loudly with a one-tap retry, instead of showing a silently-halved figure as final.
   const missWarn = (f.billsFailed > 0)
-    ? `<div class="rs-fin-warn">⚠ Estimate — ${rsNum(f.billsFailed)} of ${rsNum((f.billsRead || 0) + f.billsFailed)} bills couldn't be read, so revenue below is undercounted. <button class="ghost" onclick="rsLoad(false, true)">Retry read</button></div>`
+    ? `<div class="rs-fin-warn">${icon('alert')} Estimate — ${rsNum(f.billsFailed)} of ${rsNum((f.billsRead || 0) + f.billsFailed)} bills couldn't be read, so revenue below is undercounted. <button class="ghost" onclick="rsLoad(false, true)">Retry read</button></div>`
     : '';
   return `<div class="rs-fin">
     ${missWarn}

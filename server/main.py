@@ -9499,6 +9499,11 @@ def _rad_live_done_day(date):
             unverifiable += 1
     return {"date": date, "ordered": ordered, "done": done, "unverifiable": unverifiable, "by_modality": mods}
 
+# Ordered-vs-Done serving state: per-worker throttle for the background month sweep,
+# and a short per-date cache for the day drill (a full live DePACS sweep per call).
+_done_live_kick = {"at": 0.0}
+_done_day_cache = {}   # date -> (monotonic_ts, payload)
+
 @app.get("/api/radiology/stats/done-history")
 def radiology_done_history(request: Request, user=Depends(require_admin)):
     """Daily + monthly ORDERED vs DONE, attributed to the order date. TODAY is computed LIVE
@@ -9515,10 +9520,15 @@ def radiology_done_history(request: Request, user=Depends(require_admin)):
     # Refresh the WHOLE CURRENT MONTH live (unless ?live=0), so "This month" and every current-month
     # day track the SAME ordered+non-cancelled basis as the Overview — not last night's snapshot,
     # which predates today's counting rules and still counted walk-in/cancelled exams. Reuses the
-    # nightly reconcile over just the current month, gated to ~every 5 min (or ?refresh=1) so opening
-    # the tab doesn't re-run the DePACS sweep every time.
+    # nightly reconcile over just the current month, gated to ~every 5 min (or ?refresh=1).
+    # IN THE BACKGROUND: this sweep used to run INLINE, so the first open after a quiet 5 minutes
+    # blocked the whole tab behind a month-wide DePACS sweep (the "done/not-done takes forever"
+    # complaint). Now the stored snapshot is returned IMMEDIATELY, the sweep runs on a daemon
+    # thread (single-flight via the sweep lock), and the response says refreshing=true so the
+    # client can show its quiet chip and refetch when the fresh numbers have landed.
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
     ksa_now = _dt.now(_tz.utc) + _td(hours=3)
+    refreshing = False
     if (p.get("live") or "1") != "0":
         try:
             last = q("SELECT value FROM scheduling.app_settings WHERE key='rad_done_live_refresh'", one=True)
@@ -9529,12 +9539,29 @@ def radiology_done_history(request: Request, user=Depends(require_admin)):
                 except Exception:
                     stale = True
             if stale or p.get("refresh") == "1":
-                month_start = ksa_now.replace(day=1).date()
-                win = (ksa_now.date() - month_start).days + 3
-                _rad_reconcile_run(window_days=win)
-                q("""INSERT INTO scheduling.app_settings (key, value) VALUES ('rad_done_live_refresh', %s)
-                     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""",
-                  (ksa_now.isoformat(),), exec_only=True)
+                import time as _time
+                # Per-worker throttle so a burst of opens doesn't spawn a thread each; the
+                # sweep lock below is the real cross-worker single-flight.
+                if _time.monotonic() - _done_live_kick["at"] > 120:
+                    _done_live_kick["at"] = _time.monotonic()
+                    def _done_live_sweep(win, stamp):
+                        try:
+                            if not _claim_sweep_lock("done_live", 900):
+                                return
+                            try:
+                                _rad_reconcile_run(window_days=win)
+                                q("""INSERT INTO scheduling.app_settings (key, value) VALUES ('rad_done_live_refresh', %s)
+                                     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""",
+                                  (stamp,), exec_only=True)
+                            finally:
+                                _release_sweep_lock("done_live")
+                        except Exception:
+                            pass
+                    month_start = ksa_now.replace(day=1).date()
+                    win = (ksa_now.date() - month_start).days + 3
+                    threading.Thread(target=_done_live_sweep, args=(win, ksa_now.isoformat()),
+                                     daemon=True, name="done-live-refresh").start()
+                refreshing = True
         except Exception:
             pass
     daily = q("""SELECT stat_date::text AS date, ordered, done, unverifiable, by_modality, updated_at
@@ -9559,7 +9586,8 @@ def radiology_done_history(request: Request, user=Depends(require_admin)):
             m["ordered"] += (v or {}).get("ordered", 0)
             m["done"] += (v or {}).get("done", 0)
     by_modality = [{"modality": k, **v} for k, v in sorted(mods.items(), key=lambda kv: -kv[1]["ordered"])]
-    return {"ok": True, "daily": daily, "monthly": monthly, "byModality": by_modality, "currentMonth": ksa_month}
+    return {"ok": True, "daily": daily, "monthly": monthly, "byModality": by_modality,
+            "currentMonth": ksa_month, "refreshing": refreshing}
 
 @app.get("/api/radiology/stats/done-day")
 async def radiology_done_day(request: Request, user=Depends(require_admin)):
@@ -9571,8 +9599,14 @@ async def radiology_done_day(request: Request, user=Depends(require_admin)):
     date = (request.query_params.get("date") or "").strip()
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
         raise HTTPException(400, "date must be YYYY-MM-DD")
-    import urllib.parse as _up
+    import urllib.parse as _up, time as _time
     from starlette.concurrency import run_in_threadpool
+    # Short per-date cache: the drill runs a full live DePACS sweep for the day, and
+    # repeated clicks on the same day (or two managers comparing) were re-paying the
+    # whole 240s-ceiling build each time. Done-ness only moves forward, so 2 min is safe.
+    hit = _done_day_cache.get(date)
+    if hit and (_time.monotonic() - hit[0]) < 120:
+        return hit[1]
     match_after_h = min(1080, max(96, RAD_RECON_MATCH_DAYS * 24))
     qs = _up.urlencode({"from": date, "to": date, "ready": "1", "matchAfterH": match_after_h})
     data = await run_in_threadpool(lambda: _bridge_request("/his/worklist?" + qs, timeout=240))
@@ -9613,7 +9647,14 @@ async def radiology_done_day(request: Request, user=Depends(require_admin)):
             "reported": stage == "reported",
         })
     orders.sort(key=lambda o: (o["done"], o["modality"]))
-    return {"ok": True, "date": date, "ordered": len(orders), "done": done, "orders": orders}
+    out = {"ok": True, "date": date, "ordered": len(orders), "done": done, "orders": orders}
+    _done_day_cache[date] = (_time.monotonic(), out)
+    if len(_done_day_cache) > 40:
+        try:
+            del _done_day_cache[min(_done_day_cache, key=lambda k: _done_day_cache[k][0])]
+        except (ValueError, KeyError):
+            pass
+    return out
 
 @app.get("/api/radiology/results/match/{file_no}")
 def radiology_results_match(file_no: str, request: Request, user=Depends(require_radiology)):
