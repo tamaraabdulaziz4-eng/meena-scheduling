@@ -1862,10 +1862,14 @@ async function wlOpenPatientCard(mrno) {
     document.addEventListener('keydown', window._wlPcardEsc);
   }
   try {
-    // Use the shared patient-lookup cache (filled by hover/board prefetch); else fetch now.
+    // Warm (already enriched in cache) → paint the full card. Otherwise fetch the FAST
+    // base card (~0.5s) so the modal fills in immediately; renderPsDetail then shows the
+    // "Load full details" button for the on-demand enrichment (same as the lookup page),
+    // instead of blocking this modal on the ~100-call full lookup.
     const d = isWarm ? warm.data
-      : (typeof psPrefetchLookup === 'function' ? await psPrefetchLookup(mrno)
-        : await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`));
+      : (typeof psFetchLookupFast === 'function' ? await psFetchLookupFast(mrno)
+        : (typeof psPrefetchLookup === 'function' ? await psPrefetchLookup(mrno)
+          : await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`)));
     const _cur = document.getElementById('wl-pcard');
     if (!_cur || _cur.dataset.mrno !== mrno) return;                  // closed, or a newer patient was opened
     if (typeof psNoteCache !== 'undefined') { try { psNoteCache = new Map(); psReportStore = {}; } catch (e) {} }

@@ -7,6 +7,7 @@
 
 let _prDays = 90;
 let _prReader = '';
+const _prCache = new Map();   // `${days}|${reader}` -> {sum, list} — stale-first: repaint instantly on re-entry, refresh underneath
 
 const PR_SCORE = {
   1: { label: 'Concur', desc: 'Agree with the interpretation', color: '#22c55e' },
@@ -48,7 +49,10 @@ function prSetReader(r) { _prReader = r || ''; prLoad(); }
 async function prLoad() {
   const sBox = document.getElementById('pr-summary');
   const lBox = document.getElementById('pr-list');
-  if (sBox) sBox.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--muted)">Loading…</div></div>`;
+  const key = `${_prDays}|${_prReader}`;
+  const cached = _prCache.get(key);
+  if (cached) { prRenderSummary(cached.sum || {}); prRenderList((cached.list && cached.list.items) || []); }
+  else if (sBox) sBox.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--muted)">Loading…</div></div>`;
   let sum, list;
   try {
     [sum, list] = await Promise.all([
@@ -56,10 +60,11 @@ async function prLoad() {
       API.get(`/radiology/peer-review?days=${_prDays}${_prReader ? '&reader=' + encodeURIComponent(_prReader) : ''}`),
     ]);
   } catch (e) {
-    if (sBox) sBox.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--danger-ink)">Could not load: ${escapeHtml(e.message || 'error')}</div></div>`;
-    if (lBox) lBox.innerHTML = '';
-    return;
+    if (!cached && sBox) sBox.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--danger-ink)">Could not load: ${escapeHtml(e.message || 'error')}</div></div>`;
+    if (!cached && lBox) lBox.innerHTML = '';
+    return;   // on a refresh error, keep the stale summary/list on screen
   }
+  _prCache.set(key, { sum, list });
   prRenderSummary(sum || {});
   prRenderList((list && list.items) || []);
 }

@@ -5,6 +5,7 @@
 // written back to Siratech.
 
 let _crStatus = 'open';
+const _crCache = new Map();   // status -> items — stale-first: repaint instantly on re-entry / tab switch, refresh underneath
 
 function renderCriticalResultsPage() {
   setTopbar('Critical Results', 'Closed-loop communication of critical & urgent findings');
@@ -36,15 +37,19 @@ function crSetStatus(s) { _crStatus = s; crRenderTabs(); crLoad(); }
 
 async function crLoad() {
   const box = document.getElementById('cr-list');
-  if (box) box.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--muted)">Loading…</div></div>`;
+  const cached = _crCache.get(_crStatus);
+  if (cached) crRenderList(cached);                    // paint last data instantly, refresh underneath
+  else if (box) box.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--muted)">Loading…</div></div>`;
   let d;
   try {
     d = await API.get(`/radiology/critical?status=${encodeURIComponent(_crStatus)}`);
   } catch (e) {
-    if (box) box.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--danger-ink)">Could not load: ${escapeHtml(e.message || 'error')}</div></div>`;
-    return;
+    if (!cached && box) box.innerHTML = `<div class="board"><div style="padding:22px 18px;color:var(--danger-ink)">Could not load: ${escapeHtml(e.message || 'error')}</div></div>`;
+    return;   // on a refresh error, keep the stale list on screen
   }
-  crRenderList(d.items || []);
+  const items = d.items || [];
+  _crCache.set(_crStatus, items);
+  crRenderList(items);
 }
 
 function crRenderList(items) {
