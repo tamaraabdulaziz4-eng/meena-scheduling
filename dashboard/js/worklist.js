@@ -1625,13 +1625,12 @@ function wlIndPump() {
     const { mr } = _wlIndQueue.shift();
     if (wlState.indCache.has(mr) || _wlIndInflight.has(mr)) continue;
     _wlIndBusy++; _wlIndInflight.add(mr);
-    // Reuse the SAME lookup the row-expand prefetch already kicked off (psPrefetchLookup
-    // serves it from psLookupCache or shares the in-flight promise) instead of firing a
-    // second identical /radiology/lookup — one call feeds both the indication cell and the
-    // patient card, so the indication resolves as soon as that prefetch lands.
-    const _lk = (typeof psPrefetchLookup === 'function')
-      ? psPrefetchLookup(mr)
-      : API.get('/radiology/lookup/' + encodeURIComponent(mr));
+    // Board rows use the LIGHT lookup: RIS-panel enrichment (clinical indication + ER +
+    // doctor name) but NOT the slow RadiologySearch (ordering-clinic name + referring-
+    // doctor phone). That keeps the indication column while cutting ~3-4x the per-row HIS
+    // work — the dominant board load. Clinic/phone still fill in when a row is expanded or
+    // the full patient card is opened (those fire the full /radiology/lookup on demand).
+    const _lk = API.get('/radiology/lookup-light/' + encodeURIComponent(mr));
     Promise.resolve(_lk)
       .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlBackfillDetail(mr, lk); wlIndSet(mr); })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })

@@ -7232,6 +7232,18 @@ def radiology_lookup_fast(file_no: str, user=Depends(require_radiology)):
         raise HTTPException(400, "Enter a patient file number")
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "?fast=1", timeout=30)
 
+@app.get("/api/radiology/lookup-light/{file_no}")
+def radiology_lookup_light(file_no: str, user=Depends(require_radiology)):
+    """Patient card with the per-order RIS-panel enrichment (clinical indication, ER,
+    doctor name) but WITHOUT the slow RadiologySearch (ordering-clinic name + referring-
+    doctor phone). Used by the worklist board per row — keeps the indication column while
+    cutting the heavy fan-out. ~3-4x faster than the full lookup. Live from Siratech."""
+    import urllib.parse
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "?enrich=light", timeout=60)
+
 @app.get("/api/radiology/patient/{file_no}/clinical")
 def radiology_patient_clinical(file_no: str, user=Depends(require_radiology)):
     """Patient clinical context for the lookup card — problem list (ICD diagnoses),
