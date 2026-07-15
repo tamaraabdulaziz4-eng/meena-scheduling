@@ -258,22 +258,41 @@ async function psOpen(i) {
   const paint = (d) => { psState.lookup = { ...d, patient: d.patient || p }; renderPsDetail(); };
   try {
     if (warm) { paint(cached.data); return; }
-    // FAST first: paint the base card (~0.5s — no RadiologySearch/RIS-panel enrichment) so the
-    // card is visible immediately, then upgrade to the full enriched card when it lands (fills
-    // in clinical indication, ordering branch, referring doctor, ER flag).
+    // FAST only: paint the base card (~0.5s — no RadiologySearch/RIS-panel enrichment).
+    // The enriched fields (clinical indication, ordering branch, referring doctor + phone,
+    // clinic, ER flag) are the ~100-call fan-out that saturates the single-core connector,
+    // so we DON'T fetch them automatically — the card shows a "Load full details" button
+    // (renderPsDetail, when lookup.fast) and psLoadFullDetails() runs it only on demand.
     let painted = false;
     const fast = await psFetchLookupFast(p.mrno).catch(() => null);
     if (seq !== psState.reqSeq) return;
     if (fast) { paint(fast); painted = true; }
-    try {
+    // Fallback only: if the fast card never painted, fetch the full one so it isn't empty.
+    if (!painted) {
       const full = await psPrefetchLookup(p.mrno);
       if (seq !== psState.reqSeq) return;
       paint(full);
-    } catch (e2) { if (!painted) throw e2; }   // enrichment failed but the fast card is up → keep it
+    }
   } catch (e) {
     if (seq !== psState.reqSeq) return;
     if (det) det.innerHTML = `<div class="card"><div class="empty" style="padding:22px 16px"><div class="empty-icon">⚠️</div>
       <p>${escapeHtml(e.message || 'Could not load the patient\'s exams')}</p></div></div>`;
+  }
+}
+
+// On-demand upgrade from the fast card to the full enriched one (the heavy ~100-call
+// fan-out: referring doctor + phone, ordering clinic, clinical indication, ER, branch).
+// Runs only when the user clicks the "Load full details" button.
+async function psLoadFullDetails(btn) {
+  const mrno = String((psState.lookup && psState.lookup.patient && psState.lookup.patient.mrno) || '').trim();
+  if (!mrno) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading full details…'; }
+  try {
+    const full = await psPrefetchLookup(mrno);   // enriched lookup (RadiologySearch + RIS panel)
+    psState.lookup = { ...full, patient: full.patient || psState.lookup.patient };
+    renderPsDetail();   // re-render: button gone, enriched fields filled in
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '＋ Load full details — retry'; }
   }
 }
 
@@ -379,8 +398,15 @@ function renderPsDetail() {
       .map((x) => x.o);
     // Collapsible rows keep a long history scannable: only the most recent exam is
     // expanded by default; the rest show a one-line summary you can tap open.
+    // When the card is the FAST (un-enriched) view, offer to load the heavy per-exam
+    // detail (referring doctor + phone, ordering clinic, clinical indication, ER, branch)
+    // on demand — it's the ~100-call fan-out we don't want to run on every open.
+    const fullBtn = d.fast ? `<button id="ps-loadfull" onclick="psLoadFullDetails(this)"
+      style="width:100%;margin:6px 0 10px;padding:10px;border:1.5px dashed var(--border);
+      background:var(--violet-wash,#f0edff);color:var(--accent,#6b4eff);border-radius:11px;
+      font-weight:700;font-size:13px;cursor:pointer">＋ Load referring doctor · clinic · indication</button>` : '';
     examBlock = `<div class="ps-sec-l ps-examhead">Radiology exams · ${sorted.length}<span>newest first</span></div>` +
-      sorted.map((o, i) => psExamCard(o, i === 0)).join('');
+      fullBtn + sorted.map((o, i) => psExamCard(o, i === 0)).join('');
   }
   det.innerHTML = patCard + examBlock;
   psLoadDocuments();   // consent list removed from the card — the Worklist owns consent now
