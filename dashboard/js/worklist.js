@@ -553,37 +553,23 @@ function wlPrefetchCards() {
   }
   if (!mrns.length) return;
   const myGen = ++_wlCardWarmGen;                            // a newer board load cancels this sweep
-  const CONC = 2; let idx = 0;
-  // Deep-warm budget: the FIRST few rows also get their card's heavy sections
-  // (clinical history, visits, labs, appointments) prefetched, so opening them is one
-  // paint with zero spinners. Kept small — the connector caches + single-flights these
-  // per patient now, but the 2 GB box still shouldn't see 20 patients × 4 sections.
-  const DEEP_WARM = 5; let deep = 0;
+  // Every VISIBLE row is now light-warmed for free by the indication pump (instant tap), so
+  // here we only DEEP-warm the top few most-likely rows (emergency-first board order) with
+  // their heavy sections (clinical history · visits · labs · appointments) — opening them is
+  // one paint, zero spinners. Bounded, sequential, and PAUSED while a card is open, so the
+  // single-core connector is never stressed by speculative work.
+  const DEEP_WARM = 3; let idx = 0;
   const pump = () => {
     if (myGen !== _wlCardWarmGen) return;                    // superseded — stop warming stale rows
-    if (idx >= mrns.length) return;
+    if (typeof _wlCardOpen !== 'undefined' && _wlCardOpen) { setTimeout(pump, 400); return; }  // yield to the open card
+    if (idx >= DEEP_WARM || idx >= mrns.length) return;
     const mrno = mrns[idx++];
-    let done = false;
-    const next = () => { if (done) return; done = true; pump(); };
-    try {
-      const p = psPrefetchLookup(mrno);                      // no-op if already warm/in-flight
-      if (p && typeof p.then === 'function') {
-        // As each warm-up lands, backfill the clinic/phone/age/gender the fast board can't carry
-        // so the VISIBLE (collapsed) rows show them too — not only expanded ones.
-        p.then((lk) => {
-          try { wlBackfillDetail(mrno, lk); } catch (e) {}
-          if (myGen === _wlCardWarmGen && deep < DEEP_WARM && typeof psPrefetchCard === 'function') {
-            deep++;
-            psPrefetchCard(mrno);                            // sections ride the fresh lookup
-          }
-        }, () => {});
-        p.then(next, next);
-      } else next();
-    } catch (e) { next(); }
+    if (typeof psPrefetchCard !== 'function') return;
+    const p = psPrefetchCard(mrno);                          // full card + sections (deduped/single-flight)
+    if (p && typeof p.then === 'function') p.then(pump, pump); else pump();
   };
-  const kick = () => { for (let i = 0; i < CONC; i++) pump(); };
-  if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 1500 });
-  else setTimeout(kick, 250);
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(pump, { timeout: 1500 });
+  else setTimeout(pump, 300);
 }
 
 // HOVER-WARM (instant.page for the board): the moment the operator's pointer settles on
@@ -1639,7 +1625,12 @@ function wlIndPump() {
     // the full patient card is opened (those fire the full /radiology/lookup on demand).
     const _lk = API.get('/radiology/lookup-light/' + encodeURIComponent(mr));
     Promise.resolve(_lk)
-      .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlBackfillDetail(mr, lk); wlIndSet(mr); })
+      .then((lk) => {
+        wlState.indCache.set(mr, wlIndexIndications(lk)); wlBackfillDetail(mr, lk); wlIndSet(mr);
+        // PREDICTIVE WARM (free): this indication fetch IS the light card — cache it so
+        // tapping the row / "Full patient card" opens INSTANTLY. Never downgrade a full card.
+        try { if (typeof psLookupCache !== 'undefined' && lk && !psLookupCache.get(mr)) psLookupCache.set(mr, { ts: Date.now(), data: lk }); } catch (e) {}
+      })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })
       .finally(() => { _wlIndBusy--; _wlIndInflight.delete(mr); wlIndPump(); });
   }
