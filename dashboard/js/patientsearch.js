@@ -22,12 +22,29 @@ function psPrefetchLookup(mrno) {
   mrno = String(mrno || '').trim();
   if (!mrno) return null;
   const hit = psLookupCache.get(mrno);
-  if (hit && Date.now() - hit.ts < PS_LOOKUP_TTL) return Promise.resolve(hit.data);
+  // Only a FULL cached card counts as warm here — a light/fast entry (from the board's
+  // predictive warm) must still fetch the real full lookup so "Load full details" works.
+  if (hit && Date.now() - hit.ts < PS_LOOKUP_TTL && !(hit.data && (hit.data.fast || hit.data.light))) return Promise.resolve(hit.data);
   if (psLookupInflight.has(mrno)) return psLookupInflight.get(mrno);
   const pr = API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`)
     .then((d) => { psLookupCache.set(mrno, { ts: Date.now(), data: d }); if (psLookupCache.size > 300) psLookupCache.delete(psLookupCache.keys().next().value); psLookupInflight.delete(mrno); return d; })
     .catch((e) => { psLookupInflight.delete(mrno); throw e; });
   psLookupInflight.set(mrno, pr);
+  return pr;
+}
+
+// Predictive LIGHT warm: cache the light card (indication, no slow RadiologySearch) in
+// psLookupCache so a tap opens instantly — at ~1/4 the connector cost of the full lookup.
+// Never downgrades an already-cached full card; used by the board's background prewarm.
+function psWarmLight(mrno) {
+  mrno = String(mrno || '').trim();
+  if (!mrno) return null;
+  if (psLookupCache.get(mrno) || psLookupInflight.has(mrno)) return null;   // already warm / in-flight
+  const pr = API.get(`/radiology/lookup-light/${encodeURIComponent(mrno)}`)
+    .then((d) => { if (!psLookupCache.get(mrno)) { psLookupCache.set(mrno, { ts: Date.now(), data: d }); if (psLookupCache.size > 300) psLookupCache.delete(psLookupCache.keys().next().value); } psLookupInflight.delete(mrno); return d; })
+    .catch((e) => { psLookupInflight.delete(mrno); throw e; });
+  psLookupInflight.set(mrno, pr);
+  pr.catch(() => {});
   return pr;
 }
 
@@ -401,7 +418,7 @@ function renderPsDetail() {
     // When the card is the FAST (un-enriched) view, offer to load the heavy per-exam
     // detail (referring doctor + phone, ordering clinic, clinical indication, ER, branch)
     // on demand — it's the ~100-call fan-out we don't want to run on every open.
-    const fullBtn = d.fast ? `<button id="ps-loadfull" onclick="psLoadFullDetails(this)"
+    const fullBtn = (d.fast || d.light) ? `<button id="ps-loadfull" onclick="psLoadFullDetails(this)"
       style="width:100%;margin:6px 0 10px;padding:10px;border:1.5px dashed var(--border);
       background:var(--violet-wash,#f0edff);color:var(--accent,#6b4eff);border-radius:11px;
       font-weight:700;font-size:13px;cursor:pointer">＋ Load referring doctor · clinic · indication</button>` : '';
