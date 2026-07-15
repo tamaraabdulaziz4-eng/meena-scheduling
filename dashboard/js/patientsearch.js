@@ -241,9 +241,10 @@ async function psOpen(i) {
   if (!p || !p.mrno) return;
   psState.sel = i;
   renderPsResults();
-  // Warm the whole card in ONE bundled round-trip. The lookup + section fetches
-  // below then join these in-flight promises instead of firing 5 separate requests.
-  psPrefetchCardBundle(p.mrno);
+  // NB: we intentionally do NOT warm the enriched /card bundle here — its heavy
+  // enriched-lookup would compete with the fast first paint on the single-core
+  // connector box. The fast lookup runs alone below; renderPsDetail then kicks off
+  // the sections, and the enriched lookup follows — all AFTER the card is visible.
   const det = document.getElementById('ps-detail');
   // Skip the loading flash entirely when the patient was prefetched on hover/touch — it's
   // already in hand, so the card paints on the very next line (feels instant).
