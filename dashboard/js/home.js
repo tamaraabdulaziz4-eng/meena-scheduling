@@ -117,10 +117,21 @@ async function renderHomePage() {
   if (ADMIN_ROLES.includes(currentUser?.role)) {
     renderHomeRadstats();
     // Full radiology statistics embedded right in Home (by branch / modality /
-    // department / doctor / payer / trend), reusing the Radiology-stats view.
+    // department / doctor / payer / trend), reusing the Radiology-stats view. DEFERRED
+    // until scrolled into view — it fires slow HIS calls (/radiology/stats + branches)
+    // that used to load on every login, slowing the landing. The "Radiology today" card
+    // above already gives the at-a-glance snapshot; the full dashboard loads on demand.
     const fs = document.getElementById('hm-fullstats');
     if (fs && typeof renderRadStatsPage === 'function') {
-      renderRadStatsPage({ container: fs }).catch(() => {});
+      if (typeof IntersectionObserver === 'function') {
+        fs.innerHTML = `<div class="board" style="margin-bottom:14px"><div class="rows"><div class="lrow" style="padding:14px 18px;color:var(--muted);font-size:13px"><span class="mini-spin"></span> Radiology dashboard — loads as you scroll…</div></div></div>`;
+        const io = new IntersectionObserver((ents, obs) => {
+          if (ents.some((e) => e.isIntersecting)) { obs.disconnect(); renderRadStatsPage({ container: fs }).catch(() => {}); }
+        }, { rootMargin: '250px' });
+        io.observe(fs);
+      } else {
+        renderRadStatsPage({ container: fs }).catch(() => {});
+      }
     }
     renderHomeApprovals();
   }
