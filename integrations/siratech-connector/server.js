@@ -965,7 +965,11 @@ async function buildPatientCard(file, opts = {}) {
   // WITHOUT the RadiologySearch site-correction and per-order RIS-panel enrichment, so
   // it paints in ~0.2s. The caller fetches the full enriched card in the background and
   // merges the indication / ordering-branch / doctor / ER fields when they arrive.
+  // Three tiers: false = fast (base only, no enrichment); 'light' = per-order RIS-panel
+  // enrichment (clinical indication, ER, doctor name) but WITHOUT the slow RadiologySearch
+  // (ordering-clinic name + referring-doctor phone + branch correction); true = full.
   const enrich = opts.enrich !== false;
+  const full = enrich && opts.enrich !== 'light';
   // Accept ANY identifier, not just the MRN: if the input is a mobile / national ID
   // / iqama, resolve it to the real MRN first (the same unified search the lookup
   // page uses), so every search box finds the patient the same way.
@@ -1008,7 +1012,7 @@ async function buildPatientCard(file, opts = {}) {
   // enrichOrder also fixes the clinical indication: enrichOrder queries the RIS panel at
   // o.siteId, so once the site is right it finds the order's row and its indication.
   let _rsAge = null, _rsGender = null;   // age/gender salvaged from the RadiologySearch rows below
-  if (enrich) try {
+  if (full) try {
     // Only probe the branches this patient's orders actually touch (+ the result
     // site) instead of all 14 — the orders already carry their site, so this keeps
     // the branch correction while cutting the fan-out that made the card slow.
@@ -1056,7 +1060,8 @@ async function buildPatientCard(file, opts = {}) {
     }
   }
   const patientRawKeys = rawPatient ? Object.keys(rawPatient) : [];
-  return { ok: true, file, patient, patientRawKeys, orders, count: orders.length, fast: !enrich, fetchedAt: new Date().toISOString() };
+  return { ok: true, file, patient, patientRawKeys, orders, count: orders.length,
+           fast: !enrich, light: enrich && !full, fetchedAt: new Date().toISOString() };
 }
 
 // Resolve a patient's national ID / Iqama from the DEMOGRAPHIC record when Patient/Search
@@ -1090,7 +1095,9 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
   if (!file) return res.status(400).json({ ok: false, error: 'file (MRN) is required' });
   const noCache = req.query.nocache === '1' || req.query.nocache === 'true';
   const fast = req.query.fast === '1' || req.query.fast === 'true';   // base card, no enrichment (~0.2s)
-  const cacheKey = fast ? 'fast|' + file : file;   // fast + full are cached separately
+  const light = !fast && (req.query.enrich === 'light' || req.query.light === '1');   // RIS indication, no RadiologySearch
+  const enrichOpt = fast ? false : (light ? 'light' : true);
+  const cacheKey = fast ? 'fast|' + file : (light ? 'light|' + file : file);   // each tier cached separately
   try {
     if (!noCache) {
       const hit = _patientCardCache.get(cacheKey);
@@ -1098,7 +1105,7 @@ app.get('/patient/:file', requireAuth, async (req, res) => {
     }
     let p = _patientCardInFlight.get(cacheKey);
     if (!p) {
-      p = buildPatientCard(file, { enrich: !fast }).then((data) => {
+      p = buildPatientCard(file, { enrich: enrichOpt }).then((data) => {
         _patientCardCache.set(cacheKey, { ts: Date.now(), data });
         if (_patientCardCache.size > 500) _patientCardCache.delete(_patientCardCache.keys().next().value);
         return data;
