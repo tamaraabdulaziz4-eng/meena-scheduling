@@ -191,6 +191,7 @@ function wlCheckNewEmergencies(items) {
 }
 
 async function renderWorklistPage() {
+  _wlCardOpen = false;   // safety: a fresh board load always resumes the background pumps
   setTopbar('Radiology worklist', 'Live RIS status board · STAT first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState._paintedOnce = false;                        // entrance animation once per visit
@@ -1606,6 +1607,11 @@ let _wlIndBusy = 0;
 const _WL_IND_MAX = 2;
 const _wlIndQueue = [];
 const _wlIndInflight = new Set();
+// While a patient card/modal is open, PAUSE the board's background enrichment pumps so
+// the foreground card's live HIS fetches aren't starved on the single-core connector.
+// Isolated, the card's sections load in ~2-3s; the board pump running alongside pushed
+// that to ~7s. Resumed on card close.
+let _wlCardOpen = false;
 function wlAutoIndication() {
   const items = (wlState.data && wlState.data.items) || [];
   const seen = new Set(_wlIndQueue.map((x) => x.mr));
@@ -1621,7 +1627,7 @@ function wlAutoIndication() {
   wlIndPump();
 }
 function wlIndPump() {
-  while (_wlIndBusy < _WL_IND_MAX && _wlIndQueue.length) {
+  while (_wlIndBusy < _WL_IND_MAX && _wlIndQueue.length && !_wlCardOpen) {
     const { mr } = _wlIndQueue.shift();
     if (wlState.indCache.has(mr) || _wlIndInflight.has(mr)) continue;
     _wlIndBusy++; _wlIndInflight.add(mr);
@@ -1683,7 +1689,7 @@ function wlAutoVitals() {
   wlVitalsPump();
 }
 function wlVitalsPump() {
-  while (_wlVitalsBusy < _WL_VITALS_MAX && _wlVitalsQueue.length) {
+  while (_wlVitalsBusy < _WL_VITALS_MAX && _wlVitalsQueue.length && !_wlCardOpen) {
     const { mr } = _wlVitalsQueue.shift();
     if (wlState.vitalsCache.has(mr) || _wlVitalsInflight.has(mr)) continue;
     _wlVitalsBusy++; _wlVitalsInflight.add(mr);
@@ -1822,6 +1828,7 @@ function wlEnsurePcardStyles() {
 async function wlOpenPatientCard(mrno) {
   mrno = String(mrno || '').trim();
   if (!mrno || typeof renderPsDetail !== 'function') return;
+  _wlCardOpen = true;   // pause the board's background enrichment so the card isn't starved
   wlEnsurePcardStyles();
   let ov = document.getElementById('wl-pcard');
   if (!ov) { ov = document.createElement('div'); ov.id = 'wl-pcard'; document.body.appendChild(ov); }
@@ -1887,6 +1894,8 @@ async function wlOpenPatientCard(mrno) {
 function wlClosePatientCard() {
   const ov = document.getElementById('wl-pcard');
   document.body.style.overflow = '';
+  _wlCardOpen = false;   // resume the board's background enrichment
+  try { wlIndPump(); wlVitalsPump(); } catch (e) {}
   if (window._wlPcardEsc) { document.removeEventListener('keydown', window._wlPcardEsc); window._wlPcardEsc = null; }
   if (!ov) return;
   // Play the exit (fade + settle) before removing, instead of a hard snap-out. Guard
