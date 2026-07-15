@@ -281,14 +281,43 @@ async function fetchRisPanel(mrno, isoDay, siteId) {
   return p;
 }
 
+// BATCHED RIS panel: fetch ONE panel per site covering a whole date RANGE, instead of
+// one per (day, site). Same endpoint + same rows, just a wider window — so the billNo
+// match in enrichOrder is identical. Collapses a many-exam patient's per-order fan-out.
+async function fetchRisPanelRange(mrno, fromDay, toDay, siteId) {
+  const key = `${mrno}|${fromDay}|${toDay}|${siteId}`;
+  const hit = _risPanelCache.get(key);
+  if (hit && Date.now() - hit.ts < RIS_PANEL_TTL_MS) return hit.rows;
+  if (_risPanelInFlight.has(key)) return _risPanelInFlight.get(key);
+  const p = (async () => {
+    const ris = await hisFetch('/emr-api/api/v1/EMR/FetchRISPanel', { body: {
+      mrno, fromDate: fromDay + 'T00:00:00', toDate: toDay + 'T23:59:59',
+      invMastServiceId: 0, apptResourceCategoryId: 0, apptResourceId: 0, providerId: '',
+      serviceCategoryId: 0, emrPatRisPanelId: 0,
+      userId: String(HIS_USER).padStart(8, '0'), hospitalId: siteId,
+    } });
+    const rows = (ris.json && ris.json.data) || [];
+    _risPanelCache.set(key, { ts: Date.now(), rows });
+    if (_risPanelCache.size > 500) _risPanelCache.delete(_risPanelCache.keys().next().value);
+    return rows;
+  })().finally(() => { _risPanelInFlight.delete(key); });
+  _risPanelInFlight.set(key, p);
+  return p;
+}
+
 // Enrich an order from the RIS panel (which carries the internal order id,
 // billing status and encounter/ER) and then GetEmrOrderDetails (the clinical
 // indication). FetchRISPanel is site-scoped, so it MUST use the order's siteId.
-async function enrichOrder(mrno, o) {
+// `preRows` = the batched per-site panel (fetchRisPanelRange); if it's missing this
+// order's bill we fall back to the per-day fetch, so no indication is ever lost.
+async function enrichOrder(mrno, o, preRows) {
   try {
     const d = orderedDateToISO(o.orderedDate);
     if (!d || o.siteId == null) return {};
-    const rows = await fetchRisPanel(mrno, d, o.siteId);
+    let rows = preRows;
+    if (!rows || !rows.some((r) => String(r.billNo) === String(o.billNo))) {
+      rows = await fetchRisPanel(mrno, d, o.siteId);   // batch missed this bill → per-day fallback
+    }
     // Only enrich from the RIS row that matches THIS order's bill. The old
     // `|| rows[0]` fallback borrowed another same-day order's billingStatus / ER
     // flag / payer / indication when the billNo didn't match — a wrong-data risk.
@@ -1037,7 +1066,21 @@ async function buildPatientCard(file, opts = {}) {
   // Enrich each order with its clinical indication + billing/ER status. Bounded pool
   // (not an unbounded Promise.all) so a 20-order patient never opens 20+ sockets to the
   // 2 GB HIS box at once; the RIS panel is deduped per (day,site) inside fetchRisPanel.
-  const ext = enrich ? await pool(rawOrders, 6, (o) => enrichOrder(file, o)) : rawOrders.map(() => ({}));
+  // Batch the RIS panel: one call per site covering the full order date range, instead of
+  // one per order-day. enrichOrder then reads its bill's row from the pre-fetched panel
+  // (falling back to a per-day fetch if the batch misses it — so no indication is lost).
+  const panelBySite = new Map();
+  if (enrich) {
+    const _days = rawOrders.map((o) => orderedDateToISO(o.orderedDate)).filter(Boolean).sort();
+    const _from = _days[0], _to = _days[_days.length - 1];
+    const _sites = [...new Set(rawOrders.map((o) => o.siteId).filter((s) => s != null))];
+    if (_from && _to && _sites.length) {
+      await pool(_sites, 4, async (site) => {
+        try { panelBySite.set(site, await fetchRisPanelRange(file, _from, _to, site)); } catch (e) { /* per-order fallback covers it */ }
+      });
+    }
+  }
+  const ext = enrich ? await pool(rawOrders, 6, (o) => enrichOrder(file, o, panelBySite.get(o.siteId))) : rawOrders.map(() => ({}));
   const orders = rawOrders.map((o, i) => {
     const n = normalizeOrder(o, ext[i]);
     if (o._department) n.department = o._department;      // ordering clinic (RadiologySearch)
