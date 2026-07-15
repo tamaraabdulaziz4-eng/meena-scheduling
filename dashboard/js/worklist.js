@@ -1207,6 +1207,7 @@ function wlExpandHtml(it, st) {
     <div class="xbtns">
       ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')" onmouseenter="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')" ontouchstart="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
+      <button class="btn" onclick="wlStampIndication('${jsAttr(mrn)}',this)" title="Write this patient's clinical indication onto the DePACS study now">🖊 Stamp now</button>
       <button class="btn" onclick="wlFlagCritical('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(acc)}',${it.genPatBillingId != null ? it.genPatBillingId : 'null'},${it.site != null ? "'" + jsAttr(String(it.site)) + "'" : 'null'},'${jsAttr(it.doctorName || '')}')">🚨 Flag critical</button>
       ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
       ${wlWorkflowBtns(it, st)}
@@ -1825,6 +1826,24 @@ function wlEnsurePcardStyles() {
     .pname-link:hover{color:var(--accent,#6B4EFF);text-decoration:underline}`;
   document.head.appendChild(s);
 }
+// Manual "Stamp now": write THIS patient's clinical indication onto their DePACS study
+// immediately (same matcher/safety as the background auto-stamp). Auto keeps running.
+async function wlStampIndication(mrno, btn) {
+  mrno = String(mrno || '').trim();
+  if (!mrno) return;
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Stamping…'; }
+  try {
+    const d = await API.post(`/radiology/patient/${encodeURIComponent(mrno)}/autostamp`, {});
+    const n = d && d.stamped || 0;
+    toast(n ? `Stamped ${n} stud${n === 1 ? 'y' : 'ies'}` : 'Nothing to stamp (already stamped, or no fresh study matched)');
+  } catch (e) {
+    toast(e.message || 'Stamp failed', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label || '🖊 Stamp now'; }
+  }
+}
+
 async function wlOpenPatientCard(mrno) {
   mrno = String(mrno || '').trim();
   if (!mrno || typeof renderPsDetail !== 'function') return;

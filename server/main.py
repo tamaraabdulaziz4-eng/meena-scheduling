@@ -8126,6 +8126,21 @@ async def radiology_autostamp_set(request: Request, user=Depends(require_superad
                              "sites": get_setting("rad_autostamp_sites", "3")}))
     return radiology_autostamp_get(user=user)
 
+@app.post("/api/radiology/patient/{file_no}/autostamp")
+def radiology_autostamp_now(file_no: str, user=Depends(require_radiology)):
+    """Manually stamp THIS patient's clinical indication onto their DePACS study(ies)
+    right now — the exact same matcher + no-clobber safety as the background sweep,
+    scoped to one file. The rotating background auto-stamp keeps running as usual."""
+    file_no = (file_no or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    try:
+        n = _radiology_autostamp_sweep(only_file=file_no)
+    except Exception as e:
+        raise HTTPException(502, f"Auto-stamp failed: {e}")
+    insert_audit(user, "RADIOLOGY_AUTOSTAMP_MANUAL", str(file_no), json.dumps({"stamped": n}))
+    return {"ok": True, "stamped": n}
+
 @app.get("/api/radiology/autostamp/diagnose")
 def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadmin)):
     """READ-ONLY dry run of the auto-stamp matcher over the live board. Writes NOTHING —
@@ -13746,7 +13761,7 @@ def _autostamp_order_acc(o):
             return v
     return ""
 
-def _radiology_autostamp_sweep():
+def _radiology_autostamp_sweep(only_file=None):
     """The moment a patient's images land in DePACS, stamp what the radiologist needs
     to START READING with zero delay — the clinical indication (from the order), the
     category ("Others") and the emergency flag — plus the order's accession when the
@@ -13787,7 +13802,11 @@ def _radiology_autostamp_sweep():
     # in ceil(N/25) passes (~90s each). Studies already stamped are cheap no-ops.
     mrns = list(by_mrn.items())
     _PASS = 25
-    if mrns:
+    if only_file is not None:
+        # Manual "stamp now" for ONE patient — same matching + write + safety, scoped to
+        # this file (the background rotating sweep is untouched).
+        window = [(str(only_file), by_mrn.get(str(only_file)) or [])]
+    elif mrns:
         start = _autostamp_cursor % len(mrns)
         window = (mrns + mrns)[start:start + _PASS]          # wrap-around slice
         _autostamp_cursor = (start + _PASS) % len(mrns)
