@@ -52,10 +52,6 @@ async function renderRadStatsPage(opts) {
   opts = opts || {};
   const embed = !!opts.container;           // render the full stats INSIDE a host (e.g. Home) instead of the page
   const isLead = rsIsLead();
-  // A team lead is pinned to their own branch; resolve it before the first load.
-  if (isLead && !radstats.leadLocked) { await rsApplyLeadScope(); }
-  const scopeName = radstats.leadLocked ? (radstats.leadBranchName || 'your branch') : '';
-  if (!embed) setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
   rsStopAuto();
   radstats._paintedOnce = false;         // entrance animation once per visit/mount
   if (radstats.preset && radstats.preset !== 'custom') {
@@ -64,18 +60,28 @@ async function renderRadStatsPage(opts) {
   }
   rsRestore();                           // stale-first: hydrate from sessionStorage on a hard reload
   const c = opts.container || document.getElementById('content');
-  const heroSub = scopeName
-    ? `Live request volume for ${escapeHtml(scopeName)} — by modality, doctor and department, straight from Siratech HIS`
-    : 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS';
-  c.innerHTML = `<div class="cc">
-    ${embed ? '' : pageHero('Radiology', 'Radiology statistics', heroSub)}
-    <div id="rs-controls"></div>
-    <div id="rs-billing-banner"></div>
-    <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>
-  </div>`;
-  rsRenderControls();
+  // Paint the shell + skeleton BEFORE resolving a team lead's branch. rsApplyLeadScope →
+  // /radiology/branches is a slow HIS read that used to block the first paint and leave the
+  // previous page frozen. Re-painted once the scope resolves so the hero shows the branch.
+  const paintShell = () => {
+    const scopeName = radstats.leadLocked ? (radstats.leadBranchName || 'your branch') : '';
+    if (!embed) setTopbar('Radiology statistics', scopeName ? `Live requests · ${scopeName}` : 'Live requests across all branches');
+    const heroSub = scopeName
+      ? `Live request volume for ${escapeHtml(scopeName)} — by modality, doctor and department, straight from Siratech HIS`
+      : 'Live request volume by branch, modality, doctor and department — straight from Siratech HIS';
+    c.innerHTML = `<div class="cc">
+      ${embed ? '' : pageHero('Radiology', 'Radiology statistics', heroSub)}
+      <div id="rs-controls"></div>
+      <div id="rs-billing-banner"></div>
+      <div id="rs-body">${radstats.data ? '' : rsSkeleton()}</div>
+    </div>`;
+    rsRenderControls();
+  };
+  paintShell();
   rsStartClock();
   rsBindTips();                        // live cursor-following tooltips
+  // A team lead is pinned to their own branch; resolve it AFTER the skeleton is on screen.
+  if (isLead && !radstats.leadLocked) { await rsApplyLeadScope(); paintShell(); rsBindTips(); }
   if (radstats.leadUnmatched) {        // fail-closed lead → explain, don't fetch org-wide data
     rsHideOverlay();
     rsRenderUnmatched();
