@@ -229,6 +229,14 @@ async function renderHomeRadstats() {
   if (_hmRadTimer) { clearInterval(_hmRadTimer); _hmRadTimer = null; }
   if (!box) return;
   const isLead = currentUser?.role === 'admin';
+  // Paint the skeleton IMMEDIATELY — BEFORE resolving a team lead's branch (rsMySite →
+  // /radiology/branches is a slow HIS read that used to leave this card blank). The fetch
+  // below fills it in; the branch scope only refines the query, not the first paint.
+  if (!box.dataset.loaded) {
+    box.innerHTML = `<div class="board" style="margin-bottom:14px">
+      <div class="bhead"><div class="bhrow"><div class="btitle">Radiology today</div></div></div>
+      <div class="rows"><div class="lrow" style="padding:12px 18px"><span class="mini-spin"></span> Loading live data…</div></div></div>`;
+  }
   let site = null, scopeName = '';
   if (isLead && typeof rsMySite === 'function') {
     let mine = null;
