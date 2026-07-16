@@ -187,6 +187,10 @@ function wlCheckNewEmergencies(items) {
   if (wlState.seenEmerg === null) { wlState.seenEmerg = new Set(keys); return; }   // seed, no alarm
   const fresh = emerg.filter((i) => !wlState.seenEmerg.has(wlKey(i)));
   keys.forEach((k) => wlState.seenEmerg.add(k));
+  // Hand the reconciling painter the uids of just-arrived STAT orders so their rows get a
+  // one-shot arrival cue (see wlPaintBoard → .rw-newstat). Always overwrite so a stale set
+  // from a previous tick can't re-fire.
+  wlState._freshEmergUids = new Set(fresh.map(wlRowUid));
   if (fresh.length) { wlBeep(); wlNotify(fresh); }
 }
 
@@ -388,8 +392,9 @@ function wlSwitchBranch() {
   wlState.loading = false;        // …so the silent refresh below isn't dropped by the lock
   _wlEnrichBusy = false;          // free the enrich lock for the (possibly narrower) new scope
   wlState.openRows.clear(); wlState.selMrns.clear();
-  wlRender();                     // INSTANT: client-side site filter — branch rows if in hand,
-                                  // else a brief empty (never a blank spinner or the wrong branch)
+  wlRenderLocal();                // INSTANT: client-side site filter — branch rows if in hand,
+                                  // else a brief empty (never a blank spinner or the wrong branch).
+                                  // Local so switching branch snaps instead of animating a churn.
   wlLoad(false, true);            // silent background refresh — no loading flash
 }
 
@@ -924,6 +929,148 @@ function wlRowMod(it) {
   return null;
 }
 
+// ── Live board painter (keyed reconcile + FLIP) ───────────────────────────────
+// Instead of blowing the whole board away on every tick, we diff the desired rows
+// against the DOM by uid and only touch what changed: a new order slides IN, a
+// filed study fades OUT (rows below glide up), a re-sorted/pushed-up row travels
+// via FLIP, a status bump pulses its pill. Unchanged rows are left untouched — so
+// async-injected cells (vitals / indication / pregnancy) survive a refresh instead
+// of being wiped and re-fetched every poll. User navigation (tab/filter/sort/open)
+// sets _localMutate so it stays instant; only LIVE data changes animate. Reduced
+// motion or any failure falls back to a plain full repaint.
+function _wlReduceMotion() {
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch (_e) { return false; }
+}
+function _wlCssEsc(s) { return (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s).replace(/["\\\]]/g, '\\$&'); }
+function wlBuildItem(html) { const t = document.createElement('template'); t.innerHTML = html; return t.content.firstElementChild; }
+// Remove one-shot animation classes once they've played so they can re-trigger later.
+function _wlOneShot(el, classes) {
+  const cls = Array.isArray(classes) ? classes : [classes];
+  let done = false;
+  const clear = () => { if (done) return; done = true; cls.forEach((c) => el.classList.remove(c)); el.removeEventListener('animationend', clear); };
+  el.addEventListener('animationend', clear);
+  setTimeout(clear, 1400);
+}
+function _wlClearFlip(item) {
+  const c = () => { item.style.transition = ''; item.style.transform = ''; item.removeEventListener('transitionend', c); };
+  item.addEventListener('transitionend', c);
+  setTimeout(c, 500);
+}
+// Pull a departing row out of flow (absolute, pinned where it sits) so the rows below
+// glide up while it fades — then drop it when the exit animation ends.
+function wlExitItem(el, body) {
+  try {
+    el.style.top = el.offsetTop + 'px';
+    el.dataset.exiting = '1';
+    el.classList.add('rw-exit');
+    body.appendChild(el);          // park at the end; absolute + top holds its visual position
+    let done = false;
+    const rm = () => { if (done) return; done = true; el.remove(); };
+    el.addEventListener('animationend', rm);
+    setTimeout(rm, 600);
+  } catch (_e) { el.remove(); }
+}
+function wlPaintBoard(body, rows) {
+  try {
+    const localMutate = !!wlState._localMutate; wlState._localMutate = false;
+    const reduce = _wlReduceMotion();
+
+    const desired = rows.map((it) => ({ uid: wlRowUid(it), html: wlRowHtml(it), status: it.__status }));
+    const seen   = wlState._seenUids  || (wlState._seenUids  = new Set());
+    const sig    = wlState._rowSig    || (wlState._rowSig    = new Map());
+    const prevSt = wlState._rowStatus || (wlState._rowStatus = new Map());
+
+    const kids = Array.from(body.children);
+    const clean = kids.length > 0 && kids.every((el) => el.classList.contains('rw-item'));
+
+    // Fresh mount, a non-board view (typeahead / empty state) was showing, or reduced
+    // motion → a plain full paint. Reseed the caches so the next diff has a clean base;
+    // the initial staggered entrance is handled by the CSS (.rw-row rw-rise), not here.
+    if (!clean || reduce) {
+      body.innerHTML = desired.map((d) => d.html).join('');
+      sig.clear(); prevSt.clear(); seen.clear();
+      desired.forEach((d) => { sig.set(d.uid, d.html); prevSt.set(d.uid, d.status); seen.add(d.uid); });
+      return;
+    }
+
+    const existing = new Map();
+    for (const el of kids) { if (!el.dataset.exiting && el.dataset.uid) existing.set(el.dataset.uid, el); }
+    const desiredUids = new Set(desired.map((d) => d.uid));
+
+    // FLIP FIRST — kept-row positions while everything (incl. soon-to-exit rows) is in flow.
+    const firstTop = new Map();
+    if (!localMutate) existing.forEach((el, uid) => { if (desiredUids.has(uid)) firstTop.set(uid, el.getBoundingClientRect().top); });
+
+    // Exit rows no longer on the board.
+    existing.forEach((el, uid) => {
+      if (desiredUids.has(uid)) return;
+      sig.delete(uid); prevSt.delete(uid); seen.delete(uid);
+      if (localMutate || reduce) el.remove(); else wlExitItem(el, body);
+    });
+
+    const freshEmerg = wlState._freshEmergUids || new Set();
+    const enterUids = [], advanceUids = [];
+
+    // Walker: place every desired row in order, reusing unchanged nodes.
+    let ref = body.firstElementChild;
+    for (const d of desired) {
+      let el = existing.get(d.uid);
+      if (el) {
+        if (sig.get(d.uid) !== d.html) {                          // content changed → rebuild in place
+          if ((_WL_ST_RANK[d.status] != null ? _WL_ST_RANK[d.status] : 5) >
+              (_WL_ST_RANK[prevSt.get(d.uid)] != null ? _WL_ST_RANK[prevSt.get(d.uid)] : -1)) advanceUids.push(d.uid);
+          const nw = wlBuildItem(d.html);
+          if (ref === el) ref = ref.nextElementSibling;
+          el.replaceWith(nw);
+          el = nw;
+        }
+      } else {
+        el = wlBuildItem(d.html);
+        if (!seen.has(d.uid)) enterUids.push(d.uid);
+      }
+      if (el === ref) { ref = ref.nextElementSibling; }
+      else { body.insertBefore(el, ref); }
+      sig.set(d.uid, d.html); prevSt.set(d.uid, d.status); seen.add(d.uid);
+    }
+    // Drop the exiting nodes still parked at the tail from the walker's view (they're
+    // position:absolute, so leaving them in the DOM tail doesn't disturb the flow).
+
+    if (localMutate || reduce) return;
+
+    const byUid = (uid) => body.querySelector('.rw-item[data-uid="' + _wlCssEsc(uid) + '"]:not([data-exiting])');
+
+    for (const uid of enterUids) {
+      const el = byUid(uid); if (!el) continue;
+      el.classList.add('rw-enter');
+      if (freshEmerg.has(uid)) el.classList.add('rw-newstat');
+      _wlOneShot(el, ['rw-enter', 'rw-newstat']);
+    }
+    for (const uid of advanceUids) {
+      const el = byUid(uid), pill = el && el.querySelector('.rw-row .ris');
+      if (pill) { pill.classList.add('rw-advance'); _wlOneShot(pill, ['rw-advance']); }
+    }
+
+    // FLIP LAST + INVERT + PLAY for rows that moved.
+    if (firstTop.size) {
+      const moves = [];
+      firstTop.forEach((oldTop, uid) => {
+        const el = byUid(uid); if (!el) return;
+        const dy = oldTop - el.getBoundingClientRect().top;
+        if (Math.abs(dy) > 1) moves.push([el, dy]);
+      });
+      if (moves.length) {
+        for (const [el, dy] of moves) { el.style.transform = 'translateY(' + dy + 'px)'; el.style.transition = 'none'; }
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          for (const [el] of moves) { el.style.transition = 'transform .34s var(--ease-out)'; el.style.transform = ''; _wlClearFlip(el); }
+        }));
+      }
+    }
+  } catch (_e) {
+    try { body.innerHTML = rows.map(wlRowHtml).join(''); } catch (_e2) { /* give up quietly */ }
+  }
+}
+
 function wlRender() {
   const d = wlState.data || {};
   let items = d.items || [];
@@ -1004,7 +1151,7 @@ function wlRender() {
   // no-op assignment also PRESERVES async-injected cell content (vitals/indication) instead
   // of wiping and re-fetching it every tick.
   if (html !== wlState._lastBodyHtml || !body.firstChild) {
-    body.innerHTML = html;
+    wlPaintBoard(body, rows);
     wlState._lastBodyHtml = html;
   }
 
@@ -1122,7 +1269,7 @@ function wlRowHtml(it) {
   const primaryAct = canReport
     ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" ontouchstart="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
     : `<button class="iconbtn" title="Handoff" onclick="event.stopPropagation();wlOpenHandoff('${jsAttr(mrn)}')">${icon('inbox')}</button>`;
-  return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" data-mrn="${escapeHtml(mrn)}" onclick="wlToggleRow('${uid}',event)">
+  return `<div class="rw-item" data-uid="${uid}"><div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" data-uid="${uid}" data-mrn="${escapeHtml(mrn)}" onclick="wlToggleRow('${uid}',event)">
     <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
     <div class="pt">
       <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}${payChip}</div>
@@ -1139,7 +1286,7 @@ function wlRowHtml(it) {
       <button class="iconbtn" title="Expand" onclick="wlToggleRow('${uid}',event)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
     </div>
   </div>
-  <div class="rw-expand">${wlExpandHtml(it, st)}</div>`;
+  <div class="rw-expand">${wlExpandHtml(it, st)}</div></div>`;
 }
 
 // The expand card built from the real item fields.
@@ -1229,23 +1376,27 @@ function wlSyncActionbar() {
 }
 
 // ── Redesign view-state handlers (all repaint via wlRender) ────────────────────
-function wlSetTab(k) { wlState.tab = k; wlRender(); }
-function wlToggleMod(m) { if (wlState.fMods.has(m)) wlState.fMods.delete(m); else wlState.fMods.add(m); wlRender(); }
-function wlSetPrio(p) { wlState.fPrio = p; wlRender(); }
-function wlSetDoc(v) { wlState.fDoc = v; wlRender(); }
-function wlSetSort(v) { wlState.fSort = v; const s = document.getElementById('rw-sortsel'); if (s && s.value !== v) s.value = v; wlRender(); }
+// A repaint driven by the operator (tab / filter / sort / open / select). Flag it so
+// wlPaintBoard applies the change instantly instead of animating enter/exit/FLIP —
+// navigation stays snappy; only unattended LIVE data changes get motion.
+function wlRenderLocal() { wlState._localMutate = true; wlRender(); }
+function wlSetTab(k) { wlState.tab = k; wlRenderLocal(); }
+function wlToggleMod(m) { if (wlState.fMods.has(m)) wlState.fMods.delete(m); else wlState.fMods.add(m); wlRenderLocal(); }
+function wlSetPrio(p) { wlState.fPrio = p; wlRenderLocal(); }
+function wlSetDoc(v) { wlState.fDoc = v; wlRenderLocal(); }
+function wlSetSort(v) { wlState.fSort = v; const s = document.getElementById('rw-sortsel'); if (s && s.value !== v) s.value = v; wlRenderLocal(); }
 function wlSetDensity(dn) {
   wlState.density = dn;
   const a = document.getElementById('rw-dCompact'), b = document.getElementById('rw-dDetailed');
   if (a) a.classList.toggle('on', dn === 'compact');
   if (b) b.classList.toggle('on', dn === 'detailed');
-  wlRender();
+  wlRenderLocal();
 }
 function wlResetFilters() {
   wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = '';
   const r = document.querySelector('input[name="rw-prio"][value=""]'); if (r) r.checked = true;
   const ds = document.getElementById('rw-docsel'); if (ds) ds.value = '';
-  wlRender();
+  wlRenderLocal();
 }
 function wlToggleRow(uid, e) {
   if (e) e.stopPropagation();
@@ -1263,10 +1414,10 @@ function wlToggleRow(uid, e) {
       }
     } catch (_e) { /* prefetch is best-effort */ }
   }
-  wlRender();
+  wlRenderLocal();
 }
-function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRender(); }
-function wlClearSel() { wlState.selMrns.clear(); wlRender(); }
+function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRenderLocal(); }
+function wlClearSel() { wlState.selMrns.clear(); wlRenderLocal(); }
 
 // ── Phase-2 workflow actions (Meena-owned local overlay) ──────────────────────
 // receive / start / complete / assign / note / cancel — POST to the order endpoint,
