@@ -354,12 +354,40 @@ body.dark .cc .tab .n { background: var(--surface-2); }
 .rw .rw-colhead .sortable { cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
 .rw .rw-colhead .sortable:hover { color: var(--accent); }
 .rw .rw-colhead .sortable.act { color: var(--accent); }
-.rw .rw-rows { min-width: 820px; }
+.rw .rw-rows { min-width: 820px; position: relative; }
+/* Each order is one keyable unit (row + its expand card) so the live painter can
+   diff, move (FLIP), enter and exit whole orders atomically — see wlPaintBoard. */
+.rw .rw-item { position: relative; z-index: 1; }
 .rw .rw-row { min-height: 56px; border-bottom: 1px solid var(--border); cursor: pointer; position: relative;
   transition: background .12s; animation: rw-rise .18s ease both; }
 .rw.rw-still .rw-row { animation: none; }
 @keyframes rw-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-.rw .rw-row:nth-child(even) { background: rgba(120,120,150,.045); }
+.rw .rw-item:nth-child(even) .rw-row { background: rgba(120,120,150,.045); }
+
+/* ── Live motion: a new order slides in, a filed one fades out, a status bump pulses.
+   JS gates all of this (skipped on user navigation + reduced motion); these are the
+   curves. ── */
+@keyframes rw-enter { from { opacity: 0; transform: translateY(-9px); } to { opacity: 1; transform: none; } }
+@keyframes rw-exit  { to   { opacity: 0; transform: translateY(-6px) scale(.985); } }
+@keyframes rw-newstat { 0% { background: var(--danger-wash); } 100% { background: transparent; } }
+@keyframes rw-advance { 0% { transform: scale(1); } 30% { transform: scale(1.14); } 100% { transform: scale(1); } }
+.rw .rw-item.rw-enter { animation: rw-enter .34s var(--ease-out) both; will-change: transform, opacity; }
+.rw .rw-item.rw-enter .rw-row { animation: none; }
+.rw .rw-item.rw-exit { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none;
+  animation: rw-exit .3s var(--ease-out) forwards; will-change: transform, opacity; }
+.rw .rw-item.rw-newstat .rw-row { animation: rw-newstat 1.7s ease; }
+.rw .ris.rw-advance { animation: rw-advance .5s var(--ease-spring); transform-origin: left center; }
+
+/* Honour reduced-motion: kill every worklist animation/transition. The JS painter
+   also detects this and skips enter/exit/FLIP, so state changes still apply — just
+   without movement. */
+@media (prefers-reduced-motion: reduce) {
+  .rw .rw-item, .rw .rw-item.rw-enter, .rw .rw-item.rw-exit, .rw .rw-item.rw-newstat .rw-row,
+  .rw .rw-row, .rw .ris.rw-advance, .rw .ris.progress .rd, .cc .liveTag i, .cc .hero {
+    animation: none !important;
+  }
+  .rw .rw-item, .rw .rw-row, .rw .chev { transition: none !important; }
+}
 .rw .rw-row:hover { background: var(--card-alt); }
 .rw .rw-row.sel { background: var(--violet-wash); }
 .rw .rw-row.stat { box-shadow: inset 3px 0 0 var(--danger); }
