@@ -13788,6 +13788,14 @@ def _radiology_autostamp_sweep(only_file=None, _detail=None):
     # siteId 3) — the pilot branch. Blank setting → every branch.
     sites_raw = (get_setting("rad_autostamp_sites", "3") or "").strip()
     site_set = set(s.strip() for s in sites_raw.split(",") if s.strip()) if sites_raw else None
+    if only_file is not None:
+        # Explicit manual "Stamp now": the operator picked THIS patient, so honour that
+        # intent and stamp their studies regardless of the background pilot-branch scope
+        # (which exists to pace the ROTATING sweep, not to veto a deliberate one-patient
+        # click). Every per-study safety gate still applies — patient-identity match,
+        # accession key, modality 1:1, and body-part conflict — so a wrong indication can
+        # never land on the wrong study; only the branch pre-filter is lifted.
+        site_set = None
     # Shared-PACS branch guard (see the per-study check below): the DePACS station /
     # institution values that identify the scoped branch. Comma-separated, case-insensitive.
     n3_stations_raw = (get_setting("rad_autostamp_n3_stations", "") or "").strip()
