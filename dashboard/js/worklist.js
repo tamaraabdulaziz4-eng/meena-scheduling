@@ -964,7 +964,7 @@ function wlRender() {
       : `<div class="empty"><div class="ei">🔍</div><p>No patient on this board starts with “${escapeHtml(f)}”.${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
     wlState._lastBodyHtml = null;   // typeahead view — next full-board render must repaint
     wlRenderTabs(items);
-    wlAutoPreg(); wlAutoIndication(); wlAutoVitals(); wlSyncActionbar();
+    wlAutoPreg(); wlAutoIndication(match); wlAutoVitals(); wlSyncActionbar();
     return;
   }
 
@@ -1011,7 +1011,7 @@ function wlRender() {
   // Selection + expanded state are re-derived from the wlState Sets while building the
   // row HTML, so they survive every repaint with no separate restore pass.
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
-  wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
+  wlAutoIndication(rows); // pre-warm indications for the top visible rows (instant on click)
   wlAutoVitals();         // auto-fetch vitals for any EXPANDED order row (throttled, cached)
   wlSyncActionbar();      // reflect the current checkbox selection in the sticky action bar
 }
@@ -1592,6 +1592,7 @@ function wlIndSet(mr) {
 // study's indication is already viewable in the drill.
 let _wlIndBusy = 0;
 const _WL_IND_MAX = 2;
+const _WL_IND_WARM = 12;   // how many TOP visible rows to pre-warm so a click is instant
 const _wlIndQueue = [];
 const _wlIndInflight = new Set();
 // While a patient card/modal is open, PAUSE the board's background enrichment pumps so
@@ -1599,17 +1600,26 @@ const _wlIndInflight = new Set();
 // Isolated, the card's sections load in ~2-3s; the board pump running alongside pushed
 // that to ~7s. Resumed on card close.
 let _wlCardOpen = false;
-function wlAutoIndication() {
-  const items = (wlState.data && wlState.data.items) || [];
+function wlAutoIndication(rows) {
+  // `rows` is the sorted, filtered, VISIBLE list (STAT-first) from wlRender; fall back to
+  // the raw items if called without it. Two priorities feed one throttled pump:
+  const items = (rows && rows.length) ? rows : ((wlState.data && wlState.data.items) || []);
   const seen = new Set(_wlIndQueue.map((x) => x.mr));
-  // On-demand: only fetch the clinical indication for an EXPANDED card, not the whole
-  // board — the per-MRN HIS lookup was what made the indication lag on the list.
+  const want = (mr) => mr && !wlState.indCache.has(mr) && !seen.has(mr) && !_wlIndInflight.has(mr);
+  // 1) EXPANDED rows first — the user is looking at these NOW, so jump the queue (unshift).
   for (const it of items) {
     if (!wlState.openRows.has(wlRowUid(it))) continue;
     const mr = String(it.mrno || '');
-    if (!mr || wlState.indCache.has(mr) || seen.has(mr) || _wlIndInflight.has(mr)) continue;
-    seen.add(mr);
-    _wlIndQueue.push({ mr });
+    if (want(mr)) { seen.add(mr); _wlIndQueue.unshift({ mr }); }
+  }
+  // 2) PREDICTIVE WARM — the top few visible rows (most likely to be clicked) so expanding
+  //    is INSTANT instead of a ~2s HIS wait. Bounded (_WL_IND_WARM), deduped against the
+  //    per-MRN cache so steady-board polls don't re-fetch, and paused while a card is open.
+  let warm = 0;
+  for (const it of items) {
+    if (warm >= _WL_IND_WARM) break;
+    const mr = String(it.mrno || '');
+    if (want(mr)) { seen.add(mr); _wlIndQueue.push({ mr }); warm++; }
   }
   wlIndPump();
 }

@@ -134,11 +134,11 @@ async function initApp() {
   if (typeof loadTicketsBadge === 'function') loadTicketsBadge();
   // Unacknowledged action-required circulars badge (everyone).
   if (typeof loadAnnouncementsBadge === 'function') loadAnnouncementsBadge();
-  // Landing page: management (team lead / manager / full admin) opens on the Home
-  // dashboard — their overview of the whole operation. A radiology-privileged STAFF
-  // operator opens straight onto the Worklist (their main screen). A staff member
-  // without radiology lands on their schedule; other roles on the schedule.
-  window._defaultPage = canSeeHome ? 'home' : (canRad ? 'worklist' : (isStaff ? 'myschedule' : 'schedule'));
+  // Landing page: anyone who works radiology (read or file) opens straight onto the
+  // Worklist — it's their operational screen, so a radiologist/owner isn't bounced through
+  // the Home dashboard first. Non-radiology management still lands on Home (their overview);
+  // a staff member without radiology on their schedule; other roles on the schedule.
+  window._defaultPage = canRad ? 'worklist' : (canSeeHome ? 'home' : (isStaff ? 'myschedule' : 'schedule'));
   // Kick the landing page's lazy chunk NOW so it downloads in parallel with the login
   // data fetches below — by the time showPage() runs it's already in hand (no-op for an
   // eager landing page). This keeps the radiology operator's cold open fast.
