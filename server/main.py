@@ -8134,12 +8134,23 @@ def radiology_autostamp_now(file_no: str, user=Depends(require_radiology)):
     file_no = (file_no or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
+    detail = {}
     try:
-        n = _radiology_autostamp_sweep(only_file=file_no)
+        n = _radiology_autostamp_sweep(only_file=file_no, _detail=detail)
     except Exception as e:
         raise HTTPException(502, f"Auto-stamp failed: {e}")
     insert_audit(user, "RADIOLOGY_AUTOSTAMP_MANUAL", str(file_no), json.dumps({"stamped": n}))
-    return {"ok": True, "stamped": n}
+    studies = detail.get("studies", [])
+    # An honest outcome so the button never reads as a silent failure: report what was
+    # ALREADY on DePACS (the common case — the HIS/MWL feed writes the indication before
+    # this ever runs) vs. genuinely nothing landing today vs. a match we couldn't make.
+    already = [{"studyId": s["studyId"], "indication": s.get("currentHistory"),
+                "studyDesc": s.get("studyDesc"), "modality": s.get("modality")}
+               for s in studies if (s.get("currentHistory") or "").strip() and not s.get("stamped")]
+    return {"ok": True, "stamped": n,
+            "totalStudies": detail.get("totalStudies", 0),
+            "freshStudies": detail.get("freshStudies", 0),
+            "already": already}
 
 @app.get("/api/radiology/autostamp/diagnose")
 def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadmin)):
@@ -13761,7 +13772,7 @@ def _autostamp_order_acc(o):
             return v
     return ""
 
-def _radiology_autostamp_sweep(only_file=None):
+def _radiology_autostamp_sweep(only_file=None, _detail=None):
     """The moment a patient's images land in DePACS, stamp what the radiologist needs
     to START READING with zero delay — the clinical indication (from the order), the
     category ("Others") and the emergency flag — plus the order's accession when the
@@ -13819,6 +13830,9 @@ def _radiology_autostamp_sweep(only_file=None):
             continue
         fresh = [s for s in studies
                  if re.sub(r"\D", "", str(s.get("study_date") or ""))[:8] in fresh_days]
+        if _detail is not None:                              # manual "stamp now": explain the outcome
+            _detail["totalStudies"] = _detail.get("totalStudies", 0) + len(studies)
+            _detail["freshStudies"] = _detail.get("freshStudies", 0) + len(fresh)
         if not fresh:
             continue
         # How many fresh studies of each modality — we only stamp when a modality has
@@ -13861,6 +13875,13 @@ def _radiology_autostamp_sweep(only_file=None):
                          and _elite_bare_id(_autostamp_order_acc(o)) == _elite_bare_id(s_acc)]
                         if _elite_is_real_accession(s_acc) else [])
             cur_hist = str(s.get("clinical_history") or "").strip()
+            sd = None
+            if _detail is not None:                          # manual "stamp now": per-study outcome
+                sd = {"studyId": sid, "modality": s.get("modality"),
+                      "studyDate": s.get("study_date"),
+                      "studyDesc": s.get("study_description") or s.get("study_desc"),
+                      "currentHistory": cur_hist, "stamped": False}
+                _detail.setdefault("studies", []).append(sd)
             # One-time: dump a study's field names so the DePACS branch/station field can
             # be pinned from a live response (to configure rad_autostamp_n3_stations).
             if not _autostamp_keys_logged:
@@ -14025,6 +14046,7 @@ def _radiology_autostamp_sweep(only_file=None):
                         _elite_write_history(sid, text, set_emergency=emergency)
                         _autostamp_hist_done.add(sid)   # don't re-stamp this study this process
                         stamped += 1
+                        if sd is not None: sd["stamped"] = True; sd["wroteHistory"] = text[:160]
                         insert_audit(_RAD_AUTOSTAMP_USER, "RADIOLOGY_AUTOSTAMP", str(mrno),
                                      json.dumps({"studyId": sid, "emergency": bool(emergency),
                                                  "history": text[:160], "site": o.get("site")}))

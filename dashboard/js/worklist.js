@@ -1825,9 +1825,20 @@ async function wlStampIndication(mrno, btn) {
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Stamping…'; }
   try {
-    const d = await API.post(`/radiology/patient/${encodeURIComponent(mrno)}/autostamp`, {});
-    const n = d && d.stamped || 0;
-    toast(n ? `Stamped ${n} stud${n === 1 ? 'y' : 'ies'}` : 'Nothing to stamp (already stamped, or no fresh study matched)');
+    const d = await API.post(`/radiology/patient/${encodeURIComponent(mrno)}/autostamp`, {}) || {};
+    const n = d.stamped || 0;
+    if (n) {
+      toast(`Stamped ${n} stud${n === 1 ? 'y' : 'ies'} on DePACS ✓`);
+    } else if (Array.isArray(d.already) && d.already.length) {
+      // The study already carries its clinical indication (HIS wrote it first) — show it so
+      // the radiologist sees it's genuinely there, not that the button failed.
+      const ind = (d.already[0].indication || '').trim();
+      toast(`Already on DePACS: “${ind.length > 80 ? ind.slice(0, 79) + '…' : ind}”`, 'ok');
+    } else if (!d.freshStudies) {
+      toast(d.totalStudies ? 'No study from today/yesterday to stamp' : 'No DePACS study found for this patient', 'ok');
+    } else {
+      toast('Fresh study found, but no matching order to take the indication from', 'err');
+    }
   } catch (e) {
     toast(e.message || 'Stamp failed', 'err');
   } finally {
