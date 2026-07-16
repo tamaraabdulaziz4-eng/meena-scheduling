@@ -13652,7 +13652,13 @@ def _mod_bucket(m):
 _AS_BODY_STOP = {"XR", "CT", "MR", "MRI", "US", "THE", "AND", "VIEW", "VIEWS", "AP", "PA",
     "LAT", "LATERAL", "OBLIQUE", "OBLIQUES", "LT", "RT", "LEFT", "RIGHT", "BILATERAL",
     "BILAT", "BOTH", "WITH", "WITHOUT", "CONTRAST", "SERIES", "STUDY", "SCAN", "PLAIN",
-    "ROUTINE", "PORTABLE", "STANDING", "ERECT", "SUPINE", "ONE", "TWO", "THREE"}
+    "ROUTINE", "PORTABLE", "STANDING", "ERECT", "SUPINE", "ONE", "TWO", "THREE",
+    # Generic non-anatomy words that appear in MANY exam names — if counted as body
+    # parts they cross-match unrelated exams (e.g. "ANKLE JOINT" vs "KNEE JOINT" both
+    # carry JOINT → falsely "2 body matches" → the study is wrongly left ambiguous and
+    # a human ends up stamping it). Anatomy alone must decide the study↔order match.
+    "JOINT", "JOINTS", "EXAM", "EXAMINATION", "SCREENING", "PROJECTION", "PROJECTIONS",
+    "FOUR", "FIVE", "SIX", "MINIMUM", "WEIGHT", "BEARING", "FOR", "AND", "OF"}
 def _as_body_tokens(s):
     t = " " + re.sub(r"\s+", " ", re.sub(r"[^A-Z]", " ", str(s or "").upper())) + " "
     t = re.sub(r"\bLUMBO\s?SACRAL\b", " LUMBAR SPINE ", t)
