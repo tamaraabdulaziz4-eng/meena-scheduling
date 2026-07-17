@@ -7114,6 +7114,77 @@ def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
             rows.append(s)
     return rows
 
+def _elite_studies_by_date(start_date, end_date):
+    """EVERY DePACS study imaged within [start_date, end_date] (KSA study day), across
+    all patients — paginated and de-duplicated by study_id. Read-only. Powers the
+    'DePACS arrivals' manager report (which studies actually reached the PACS each day)."""
+    import urllib.parse
+    rows, seen = [], set()
+    page = 1
+    while page <= 80:                              # hard cap ~8000 studies/range
+        r = _elite_get("/study/get_studies?start_date=%s&end_date=%s&page_size=100&current_page=%d"
+                       % (urllib.parse.quote(start_date), urllib.parse.quote(end_date), page))
+        b = _elite_body(r)
+        batch = b.get("data") or []
+        for s in batch:
+            sid = s.get("study_id")
+            if sid in seen:
+                continue
+            seen.add(sid)
+            rows.append(s)
+        tp = b.get("total_pages") or 1
+        if page >= tp or not batch:
+            break
+        page += 1
+    return rows
+
+@app.get("/api/radiology/depacs-arrivals")
+def radiology_depacs_arrivals(request: Request, user=Depends(require_admin)):
+    """Every study that ARRIVED (was imaged) in DePACS within a date range — one row
+    per study, for manager review. NOTHING is excluded: the caller decides what's a
+    duplicate or irrelevant. Studies WITHOUT a real DICOM accession are flagged
+    (noAccession=true) for manual review. Management-only (carries patient IDs)."""
+    if user.get("role") not in ("manager", "superadmin"):
+        raise HTTPException(403, "Management only")
+    p = request.query_params
+    frm = (p.get("from") or "").strip()
+    to = (p.get("to") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", frm) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", to):
+        raise HTTPException(400, "from and to are required as YYYY-MM-DD")
+    if to < frm:
+        frm, to = to, frm
+    rows = []
+    for s in _elite_studies_by_date(frm, to):
+        acc = s.get("accession_number")
+        rows.append({
+            "studyId": s.get("study_id"),
+            "day": str(s.get("study_date") or "")[:10],
+            "studyDate": s.get("study_date"),
+            "patId": s.get("pat_id"),
+            "mrno": _elite_bare_id(s.get("pat_id")),
+            "name": _elite_name(s.get("pat_name")),
+            "sex": s.get("pat_sex"),
+            "modality": s.get("modality"),
+            "exam": s.get("study_description") or s.get("study_desc") or "",
+            "status": s.get("study_status"),
+            "accession": acc,
+            "noAccession": not _elite_is_real_accession(acc),
+        })
+    rows.sort(key=lambda r: (r["day"], str(r["studyDate"])))
+    by_day = {}
+    for r in rows:
+        d = by_day.setdefault(r["day"], {"day": r["day"], "studies": 0, "patients": set(), "noAccession": 0})
+        d["studies"] += 1
+        if r["mrno"]:
+            d["patients"].add(r["mrno"])
+        if r["noAccession"]:
+            d["noAccession"] += 1
+    days = [{"day": d["day"], "studies": d["studies"], "patients": len(d["patients"]), "noAccession": d["noAccession"]}
+            for d in sorted(by_day.values(), key=lambda x: x["day"])]
+    return {"ok": True, "from": frm, "to": to, "count": len(rows),
+            "noAccession": sum(1 for r in rows if r["noAccession"]),
+            "days": days, "studies": rows}
+
 @app.get("/api/reports/config")
 def reports_config(user=Depends(require_superadmin)):
     c = _elite_cfg()

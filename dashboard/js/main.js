@@ -77,7 +77,7 @@ async function initApp() {
     'nav-reports': 'reports', 'nav-messages': 'messages',
     'nav-worklist': 'worklist', 'nav-patientsearch': 'patientsearch', 'nav-critical': 'critical',
     'nav-orders': 'orders', 'nav-handoff': 'handoff', 'nav-cdxfer': 'cdxfer',
-    'nav-radstats': 'radstats', 'nav-peerreview': 'peerreview',
+    'nav-radstats': 'radstats', 'nav-depacsarrivals': 'radstats', 'nav-peerreview': 'peerreview',
     'nav-branches': 'admin_branches', 'nav-shifts': 'admin_shifts', 'nav-users': 'admin_users',
     'nav-hisaccess': 'admin_hisaccess', 'nav-audit': 'admin_audit', 'nav-tld': 'admin_tld',
   };
@@ -110,7 +110,7 @@ async function initApp() {
   if (canRad) {
     const nav = document.querySelector('.sidebar-nav');
     const radIds = ['nav-section-radiology', 'nav-worklist', 'nav-critical', 'nav-orders', 'nav-handoff',
-                    'nav-patientsearch', 'nav-radstats', 'nav-peerreview', 'nav-cdxfer'];
+                    'nav-patientsearch', 'nav-radstats', 'nav-depacsarrivals', 'nav-peerreview', 'nav-cdxfer'];
     if (nav) {
       radIds.map((id) => document.getElementById(id)).filter(Boolean).reverse()
         .forEach((el) => nav.insertBefore(el, nav.firstChild));
@@ -207,7 +207,7 @@ const PAGE_PERM = {
   swaps: 'swaps', downtime: 'downtime', inventory: 'inventory', equipment: 'equipment',
   review: 'review', reports: 'reports', messages: 'messages',
   worklist: 'worklist', patientsearch: 'patientsearch', critical: 'critical', orders: 'orders',
-  handoff: 'handoff', cdxfer: 'cdxfer', radstats: 'radstats', peerreview: 'peerreview',
+  handoff: 'handoff', cdxfer: 'cdxfer', radstats: 'radstats', depacsarrivals: 'radstats', peerreview: 'peerreview',
   branches: 'admin_branches', shifts: 'admin_shifts', users: 'admin_users',
   hisaccess: 'admin_hisaccess', audit: 'admin_audit', tld: 'admin_tld',
 };
@@ -260,6 +260,7 @@ const PAGE_ASSETS = {
   critical:      ['/js/criticalresults.js'],
   peerreview:    ['/js/peerreview.js', '/css/radstats.css'],
   radstats:      ['/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
+  depacsarrivals: ['/js/depacs_arrivals.js', '/css/radstats.css'],
   home:          ['/js/home.js', ...RAD_JS, '/js/radstats.js', '/js/radreport.js', '/css/radstats.css'],
   // Standalone admin/ops pages — no other module calls into them and they do no boot work
   // (verified), so they load only when opened (and hover-prefetch from the nav). This keeps
@@ -376,6 +377,7 @@ async function renderRoute(page) {
     case 'handoff':    await renderHandoffPage(); break;
     case 'patientsearch': renderPatientSearchPage(); break;
     case 'radstats':   await renderRadStatsPage(); break;
+    case 'depacsarrivals': await renderDepacsArrivalsPage(); break;
     case 'worklist':   await renderWorklistPage(); break;
     case 'critical':   renderCriticalResultsPage(); break;
     case 'peerreview': renderPeerReviewPage(); break;
@@ -403,7 +405,7 @@ let _navSeq = 0;
 // Page-level hash routing: keep the URL (#/page) in sync so the browser back
 // button, a refresh, and shared links all land on the right screen.
 const VALID_PAGES = new Set(['home','myschedule','schedule','review','staff',
-  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','worklist','critical','peerreview','patientsearch','radstats','cdxfer','branches','shifts','users','audit','tld']);
+  'leaves','swaps','downtime','inventory','equipment','tickets','announcements','messages','reports','handoff','orders','worklist','critical','peerreview','patientsearch','radstats','depacsarrivals','cdxfer','branches','shifts','users','audit','tld']);
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
   return VALID_PAGES.has(h) ? h : null;
