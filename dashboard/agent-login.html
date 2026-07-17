@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent — Login</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Segoe UI",Roboto,sans-serif;
+    background:#05060a;
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden;-webkit-font-smoothing:antialiased;
+  }
+
+  /* colorful blurred backdrop behind the "screen", like the video */
+  .backdrop{position:fixed;inset:0;filter:blur(40px) saturate(150%);transform:scale(1.15);opacity:.9;
+    background:
+      radial-gradient(600px 500px at 12% 60%, #3ad07a 0%, transparent 60%),
+      radial-gradient(700px 600px at 85% 30%, #2f6bff 0%, transparent 60%),
+      radial-gradient(500px 500px at 60% 90%, #7b3ff2 0%, transparent 60%),
+      linear-gradient(160deg,#0a1830,#0a2018);}
+
+  /* the rounded virtual-screen container */
+  .screen{
+    position:relative;width:min(880px,90vw);aspect-ratio:16/10;border-radius:18px;overflow:hidden;
+    box-shadow:0 40px 120px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+  }
+  /* the lock-screen wallpaper inside the screen */
+  .wall{position:absolute;inset:0;
+    background:
+      radial-gradient(900px 700px at 30% 20%, rgba(60,110,180,.55) 0%, transparent 60%),
+      radial-gradient(800px 800px at 80% 80%, rgba(40,120,90,.5) 0%, transparent 60%),
+      linear-gradient(160deg,#14324f,#0e2a33 60%,#0c2018);
+    filter:saturate(120%);}
+  .wall::after{content:"";position:absolute;inset:0;backdrop-filter:blur(2px);background:rgba(0,0,0,.12)}
+
+  .lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:flex-start;padding-top:9%;color:#fff;z-index:2}
+
+  .day{font-size:15px;font-weight:600;letter-spacing:.2px;opacity:.95;
+    text-shadow:0 1px 12px rgba(0,0,0,.4)}
+  .time{font-size:74px;font-weight:600;line-height:1;letter-spacing:-1px;margin-top:2px;
+    text-shadow:0 2px 24px rgba(0,0,0,.45)}
+
+  /* login block, vertically centered lower like the image */
+  .login{position:absolute;left:50%;top:70%;transform:translate(-50%,-50%);
+    display:flex;flex-direction:column;align-items:center;gap:9px;z-index:3;cursor:pointer}
+  .avatar{width:74px;height:74px;border-radius:50%;
+    background:linear-gradient(135deg,#0a84ff,#1e64ff);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:30px;font-weight:600;
+    box-shadow:0 8px 30px rgba(10,90,255,.45), 0 0 0 1px rgba(255,255,255,.18) inset;
+    transition:transform .15s ease, box-shadow .15s}
+  .login:hover .avatar{transform:scale(1.05);box-shadow:0 10px 36px rgba(10,90,255,.6),0 0 0 1px rgba(255,255,255,.25) inset}
+  .uname{font-size:16px;font-weight:600;text-shadow:0 1px 10px rgba(0,0,0,.4)}
+  .hint{font-size:12px;font-weight:500;opacity:.75}
+
+  /* password field (revealed after click) */
+  .pwd{display:none;flex-direction:column;align-items:center;gap:10px}
+  .pwd.show{display:flex}
+  .pwd .field{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.16);
+    border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:8px 8px 8px 16px;backdrop-filter:blur(10px)}
+  .pwd input{background:transparent;border:0;outline:0;color:#fff;font-size:14px;width:170px;font-family:inherit}
+  .pwd input::placeholder{color:rgba(255,255,255,.7)}
+  .pwd .go{width:30px;height:30px;border-radius:50%;border:0;cursor:pointer;color:#fff;font-size:15px;
+    background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;transition:background .12s}
+  .pwd .go:hover{background:rgba(255,255,255,.4)}
+  .pwd .touch{font-size:11.5px;opacity:.7}
+
+  /* little sleep/accessibility control on the right, like the image */
+  .aux{position:absolute;right:14px;top:50%;transform:translateY(-50%);z-index:3;
+    width:34px;height:22px;border-radius:999px;background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;
+    font-size:11px;color:#fff;cursor:pointer;backdrop-filter:blur(8px)}
+
+  /* corner agent badge, like "Kimi Agent" bottom-right */
+  .badge{position:absolute;right:10px;bottom:10px;z-index:4;display:flex;align-items:center;gap:6px;
+    background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.14);border-radius:8px;
+    padding:5px 9px;font-size:11px;color:#e8e8ea;backdrop-filter:blur(10px)}
+  .badge .b{width:15px;height:15px;border-radius:4px;background:linear-gradient(135deg,#0a84ff,#1e64ff);
+    display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff}
+
+  /* fake traffic lights top-left of the screen frame */
+  .lights{position:absolute;left:12px;top:12px;display:flex;gap:7px;z-index:5}
+  .lights i{width:11px;height:11px;border-radius:50%;display:block}
+  .lights i:nth-child(1){background:#ff5f57}
+  .lights i:nth-child(2){background:#febc2e}
+  .lights i:nth-child(3){background:#28c840}
+</style>
+</head>
+<body>
+  <div class="backdrop"></div>
+
+  <div class="screen">
+    <div class="wall"></div>
+    <div class="lights"><i></i><i></i><i></i></div>
+
+    <div class="lock">
+      <div class="day" id="day">Friday, July 17</div>
+      <div class="time" id="time">9:56</div>
+    </div>
+
+    <div class="aux" title="Sleep">⏻</div>
+
+    <div class="login" id="login" onclick="showPwd()">
+      <div class="avatar" id="avatar">K</div>
+      <div class="uname" id="uname">kimi</div>
+      <div class="hint" id="hint">Click to log in</div>
+      <div class="pwd" id="pwd" onclick="event.stopPropagation()">
+        <div class="field">
+          <input type="password" id="pass" placeholder="Enter Password" autocomplete="off">
+          <button class="go" onclick="login()">→</button>
+        </div>
+        <div class="touch">Touch ID or Enter Password</div>
+      </div>
+    </div>
+
+    <div class="badge"><span class="b">K</span> Agent</div>
+  </div>
+
+<script>
+  // live clock, matching the mac lock-screen format
+  const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function tick(){
+    const d=new Date();
+    let h=d.getHours(), m=d.getMinutes();
+    const hh=((h%12)||12), mm=String(m).padStart(2,'0');
+    document.getElementById('time').textContent=`${hh}:${mm}`;
+    document.getElementById('day').textContent=`${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  }
+  tick(); setInterval(tick,1000);
+
+  function showPwd(){
+    document.getElementById('pwd').classList.add('show');
+    document.getElementById('hint').style.display='none';
+    document.getElementById('pass').focus();
+  }
+  function login(){
+    const a=document.getElementById('avatar');
+    a.textContent='✓'; a.style.background='linear-gradient(135deg,#30d158,#28c840)';
+    document.getElementById('uname').textContent='Signing in…';
+    document.getElementById('pwd').classList.remove('show');
+  }
+  document.getElementById('pass').addEventListener('keydown',e=>{ if(e.key==='Enter') login(); });
+</script>
+</body>
+</html>
