@@ -1463,6 +1463,20 @@ def _login_throttle_fail(username):
     import time as _t
     _login_fails.setdefault(username, []).append(_t.time())
 
+def _password_matches(plain: str, stored) -> bool:
+    """Verify a password against a stored hash WITHOUT ever raising.
+    bcrypt.checkpw throws ValueError ("Invalid salt") when the stored value
+    isn't a valid bcrypt hash — e.g. a plaintext/legacy password, a corrupted
+    or truncated hash, an empty string, or NULL. Left uncaught that turned a
+    normal sign-in into an HTTP 500 instead of a clean "invalid credentials".
+    Any such case is treated as a non-match (auth failure), not a crash."""
+    if not stored:
+        return False
+    try:
+        return bcrypt.checkpw(plain.encode(), stored.encode())
+    except (ValueError, TypeError):
+        return False
+
 def get_current_user(request: Request) -> dict:
     token = request.cookies.get("token") or \
             request.headers.get("authorization", "").replace("Bearer ", "")
@@ -2673,7 +2687,7 @@ async def login(request: Request, response: Response):
     user = q("""SELECT u.*, b.name AS branch_name FROM scheduling.users u
                 LEFT JOIN scheduling.branches b ON b.id=u.branch_id
                 WHERE u.username=%s""", (username,), one=True)
-    if not user or not bcrypt.checkpw(password.encode(), user["password"].encode()):
+    if not user or not _password_matches(password, user.get("password")):
         _login_throttle_fail(username)
         raise HTTPException(401, "Invalid credentials")
     _login_fails.pop(username, None)  # clear on success
@@ -2706,7 +2720,7 @@ async def change_password(request: Request, response: Response, user=Depends(get
     if len(new) < 6:
         raise HTTPException(400, "New password must be at least 6 characters")
     row = q("SELECT password FROM scheduling.users WHERE id=%s", (user["id"],), one=True)
-    if not row or not bcrypt.checkpw(current.encode(), row["password"].encode()):
+    if not row or not _password_matches(current, row.get("password")):
         raise HTTPException(403, "Current password is incorrect")
     hashed = bcrypt.hashpw(new.encode(), bcrypt.gensalt()).decode()
     updated = q("""UPDATE scheduling.users
