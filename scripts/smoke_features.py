@@ -538,11 +538,20 @@ check("team lead can't move staff to another branch", mv.status_code == 403, mv.
 # H-03: team lead can't read another branch's settings
 bs = lead.get(f"/api/branch-settings/{bidB}")
 check("team lead blocked from another branch's settings", bs.status_code == 403, bs.status_code)
-# C-01: seed_admin is idempotent (won't reset an existing password)
-M.q("UPDATE scheduling.users SET password='SENTINEL' WHERE username='admin'", exec_only=True)
+# C-01: seed_admin is idempotent — it won't reset a LEGITIMATE (valid bcrypt)
+# password. Use a real hash as the sentinel: a non-bcrypt value would (correctly)
+# be self-healed, so it can't stand in for "an existing password".
+_legit = M.bcrypt.hashpw(b"keepme123", M.bcrypt.gensalt()).decode()
+M.q("UPDATE scheduling.users SET password=%s WHERE username='admin'", (_legit,), exec_only=True)
 M.seed_admin()
 pw = M.q("SELECT password FROM scheduling.users WHERE username='admin'", one=True)["password"]
-check("seed_admin does not reset existing password", pw == "SENTINEL", pw)
+check("seed_admin does not reset a valid existing password", pw == _legit, pw)
+# C-01b: seed_admin self-heals an unusable (non-bcrypt) admin password hash so a
+# bricked bootstrap account can log in again instead of 401/500-ing forever.
+M.q("UPDATE scheduling.users SET password='SENTINEL' WHERE username='admin'", exec_only=True)
+M.seed_admin()
+pw2 = M.q("SELECT password FROM scheduling.users WHERE username='admin'", one=True)["password"]
+check("seed_admin repairs an unusable password hash", pw2 != "SENTINEL" and M._is_bcrypt_hash(pw2), pw2)
 # H-02: login throttle kicks in after repeated failures
 from fastapi.testclient import TestClient as _TC
 tc = _TC(app)
