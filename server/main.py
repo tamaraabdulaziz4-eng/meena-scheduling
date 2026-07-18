@@ -1390,26 +1390,53 @@ def seed_nest_config():
     print("Nest configs seeded (skipped if already exist).")
 
 
+def _is_bcrypt_hash(stored) -> bool:
+    """True only if `stored` is a usable bcrypt hash. A non-bcrypt value
+    (plaintext, a corrupted/truncated hash, an empty string, NULL) can never
+    verify — bcrypt.checkpw raises ValueError on it — so it's an unusable
+    credential, not a real password."""
+    if not stored:
+        return False
+    try:
+        bcrypt.checkpw(b"probe", stored.encode())   # returns False; only the FORMAT matters
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def _new_admin_password() -> str:
+    """Use ADMIN_PASS when set; otherwise mint a random one-time password and
+    print it once so the operator can log in."""
+    if ADMIN_PASS:
+        return ADMIN_PASS
+    import secrets
+    pw = secrets.token_urlsafe(18)
+    print("=" * 64)
+    print("  ADMIN_PASS was not set — generated a one-time superadmin password.")
+    print(f"    username: {ADMIN_USER}")
+    print(f"    password: {pw}")
+    print("  Log in and change it immediately, or set ADMIN_PASS and redeploy.")
+    print("=" * 64)
+    return pw
+
 def seed_admin():
     # Create the bootstrap admin once. Never overwrite an existing account's
     # password/role on restart — that would wipe a manual password change and
     # was an account-takeover risk.
-    existing = q("SELECT id FROM scheduling.users WHERE username=%s", (ADMIN_USER,), one=True)
+    existing = q("SELECT id, password FROM scheduling.users WHERE username=%s",
+                 (ADMIN_USER,), one=True)
     if existing:
+        # Self-heal a bricked bootstrap admin: if the stored password isn't a
+        # valid bcrypt hash it can never verify (login would 401 forever, and
+        # before the checkpw guard it 500'd). Repairing it is safe — a legitimate
+        # hashed password is a valid bcrypt hash and is left untouched, so this
+        # can't be used to reset a working admin's password.
+        if not _is_bcrypt_hash(existing.get("password")):
+            pwd = bcrypt.hashpw(_new_admin_password().encode(), bcrypt.gensalt()).decode()
+            q("UPDATE scheduling.users SET password=%s WHERE username=%s",
+              (pwd, ADMIN_USER), exec_only=True)
+            print(f'Admin user "{ADMIN_USER}" had an unusable password hash — reset it.')
         return
-    admin_pass = ADMIN_PASS
-    if not admin_pass:
-        # No ADMIN_PASS provided — mint a random one-time password instead of a
-        # predictable default. Printed once here so the operator can log in.
-        import secrets
-        admin_pass = secrets.token_urlsafe(18)
-        print("=" * 64)
-        print("  ADMIN_PASS was not set — generated a one-time superadmin password.")
-        print(f"    username: {ADMIN_USER}")
-        print(f"    password: {admin_pass}")
-        print("  Log in and change it immediately, or set ADMIN_PASS and redeploy.")
-        print("=" * 64)
-    pwd = bcrypt.hashpw(admin_pass.encode(), bcrypt.gensalt()).decode()
+    pwd = bcrypt.hashpw(_new_admin_password().encode(), bcrypt.gensalt()).decode()
     q("INSERT INTO scheduling.users (username,password,role) VALUES (%s,%s,'superadmin')",
       (ADMIN_USER, pwd), exec_only=True)
     print(f'Admin user "{ADMIN_USER}" ready.')
