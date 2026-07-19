@@ -173,11 +173,30 @@ async function lookup(){
   $('results').innerHTML = loaderHTML('ld-search');
   const stop = cycle('ld-search', ['Searching…', 'Contacting the imaging system…', 'Fetching studies…', 'Reading results…', 'Almost there…']);
   let resolved = file;
-  try { const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file)); stop(); renderList(d); resolved = (d && d.file_no) || file; }
+  try {
+    const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file)); stop();
+    if (d && d.ambiguous){ renderChooser(d); resolved = null; }   // shared phone → pick a patient first
+    else { renderList(d); resolved = (d && d.file_no) || file; }
+  }
   catch(e){ stop(); $('results').innerHTML=''; showMsg(e.message || 'Search failed'); }
   finally { $('go').disabled=false; }
-  appendRadcare(resolved);
+  if (resolved) appendRadcare(resolved);
 }
+
+// More than one file on the same phone → let the doctor choose the correct patient.
+function renderChooser(d){
+  const c = d.candidates || [];
+  const rows = c.map(p => `
+    <div class="study" onclick="pickPatient('${esc(p.mrno)}')">
+      <div class="rhead"><span class="sd">${esc(p.name || '—')}</span><span class="pill wait">MRN ${esc(p.mrno)}</span></div>
+      <div class="sm">${esc(p.gender||'')}${p.age?(' · '+esc(p.age)):''}${p.nationalId?(' · ID '+esc(p.nationalId)):''}</div>
+    </div>`).join('');
+  $('results').innerHTML = `<div class="card">
+    <label>Multiple patients on this number — choose one (${c.length})</label>
+    <div class="verify-strong" style="margin:0 0 10px">⚠️ This phone number is on more than one file. Pick the correct patient — do not guess.</div>
+    ${rows}</div>`;
+}
+function pickPatient(mrno){ $('file').value = mrno; lookup(); }
 
 // ── RadCare (MILLENSYS) MRI/CT report — optional cross-system check on the same file ──
 const RC_DECISION = {

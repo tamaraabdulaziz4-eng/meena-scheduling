@@ -7135,27 +7135,41 @@ def _elite_body(resp):
     b = resp.get("body") if isinstance(resp, dict) else None
     return b if isinstance(b, dict) else {}
 
-def _resolve_to_mrn(term):
-    """Accept a file/MRN, a national ID / Iqama, or a phone number and return the
-    patient's MRN. Plain file numbers pass straight through; a 10-digit national ID/Iqama
-    (1…/2…) or a Saudi mobile is resolved to the MRN via the connector's unified search.
-    Best-effort: on any failure or no hit, returns the term unchanged."""
+def _resolve_patients(term):
+    """Candidate patients for a national ID / Iqama or phone, via the connector's unified
+    search. Returns a list of {mrno, name, nationalId, gender, age}, de-duplicated by MRN.
+    A national ID is unique (0–1 hit); a PHONE can map to several files (a family sharing a
+    mobile) — the caller must disambiguate rather than silently pick one. [] when the term
+    isn't an ID/phone, or nothing matched / the search failed."""
     import urllib.parse
     t = (term or "").strip()
     digits = re.sub(r"\D", "", t)
-    looks_id = bool(re.fullmatch(r"[12]\d{9}", digits))
-    looks_phone = bool(re.fullmatch(r"(?:00)?(?:966)?0?5\d{8}", digits))
-    if not (looks_id or looks_phone):
-        return t
+    if not (re.fullmatch(r"[12]\d{9}", digits) or re.fullmatch(r"(?:00)?(?:966)?0?5\d{8}", digits)):
+        return []
     try:
         d = _bridge_request("/his/search?q=" + urllib.parse.quote(t), timeout=60)
-        for p in (d or {}).get("patients") or []:
-            mrn = p.get("mrno") or p.get("mrNo") or p.get("file")
-            if mrn:
-                return str(mrn).strip()
     except Exception:
-        pass
-    return t
+        return []
+    out, seen = [], set()
+    for p in (d or {}).get("patients") or []:
+        mrn = p.get("mrno") or p.get("mrNo") or p.get("file")
+        if not mrn:
+            continue
+        mrn = str(mrn).strip()
+        if mrn in seen:
+            continue
+        seen.add(mrn)
+        out.append({"mrno": mrn, "name": p.get("name") or "", "nationalId": p.get("nationalId") or "",
+                    "gender": p.get("gender") or "", "age": p.get("age")})
+    return out
+
+def _resolve_to_mrn(term):
+    """Best-effort single MRN for a national ID / phone. Collapses to the MRN ONLY when
+    exactly one patient matches; on 0 or >1 (ambiguous phone) returns the term unchanged so
+    the caller fails safely rather than picking the wrong patient. Plain file numbers pass
+    straight through."""
+    c = _resolve_patients(term)
+    return c[0]["mrno"] if len(c) == 1 else (term or "").strip()
 
 def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
     """DePACS studies for a file number across EVERY SIRA/bare candidate, merged and
@@ -12052,7 +12066,13 @@ def public_reports_lookup(request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    file_no = _resolve_to_mrn(file_no)   # accept national ID / phone too; exact MRN match below
+    # A national ID / phone may match one or several files. >1 (a shared phone) → ask the
+    # doctor to pick the right patient instead of silently choosing one (patient safety).
+    cands = _resolve_patients(file_no)
+    if len(cands) > 1:
+        return {"ambiguous": True, "term": file_no, "count": len(cands), "candidates": cands}
+    if len(cands) == 1:
+        file_no = cands[0]["mrno"]
     try:
         rows = _elite_studies_for_file(file_no)
     except HTTPException:
