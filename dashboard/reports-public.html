@@ -123,12 +123,12 @@
   </div>
 
   <div class="card" id="search-card">
-    <label for="file">File number</label>
+    <label for="file">File number · National ID · Phone</label>
     <div class="row">
-      <input id="file" inputmode="numeric" autocomplete="off" placeholder="e.g. 26289620" onkeydown="if(event.key==='Enter')lookup()">
+      <input id="file" inputmode="numeric" autocomplete="off" placeholder="MRN, national ID, or mobile" onkeydown="if(event.key==='Enter')lookup()">
       <button class="btn2" id="go" onclick="lookup()">Search</button>
     </div>
-    <div class="hint">Newest first — tap a study to read the full report.</div>
+    <div class="hint">Search by file number (exact), national ID / Iqama, or mobile. Newest first — tap a study to read the report.</div>
     <div class="msg" id="msg"></div>
   </div>
 
@@ -171,10 +171,11 @@ async function lookup(){
   $('go').disabled=true;
   $('results').innerHTML = loaderHTML('ld-search');
   const stop = cycle('ld-search', ['Searching…', 'Contacting the imaging system…', 'Fetching studies…', 'Reading results…', 'Almost there…']);
-  try { const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file)); stop(); renderList(d); }
+  let resolved = file;
+  try { const d = await api('/api/public/reports/lookup?file=' + encodeURIComponent(file)); stop(); renderList(d); resolved = (d && d.file_no) || file; }
   catch(e){ stop(); $('results').innerHTML=''; showMsg(e.message || 'Search failed'); }
   finally { $('go').disabled=false; }
-  appendRadcare(file);
+  appendRadcare(resolved);
 }
 
 // ── RadCare (MILLENSYS) MRI/CT report — optional cross-system check on the same file ──
