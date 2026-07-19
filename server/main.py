@@ -7135,14 +7135,42 @@ def _elite_body(resp):
     b = resp.get("body") if isinstance(resp, dict) else None
     return b if isinstance(b, dict) else {}
 
+def _resolve_to_mrn(term):
+    """Accept a file/MRN, a national ID / Iqama, or a phone number and return the
+    patient's MRN. Plain file numbers pass straight through; a 10-digit national ID/Iqama
+    (1…/2…) or a Saudi mobile is resolved to the MRN via the connector's unified search.
+    Best-effort: on any failure or no hit, returns the term unchanged."""
+    import urllib.parse
+    t = (term or "").strip()
+    digits = re.sub(r"\D", "", t)
+    looks_id = bool(re.fullmatch(r"[12]\d{9}", digits))
+    looks_phone = bool(re.fullmatch(r"(?:00)?(?:966)?0?5\d{8}", digits))
+    if not (looks_id or looks_phone):
+        return t
+    try:
+        d = _bridge_request("/his/search?q=" + urllib.parse.quote(t), timeout=60)
+        for p in (d or {}).get("patients") or []:
+            mrn = p.get("mrno") or p.get("mrNo") or p.get("file")
+            if mrn:
+                return str(mrn).strip()
+    except Exception:
+        pass
+    return t
+
 def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
     """DePACS studies for a file number across EVERY SIRA/bare candidate, merged and
     de-duplicated by study_id. We must query all forms (not stop at the first with
     hits): the same patient can have some studies filed under the bare number and
     others under the SIRA-prefixed one, so stopping early would drop half of them.
     end_date defaults to a far-future bound so timezone-skewed / recent studies are
-    never excluded (the "some results missing" bug)."""
+    never excluded (the "some results missing" bug).
+
+    EXACT match only: DePACS filters patient_id as a substring/prefix, so a search for
+    '501' would otherwise return studies for '15012', '5011', etc. — a patient-safety
+    hazard. We keep only studies whose pat_id EXACTLY equals the requested file (bare/
+    SIRA-normalised)."""
     import urllib.parse
+    want = _elite_bare_id(file_no)
     seen, rows = set(), []
     for pid in _elite_file_candidates(file_no):
         r = _elite_get(f"/study/get_studies?start_date=2015-01-01&end_date={end_date}"
@@ -7150,6 +7178,9 @@ def _elite_studies_for_file(file_no, end_date=_ELITE_STUDY_END_DATE):
         for s in (_elite_body(r).get("data")) or []:
             sid = s.get("study_id")
             if sid in seen:
+                continue
+            # Exact identity check — reject partial/substring matches on the file number.
+            if want and _elite_bare_id(s.get("pat_id") or s.get("patient_id") or "") != want:
                 continue
             seen.add(sid)
             rows.append(s)
@@ -11987,6 +12018,7 @@ def public_radcare_match(request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
+    file_no = _resolve_to_mrn(file_no)   # accept national ID / phone too
     return _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/millensys-report", timeout=120)
 
 @app.get("/api/public/radcare/pdf")
@@ -12000,6 +12032,7 @@ def public_radcare_pdf(request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
+    file_no = _resolve_to_mrn(file_no)   # accept national ID / phone too
     d = _bridge_request("/his/patient/" + urllib.parse.quote(file_no) + "/millensys-report-pdf", timeout=150)
     if not d.get("ok") or not d.get("base64"):
         raise HTTPException(404, d.get("error") or "No RadCare PDF report available for this patient.")
@@ -12019,6 +12052,7 @@ def public_reports_lookup(request: Request):
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
+    file_no = _resolve_to_mrn(file_no)   # accept national ID / phone too; exact MRN match below
     try:
         rows = _elite_studies_for_file(file_no)
     except HTTPException:
