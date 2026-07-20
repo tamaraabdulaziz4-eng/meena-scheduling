@@ -10578,9 +10578,10 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
         raise HTTPException(400, "The signature looks blank — please capture the patient's actual signature")
     now = _ksa_now()
     tech = _consent_signer(user)
-    # The PDF overlay font (Helvetica) can't render Arabic, so the printed name uses the
-    # ENGLISH name; the Arabic display name is kept on screen + stored as patient_name.
-    pdf_name = (b.get("name_en") or "").strip() or name
+    # The consent PDF now renders Arabic (Noto Naskh via insert_htmlbox), so the printed
+    # name is the patient's ARABIC name — falling back to the English name only when no
+    # Arabic name is on file.
+    pdf_name = name or (b.get("name_en") or "").strip()
     data = {
         "name": pdf_name, "mrn": (b.get("mrn") or file_no).strip(),
         "dob": (b.get("dob") or "").strip(), "procedure": (b.get("procedure") or "").strip(),
@@ -11154,9 +11155,9 @@ def public_consent_form_image(token: str):
     # a QR photo / browser history / proxy logs for the rest of its TTL).
     if (r.get("status") or "") == "signed":
         raise HTTPException(410, "This consent has already been signed.")
-    # The renderer's font (Helvetica) can't shape Arabic, so use the English name for the
-    # printed form — same as the final signed PDF — else the name column renders blank.
-    _form_name = (r.get("patient_name_en") or "").strip() or (r.get("patient_name") or "")
+    # The renderer now shapes Arabic, so show the patient's ARABIC name on the previewed
+    # form — same as the final signed PDF — falling back to English only if none on file.
+    _form_name = (r.get("patient_name") or "").strip() or (r.get("patient_name_en") or "")
     data = {
         "name": _form_name, "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
@@ -11208,9 +11209,9 @@ async def public_consent_sign(token: str, request: Request):
     weight = (b.get("weight") or r.get("weight") or "").strip()
     height = (b.get("height") or r.get("height") or "").strip()
     hcg = (b.get("hcg") or "").strip()
-    # PDF font (Helvetica) can't render Arabic → print the English name; the Arabic display
-    # name stays on the record (patient_name) for the on-screen views.
-    _pdf_name = (r.get("patient_name_en") or "").strip() or (r.get("patient_name") or "")
+    # The consent PDF now renders Arabic → print the patient's ARABIC name, falling back
+    # to the English name only when no Arabic name is on the record.
+    _pdf_name = (r.get("patient_name") or "").strip() or (r.get("patient_name_en") or "")
     data = {
         "name": _pdf_name, "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",

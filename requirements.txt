@@ -8,5 +8,5 @@ python-multipart==0.0.9
 ortools==9.10.4067
 gunicorn==22.0.0
 httpx==0.28.1
-PyMuPDF==1.24.9
+PyMuPDF==1.28.0
 segno==1.6.1
