@@ -3,13 +3,15 @@ stamping the patient's data + signature onto the official Meena template PDF.
 
 The template is BILINGUAL — every label/blank exists twice: English on the left
 half, Arabic on the right half — and the stamped values follow that convention:
-Arabic values print beside the Arabic labels (right), English values beside the
-English labels (left), the patient's name in BOTH languages, and the checkbox
-marks go into BOTH the English and Arabic checkbox of each pair.
+the ENGLISH side always carries English, the ARABIC side always carries Arabic.
+Values that arrive in one language only are put on BOTH sides by translating
+them where that is reliable (procedure names via a radiology dictionary, HCG
+results) and by mirroring names (a person's name is the same on both sides of a
+bilingual form; only the Dr./د. title is swapped).
 
 Arabic is rendered through PyMuPDF's `insert_htmlbox` (HarfBuzz shaping + RTL)
 with the bundled Noto Naskh Arabic font; language-neutral values (MRN, dates,
-weight, height, time) use crisp Helvetica.
+weight, height, time) use crisp Helvetica and are stamped on both sides.
 
 ALL coordinates are in PDF points (A4 = 595 x 842) and were MEASURED from the
 template itself — get_text("words") for the labels/blanks, get_drawings() for
@@ -39,9 +41,9 @@ def _esc(s):
              .replace('"', "&quot;").replace("'", "&#39;"))
 
 
-# Unicode bidi isolates — wrap ASCII runs (IDs like "(12345)", room "A12") inside an
-# Arabic (RTL) value so they render left-to-right with balanced parentheses instead of
-# bidi-mirrored. FSI = First-Strong Isolate, PDI = Pop Directional Isolate.
+# Unicode bidi isolates — wrap ASCII runs (IDs like "(12345)", leftover English
+# words inside a translated procedure) inside an Arabic (RTL) value so they render
+# left-to-right with balanced parentheses instead of bidi-mirrored.
 _FSI, _PDI = "⁨", "⁩"
 
 
@@ -49,43 +51,140 @@ def _isolate_ascii(text):
     return re.sub(r"([\x20-\x7E]+)", lambda m: _FSI + m.group(1) + _PDI, text)
 
 
+def _is_arabic_ch(ch):
+    o = ord(ch)
+    return (0x0600 <= o <= 0x06FF or 0x0750 <= o <= 0x077F or
+            0x08A0 <= o <= 0x08FF or 0xFB50 <= o <= 0xFDFF or 0xFE70 <= o <= 0xFEFF)
+
+
 def _has_arabic(s):
-    """True if the string contains any Arabic-script character. Used to route each
-    value to the correct SIDE of the bilingual form and pick its direction."""
-    for ch in (s or ""):
-        o = ord(ch)
-        if (0x0600 <= o <= 0x06FF or 0x0750 <= o <= 0x077F or
-                0x08A0 <= o <= 0x08FF or 0xFB50 <= o <= 0xFDFF or 0xFE70 <= o <= 0xFEFF):
-            return True
-    return False
+    """True if the string contains any Arabic-script character."""
+    return any(_is_arabic_ch(ch) for ch in (s or ""))
 
 
-# ── Generic value boxes (x0, y0, x1, y1, size). Rendered with insert_htmlbox; an
-# Arabic value settles on the RIGHT edge of its box (text-align:left inverts under
-# RTL), a Latin value on the LEFT — so wide boxes auto-place single values on the
-# correct side. Boxes stop just short of the Arabic label's colon.
+def _mostly_arabic(s):
+    """True when Arabic letters outnumber Latin letters — the string should lay
+    out RTL. A mostly-LATIN value with a lone Arabic title ("د. Khalid (12345)")
+    must stay LTR: forcing RTL bidi-mirrors its parentheses."""
+    ar = sum(1 for ch in (s or "") if _is_arabic_ch(ch))
+    lat = sum(1 for ch in (s or "") if ch.isascii() and ch.isalpha())
+    return ar > lat
+
+
+# ── English → Arabic translation for the values the HIS sends in English, so the
+# ARABIC side of the form is never left blank. Radiology exam names are built from
+# a small vocabulary (modality + body part + contrast), which a phrase/word map
+# translates well; anything unrecognized stays English inside the Arabic text
+# (bidi-isolated) rather than blocking the translation.
+_PROC_PHRASES = [
+    (r"WITH\s*(?:AND|&)\s*WITHOUT\s*(?:IV\s*)?CONTRAST", "بالصبغة وبدونها"),
+    (r"WITHOUT\s*(?:IV\s*)?CONTRAST|NON[- ]?CONTRAST|PLAIN", "بدون صبغة"),
+    (r"WITH\s*(?:IV\s*)?CONTRAST|CONTRAST\s*ENHANCED|\bC\+", "بالصبغة"),
+    (r"CERVICAL\s+SPINE|C[- ]?SPINE", "الفقرات العنقية"),
+    (r"LUMBAR\s+SPINE|LS[- ]?SPINE|L[- ]?SPINE", "الفقرات القطنية"),
+    (r"THORACIC\s+SPINE|D[- ]?SPINE|T[- ]?SPINE", "الفقرات الصدرية"),
+    (r"WHOLE\s+ABDOMEN", "البطن كامل"),
+    (r"URINARY\s+TRACT", "المسالك البولية"),
+]
+_PROC_WORDS = {
+    "MRI": "رنين مغناطيسي", "MR": "رنين مغناطيسي", "MRCP": "رنين للقنوات الصفراوية",
+    "MRA": "رنين للأوعية", "CT": "أشعة مقطعية", "CAT": "أشعة مقطعية",
+    "CTA": "أشعة مقطعية للأوعية", "XRAY": "أشعة سينية", "X-RAY": "أشعة سينية",
+    "XR": "أشعة سينية", "US": "موجات فوق صوتية", "U/S": "موجات فوق صوتية",
+    "ULTRASOUND": "موجات فوق صوتية", "SONOGRAPHY": "موجات فوق صوتية",
+    "MAMMOGRAM": "تصوير الثدي الإشعاعي", "MAMMOGRAPHY": "تصوير الثدي الإشعاعي",
+    "MAMMO": "تصوير الثدي الإشعاعي", "DOPPLER": "دوبلر",
+    "ANGIO": "تصوير الأوعية", "ANGIOGRAM": "تصوير الأوعية", "ANGIOGRAPHY": "تصوير الأوعية",
+    "BRAIN": "الدماغ", "HEAD": "الرأس", "NECK": "الرقبة", "CHEST": "الصدر",
+    "ABDOMEN": "البطن", "ABD": "البطن", "PELVIS": "الحوض", "SPINE": "العمود الفقري",
+    "KNEE": "الركبة", "SHOULDER": "الكتف", "ANKLE": "الكاحل", "WRIST": "المعصم",
+    "ELBOW": "المرفق", "HIP": "الورك", "HAND": "اليد", "FOOT": "القدم",
+    "FEMUR": "عظم الفخذ", "TIBIA": "عظم الساق", "SKULL": "الجمجمة",
+    "BREAST": "الثدي", "KIDNEY": "الكلى", "KIDNEYS": "الكلى", "RENAL": "الكلى",
+    "LIVER": "الكبد", "PANCREAS": "البنكرياس", "KUB": "الكلى والحالب والمثانة",
+    "UTERUS": "الرحم", "OVARIES": "المبايض", "THYROID": "الغدة الدرقية",
+    "PITUITARY": "الغدة النخامية", "SINUS": "الجيوب الأنفية", "SINUSES": "الجيوب الأنفية",
+    "PNS": "الجيوب الأنفية", "ORBIT": "محجر العين", "ORBITS": "محجر العين",
+    "RIGHT": "يمين", "RT": "يمين", "LEFT": "يسار", "LT": "يسار",
+    "BILATERAL": "الجانبين", "BOTH": "الجانبين", "AND": "و", "&": "و", "+": "و",
+    "WITH": "مع", "SCREENING": "فحص", "SCAN": "تصوير", "PPD": "", "IV": "",
+}
+
+
+def _procedure_ar(text):
+    """Translate an English radiology exam name to Arabic. Phrases first, then
+    word-by-word; unknown words stay English inside the Arabic string. Returns ''
+    when nothing translated (better an empty Arabic side than English there)."""
+    src = " " + re.sub(r"\s+", " ", str(text or "").strip().upper()) + " "
+    for pat, ar in _PROC_PHRASES:
+        src = re.sub(r"(?<=[\s(])(?:%s)(?=[\s),.])" % pat, " %s " % ar, src)
+    out = []
+    for tok in src.split():
+        out.append(_PROC_WORDS.get(tok, tok) if not _has_arabic(tok) else tok)
+    res = re.sub(r"\s+", " ", " ".join(t for t in out if t)).strip()
+    return res if _has_arabic(res) else ""
+
+
+_HCG_MAP = {
+    "negative": "سلبي", "neg": "سلبي", "-ve": "سلبي",
+    "positive": "إيجابي", "pos": "إيجابي", "+ve": "إيجابي",
+    "pending": "قيد النتيجة", "na": "لا ينطبق", "n/a": "لا ينطبق",
+    "not applicable": "لا ينطبق", "not done": "لم يُجرَ",
+}
+_HCG_REV = {"سلبي": "Negative", "إيجابي": "Positive", "قيد النتيجة": "Pending",
+            "لا ينطبق": "N/A", "لم يجر": "Not done", "لم يُجرَ": "Not done"}
+
+
+def _split_bilingual(raw, translate_ar=None, translate_en=None, mirror=False):
+    """Split one value into (english_side, arabic_side). A value in one language
+    fills the other side via the given translator; `mirror` puts the SAME value on
+    both sides when no translation exists (used for person names, which stay the
+    same on a bilingual form)."""
+    raw = str(raw or "").strip()
+    if not raw:
+        return "", ""
+    if _has_arabic(raw):
+        en = (translate_en(raw) if translate_en else "") or (raw if mirror else "")
+        return en, raw
+    ar = (translate_ar(raw) if translate_ar else "") or (raw if mirror else "")
+    return raw, ar
+
+
+def _staff_pair(raw):
+    """(english_side, arabic_side) for a physician/technologist NAME. A person's
+    name can't be translated, so it is mirrored VERBATIM into both columns — the
+    standard on bilingual forms. (No title swapping: a half-swapped 'Dr. خالد'
+    mixes scripts mid-string and the bidi mangles the punctuation.)"""
+    raw = str(raw or "").strip()
+    return (raw, raw) if raw else ("", "")
+
+
+# ── Value boxes (x0, y0, x1, y1). `side` pins the text to the box edge facing its
+# label: 'left' for the English half, 'right' for the Arabic half. (In this
+# renderer text-align is inverted under RTL, so the align that pins each
+# direction to an edge is computed in put_html.)
 _HTML_FIELDS = {
-    #                 x0   y0   x1   y1  size
-    "name_en":      (128, 126, 300, 141, 10),  # left, after "Name of Patient:" (label ends x=123)
-    "name":         (305, 126, 495, 141, 10),  # right, before "اسم المريض:" (colon at x=503)
-    "procedure":    (128, 172, 522, 187, 10),  # "الإجراء:" colon at x=526
-    "hcg":          (128, 216, 442, 231, 9),   # "نتيجة تحليل الحمل ان وجد:" colon at x=446
-    # "I, the undersigned ______" — the ENGLISH blank runs x=130–267 (y≈512), the
-    # ARABIC blank runs x=396–495 (y≈508, right before "أنا الموقعة أدناه"). The y
-    # offsets put each name ON its blank line, clear of the section's top border
-    # (a rule at y≈505 that struck the text when the boxes started higher).
-    "undersigned_en": (135, 507, 265, 522, 9),
-    "undersigned":    (398, 504, 493, 519, 9),
+    #                  box                    size  side
+    "name_en":      ((128, 126, 300, 141), 10, "left"),   # after "Name of Patient:" (ends x=123)
+    "name_ar":      ((305, 126, 495, 141), 10, "right"),  # before "اسم المريض:" (colon x=503)
+    "procedure_en": ((128, 172, 320, 187), 10, "left"),
+    "procedure_ar": ((324, 172, 522, 187), 10, "right"),  # "الإجراء:" colon at x=526
+    "hcg_en":       ((128, 216, 280, 231), 9,  "left"),
+    "hcg_ar":       ((284, 216, 442, 231), 9,  "right"),  # "نتيجة …:" colon at x=446
+    # "I, the undersigned ______": ENGLISH blank x=130–267 (y≈512), ARABIC blank
+    # x=396–495 (y≈508). y offsets sit each name ON its line, clear of the section's
+    # top border (a rule at y≈505 that struck the text when boxes started higher).
+    "undersigned_en": ((135, 507, 265, 522), 9, "left"),
+    "undersigned_ar": ((398, 504, 493, 519), 9, "right"),
 }
 
 # ── Sign-off table (columns measured at x = 39 | 221 | 287 | 349 | 557; rows at
-# y = 628 | 656 | 684 | 725 | 754 | 775). The value must stay INSIDE its cell:
-# an Arabic name goes in the free space of the ARABIC label cell (x 349–557,
-# ending before the label text), an English name under the ENGLISH label
-# (cell x 39–221). Keyed as {field: {"ar": box, "en": box, "size": n}}.
+# y = 628 | 656 | 684 | 725 | 754 | 775). Values must stay INSIDE their cell:
+# the Arabic side in the free space of the ARABIC label cell (x 349–557, ending
+# before the label text), the English side under the ENGLISH label (cell 39–221).
 _CELL_FIELDS = {
     # Patient row (y 628–656): Arabic label "اسم المريضة/ممثلها القانوني:" starts x=443;
-    # English label fills its cell's first line, so the EN name takes the second line.
+    # the English label fills its first line, so the EN name takes the second line.
     "sig_name":     {"ar": (351, 631, 441, 649), "en": (46, 641, 218, 655), "size": 8},
     # Physician row (y 656–684): Arabic label starts x=449.
     "physician":    {"ar": (351, 662, 446, 680), "en": (48, 669, 218, 683), "size": 8},
@@ -146,62 +245,72 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
         page.insert_text((point[0], point[1]), text, fontsize=size,
                          fontname="helv", color=(0, 0, 0))
 
-    def put_html(box, text, size):
+    def put_html(box, text, size, side):
         if text is None:
             return
         text = str(text).strip()
         if not text:
             return
         x0, y0, x1, y1 = box
-        # Direction follows the CONTENT (Arabic → RTL, Latin → LTR). text-align:left
-        # settles Arabic on the box's right edge and Latin on its left. An ASCII ID
-        # inside an Arabic value ("د. خالد (12345)") is bidi-isolated so its digits
-        # and parentheses stay LTR and balanced.
-        if _has_arabic(text):
-            direction, body = "rtl", _esc(_isolate_ascii(text))
+        # Direction by MAJORITY script: a value that's mostly Latin with a lone
+        # Arabic title stays LTR (RTL would mirror its parentheses); a mostly-
+        # Arabic value lays out RTL with its ASCII runs (IDs) bidi-isolated.
+        rtl = _mostly_arabic(text)
+        body = _esc(_isolate_ascii(text)) if rtl else _esc(text)
+        # This renderer inverts text-align under RTL, so the align that PINS the
+        # text to the requested edge depends on the content's direction:
+        #   pin LEFT  → align 'left' for LTR text, 'right' for RTL text
+        #   pin RIGHT → align 'right' for LTR text, 'left' for RTL text
+        if side == "right":
+            align = "left" if rtl else "right"
         else:
-            direction, body = "ltr", _esc(text)
+            align = "right" if rtl else "left"
         html = ('<div style="font-size:%dpt;line-height:1.05;white-space:nowrap;'
-                'text-align:left;direction:%s;">%s</div>') % (size, direction, body)
-        # scale_low lets the shaper shrink an over-long name to fit rather than clip.
+                'text-align:%s;direction:%s;">%s</div>') % (
+                    size, align, "rtl" if rtl else "ltr", body)
+        # scale_low lets the shaper shrink an over-long value to fit rather than clip.
         page.insert_htmlbox(fitz.Rect(x0, y0, x1, y1), html, css=_CSS,
                             archive=arch, scale_low=0.5)
 
-    # Route the patient's name(s) by language so each side of the form shows the
-    # right one: Arabic name by the Arabic label, English name by the English label.
+    # ── Derive the English-side / Arabic-side value for every bilingual field, so
+    # BOTH halves of the form are filled and each half is in its own language.
     raw_name = str(data.get("name") or "").strip()
     raw_en = str(data.get("name_en") or "").strip()
-    name_ar = raw_name if _has_arabic(raw_name) else ""
-    name_en = raw_en or ("" if _has_arabic(raw_name) else raw_name)
+    ar_name = raw_name if _has_arabic(raw_name) else (raw_en if _has_arabic(raw_en) else "")
+    en_name = raw_en if (raw_en and not _has_arabic(raw_en)) else (raw_name if not _has_arabic(raw_name) else "")
+    # A name existing in one language only is mirrored — same name on both sides.
+    ar_name = ar_name or en_name
+    en_name = en_name or ar_name
 
-    values = dict(data)
-    values["name"] = name_ar
-    values["name_en"] = name_en
-    # "I, the undersigned ____ / أنا الموقعة أدناه ____": each language's blank gets
-    # the matching name so BOTH declaration lines carry the signer.
-    und = str(data.get("undersigned") or "").strip() or raw_name or raw_en
-    if _has_arabic(und):
-        values["undersigned"], values["undersigned_en"] = und, name_en
+    proc_en, proc_ar = _split_bilingual(data.get("procedure"), translate_ar=_procedure_ar)
+    hcg_raw = str(data.get("hcg") or "").strip()
+    if hcg_raw and not re.search(r"[A-Za-z؀-ۿ]", hcg_raw):
+        hcg_en = hcg_ar = hcg_raw          # numeric titre — language-neutral, both sides
     else:
-        values["undersigned"], values["undersigned_en"] = name_ar, und
+        hcg_en, hcg_ar = _split_bilingual(
+            hcg_raw,
+            translate_ar=lambda v: _HCG_MAP.get(v.lower().strip()),
+            translate_en=lambda v: _HCG_REV.get(v.strip()))
+    phys_en, phys_ar = _staff_pair(data.get("physician"))
+    tech_en, tech_ar = _staff_pair(data.get("technologist"))
 
-    for key, box in _HTML_FIELDS.items():
-        put_html(box[:4], values.get(key), box[4])
+    values = {
+        "name_en": en_name, "name_ar": ar_name,
+        "procedure_en": proc_en, "procedure_ar": proc_ar,
+        "hcg_en": hcg_en, "hcg_ar": hcg_ar,
+        # Both declaration lines carry the signer — each side in its language.
+        "undersigned_en": en_name, "undersigned_ar": ar_name,
+    }
+    for key, (box, size, side) in _HTML_FIELDS.items():
+        put_html(box, values.get(key), size, side)
 
-    # Sign-off table cells: route each value to the Arabic or English cell by its
-    # own language, so it sits beside the matching label and inside the borders.
-    cell_values = {"sig_name": name_ar or name_en,
-                   "physician": data.get("physician"),
-                   "technologist": data.get("technologist")}
-    for key, spec in _CELL_FIELDS.items():
-        val = str(cell_values.get(key) or "").strip()
-        if not val:
-            continue
-        put_html(spec["ar" if _has_arabic(val) else "en"], val, spec["size"])
-    # Patient row: when both names exist, show BOTH (Arabic in the Arabic cell,
-    # English under the English label) — same as the top Name row.
-    if name_ar and name_en:
-        put_html(_CELL_FIELDS["sig_name"]["en"], name_en, _CELL_FIELDS["sig_name"]["size"])
+    # Sign-off table: both cells of each row — English side + Arabic side.
+    for key, (en_v, ar_v) in {"sig_name": (en_name, ar_name),
+                              "physician": (phys_en, phys_ar),
+                              "technologist": (tech_en, tech_ar)}.items():
+        spec = _CELL_FIELDS[key]
+        put_html(spec["en"], en_v, spec["size"], "left")
+        put_html(spec["ar"], ar_v, spec["size"], "right")
 
     for key, points in _TEXT_FIELDS.items():
         for pt in points:
