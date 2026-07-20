@@ -354,7 +354,15 @@ def generate_consent_pdf(data, signature_png=None):
     import fitz  # PyMuPDF
     doc = fitz.open(_TEMPLATE)
     _stamp(doc[0], data, signature_png)
-    out = doc.tobytes()
+    # CRITICAL: every insert_htmlbox embeds its own copy of the Noto Naskh font,
+    # ballooning the PDF to ~6.5 MB — whose base64 (~8.6 MB) EXCEEDS the bridge/
+    # connector 8 MB body limits, so the Siratech consent upload silently fails.
+    # Subsetting + garbage collection dedupes the fonts back down to ~0.8 MB.
+    try:
+        doc.subset_fonts()
+    except Exception:
+        pass  # subsetting is an optimisation — never fail the consent over it
+    out = doc.tobytes(garbage=4, deflate=True)
     doc.close()
     return out
 
