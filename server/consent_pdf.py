@@ -1,16 +1,20 @@
 """Generate the completed 'Declaration of Non-Pregnancy' radiology consent by
 stamping the patient's data + signature onto the official Meena template PDF.
 
-The template already carries the bilingual (Arabic/English) BODY text. What we
-stamp are the per-patient VALUES — and those can be Arabic (patient name,
-procedure, physician/technologist names). Helvetica has no Arabic glyphs, so
-Arabic values used to come out as dots. We now render any value that may contain
-Arabic through PyMuPDF's `insert_htmlbox`, which shapes Arabic + handles RTL via
-HarfBuzz, using the bundled Noto Naskh Arabic font. Pure-Latin/numeric fields
-(MRN, dates, weight, height, time) still use plain Helvetica for crispness.
+The template is BILINGUAL — every label/blank exists twice: English on the left
+half, Arabic on the right half — and the stamped values follow that convention:
+Arabic values print beside the Arabic labels (right), English values beside the
+English labels (left), the patient's name in BOTH languages, and the checkbox
+marks go into BOTH the English and Arabic checkbox of each pair.
 
-Coordinates are in PDF points (A4 = 595 x 842), derived from the template's own
-label positions (measured with get_text("words")).
+Arabic is rendered through PyMuPDF's `insert_htmlbox` (HarfBuzz shaping + RTL)
+with the bundled Noto Naskh Arabic font; language-neutral values (MRN, dates,
+weight, height, time) use crisp Helvetica.
+
+ALL coordinates are in PDF points (A4 = 595 x 842) and were MEASURED from the
+template itself — get_text("words") for the labels/blanks, get_drawings() for
+the checkbox rects and the sign-off table's cell borders (columns at x = 39 |
+221 | 287 | 349 | 557). Don't nudge them by eye; re-measure.
 """
 import io
 import os
@@ -46,10 +50,8 @@ def _isolate_ascii(text):
 
 
 def _has_arabic(s):
-    """True if the string contains any Arabic-script character. Used to pick the
-    text DIRECTION per value: Arabic → RTL, Latin/digits → LTR. Forcing RTL on a
-    Latin value ('Dr. Khalid (12345)') bidi-reorders the punctuation, so we only
-    go RTL when the value is actually Arabic."""
+    """True if the string contains any Arabic-script character. Used to route each
+    value to the correct SIDE of the bilingual form and pick its direction."""
     for ch in (s or ""):
         o = ord(ch)
         if (0x0600 <= o <= 0x06FF or 0x0750 <= o <= 0x077F or
@@ -58,57 +60,73 @@ def _has_arabic(s):
     return False
 
 
-# ── Value boxes (x0, y0, x1, y1) for fields that MAY contain Arabic. Rendered with
-# insert_htmlbox so Arabic shapes correctly. The form is BILINGUAL — English labels on
-# the left, Arabic labels on the right — so values follow the same convention. In this
-# renderer, text-align:left makes an ARABIC value settle on the RIGHT of its (wide) box
-# (beside the Arabic label) and a LATIN value on the LEFT (beside the English label). So
-# a single wide box auto-places each value on the correct side by its language; the name
-# renders in BOTH languages (English left + Arabic right) via two boxes.
+# ── Generic value boxes (x0, y0, x1, y1, size). Rendered with insert_htmlbox; an
+# Arabic value settles on the RIGHT edge of its box (text-align:left inverts under
+# RTL), a Latin value on the LEFT — so wide boxes auto-place single values on the
+# correct side. Boxes stop just short of the Arabic label's colon.
 _HTML_FIELDS = {
-    #                x0   y0   x1   y1   size
-    "name_en":     (128, 126, 300, 141, 10),   # English name → left, by "Name of Patient:"
-    "name":        (305, 126, 495, 141, 10),   # Arabic name  → right, by "اسم المريض"
-    "procedure":   (128, 172, 440, 187, 10),   # single value: Arabic→right / Latin→left
-    "hcg":         (128, 218, 440, 233, 9),
-    "undersigned": (140, 508, 345, 523, 9),
-    # Physician / technologist names live in the leftmost cell of the sign-off
-    # table (x 44–235). Placed on the line just under their long English label,
-    # small font so a name + ID number stays inside the cell.
-    "physician":   (48, 670, 232, 685, 8),
-    # Its English label wraps to two lines ("… +ID / No)."), so the value sits a
-    # line lower than the physician's to clear the "No)." on the second line.
-    "technologist":(48, 711, 232, 726, 8),
+    #                 x0   y0   x1   y1  size
+    "name_en":      (128, 126, 300, 141, 10),  # left, after "Name of Patient:" (label ends x=123)
+    "name":         (305, 126, 495, 141, 10),  # right, before "اسم المريض:" (colon at x=503)
+    "procedure":    (128, 172, 522, 187, 10),  # "الإجراء:" colon at x=526
+    "hcg":          (128, 216, 442, 231, 9),   # "نتيجة تحليل الحمل ان وجد:" colon at x=446
+    # "I, the undersigned ______" — the ENGLISH blank runs x=130–267 (y≈512), the
+    # ARABIC blank runs x=396–495 (y≈508, right before "أنا الموقعة أدناه"). The y
+    # offsets put each name ON its blank line, clear of the section's top border
+    # (a rule at y≈505 that struck the text when the boxes started higher).
+    "undersigned_en": (135, 507, 265, 522, 9),
+    "undersigned":    (398, 504, 493, 519, 9),
 }
 
-# Pure Latin / numeric values — crisp Helvetica at an exact baseline (x, y). These are
-# language-neutral (digits/dates) and stay on the LEFT beside their English label.
+# ── Sign-off table (columns measured at x = 39 | 221 | 287 | 349 | 557; rows at
+# y = 628 | 656 | 684 | 725 | 754 | 775). The value must stay INSIDE its cell:
+# an Arabic name goes in the free space of the ARABIC label cell (x 349–557,
+# ending before the label text), an English name under the ENGLISH label
+# (cell x 39–221). Keyed as {field: {"ar": box, "en": box, "size": n}}.
+_CELL_FIELDS = {
+    # Patient row (y 628–656): Arabic label "اسم المريضة/ممثلها القانوني:" starts x=443;
+    # English label fills its cell's first line, so the EN name takes the second line.
+    "sig_name":     {"ar": (351, 631, 441, 649), "en": (46, 641, 218, 655), "size": 8},
+    # Physician row (y 656–684): Arabic label starts x=449.
+    "physician":    {"ar": (351, 662, 446, 680), "en": (48, 669, 218, 683), "size": 8},
+    # Technologist row (y 685–725): Arabic label starts x=423; the English label wraps
+    # ("… +ID / No)."), so the EN value sits below the second label line.
+    "technologist": {"ar": (351, 694, 420, 712), "en": (48, 712, 218, 724), "size": 8},
+}
+
+# Pure Latin / numeric values — crisp Helvetica at exact baselines. Language-neutral
+# digits are stamped on BOTH sides of the bilingual form: (x, y) per side.
 _TEXT_FIELDS = {
-    "mrn":       (132, 151),
-    "dob":       (132, 166),
-    "weight":    (132, 197),
-    "height":    (132, 212),
-    "lmp_date":  (222, 410),
-    "date":      (80, 765),
-    "time":      (220, 765),
+    "mrn":      [(132, 151)],
+    "dob":      [(132, 166)],
+    "weight":   [(132, 197)],
+    "height":   [(132, 212)],
+    # LMP date: English blank x=202–278, Arabic blank x=364–446 (same row, y≈410).
+    "lmp_date": [(222, 410), (372, 410)],
+    # Bottom row: "Date:"/"Time:" on the left; "الوقت:" colon at x=398 (value ends
+    # ≈395) and "التاريخ:" colon at x=525 (value ends ≈522) on the right.
+    "date":     [(80, 765), (474, 765)],
+    "time":     [(220, 765), (368, 765)],
 }
 
-# Checkbox marks: an "X" placed at the box.
+# Checkbox marks — the form has PAIRS of checkboxes: English side + Arabic side
+# (measured rects; EN boxes at x=45/176, AR boxes at x=553/442). BOTH get the X.
 _CHECKS = {
-    "outpatient":   (180, 241),
-    "er":           (180, 255),
-    "not_pregnant": (47, 356),
-    "not_married":  (47, 393),
-    "lmp":          (47, 410),
-    "iud":          (47, 426),
-    "risks":        (47, 455),
-    "read":         (47, 536),
+    "outpatient":   [(180, 241), (444, 241)],
+    "er":           [(180, 255), (444, 256)],
+    "not_pregnant": [(47, 354), (555, 354)],
+    "not_married":  [(47, 393), (555, 393)],
+    "lmp":          [(47, 410), (555, 410)],
+    "iud":          [(47, 425), (555, 425)],
+    "risks":        [(47, 456), (555, 456)],
+    "read":         [(47, 536), (555, 536)],
 }
-# Signature image box (x0, y0, x1, y1) — the Signature cell of the Patient row.
-_SIG_RECT = (240, 627, 424, 656)
-# A slightly larger white patch drawn UNDER the signature to fully erase the
-# "Signature / التوقيع" placeholder hint (spans x≈235–430) so no sliver peeks out.
-_SIG_WHITE = (233, 623, 431, 659)
+
+# Signature — the patient row's TWO signature cells ("Signature" x 221–287 and
+# "التوقيع" x 287–349) form one signing area; the image must NOT spill into the
+# Arabic name cell (border at x=349). White patch under it erases the hints.
+_SIG_RECT = (226, 631, 344, 653)
+_SIG_WHITE = (222.5, 629, 348, 655)
 
 
 def _stamp(page, data, signature_png=None, mark_declaration=True):
@@ -135,12 +153,10 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
         if not text:
             return
         x0, y0, x1, y1 = box
-        # Direction follows the CONTENT (Arabic → RTL, Latin → LTR). Alignment is always
-        # text-align:left, which in this renderer settles an Arabic value on the RIGHT of
-        # the box (beside the Arabic label) and a Latin value on the LEFT (beside the
-        # English label) — the form's bilingual convention. For an Arabic value carrying
-        # an ASCII ID ("د. خالد (12345)"), isolate the ASCII run so its digits +
-        # parentheses stay LTR and balanced instead of bidi-mirrored.
+        # Direction follows the CONTENT (Arabic → RTL, Latin → LTR). text-align:left
+        # settles Arabic on the box's right edge and Latin on its left. An ASCII ID
+        # inside an Arabic value ("د. خالد (12345)") is bidi-isolated so its digits
+        # and parentheses stay LTR and balanced.
         if _has_arabic(text):
             direction, body = "rtl", _esc(_isolate_ascii(text))
         else:
@@ -151,10 +167,45 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
         page.insert_htmlbox(fitz.Rect(x0, y0, x1, y1), html, css=_CSS,
                             archive=arch, scale_low=0.5)
 
+    # Route the patient's name(s) by language so each side of the form shows the
+    # right one: Arabic name by the Arabic label, English name by the English label.
+    raw_name = str(data.get("name") or "").strip()
+    raw_en = str(data.get("name_en") or "").strip()
+    name_ar = raw_name if _has_arabic(raw_name) else ""
+    name_en = raw_en or ("" if _has_arabic(raw_name) else raw_name)
+
+    values = dict(data)
+    values["name"] = name_ar
+    values["name_en"] = name_en
+    # "I, the undersigned ____ / أنا الموقعة أدناه ____": each language's blank gets
+    # the matching name so BOTH declaration lines carry the signer.
+    und = str(data.get("undersigned") or "").strip() or raw_name or raw_en
+    if _has_arabic(und):
+        values["undersigned"], values["undersigned_en"] = und, name_en
+    else:
+        values["undersigned"], values["undersigned_en"] = name_ar, und
+
     for key, box in _HTML_FIELDS.items():
-        put_html(box[:4], data.get(key), box[4])
-    for key, point in _TEXT_FIELDS.items():
-        put_latin(point, data.get(key))
+        put_html(box[:4], values.get(key), box[4])
+
+    # Sign-off table cells: route each value to the Arabic or English cell by its
+    # own language, so it sits beside the matching label and inside the borders.
+    cell_values = {"sig_name": name_ar or name_en,
+                   "physician": data.get("physician"),
+                   "technologist": data.get("technologist")}
+    for key, spec in _CELL_FIELDS.items():
+        val = str(cell_values.get(key) or "").strip()
+        if not val:
+            continue
+        put_html(spec["ar" if _has_arabic(val) else "en"], val, spec["size"])
+    # Patient row: when both names exist, show BOTH (Arabic in the Arabic cell,
+    # English under the English label) — same as the top Name row.
+    if name_ar and name_en:
+        put_html(_CELL_FIELDS["sig_name"]["en"], name_en, _CELL_FIELDS["sig_name"]["size"])
+
+    for key, points in _TEXT_FIELDS.items():
+        for pt in points:
+            put_latin(pt, data.get(key))
 
     marks = set()
     if mark_declaration:
@@ -167,15 +218,15 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
     if reason in ("not_married", "lmp", "iud"):
         marks.add(reason)
     for key in marks:
-        pt = _CHECKS.get(key)
-        if pt:
+        for pt in _CHECKS.get(key, ()):
             page.insert_text((pt[0], pt[1]), "X", fontsize=11, fontname="helv", color=(0, 0, 0))
 
     if signature_png:
         try:
-            # Lay a clean WHITE background over the signature cell first (clears the
-            # "Signature / التوقيع" placeholder hint) so the ink always sits on white,
-            # then drop the signature image on top.
+            # Lay a clean WHITE background over the signature cells first (clears the
+            # "Signature / التوقيع" placeholder hints) so the ink always sits on white,
+            # then drop the signature image on top — kept inside the two signature
+            # cells so it never covers the table borders or the Arabic name cell.
             page.draw_rect(fitz.Rect(*_SIG_WHITE), color=None, fill=(1, 1, 1))
             page.insert_image(fitz.Rect(*_SIG_RECT), stream=signature_png, keep_proportion=True)
         except Exception:
