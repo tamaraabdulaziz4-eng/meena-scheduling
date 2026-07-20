@@ -143,16 +143,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // clinical response — no VPS shell needed to confirm which code is actually live.
 const CONNECTOR_BUILD = 'latematch-2026-07-13bf';
 
-// Click a selector only once it's actually visible + clickable. The HIS login is
-// Angular Material, whose inputs mount a beat after they enter the DOM, so a bare
-// page.click() can race and throw "Node is either not clickable or not an Element".
-// Wait for visibility, then click with a couple of retries.
-async function clickReady(page, selector, { timeout = 20000 } = {}) {
-  await page.waitForSelector(selector, { visible: true, timeout });
-  for (let i = 0; i < 3; i++) {
-    try { await page.click(selector); return; }
-    catch (e) { if (i === 2) throw e; await sleep(500); }
-  }
+// Fill an Angular Material input robustly. In headless Chrome these fields are
+// present in the DOM but sometimes have no clickable bounding box, so page.click()
+// throws "Node is either not clickable or not an Element" and a {visible:true} wait
+// can time out. Wait for PRESENCE, try a click (best-effort), then focus() — which
+// needs no bounding box — and type via the keyboard.
+async function fillInput(page, selector, text, { timeout = 20000, delay = 50 } = {}) {
+  const el = await page.waitForSelector(selector, { timeout });   // presence, not visibility
+  try { await el.click({ delay: 10 }); } catch (_e) { /* fall through to focus */ }
+  try { await el.focus(); } catch (_e) { /* ignore */ }
+  await page.keyboard.type(text, { delay });
+  return el;
 }
 
 async function doHeadlessLogin() {
@@ -175,8 +176,7 @@ async function doHeadlessLogin() {
       }
     });
     await page.goto(HIS_BASE, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
-    await clickReady(page, '#mat-input-0', { timeout: 25000 });
-    await page.type('#mat-input-0', HIS_USER, { delay: 50 });
+    await fillInput(page, '#mat-input-0', HIS_USER, { timeout: 25000, delay: 50 });
     await page.keyboard.press('Tab');           // triggers the encrypted site lookup
     await sleep(3500);
     const site = (await page.$('#focusablesite')) || (await page.$('mat-select'));
@@ -194,8 +194,7 @@ async function doHeadlessLogin() {
       if (!picked && opts[0]) await opts[0].click();
       await sleep(1000);
     }
-    await clickReady(page, '#passFocus');
-    await page.type('#passFocus', HIS_PASS, { delay: 50 });
+    await fillInput(page, '#passFocus', HIS_PASS, { delay: 50 });
     await sleep(400);
     const btn = await page.evaluateHandle(() =>
       [...document.querySelectorAll('button')].find((e) => /login/i.test(e.innerText)));
