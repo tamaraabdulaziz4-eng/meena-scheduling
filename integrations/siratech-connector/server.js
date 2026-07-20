@@ -163,7 +163,7 @@ async function fillInput(page, selector, text, { timeout = 20000, delay = 50 } =
   return el;
 }
 
-async function doHeadlessLogin() {
+async function doHeadlessLoginOnce() {
   const browser = await puppeteer.launch({
     headless: true,
     // Lean flags — this runs on a small (2 GB) VPS, so trim Chromium's footprint.
@@ -238,6 +238,29 @@ async function doHeadlessLogin() {
   } finally {
     await browser.close().catch(() => {});
   }
+}
+
+// The HIS is an Angular SPA that reloads mid-login under newer headless Chromium,
+// which detaches the frame the automation is driving. That race is timing-based, so
+// a fresh attempt usually lands past it — retry the whole login a couple of times.
+async function doHeadlessLogin() {
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await doHeadlessLoginOnce();
+    } catch (e) {
+      lastErr = e;
+      const msg = (e && e.message) || String(e);
+      const racy = /detached Frame|Execution context was destroyed|Target closed|frame (was|got) detached|Navigating frame/i.test(msg);
+      if (attempt < 3 && racy) {
+        console.warn(`[his] login attempt ${attempt} hit a navigation race — retrying (${msg.slice(0, 70)})`);
+        await sleep(2000);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
 }
 
 async function getToken(force = false) {
