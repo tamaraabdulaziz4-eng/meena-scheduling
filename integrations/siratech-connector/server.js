@@ -143,6 +143,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // clinical response — no VPS shell needed to confirm which code is actually live.
 const CONNECTOR_BUILD = 'latematch-2026-07-13bf';
 
+// Click a selector only once it's actually visible + clickable. The HIS login is
+// Angular Material, whose inputs mount a beat after they enter the DOM, so a bare
+// page.click() can race and throw "Node is either not clickable or not an Element".
+// Wait for visibility, then click with a couple of retries.
+async function clickReady(page, selector, { timeout = 20000 } = {}) {
+  await page.waitForSelector(selector, { visible: true, timeout });
+  for (let i = 0; i < 3; i++) {
+    try { await page.click(selector); return; }
+    catch (e) { if (i === 2) throw e; await sleep(500); }
+  }
+}
+
 async function doHeadlessLogin() {
   const browser = await puppeteer.launch({
     headless: true,
@@ -163,8 +175,7 @@ async function doHeadlessLogin() {
       }
     });
     await page.goto(HIS_BASE, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
-    await page.waitForSelector('#mat-input-0', { timeout: 25000 });
-    await page.click('#mat-input-0');
+    await clickReady(page, '#mat-input-0', { timeout: 25000 });
     await page.type('#mat-input-0', HIS_USER, { delay: 50 });
     await page.keyboard.press('Tab');           // triggers the encrypted site lookup
     await sleep(3500);
@@ -183,7 +194,7 @@ async function doHeadlessLogin() {
       if (!picked && opts[0]) await opts[0].click();
       await sleep(1000);
     }
-    await page.click('#passFocus');
+    await clickReady(page, '#passFocus');
     await page.type('#passFocus', HIS_PASS, { delay: 50 });
     await sleep(400);
     const btn = await page.evaluateHandle(() =>
