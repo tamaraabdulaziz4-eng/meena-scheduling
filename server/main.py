@@ -10672,11 +10672,32 @@ def _file_consent_to_siratech(consent_id):
     if not claimed:
         return True   # another path already claimed/filed it
     import base64 as _b64
+    pdf_bytes = bytes(rec["pdf"])
+    # Consents generated before font-subsetting carry ~6.5 MB PDFs (duplicate embedded
+    # Arabic fonts) whose base64 (~8.6 MB) EXCEEDS the bridge/connector 8 MB body limit —
+    # the upload would fail forever. Shrink oversized PDFs in place (subset + garbage
+    # collect ≈ 0.8 MB) and persist the small copy so every later read/ride is small too.
+    if len(pdf_bytes) > 4 * 1024 * 1024:
+        try:
+            import fitz
+            _doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            try:
+                _doc.subset_fonts()
+            except Exception:
+                pass
+            _small = _doc.tobytes(garbage=4, deflate=True)
+            _doc.close()
+            if _small and len(_small) < len(pdf_bytes):
+                pdf_bytes = _small
+                q("UPDATE scheduling.consents SET pdf=%s WHERE id=%s",
+                  (psycopg2.Binary(pdf_bytes), consent_id), exec_only=True)
+        except Exception:
+            pass   # shrink is best-effort; an unshrunk PDF just fails filing as before
     body = {
         "file": str(rec["file_no"]).strip(),
         "billNo": (str(rec["bill_no"]).strip() if rec.get("bill_no") else None),
         "site": (rec.get("site") if isinstance(rec.get("site"), int) else None),
-        "consentPdf": _b64.b64encode(bytes(rec["pdf"])).decode("ascii"),
+        "consentPdf": _b64.b64encode(pdf_bytes).decode("ascii"),
         "consentName": _consent_file_name(rec),
         # Match against Siratech's (English) row name; the display name may be Arabic.
         "expectName": (rec.get("patient_name_en") or rec.get("patient_name") or "").strip() or None,
