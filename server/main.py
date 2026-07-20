@@ -10578,16 +10578,16 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
         raise HTTPException(400, "The signature looks blank — please capture the patient's actual signature")
     now = _ksa_now()
     tech = _consent_signer(user)
-    # The consent PDF now renders Arabic (Noto Naskh via insert_htmlbox), so the printed
-    # name is the patient's ARABIC name — falling back to the English name only when no
-    # Arabic name is on file.
-    pdf_name = name or (b.get("name_en") or "").strip()
+    # The consent is BILINGUAL: the PDF now renders Arabic (Noto Naskh via insert_htmlbox),
+    # so we pass BOTH names — the Arabic name prints on the RIGHT (by the Arabic label) and
+    # the English name on the LEFT (by the English label).
+    name_en = (b.get("name_en") or "").strip()
     data = {
-        "name": pdf_name, "mrn": (b.get("mrn") or file_no).strip(),
+        "name": name, "name_en": name_en, "mrn": (b.get("mrn") or file_no).strip(),
         "dob": (b.get("dob") or "").strip(), "procedure": (b.get("procedure") or "").strip(),
         "weight": (b.get("weight") or "").strip(), "height": (b.get("height") or "").strip(),
         "hcg": (b.get("hcg") or "").strip(), "patient_type": patient_type,
-        "reason": reason, "lmp_date": lmp, "undersigned": pdf_name,
+        "reason": reason, "lmp_date": lmp, "undersigned": name or name_en,
         "physician": (b.get("physician") or "").strip(), "technologist": tech,
         "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
     }
@@ -11155,11 +11155,12 @@ def public_consent_form_image(token: str):
     # a QR photo / browser history / proxy logs for the rest of its TTL).
     if (r.get("status") or "") == "signed":
         raise HTTPException(410, "This consent has already been signed.")
-    # The renderer now shapes Arabic, so show the patient's ARABIC name on the previewed
-    # form — same as the final signed PDF — falling back to English only if none on file.
-    _form_name = (r.get("patient_name") or "").strip() or (r.get("patient_name_en") or "")
+    # Bilingual preview → show BOTH names, Arabic on the right and English on the left,
+    # exactly as the final signed PDF.
     data = {
-        "name": _form_name, "mrn": r.get("mrn") or r.get("file_no") or "",
+        "name": (r.get("patient_name") or "").strip(),
+        "name_en": (r.get("patient_name_en") or "").strip(),
+        "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
         "weight": r.get("weight") or "", "height": r.get("height") or "",
         "patient_type": r.get("patient_type") or "", "physician": r.get("physician") or "",
@@ -11209,14 +11210,14 @@ async def public_consent_sign(token: str, request: Request):
     weight = (b.get("weight") or r.get("weight") or "").strip()
     height = (b.get("height") or r.get("height") or "").strip()
     hcg = (b.get("hcg") or "").strip()
-    # The consent PDF now renders Arabic → print the patient's ARABIC name, falling back
-    # to the English name only when no Arabic name is on the record.
-    _pdf_name = (r.get("patient_name") or "").strip() or (r.get("patient_name_en") or "")
+    # Bilingual consent → print BOTH names: Arabic on the right, English on the left.
+    _name_ar = (r.get("patient_name") or "").strip()
+    _name_en = (r.get("patient_name_en") or "").strip()
     data = {
-        "name": _pdf_name, "mrn": r.get("mrn") or r.get("file_no") or "",
+        "name": _name_ar, "name_en": _name_en, "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
         "weight": weight, "height": height, "hcg": hcg, "patient_type": r.get("patient_type") or "",
-        "reason": reason, "lmp_date": lmp, "undersigned": _pdf_name,
+        "reason": reason, "lmp_date": lmp, "undersigned": _name_ar or _name_en,
         "physician": r.get("physician") or "", "technologist": r.get("technologist") or "",
         "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
     }

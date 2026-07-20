@@ -58,13 +58,19 @@ def _has_arabic(s):
     return False
 
 
-# ── Value boxes (x0, y0, x1, y1) for fields that MAY contain Arabic. Rendered
-# with insert_htmlbox so Arabic shapes correctly. Boxes are sized to the cell so
-# the shaper can auto-fit long Arabic names without spilling into the next cell.
+# ── Value boxes (x0, y0, x1, y1) for fields that MAY contain Arabic. Rendered with
+# insert_htmlbox so Arabic shapes correctly. The form is BILINGUAL — English labels on
+# the left, Arabic labels on the right — so values follow the same convention. In this
+# renderer, text-align:left makes an ARABIC value settle on the RIGHT of its (wide) box
+# (beside the Arabic label) and a LATIN value on the LEFT (beside the English label). So
+# a single wide box auto-places each value on the correct side by its language; the name
+# renders in BOTH languages (English left + Arabic right) via two boxes.
 _HTML_FIELDS = {
     #                x0   y0   x1   y1   size
-    "name":        (128, 126, 470, 141, 10),
-    "procedure":   (128, 172, 470, 187, 10),
+    "name_en":     (128, 126, 300, 141, 10),   # English name → left, by "Name of Patient:"
+    "name":        (305, 126, 495, 141, 10),   # Arabic name  → right, by "اسم المريض"
+    "procedure":   (128, 172, 440, 187, 10),   # single value: Arabic→right / Latin→left
+    "hcg":         (128, 218, 440, 233, 9),
     "undersigned": (140, 508, 345, 523, 9),
     # Physician / technologist names live in the leftmost cell of the sign-off
     # table (x 44–235). Placed on the line just under their long English label,
@@ -75,13 +81,13 @@ _HTML_FIELDS = {
     "technologist":(48, 711, 232, 726, 8),
 }
 
-# Pure Latin / numeric values — crisp Helvetica at an exact baseline (x, y).
+# Pure Latin / numeric values — crisp Helvetica at an exact baseline (x, y). These are
+# language-neutral (digits/dates) and stay on the LEFT beside their English label.
 _TEXT_FIELDS = {
     "mrn":       (132, 151),
     "dob":       (132, 166),
     "weight":    (132, 197),
     "height":    (132, 212),
-    "hcg":       (132, 226),
     "lmp_date":  (222, 410),
     "date":      (80, 765),
     "time":      (220, 765),
@@ -129,17 +135,18 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
         if not text:
             return
         x0, y0, x1, y1 = box
-        # Direction + alignment follow the CONTENT: an Arabic value reads RTL and sits to
-        # the RIGHT of its cell (naturally beside the form's Arabic label column); a
-        # Latin/numeric value reads LTR and sits to the LEFT (beside the English label).
-        # For an Arabic value carrying an ASCII ID ("د. خالد (12345)"), isolate the ASCII
-        # run so its digits + parentheses stay LTR and balanced instead of bidi-mirrored.
+        # Direction follows the CONTENT (Arabic → RTL, Latin → LTR). Alignment is always
+        # text-align:left, which in this renderer settles an Arabic value on the RIGHT of
+        # the box (beside the Arabic label) and a Latin value on the LEFT (beside the
+        # English label) — the form's bilingual convention. For an Arabic value carrying
+        # an ASCII ID ("د. خالد (12345)"), isolate the ASCII run so its digits +
+        # parentheses stay LTR and balanced instead of bidi-mirrored.
         if _has_arabic(text):
-            direction, align, body = "rtl", "right", _esc(_isolate_ascii(text))
+            direction, body = "rtl", _esc(_isolate_ascii(text))
         else:
-            direction, align, body = "ltr", "left", _esc(text)
+            direction, body = "ltr", _esc(text)
         html = ('<div style="font-size:%dpt;line-height:1.05;white-space:nowrap;'
-                'text-align:%s;direction:%s;">%s</div>') % (size, align, direction, body)
+                'text-align:left;direction:%s;">%s</div>') % (size, direction, body)
         # scale_low lets the shaper shrink an over-long name to fit rather than clip.
         page.insert_htmlbox(fitz.Rect(x0, y0, x1, y1), html, css=_CSS,
                             archive=arch, scale_low=0.5)
