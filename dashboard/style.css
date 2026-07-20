@@ -2385,76 +2385,103 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
   padding:7px 10px; border:1px solid var(--border); border-radius:10px; }
 .cn-poll { margin-top:16px; font-size:13.5px; font-weight:700; color:var(--muted); }
 
-/* ── Send-consent-QR sheet (cnq-) — branded redesign ─────────────────────────
-   Identity chip → 3-step strip → framed QR → live status → send-link tools.   */
+/* ── Send-consent-QR sheet — Fable design ────────────────────────────────────
+   Warm ivory surface, serif headings, terracotta accent, flat and calm. The
+   .cn-fable class scopes it to the QR sheet only; palette is self-contained
+   (Fable tokens, not the app vars) so it reads the same in light and dark. */
+.cn-fable {
+  --fb-bg:#FAF9F5; --fb-panel:#F0EEE6; --fb-ink:#262624; --fb-mut:#8A8778;
+  --fb-line:#E4E1D5; --fb-line2:#DEDBCE; --fb-acc:#C96442; --fb-acc-h:#B5573A;
+  --fb-ok:#6E9B72;
+  background:var(--fb-bg); color:var(--fb-ink);
+  box-shadow:0 24px 70px rgba(38,38,36,.28);
+}
+body.dark .cn-fable {
+  --fb-bg:#262624; --fb-panel:#30302E; --fb-ink:#F0EEE6; --fb-mut:#A8A490;
+  --fb-line:#3E3D38; --fb-line2:#4A4943; --fb-acc:#D97757; --fb-acc-h:#C96442;
+}
+.cn-fable .cn-head { background:var(--fb-bg); color:var(--fb-ink); border-bottom:1px solid var(--fb-line);
+  padding:18px 22px 14px; }
+.cn-fable .cn-title { font-family:Georgia,'Times New Roman',serif; font-weight:600; font-size:21px; letter-spacing:.2px; }
+.cn-fable .cn-sub { color:var(--fb-mut); opacity:1; margin-top:3px; font-size:12px; }
+.cn-fable .cn-x { background:transparent; color:var(--fb-mut); border:1px solid var(--fb-line); }
+.cn-fable .cn-x:hover { background:var(--fb-panel); color:var(--fb-ink); }
+.cn-fable .cn-body { background:var(--fb-bg); }
+.cn-fable .input { background:var(--fb-bg); border:1px solid var(--fb-line2); color:var(--fb-ink);
+  border-radius:10px; box-shadow:none; }
+.cn-fable .input::placeholder { color:var(--fb-mut); }
+.cn-fable .input:focus { border-color:var(--fb-acc); box-shadow:0 0 0 3px rgba(201,100,66,.15); outline:none; }
+.cn-fable .btn { background:var(--fb-panel); color:var(--fb-ink); border:1px solid var(--fb-line2);
+  border-radius:10px; box-shadow:none; }
+.cn-fable .btn:hover { background:var(--fb-line); }
+.cn-fable .btn-primary { background:var(--fb-acc); border-color:var(--fb-acc); color:#fff; }
+.cn-fable .btn-primary:hover { background:var(--fb-acc-h); border-color:var(--fb-acc-h); }
+.cn-fable .mini-spin { border-color:var(--fb-line); border-top-color:var(--fb-acc); }
+
 .cnq { text-align:center; }
 .cnq-patient { display:flex; align-items:center; gap:11px; text-align:start;
-  background:color-mix(in srgb, var(--primary) 6%, var(--card)); border:1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
-  border-radius:14px; padding:10px 12px; }
-.cnq-ava { width:40px; height:40px; flex:0 0 auto; border-radius:12px; display:flex; align-items:center; justify-content:center;
-  font-size:17px; font-weight:800; color:#fff; background:linear-gradient(135deg,var(--primary),var(--accent));
-  box-shadow:0 4px 12px color-mix(in srgb, var(--primary) 35%, transparent); }
+  background:var(--fb-panel); border:1px solid var(--fb-line); border-radius:12px; padding:10px 12px; }
+.cnq-ava { width:38px; height:38px; flex:0 0 auto; border-radius:10px; display:flex; align-items:center; justify-content:center;
+  font-family:Georgia,serif; font-size:17px; font-weight:600; color:#fff; background:var(--fb-acc); }
 .cnq-pinfo { min-width:0; flex:1; }
-.cnq-pinfo b { display:block; font-size:14.5px; font-weight:800; color:var(--text);
+.cnq-pinfo b { display:block; font-size:14.5px; font-weight:700; color:var(--fb-ink);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.cnq-pinfo span { display:block; font-size:12px; color:var(--muted); margin-top:1px;
+.cnq-pinfo span { display:block; font-size:12px; color:var(--fb-mut); margin-top:1px;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.cnq-type { flex:0 0 auto; font-size:11px; font-weight:800; letter-spacing:.4px; padding:4px 10px; border-radius:999px;
-  color:var(--primary); background:color-mix(in srgb, var(--primary) 12%, transparent);
-  border:1px solid color-mix(in srgb, var(--primary) 30%, transparent); }
-.cnq-type.er { color:#c0392b; background:rgba(226,85,85,.12); border-color:rgba(226,85,85,.4); }
+.cnq-type { flex:0 0 auto; font-size:11px; font-weight:700; letter-spacing:.5px; padding:4px 10px; border-radius:999px;
+  color:var(--fb-ink); background:var(--fb-bg); border:1px solid var(--fb-line2); }
+.cnq-type.er { color:#fff; background:var(--fb-acc); border-color:var(--fb-acc); }
 
 .cnq-steps { display:flex; align-items:center; justify-content:center; gap:8px; margin:16px 4px 14px; }
 .cnq-steps .s { display:flex; align-items:center; gap:6px; }
-.cnq-steps .s i { width:22px; height:22px; border-radius:50%; font-style:normal; font-size:11.5px; font-weight:800;
-  display:flex; align-items:center; justify-content:center; color:var(--muted);
-  border:1.5px solid var(--border); background:var(--card); }
-.cnq-steps .s em { font-style:normal; font-size:12px; font-weight:700; color:var(--muted); }
-.cnq-steps .s.on i { color:#fff; border-color:transparent; background:linear-gradient(135deg,var(--primary),var(--accent)); }
-.cnq-steps .s.on em { color:var(--text); }
-.cnq-steps .ln { flex:0 1 34px; height:1.5px; background:var(--border); border-radius:2px; }
+.cnq-steps .s i { width:22px; height:22px; border-radius:50%; font-style:normal; font-size:11.5px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; color:var(--fb-mut);
+  border:1px solid var(--fb-line2); background:var(--fb-bg); }
+.cnq-steps .s em { font-style:normal; font-size:12px; font-weight:600; color:var(--fb-mut); }
+.cnq-steps .s.on i { color:#fff; border-color:var(--fb-acc); background:var(--fb-acc); }
+.cnq-steps .s.on em { color:var(--fb-ink); font-weight:700; }
+.cnq-steps .ln { flex:0 1 34px; height:1px; background:var(--fb-line2); }
 
-.cnq-qrcard { position:relative; display:inline-block; padding:14px 22px 12px; border-radius:20px;
-  background:linear-gradient(var(--card),var(--card)) padding-box,
-             linear-gradient(135deg,var(--primary),var(--accent)) border-box;
-  border:2px solid transparent; box-shadow:0 10px 30px color-mix(in srgb, var(--primary) 16%, transparent); }
-.cnq-qr { width:216px; max-width:64vw; height:auto; display:block; margin:0 auto; border-radius:12px;
-  padding:8px; background:#fff; }   /* QR must always sit on white — scannability */
-.cnq-hint { font-size:13px; font-weight:800; color:var(--text); margin-top:9px; }
-.cnq-hint-ar { font-size:12px; font-weight:600; color:var(--muted); margin-top:2px; }
+.cnq-qrcard { display:inline-block; padding:16px 26px 14px; border-radius:16px;
+  background:#fff; border:1px solid var(--fb-line2); }
+body.dark .cnq-qrcard { border-color:var(--fb-line2); }
+.cnq-qr { width:212px; max-width:64vw; height:auto; display:block; margin:0 auto; background:#fff; }
+.cnq-hint { font-size:13px; font-weight:500; color:#57544A; margin-top:10px; line-height:1.55; }
+body.dark .cnq-hint { color:#57544A; }   /* hint sits on the white QR tile in both modes */
 
 .cnq-status { display:flex; align-items:center; justify-content:center; gap:9px; margin-top:14px;
-  font-size:13px; font-weight:700; color:var(--muted); }
+  font-size:13px; font-weight:600; color:var(--fb-mut); }
 .cnq-dots { display:inline-flex; gap:4px; }
-.cnq-dots i { width:6px; height:6px; border-radius:50%; background:var(--primary); animation:cnqDot 1.2s ease-in-out infinite; }
+.cnq-dots i { width:6px; height:6px; border-radius:50%; background:var(--fb-acc); animation:cnqDot 1.2s ease-in-out infinite; }
 .cnq-dots i:nth-child(2) { animation-delay:.2s; } .cnq-dots i:nth-child(3) { animation-delay:.4s; }
 @keyframes cnqDot { 0%,100% { transform:scale(.55); opacity:.35; } 50% { transform:scale(1); opacity:1; } }
 
-.cnq-divider { display:flex; align-items:center; gap:12px; margin:16px 6px 12px; color:var(--muted); }
-.cnq-divider::before, .cnq-divider::after { content:""; flex:1; height:1px; background:var(--border); }
-.cnq-divider span { font-size:11.5px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; }
+.cnq-divider { display:flex; align-items:center; gap:12px; margin:16px 6px 12px; color:var(--fb-mut); }
+.cnq-divider::before, .cnq-divider::after { content:""; flex:1; height:1px; background:var(--fb-line); }
+.cnq-divider span { font-size:11px; font-weight:600; letter-spacing:.8px; text-transform:uppercase; }
 
 .cnq-row { display:flex; gap:8px; align-items:stretch; max-width:430px; margin:0 auto 8px; }
 .cnq-row .input { flex:1; font-size:13px; min-width:0; }
-.cnq-linkrow .input { font-size:11.5px; color:var(--muted); }
+.cnq-linkrow .input { font-size:11.5px; color:var(--fb-mut); }
 .cnq-go { flex:0 0 auto; white-space:nowrap; }
-.cnq-note { font-size:12px; color:var(--muted); min-height:16px; margin-bottom:2px; }
+.cnq-note { font-size:12px; color:var(--fb-mut); min-height:16px; margin-bottom:2px; }
 
-.cnq-alt { margin-top:12px; border-top:1px dashed var(--border); padding-top:12px; }
-.cnq-alt button { background:none; border:none; cursor:pointer; font-size:13px; font-weight:700;
-  color:var(--primary); padding:6px 10px; border-radius:10px; }
-.cnq-alt button:hover { background:color-mix(in srgb, var(--primary) 8%, transparent); }
+.cnq-alt { margin-top:12px; border-top:1px solid var(--fb-line); padding-top:12px; }
+.cnq-alt button { background:none; border:none; cursor:pointer; font-size:13px; font-weight:600;
+  color:var(--fb-acc); padding:6px 10px; border-radius:8px; text-decoration:underline;
+  text-underline-offset:3px; text-decoration-thickness:1px; }
+.cnq-alt button:hover { color:var(--fb-acc-h); }
 
-/* Success view — animated check, then the sheet closes itself */
-.cnq-done { text-align:center; padding:34px 16px 26px; }
-.cnq-done-ring { width:84px; height:84px; margin:0 auto 14px; border-radius:50%;
-  background:linear-gradient(135deg,#0E9F6E,#34d399); display:flex; align-items:center; justify-content:center;
-  box-shadow:0 12px 32px rgba(14,159,110,.35); animation:cnqPop .5s cubic-bezier(.16,1,.3,1) both; }
-.cnq-done-ring svg { width:46px; height:46px; }
+/* Success view — quiet sage check, then the sheet closes itself */
+.cnq-done { text-align:center; padding:36px 16px 28px; }
+.cnq-done-ring { width:80px; height:80px; margin:0 auto 16px; border-radius:50%;
+  background:var(--fb-ok, #6E9B72); display:flex; align-items:center; justify-content:center;
+  animation:cnqPop .5s cubic-bezier(.16,1,.3,1) both; }
+.cnq-done-ring svg { width:42px; height:42px; }
 .cnq-done-ring svg path { fill:none; stroke:#fff; stroke-width:5; stroke-linecap:round; stroke-linejoin:round;
   stroke-dasharray:40; stroke-dashoffset:40; animation:cnqDraw .45s ease-out .25s forwards; }
-.cnq-done .t { font-size:19px; font-weight:800; color:var(--text); }
-.cnq-done .s { font-size:12.5px; color:var(--muted); margin:4px 0 16px; }
+.cnq-done .t { font-family:Georgia,'Times New Roman',serif; font-size:21px; font-weight:600; color:var(--fb-ink, var(--text)); }
+.cnq-done .s { font-size:13px; color:var(--fb-mut, var(--muted)); margin:5px 0 18px; }
 @keyframes cnqPop { from { opacity:0; transform:scale(.6); } to { opacity:1; transform:scale(1); } }
 @keyframes cnqDraw { to { stroke-dashoffset:0; } }
 @media (prefers-reduced-motion:reduce) {
