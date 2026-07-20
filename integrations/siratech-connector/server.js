@@ -143,14 +143,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // clinical response — no VPS shell needed to confirm which code is actually live.
 const CONNECTOR_BUILD = 'latematch-2026-07-13bf';
 
-// Fill an Angular Material input robustly. In headless Chrome these fields are
-// present in the DOM but sometimes have no clickable bounding box, so page.click()
-// throws "Node is either not clickable or not an Element" and a {visible:true} wait
-// can time out. Wait for PRESENCE, try a click (best-effort), then focus() — which
-// needs no bounding box — and type via the keyboard.
+// DOM-level click that needs no clickable bounding box. In headless Chrome,
+// page.click()/handle.click() throw "Node is either not clickable or not an
+// Element" on Angular Material controls that are present but not laid out — so
+// fall back to the element's own .click() executed in page context.
+async function safeClick(handle) {
+  if (!handle) return;
+  try { await handle.click(); return; } catch (_e) { /* fall back to DOM click */ }
+  try { await handle.evaluate((e) => e && e.click()); } catch (_e) { /* ignore */ }
+}
+
+// Fill an Angular Material input robustly: wait for PRESENCE (not visibility),
+// focus (needs no bounding box), and type via the keyboard.
 async function fillInput(page, selector, text, { timeout = 20000, delay = 50 } = {}) {
-  const el = await page.waitForSelector(selector, { timeout });   // presence, not visibility
-  try { await el.click({ delay: 10 }); } catch (_e) { /* fall through to focus */ }
+  const el = await page.waitForSelector(selector, { timeout });
+  await safeClick(el);
   try { await el.focus(); } catch (_e) { /* ignore */ }
   await page.keyboard.type(text, { delay });
   return el;
@@ -176,29 +183,40 @@ async function doHeadlessLogin() {
       }
     });
     await page.goto(HIS_BASE, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
-    await fillInput(page, '#mat-input-0', HIS_USER, { timeout: 25000, delay: 50 });
-    await page.keyboard.press('Tab');           // triggers the encrypted site lookup
-    await sleep(3500);
-    const site = (await page.$('#focusablesite')) || (await page.$('mat-select'));
-    if (site) {
-      await site.click();
-      await sleep(1500);
-      const opts = await page.$$('mat-option');
-      let picked = false;
-      if (HIS_SITE) {
-        for (const o of opts) {
-          const t = (await o.evaluate((e) => e.innerText)).trim();
-          if (t.toLowerCase().includes(HIS_SITE.toLowerCase())) { await o.click(); picked = true; break; }
+    try {
+      await fillInput(page, '#mat-input-0', HIS_USER, { timeout: 25000, delay: 50 });
+      await page.keyboard.press('Tab');           // triggers the encrypted site lookup
+      await sleep(3500);
+      const site = (await page.$('#focusablesite')) || (await page.$('mat-select'));
+      if (site) {
+        await safeClick(site);
+        await sleep(1500);
+        const opts = await page.$$('mat-option');
+        let picked = false;
+        if (HIS_SITE) {
+          for (const o of opts) {
+            const t = (await o.evaluate((e) => e.innerText)).trim();
+            if (t.toLowerCase().includes(HIS_SITE.toLowerCase())) { await safeClick(o); picked = true; break; }
+          }
         }
+        if (!picked && opts[0]) await safeClick(opts[0]);
+        await sleep(1000);
       }
-      if (!picked && opts[0]) await opts[0].click();
-      await sleep(1000);
+      await fillInput(page, '#passFocus', HIS_PASS, { delay: 50 });
+      await sleep(400);
+      const btn = await page.evaluateHandle(() =>
+        [...document.querySelectorAll('button')].find((e) => /login|sign\s*in|دخول/i.test(e.innerText)));
+      await safeClick(btn);
+    } catch (e) {
+      // Dump the actual login form so we can see what changed if this ever fails.
+      const snap = await page.evaluate(() => ({
+        url: location.href,
+        inputs: [...document.querySelectorAll('input')].map((i) => ({ id: i.id, type: i.type, name: i.name, ph: i.placeholder })),
+        buttons: [...document.querySelectorAll('button')].map((b) => (b.innerText || '').trim()).filter(Boolean),
+      })).catch(() => null);
+      console.error('[his] login step failed:', (e && e.message) || e, '| page:', JSON.stringify(snap));
+      throw e;
     }
-    await fillInput(page, '#passFocus', HIS_PASS, { delay: 50 });
-    await sleep(400);
-    const btn = await page.evaluateHandle(() =>
-      [...document.querySelectorAll('button')].find((e) => /login/i.test(e.innerText)));
-    if (btn) await btn.click().catch(() => {});
     await sleep(9000);
     if (!auth) throw new Error('login did not yield an auth token (selectors/creds/site?)');
     cache = { auth, hospitalid: hospitalid || '', ts: Date.now() };
