@@ -143,7 +143,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // clinical response — no VPS shell needed to confirm which code is actually live.
 const CONNECTOR_BUILD = 'latematch-2026-07-13bf';
 
-async function doHeadlessLogin() {
+// DOM-level click that needs no clickable bounding box. In headless Chrome,
+// page.click()/handle.click() throw "Node is either not clickable or not an
+// Element" on Angular Material controls that are present but not laid out — so
+// fall back to the element's own .click() executed in page context.
+async function safeClick(handle) {
+  if (!handle) return;
+  try { await handle.click(); return; } catch (_e) { /* fall back to DOM click */ }
+  try { await handle.evaluate((e) => e && e.click()); } catch (_e) { /* ignore */ }
+}
+
+// Fill an Angular Material input robustly: wait for PRESENCE (not visibility),
+// focus (needs no bounding box), and type via the keyboard.
+async function fillInput(page, selector, text, { timeout = 20000, delay = 50 } = {}) {
+  const el = await page.waitForSelector(selector, { timeout });
+  await safeClick(el);
+  try { await el.focus(); } catch (_e) { /* ignore */ }
+  await page.keyboard.type(text, { delay });
+  return el;
+}
+
+async function doHeadlessLoginOnce() {
   const browser = await puppeteer.launch({
     headless: true,
     // Lean flags — this runs on a small (2 GB) VPS, so trim Chromium's footprint.
@@ -154,6 +174,10 @@ async function doHeadlessLogin() {
   });
   try {
     const page = await browser.newPage();
+    // Give the page a real layout box. Without a viewport, headless Chrome lays
+    // Angular Material controls out at zero size, so they're "not clickable" and a
+    // synthetic click never triggers Angular — the login silently fails.
+    await page.setViewport({ width: 1366, height: 900 });
     let auth = '', hospitalid = '';
     page.on('request', (r) => {
       const h = r.headers();
@@ -163,40 +187,80 @@ async function doHeadlessLogin() {
       }
     });
     await page.goto(HIS_BASE, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
-    await page.waitForSelector('#mat-input-0', { timeout: 25000 });
-    await page.click('#mat-input-0');
-    await page.type('#mat-input-0', HIS_USER, { delay: 50 });
-    await page.keyboard.press('Tab');           // triggers the encrypted site lookup
-    await sleep(3500);
-    const site = (await page.$('#focusablesite')) || (await page.$('mat-select'));
-    if (site) {
-      await site.click();
-      await sleep(1500);
-      const opts = await page.$$('mat-option');
-      let picked = false;
-      if (HIS_SITE) {
-        for (const o of opts) {
-          const t = (await o.evaluate((e) => e.innerText)).trim();
-          if (t.toLowerCase().includes(HIS_SITE.toLowerCase())) { await o.click(); picked = true; break; }
+    try {
+      await fillInput(page, '#mat-input-0', HIS_USER, { timeout: 25000, delay: 50 });
+      await page.keyboard.press('Tab');           // triggers the encrypted site lookup
+      await sleep(3500);
+      const site = (await page.$('#focusablesite')) || (await page.$('mat-select'));
+      if (site) {
+        await safeClick(site);
+        await sleep(1500);
+        const opts = await page.$$('mat-option');
+        let picked = false;
+        if (HIS_SITE) {
+          for (const o of opts) {
+            const t = (await o.evaluate((e) => e.innerText)).trim();
+            if (t.toLowerCase().includes(HIS_SITE.toLowerCase())) { await safeClick(o); picked = true; break; }
+          }
         }
+        if (!picked && opts[0]) await safeClick(opts[0]);
+        await sleep(1000);
       }
-      if (!picked && opts[0]) await opts[0].click();
-      await sleep(1000);
+      await fillInput(page, '#passFocus', HIS_PASS, { delay: 50 });
+      await sleep(400);
+      const btn = await page.evaluateHandle(() =>
+        [...document.querySelectorAll('button')].find((e) => /login|sign\s*in|دخول/i.test(e.innerText)));
+      await safeClick(btn);
+    } catch (e) {
+      // Dump the actual login form so we can see what changed if this ever fails.
+      const snap = await page.evaluate(() => ({
+        url: location.href,
+        inputs: [...document.querySelectorAll('input')].map((i) => ({ id: i.id, type: i.type, name: i.name, ph: i.placeholder })),
+        buttons: [...document.querySelectorAll('button')].map((b) => (b.innerText || '').trim()).filter(Boolean),
+      })).catch(() => null);
+      console.error('[his] login step failed:', (e && e.message) || e, '| page:', JSON.stringify(snap));
+      throw e;
     }
-    await page.click('#passFocus');
-    await page.type('#passFocus', HIS_PASS, { delay: 50 });
-    await sleep(400);
-    const btn = await page.evaluateHandle(() =>
-      [...document.querySelectorAll('button')].find((e) => /login/i.test(e.innerText)));
-    if (btn) await btn.click().catch(() => {});
     await sleep(9000);
-    if (!auth) throw new Error('login did not yield an auth token (selectors/creds/site?)');
+    if (!auth) {
+      const snap = await page.evaluate(() => ({
+        url: location.href,
+        inputs: [...document.querySelectorAll('input')].map((i) => ({ id: i.id, type: i.type, filled: !!(i.value && i.value.length) })),
+        buttons: [...document.querySelectorAll('button')].map((b) => (b.innerText || '').trim()).filter(Boolean),
+        errors: [...document.querySelectorAll('.mat-error,[class*=error],.toast,.snackbar,mat-error')].map((e) => (e.innerText || '').trim()).filter(Boolean).slice(0, 6),
+      })).catch(() => null);
+      console.error('[his] no auth token — snapshot:', JSON.stringify(snap));
+      throw new Error('login did not yield an auth token (selectors/creds/site?)');
+    }
     cache = { auth, hospitalid: hospitalid || '', ts: Date.now() };
     console.log(`[his] logged in — token len ${auth.length}, hospitalid ${hospitalid || '(none)'}`);
     return cache;
   } finally {
     await browser.close().catch(() => {});
   }
+}
+
+// The HIS is an Angular SPA that reloads mid-login under newer headless Chromium,
+// which detaches the frame the automation is driving. That race is timing-based, so
+// a fresh attempt usually lands past it — retry the whole login a couple of times.
+async function doHeadlessLogin() {
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await doHeadlessLoginOnce();
+    } catch (e) {
+      lastErr = e;
+      const msg = (e && e.message) || String(e);
+      const racy = /detached Frame|Execution context was destroyed|Target closed|frame (was|got) detached|Navigating frame/i.test(msg);
+      if (attempt < 3 && racy) {
+        console.warn(`[his] login attempt ${attempt} hit a navigation race — retrying (${msg.slice(0, 70)})`);
+        await sleep(2000);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
 }
 
 async function getToken(force = false) {
