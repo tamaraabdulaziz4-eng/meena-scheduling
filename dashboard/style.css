@@ -2385,6 +2385,83 @@ textarea.input { resize:vertical; line-height:1.5; width:100%; box-sizing:border
   padding:7px 10px; border:1px solid var(--border); border-radius:10px; }
 .cn-poll { margin-top:16px; font-size:13.5px; font-weight:700; color:var(--muted); }
 
+/* ── Send-consent-QR sheet (cnq-) — branded redesign ─────────────────────────
+   Identity chip → 3-step strip → framed QR → live status → send-link tools.   */
+.cnq { text-align:center; }
+.cnq-patient { display:flex; align-items:center; gap:11px; text-align:start;
+  background:color-mix(in srgb, var(--primary) 6%, var(--card)); border:1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+  border-radius:14px; padding:10px 12px; }
+.cnq-ava { width:40px; height:40px; flex:0 0 auto; border-radius:12px; display:flex; align-items:center; justify-content:center;
+  font-size:17px; font-weight:800; color:#fff; background:linear-gradient(135deg,var(--primary),var(--accent));
+  box-shadow:0 4px 12px color-mix(in srgb, var(--primary) 35%, transparent); }
+.cnq-pinfo { min-width:0; flex:1; }
+.cnq-pinfo b { display:block; font-size:14.5px; font-weight:800; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cnq-pinfo span { display:block; font-size:12px; color:var(--muted); margin-top:1px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cnq-type { flex:0 0 auto; font-size:11px; font-weight:800; letter-spacing:.4px; padding:4px 10px; border-radius:999px;
+  color:var(--primary); background:color-mix(in srgb, var(--primary) 12%, transparent);
+  border:1px solid color-mix(in srgb, var(--primary) 30%, transparent); }
+.cnq-type.er { color:#c0392b; background:rgba(226,85,85,.12); border-color:rgba(226,85,85,.4); }
+
+.cnq-steps { display:flex; align-items:center; justify-content:center; gap:8px; margin:16px 4px 14px; }
+.cnq-steps .s { display:flex; align-items:center; gap:6px; }
+.cnq-steps .s i { width:22px; height:22px; border-radius:50%; font-style:normal; font-size:11.5px; font-weight:800;
+  display:flex; align-items:center; justify-content:center; color:var(--muted);
+  border:1.5px solid var(--border); background:var(--card); }
+.cnq-steps .s em { font-style:normal; font-size:12px; font-weight:700; color:var(--muted); }
+.cnq-steps .s.on i { color:#fff; border-color:transparent; background:linear-gradient(135deg,var(--primary),var(--accent)); }
+.cnq-steps .s.on em { color:var(--text); }
+.cnq-steps .ln { flex:0 1 34px; height:1.5px; background:var(--border); border-radius:2px; }
+
+.cnq-qrcard { position:relative; display:inline-block; padding:14px 22px 12px; border-radius:20px;
+  background:linear-gradient(var(--card),var(--card)) padding-box,
+             linear-gradient(135deg,var(--primary),var(--accent)) border-box;
+  border:2px solid transparent; box-shadow:0 10px 30px color-mix(in srgb, var(--primary) 16%, transparent); }
+.cnq-qr { width:216px; max-width:64vw; height:auto; display:block; margin:0 auto; border-radius:12px;
+  padding:8px; background:#fff; }   /* QR must always sit on white — scannability */
+.cnq-hint { font-size:13px; font-weight:800; color:var(--text); margin-top:9px; }
+.cnq-hint-ar { font-size:12px; font-weight:600; color:var(--muted); margin-top:2px; }
+
+.cnq-status { display:flex; align-items:center; justify-content:center; gap:9px; margin-top:14px;
+  font-size:13px; font-weight:700; color:var(--muted); }
+.cnq-dots { display:inline-flex; gap:4px; }
+.cnq-dots i { width:6px; height:6px; border-radius:50%; background:var(--primary); animation:cnqDot 1.2s ease-in-out infinite; }
+.cnq-dots i:nth-child(2) { animation-delay:.2s; } .cnq-dots i:nth-child(3) { animation-delay:.4s; }
+@keyframes cnqDot { 0%,100% { transform:scale(.55); opacity:.35; } 50% { transform:scale(1); opacity:1; } }
+
+.cnq-divider { display:flex; align-items:center; gap:12px; margin:16px 6px 12px; color:var(--muted); }
+.cnq-divider::before, .cnq-divider::after { content:""; flex:1; height:1px; background:var(--border); }
+.cnq-divider span { font-size:11.5px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; }
+
+.cnq-row { display:flex; gap:8px; align-items:stretch; max-width:430px; margin:0 auto 8px; }
+.cnq-row .input { flex:1; font-size:13px; min-width:0; }
+.cnq-linkrow .input { font-size:11.5px; color:var(--muted); }
+.cnq-go { flex:0 0 auto; white-space:nowrap; }
+.cnq-note { font-size:12px; color:var(--muted); min-height:16px; margin-bottom:2px; }
+
+.cnq-alt { margin-top:12px; border-top:1px dashed var(--border); padding-top:12px; }
+.cnq-alt button { background:none; border:none; cursor:pointer; font-size:13px; font-weight:700;
+  color:var(--primary); padding:6px 10px; border-radius:10px; }
+.cnq-alt button:hover { background:color-mix(in srgb, var(--primary) 8%, transparent); }
+
+/* Success view — animated check, then the sheet closes itself */
+.cnq-done { text-align:center; padding:34px 16px 26px; }
+.cnq-done-ring { width:84px; height:84px; margin:0 auto 14px; border-radius:50%;
+  background:linear-gradient(135deg,#0E9F6E,#34d399); display:flex; align-items:center; justify-content:center;
+  box-shadow:0 12px 32px rgba(14,159,110,.35); animation:cnqPop .5s cubic-bezier(.16,1,.3,1) both; }
+.cnq-done-ring svg { width:46px; height:46px; }
+.cnq-done-ring svg path { fill:none; stroke:#fff; stroke-width:5; stroke-linecap:round; stroke-linejoin:round;
+  stroke-dasharray:40; stroke-dashoffset:40; animation:cnqDraw .45s ease-out .25s forwards; }
+.cnq-done .t { font-size:19px; font-weight:800; color:var(--text); }
+.cnq-done .s { font-size:12.5px; color:var(--muted); margin:4px 0 16px; }
+@keyframes cnqPop { from { opacity:0; transform:scale(.6); } to { opacity:1; transform:scale(1); } }
+@keyframes cnqDraw { to { stroke-dashoffset:0; } }
+@media (prefers-reduced-motion:reduce) {
+  .cnq-dots i, .cnq-done-ring, .cnq-done-ring svg path { animation:none; }
+  .cnq-done-ring svg path { stroke-dashoffset:0; }
+}
+
 /* ══════════════════════ Clinical Calm — motion & polish ══════════════════════
    Premium hospital-grade layer (design panel winner). SOLID states only — motion is
    opacity/transform/colour, fires ONCE on a view's first paint (never on the 45s silent

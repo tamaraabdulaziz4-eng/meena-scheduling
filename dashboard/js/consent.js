@@ -29,26 +29,51 @@ async function openConsentQR(prefill, onDone) {
 }
 function renderConsentQR(ov, r) {
   const p = _consent.prefill || {};
+  const initial = (p.name_en || p.name || '?').trim().charAt(0).toUpperCase() || '?';
+  const isER = (p.patient_type === 'er');
   ov.querySelector('.cn-sheet').innerHTML = `
-    <div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div><div class="cn-sub">${escapeHtml(p.name || '')}</div></div>
-      <button class="cn-x" onclick="closeConsent()">✕</button></div>
-    <div class="cn-body" style="text-align:center">
-      <p style="font-size:14px;font-weight:700;margin-bottom:4px">Ask the patient to scan this with her phone camera</p>
-      <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">She reads and signs on her own phone</p>
-      ${r.qr ? `<img src="${escapeHtml(r.qr)}" alt="QR" style="width:230px;max-width:70vw;height:auto;border:1px solid var(--border);border-radius:14px;padding:8px;background:#fff">` : ''}
-      <div style="margin-top:14px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
-        <input class="input" readonly value="${escapeHtml(r.url || '')}" style="flex:1;font-size:12px" onclick="this.select()">
-        <button class="btn btn-sm" onclick="consentCopyLink(this,'${jsAttr(r.url || '')}')">Copy</button>
+    <div class="cn-head">
+      <div><div class="cn-title">Non-Pregnancy Consent</div><div class="cn-sub">إقرار عدم الحمل · Radiology</div></div>
+      <button class="cn-x" onclick="closeConsent()">✕</button>
+    </div>
+    <div class="cn-body cnq">
+      <!-- Who this consent is for — identity check at a glance -->
+      <div class="cnq-patient">
+        <div class="cnq-ava">${escapeHtml(initial)}</div>
+        <div class="cnq-pinfo">
+          <b>${escapeHtml(p.name || '—')}</b>
+          <span>${escapeHtml([`File ${p.mrno || p.file_no || '—'}`, p.procedure || ''].filter(Boolean).join(' · '))}</span>
+        </div>
+        <span class="cnq-type ${isER ? 'er' : ''}">${isER ? 'ER' : 'OPD'}</span>
       </div>
-      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;max-width:420px;margin-inline:auto">
-        <input id="cn-sms-phone" class="input" value="${escapeHtml(p.phone || '')}" placeholder="Patient mobile e.g. 05xxxxxxxx" style="flex:1;font-size:13px">
-        <button class="btn btn-sm btn-primary" onclick="consentSendSms(this,'${jsAttr(r.url || '')}')">📱 Send SMS</button>
+
+      <div class="cnq-steps">
+        <div class="s on"><i>1</i><em>Scan</em></div><span class="ln"></span>
+        <div class="s"><i>2</i><em>Read &amp; sign</em></div><span class="ln"></span>
+        <div class="s"><i>3</i><em>Filed</em></div>
       </div>
-      <div id="cn-sms-msg" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
-      <div id="cn-poll" class="cn-poll">⏳ Waiting for the patient's signature…</div>
-      <div style="margin-top:14px;border-top:1px dashed var(--border);padding-top:12px">
-        <button class="btn btn-ghost btn-sm" onclick="consentSignHere()">Sign on this device instead</button>
+
+      <div class="cnq-qrcard">
+        ${r.qr ? `<img class="cnq-qr" src="${escapeHtml(r.qr)}" alt="QR">` : `<div class="cn-err">QR unavailable — use the link below</div>`}
+        <div class="cnq-hint">Ask the patient to scan with her phone camera</div>
+        <div class="cnq-hint-ar" dir="rtl">اطلبي من المريضة مسح الرمز بكاميرا جوالها — تقرأ وتوقّع من جوالها</div>
       </div>
+
+      <div id="cn-poll" class="cnq-status"><span class="cnq-dots"><i></i><i></i><i></i></span>Waiting for the patient's signature…</div>
+
+      <div class="cnq-divider"><span>or send her the link</span></div>
+
+      <div class="cnq-row">
+        <input id="cn-sms-phone" class="input" inputmode="tel" value="${escapeHtml(p.phone || '')}" placeholder="Patient mobile · 05xxxxxxxx">
+        <button class="btn btn-primary cnq-go" onclick="consentSendSms(this,'${jsAttr(r.url || '')}')">Send SMS</button>
+      </div>
+      <div id="cn-sms-msg" class="cnq-note"></div>
+      <div class="cnq-row cnq-linkrow">
+        <input class="input" readonly value="${escapeHtml(r.url || '')}" onclick="this.select()">
+        <button class="btn cnq-go" onclick="consentCopyLink(this,'${jsAttr(r.url || '')}')">Copy</button>
+      </div>
+
+      <div class="cnq-alt"><button onclick="consentSignHere()">✍️ Or sign on this device instead</button></div>
     </div>`;
 }
 function consentCopyLink(btn, url) {
@@ -83,12 +108,19 @@ function consentStartPoll(id) {
       if (s && s.status === 'signed' && !handled) {
         handled = true;
         consentStopPoll();
-        const box = document.getElementById('cn-poll');
-        if (box) box.innerHTML = `<span class="cn-ok">✅ Signed</span>
-          <a class="btn btn-sm" style="margin-inline-start:8px" href="/api/consent/${id}/pdf?file=${encodeURIComponent((_consent.prefill && (_consent.prefill.file_no || _consent.prefill.mrno)) || '')}" target="_blank" rel="noopener">View PDF</a>`;
+        // Flip the whole sheet to the success view — the moment the tech is waiting for.
+        const body = document.querySelector('#consent-overlay .cn-body');
+        const fileq = encodeURIComponent((_consent.prefill && (_consent.prefill.file_no || _consent.prefill.mrno)) || '');
+        if (body) body.innerHTML = `
+          <div class="cnq-done">
+            <div class="cnq-done-ring"><svg viewBox="0 0 52 52"><path d="M14 27l8 8 16-17"/></svg></div>
+            <div class="t">Consent signed</div>
+            <div class="s">تم توقيع الإقرار · filed to the patient's record</div>
+            <a class="btn btn-primary" href="/api/consent/${id}/pdf?file=${fileq}" target="_blank" rel="noopener">View PDF</a>
+          </div>`;
         const done = _consent.onDone;
         if (typeof done === 'function') done(id);
-        setTimeout(closeConsent, 2500);
+        setTimeout(closeConsent, 3200);
       }
     } catch (e) {}
   }, 3000);
