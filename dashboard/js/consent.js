@@ -13,8 +13,8 @@ async function openConsentQR(prefill, onDone) {
   _consent = { prefill: prefill || {}, onDone: onDone || null, drawing: false, hasInk: false };
   let ov = document.getElementById('consent-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'consent-overlay'; document.body.appendChild(ov); }
-  ov.innerHTML = `<div class="cn-sheet"><div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div>
-    <div class="cn-sub">Radiology consent</div></div><button class="cn-x" onclick="closeConsent()">✕</button></div>
+  ov.innerHTML = `<div class="cn-sheet cn-fable"><div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div>
+    <div class="cn-sub">Radiology · Meena Health</div></div><button class="cn-x" onclick="closeConsent()">✕</button></div>
     <div class="cn-body" style="text-align:center"><div class="mini-spin"></div><p style="margin-top:10px;color:var(--muted)">Preparing link…</p></div></div>`;
   try {
     const r = await API.post('/consent/link', _consent.prefill);
@@ -33,7 +33,7 @@ function renderConsentQR(ov, r) {
   const isER = (p.patient_type === 'er');
   ov.querySelector('.cn-sheet').innerHTML = `
     <div class="cn-head">
-      <div><div class="cn-title">Non-Pregnancy Consent</div><div class="cn-sub">إقرار عدم الحمل · Radiology</div></div>
+      <div><div class="cn-title">Non-Pregnancy Consent</div><div class="cn-sub">Radiology · Meena Health</div></div>
       <button class="cn-x" onclick="closeConsent()">✕</button>
     </div>
     <div class="cn-body cnq">
@@ -55,8 +55,7 @@ function renderConsentQR(ov, r) {
 
       <div class="cnq-qrcard">
         ${r.qr ? `<img class="cnq-qr" src="${escapeHtml(r.qr)}" alt="QR">` : `<div class="cn-err">QR unavailable — use the link below</div>`}
-        <div class="cnq-hint">Ask the patient to scan with her phone camera</div>
-        <div class="cnq-hint-ar" dir="rtl">اطلبي من المريضة مسح الرمز بكاميرا جوالها — تقرأ وتوقّع من جوالها</div>
+        <div class="cnq-hint">Ask the patient to scan this with her phone camera.<br>She reads and signs on her own phone.</div>
       </div>
 
       <div id="cn-poll" class="cnq-status"><span class="cnq-dots"><i></i><i></i><i></i></span>Waiting for the patient's signature…</div>
@@ -73,7 +72,7 @@ function renderConsentQR(ov, r) {
         <button class="btn cnq-go" onclick="consentCopyLink(this,'${jsAttr(r.url || '')}')">Copy</button>
       </div>
 
-      <div class="cnq-alt"><button onclick="consentSignHere()">✍️ Or sign on this device instead</button></div>
+      <div class="cnq-alt"><button onclick="consentSignHere()">Or sign on this device instead</button></div>
     </div>`;
 }
 function consentCopyLink(btn, url) {
@@ -115,7 +114,7 @@ function consentStartPoll(id) {
           <div class="cnq-done">
             <div class="cnq-done-ring"><svg viewBox="0 0 52 52"><path d="M14 27l8 8 16-17"/></svg></div>
             <div class="t">Consent signed</div>
-            <div class="s">تم توقيع الإقرار · filed to the patient's record</div>
+            <div class="s">Filed to the patient's record.</div>
             <a class="btn btn-primary" href="/api/consent/${id}/pdf?file=${fileq}" target="_blank" rel="noopener">View PDF</a>
           </div>`;
         const done = _consent.onDone;
