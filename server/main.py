@@ -8291,33 +8291,22 @@ def radiology_autostamp_now(file_no: str, user=Depends(require_radiology)):
     file_no = (file_no or "").strip()
     if not file_no:
         raise HTTPException(400, "Enter a patient file number")
-    detail = {}
-    try:
-        n = _radiology_autostamp_sweep(only_file=file_no, _detail=detail)
-    except Exception as e:
-        raise HTTPException(502, f"Auto-stamp failed: {e}")
-    # Keep re-running the safe sweep in the background for 5 minutes, so exams whose images
-    # reach DePACS a little later (or a multi-exam patient's second study) still get stamped
-    # without the doctor re-clicking. Idempotent + all safety gates intact.
-    import time as _t
+    # INSTANT: don't make the doctor wait for the sweep (board fetch + DePACS + writes).
+    # Enqueue for the 5-min retry AND kick the first sweep in the background right now, then
+    # return immediately. Stamps land on the board as each exam's images arrive. Same safe
+    # sweep + gates; the sweep lock serialises it against the background workers.
+    import time as _t, threading
     _autostamp_retry[file_no] = _t.time() + _AUTOSTAMP_RETRY_SEC
-    insert_audit(user, "RADIOLOGY_AUTOSTAMP_MANUAL", str(file_no), json.dumps({"stamped": n}))
-    studies = detail.get("studies", [])
-    # Honest per-exam outcome so the button never reads as a silent success. A fresh study is
-    # one of: stamped now (by us), already-had its indication (HIS/MWL wrote it first), or
-    # not-yet — couldn't be matched/confirmed this pass (images/accession may still be arriving,
-    # which the 5-min retry keeps chasing).
-    already = [{"studyId": s["studyId"], "indication": s.get("currentHistory"),
-                "studyDesc": s.get("studyDesc"), "modality": s.get("modality")}
-               for s in studies if (s.get("currentHistory") or "").strip() and not s.get("stamped")]
-    pending = [{"studyId": s["studyId"], "studyDesc": s.get("studyDesc"), "modality": s.get("modality")}
-               for s in studies if not s.get("stamped") and not (s.get("currentHistory") or "").strip()]
-    return {"ok": True, "stamped": n,
-            "totalStudies": detail.get("totalStudies", 0),
-            "freshStudies": detail.get("freshStudies", 0),
-            "alreadyCount": len(already), "pendingCount": len(pending),
-            "retrying": True, "retrySeconds": _AUTOSTAMP_RETRY_SEC,
-            "already": already, "pending": pending}
+    def _kick(fn):
+        try:
+            if _claim_sweep_lock("autostamp", 900):
+                try: _radiology_autostamp_sweep(only_file=fn)
+                finally: _release_sweep_lock("autostamp")
+        except Exception as e:
+            print(f"[rad-autostamp] manual kick {fn}: {e}")
+    threading.Thread(target=_kick, args=(file_no,), daemon=True).start()
+    insert_audit(user, "RADIOLOGY_AUTOSTAMP_MANUAL", str(file_no), json.dumps({"queued": True}))
+    return {"ok": True, "queued": True, "retrying": True, "retrySeconds": _AUTOSTAMP_RETRY_SEC}
 
 @app.get("/api/radiology/autostamp/diagnose")
 def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadmin)):

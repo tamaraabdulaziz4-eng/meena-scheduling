@@ -1987,24 +1987,15 @@ async function wlStampIndication(mrno, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Stamping…'; }
   try {
     const d = await API.post(`/radiology/patient/${encodeURIComponent(mrno)}/autostamp`, {}) || {};
-    const n = d.stamped || 0;
-    const pend = d.pendingCount || 0;         // fresh studies not stamped yet (images/order still landing)
-    const had = d.alreadyCount || 0;          // studies that already carried their indication
-    // The server now keeps retrying for ~5 min, so any not-yet-stamped exam gets picked up as
-    // its images arrive — the message says so instead of the old misleading "already".
-    const keep = d.retrying ? ' — keeping watch for 5 min ⏳' : '';
-    if (n && pend) {
-      toast(`Stamped ${n} ✓ · ${pend} more will stamp as images arrive${keep}`);
-    } else if (n) {
-      toast(`Stamped ${n} stud${n === 1 ? 'y' : 'ies'} on DePACS ✓${pend ? keep : ''}`);
-    } else if (pend) {
-      toast(`Waiting for ${pend} exam${pend === 1 ? '' : 's'} to reach DePACS${keep}`, 'ok');
-    } else if (had) {
-      toast(`Already stamped on DePACS ✓`, 'ok');
-    } else if (!d.freshStudies) {
-      toast(`No study on DePACS yet${keep || ' for this patient'}`, 'ok');
+    // The stamp now runs in the BACKGROUND (instant response) and keeps retrying for 5 min,
+    // stamping each exam as its images reach DePACS — no waiting, no re-clicking.
+    if (d.queued) {
+      toast('Stamping — will keep watch for 5 min as images arrive ⏳✓', 'ok');
     } else {
-      toast(`Couldn't match the order yet${keep}`, 'ok');
+      // Back-compat: older synchronous response shape.
+      const n = d.stamped || 0;
+      if (n) toast(`Stamped ${n} stud${n === 1 ? 'y' : 'ies'} on DePACS ✓`);
+      else toast('Stamping — will keep trying for 5 min ⏳', 'ok');
     }
   } catch (e) {
     toast(e.message || 'Stamp failed', 'err');
