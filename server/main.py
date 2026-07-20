@@ -7020,10 +7020,16 @@ def _elite_request(method, path, token=None, body=None, form=None, want="json", 
         for k, v in form.items():
             if v is None:
                 continue
-            parts.append("--" + boundary)
-            parts.append(f'Content-Disposition: form-data; name="{k}"')
-            parts.append("")
-            parts.append(str(v))
+            # A list/tuple value → one repeated form field per element (how DRF ListField
+            # fields like `tags` are sent in multipart), e.g. tags=[6] → one `tags` part = 6.
+            vals = v if isinstance(v, (list, tuple)) else [v]
+            for vv in vals:
+                if vv is None:
+                    continue
+                parts.append("--" + boundary)
+                parts.append(f'Content-Disposition: form-data; name="{k}"')
+                parts.append("")
+                parts.append(str(vv))
         parts.append("--" + boundary + "--")
         parts.append("")
         data = "\r\n".join(parts).encode("utf-8")
@@ -10192,8 +10198,12 @@ def _elite_fix_date(d):
 # emergency_status=1 and study_category_id=3 (↔ "Others"). Overridable via env.
 _ELITE_EMERGENCY_CATEGORY_ID = int(os.environ.get("ELITE_EMERGENCY_CATEGORY_ID") or 3)
 _ELITE_EMERGENCY_CATEGORY_NAME = (os.environ.get("ELITE_EMERGENCY_CATEGORY_NAME") or "Others").strip()
+# DePACS study TAG ids (proven by correlating emergency_status with the study `tags` array on
+# the live board): routine/outpatient → OPD = 4, emergency → Emergency = 6. Env-overridable.
+_ELITE_TAG_OPD_ID = int(os.environ.get("ELITE_TAG_OPD_ID") or 4)
+_ELITE_TAG_EMERGENCY_ID = int(os.environ.get("ELITE_TAG_EMERGENCY_ID") or 6)
 
-def _elite_write_history(study_id, history, set_emergency=True, preserve_emergency=True):
+def _elite_write_history(study_id, history, set_emergency=True, preserve_emergency=True, set_tag=None):
     """Write `history` into a study's clinical_history via the same endpoint the
     Butterfly UI uses — PUT study/update_study_stats/{id} (multipart form-data).
     ALWAYS files the study under Category "Others" (study_category_id=3) — a routine
@@ -10201,6 +10211,12 @@ def _elite_write_history(study_id, history, set_emergency=True, preserve_emergen
     (emergency_status=1) only for the ER/emergency hand-off. Unlike the old
     edit_study_info call, this endpoint only touches these fields — it never requires
     (or risks blanking) the patient demographics.
+
+    `set_tag` (optional): also set the study TAG in the same write — 'ER' → Emergency (id 6),
+    'OPD' → OPD (id 4). Only pass this when the study currently has NO tag (the caller checks),
+    since this endpoint appends rather than replaces (a re-send would duplicate, e.g. [4,4]).
+    FAIL-SAFE: if the write is rejected WITH the tag, it retries WITHOUT the tag so the
+    clinical history — the thing that matters — always lands.
 
     SAFETY (preserve_emergency, default on): this endpoint always SENDS emergency_status,
     so a routine write would CLEAR an emergency flag already on the study (set by MWL, a
@@ -10217,10 +10233,31 @@ def _elite_write_history(study_id, history, set_emergency=True, preserve_emergen
                 eff_emergency = True   # already emergency → keep it; a routine write must not clear it
         except Exception:
             pass   # readback failed — fall through and write the requested (routine) value
-    form = {"clinical_history": history or "",
-            "study_category_id": _ELITE_EMERGENCY_CATEGORY_ID,   # "Others" for routine AND ER
-            "emergency_status": 1 if eff_emergency else 0}       # ER = 1, routine = 0 (never downgrades)
-    res = _elite_put_form(f"/study/update_study_stats/{study_id}", form)
+    base_form = {"clinical_history": history or "",
+                 "study_category_id": _ELITE_EMERGENCY_CATEGORY_ID,   # "Others" for routine AND ER
+                 "emergency_status": 1 if eff_emergency else 0}       # ER = 1, routine = 0 (never downgrades)
+    # Tag: ER → Emergency, OPD → OPD. `set_tag` may be 'ER'/'OPD', True (derive from the
+    # emergency flag), or a raw id. None → don't touch tags.
+    tag_id = None
+    if set_tag is not None and set_tag is not False:
+        if isinstance(set_tag, int):
+            tag_id = set_tag
+        elif str(set_tag).upper() in ("ER", "EMERGENCY"):
+            tag_id = _ELITE_TAG_EMERGENCY_ID
+        elif str(set_tag).upper() == "OPD":
+            tag_id = _ELITE_TAG_OPD_ID
+        elif set_tag is True:
+            tag_id = _ELITE_TAG_EMERGENCY_ID if eff_emergency else _ELITE_TAG_OPD_ID
+    form = dict(base_form)
+    if tag_id is not None:
+        form["tags"] = [tag_id]
+    try:
+        res = _elite_put_form(f"/study/update_study_stats/{study_id}", form)
+    except HTTPException:
+        if tag_id is None:
+            raise
+        # The tag field was rejected — write the history WITHOUT it so the stamp still lands.
+        res = _elite_put_form(f"/study/update_study_stats/{study_id}", base_form)
     # _elite_put_form raises on any non-2xx, so reaching here means the PUT was
     # accepted. Only treat it as a failure if the body carries an explicit error
     # (the success-envelope key varies between Butterfly endpoints).
@@ -14229,7 +14266,13 @@ def _radiology_autostamp_sweep(only_file=None, _detail=None):
                 text = indication or str(o.get("exam") or "").strip()
                 if text:
                     try:
-                        _elite_write_history(sid, text, set_emergency=emergency)
+                        # Also set the study TAG — ER → Emergency, otherwise → OPD — but ONLY
+                        # when the study has no tag yet (this endpoint appends, so re-tagging a
+                        # tagged study would duplicate, e.g. [4,4]). Fail-safe inside the helper.
+                        _cur_tags = s.get("tags") or []
+                        # set_tag=True derives Emergency-vs-OPD from the final emergency flag the
+                        # write applies, so the tag always matches the Emergency box on the study.
+                        _elite_write_history(sid, text, set_emergency=emergency, set_tag=(True if not _cur_tags else None))
                         _autostamp_hist_done.add(sid)   # don't re-stamp this study this process
                         stamped += 1
                         if sd is not None: sd["stamped"] = True; sd["wroteHistory"] = text[:160]
