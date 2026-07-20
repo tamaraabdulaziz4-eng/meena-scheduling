@@ -58,7 +58,9 @@
     font-size:15px; font-family:inherit; background:var(--field); color:var(--ink); }
   .lmp input:focus, .field input:focus{ outline:none; border-color:var(--pri); box-shadow:0 0 0 3px rgba(107,78,255,.14); }
   .field{ margin-top:10px; } .field .lab{ font-size:12.5px; font-weight:700; color:var(--mut); margin-bottom:5px; }
-  .sigbox{ position:relative; border:2px dashed var(--line2); border-radius:14px; background:var(--field); height:210px; margin-top:8px; }
+  /* Always a WHITE pad (even in dark mode) so it reads like paper and the captured
+     signature is dark ink on white — matching the printed consent document. */
+  .sigbox{ position:relative; border:2px dashed var(--line2); border-radius:14px; background:#fff; height:210px; margin-top:8px; }
   canvas#sig{ width:100%; height:100%; display:block; touch-action:none; border-radius:12px; }
   .sigclear{ position:absolute; top:8px; inset-inline-start:8px; font-size:12px; padding:6px 12px; border:1px solid var(--line2);
     background:var(--bg); color:var(--ink); border-radius:9px; font-weight:700; cursor:pointer; }
@@ -209,7 +211,7 @@ function initPad(){
   var w=Math.round((r.width||c.offsetWidth||320))*dpr, h=Math.round((r.height||c.offsetHeight||200))*dpr;
   c.width=w; c.height=h;
   var ctx=c.getContext('2d'); ctx.scale(dpr,dpr);
-  ctx.lineWidth=2.4; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#12227a';
+  ctx.lineWidth=1.8; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#12227a';
   function pos(e){ var b=c.getBoundingClientRect(), t=e.touches?e.touches[0]:e; return {x:t.clientX-b.left, y:t.clientY-b.top}; }
   function start(e){ e.preventDefault(); DRAWING=true; var p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); }
   function move(e){ if(!DRAWING) return; e.preventDefault(); var p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); HAS_INK=true; }
