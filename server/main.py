@@ -10213,8 +10213,9 @@ def _elite_write_history(study_id, history, set_emergency=True, preserve_emergen
     (or risks blanking) the patient demographics.
 
     `set_tag` (optional): also set the study TAG in the same write — 'ER' → Emergency (id 6),
-    'OPD' → OPD (id 4). Only pass this when the study currently has NO tag (the caller checks),
-    since this endpoint appends rather than replaces (a re-send would duplicate, e.g. [4,4]).
+    'OPD' → OPD (id 4). This PUT sends the desired FINAL tag set (a replace, exactly as the
+    Butterfly UI's own Edit-Study does — captured body: `tags=6`), so it may be used both to
+    fill an empty tag AND to correct a wrong one; the caller decides whether a rewrite is needed.
     FAIL-SAFE: if the write is rejected WITH the tag, it retries WITHOUT the tag so the
     clinical history — the thing that matters — always lands.
 
@@ -14266,13 +14267,15 @@ def _radiology_autostamp_sweep(only_file=None, _detail=None):
                 text = indication or str(o.get("exam") or "").strip()
                 if text:
                     try:
-                        # Also set the study TAG — ER → Emergency, otherwise → OPD — but ONLY
-                        # when the study has no tag yet (this endpoint appends, so re-tagging a
-                        # tagged study would duplicate, e.g. [4,4]). Fail-safe inside the helper.
+                        # Also set the study TAG — ER → Emergency (6), otherwise → OPD (4).
+                        # CORRECT wrong tags, don't just fill empty ones: an ER study that was
+                        # mistagged OPD (or vice-versa) must be rewritten to the truth. The PUT
+                        # sends the desired FINAL tag set (replace), so we send the correct tag
+                        # whenever the study's current tags don't already equal exactly [want].
+                        _want_tag = _ELITE_TAG_EMERGENCY_ID if emergency else _ELITE_TAG_OPD_ID
                         _cur_tags = s.get("tags") or []
-                        # set_tag=True derives Emergency-vs-OPD from the final emergency flag the
-                        # write applies, so the tag always matches the Emergency box on the study.
-                        _elite_write_history(sid, text, set_emergency=emergency, set_tag=(True if not _cur_tags else None))
+                        _set_tag = None if _cur_tags == [_want_tag] else _want_tag
+                        _elite_write_history(sid, text, set_emergency=emergency, set_tag=_set_tag)
                         _autostamp_hist_done.add(sid)   # don't re-stamp this study this process
                         stamped += 1
                         if sd is not None: sd["stamped"] = True; sd["wroteHistory"] = text[:160]
