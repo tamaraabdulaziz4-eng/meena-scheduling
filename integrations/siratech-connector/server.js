@@ -174,6 +174,10 @@ async function doHeadlessLogin() {
   });
   try {
     const page = await browser.newPage();
+    // Give the page a real layout box. Without a viewport, headless Chrome lays
+    // Angular Material controls out at zero size, so they're "not clickable" and a
+    // synthetic click never triggers Angular — the login silently fails.
+    await page.setViewport({ width: 1366, height: 900 });
     let auth = '', hospitalid = '';
     page.on('request', (r) => {
       const h = r.headers();
@@ -218,7 +222,16 @@ async function doHeadlessLogin() {
       throw e;
     }
     await sleep(9000);
-    if (!auth) throw new Error('login did not yield an auth token (selectors/creds/site?)');
+    if (!auth) {
+      const snap = await page.evaluate(() => ({
+        url: location.href,
+        inputs: [...document.querySelectorAll('input')].map((i) => ({ id: i.id, type: i.type, filled: !!(i.value && i.value.length) })),
+        buttons: [...document.querySelectorAll('button')].map((b) => (b.innerText || '').trim()).filter(Boolean),
+        errors: [...document.querySelectorAll('.mat-error,[class*=error],.toast,.snackbar,mat-error')].map((e) => (e.innerText || '').trim()).filter(Boolean).slice(0, 6),
+      })).catch(() => null);
+      console.error('[his] no auth token — snapshot:', JSON.stringify(snap));
+      throw new Error('login did not yield an auth token (selectors/creds/site?)');
+    }
     cache = { auth, hospitalid: hospitalid || '', ts: Date.now() };
     console.log(`[his] logged in — token len ${auth.length}, hospitalid ${hospitalid || '(none)'}`);
     return cache;
