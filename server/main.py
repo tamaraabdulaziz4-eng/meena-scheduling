@@ -8296,18 +8296,28 @@ def radiology_autostamp_now(file_no: str, user=Depends(require_radiology)):
         n = _radiology_autostamp_sweep(only_file=file_no, _detail=detail)
     except Exception as e:
         raise HTTPException(502, f"Auto-stamp failed: {e}")
+    # Keep re-running the safe sweep in the background for 5 minutes, so exams whose images
+    # reach DePACS a little later (or a multi-exam patient's second study) still get stamped
+    # without the doctor re-clicking. Idempotent + all safety gates intact.
+    import time as _t
+    _autostamp_retry[file_no] = _t.time() + _AUTOSTAMP_RETRY_SEC
     insert_audit(user, "RADIOLOGY_AUTOSTAMP_MANUAL", str(file_no), json.dumps({"stamped": n}))
     studies = detail.get("studies", [])
-    # An honest outcome so the button never reads as a silent failure: report what was
-    # ALREADY on DePACS (the common case — the HIS/MWL feed writes the indication before
-    # this ever runs) vs. genuinely nothing landing today vs. a match we couldn't make.
+    # Honest per-exam outcome so the button never reads as a silent success. A fresh study is
+    # one of: stamped now (by us), already-had its indication (HIS/MWL wrote it first), or
+    # not-yet — couldn't be matched/confirmed this pass (images/accession may still be arriving,
+    # which the 5-min retry keeps chasing).
     already = [{"studyId": s["studyId"], "indication": s.get("currentHistory"),
                 "studyDesc": s.get("studyDesc"), "modality": s.get("modality")}
                for s in studies if (s.get("currentHistory") or "").strip() and not s.get("stamped")]
+    pending = [{"studyId": s["studyId"], "studyDesc": s.get("studyDesc"), "modality": s.get("modality")}
+               for s in studies if not s.get("stamped") and not (s.get("currentHistory") or "").strip()]
     return {"ok": True, "stamped": n,
             "totalStudies": detail.get("totalStudies", 0),
             "freshStudies": detail.get("freshStudies", 0),
-            "already": already}
+            "alreadyCount": len(already), "pendingCount": len(pending),
+            "retrying": True, "retrySeconds": _AUTOSTAMP_RETRY_SEC,
+            "already": already, "pending": pending}
 
 @app.get("/api/radiology/autostamp/diagnose")
 def radiology_autostamp_diagnose(request: Request, user=Depends(require_superadmin)):
@@ -13849,6 +13859,13 @@ _autostamp_branch_blocked = set()  # study ids skipped as not-the-scoped-branch 
 _autostamp_multi_blocked = set()   # multi-exam studies left ambiguous (audit once, not every sweep)
 _autostamp_keys_logged = False     # one-time dump of a DePACS study's field names
 _autostamp_cursor = 0              # rotating start offset so every patient on the board is swept
+# Manual "Stamp now" retry queue: mrno -> deadline epoch. A click enqueues the patient so a
+# background worker re-runs the SAME safe sweep every ~20s until its images reach DePACS (or
+# the 5-min deadline) — so exams whose images arrive a bit later still get stamped, and a
+# multi-exam patient's studies each get stamped as they land, without the doctor re-clicking.
+_autostamp_retry = {}
+_AUTOSTAMP_RETRY_SEC = int(os.environ.get("RAD_AUTOSTAMP_RETRY_SEC") or 300)   # keep trying 5 min
+_AUTOSTAMP_RETRY_EVERY = 20
 
 def _autostamp_study_station(s):
     """A DePACS study's originating station / institution / source-AE — whatever the
@@ -14261,6 +14278,33 @@ def _radiology_autostamp_sweep(only_file=None, _detail=None):
         print(f"[rad-autostamp] stamped {stamped} stud(ies)")
     return stamped
 
+def _radiology_autostamp_retry_loop():
+    """Drives the manual "Stamp now" retry queue: every ~20s, re-run the SAME safe per-file
+    sweep for each patient a doctor stamped in the last 5 minutes. This is what "keep trying
+    for 5 minutes until the images arrive" means — the sweep is idempotent (already-stamped
+    studies are no-ops) and all the per-study safety gates still apply, so retrying only ever
+    fills the gaps as new images/accessions land. Per-process queue; the sweep lock still
+    serialises writes across workers."""
+    import time
+    time.sleep(45)   # let boot settle
+    while True:
+        try:
+            now = time.time()
+            due = [m for m, dl in list(_autostamp_retry.items()) if dl > now]
+            for m in due:
+                try:
+                    if _claim_sweep_lock("autostamp", 900):
+                        try: _radiology_autostamp_sweep(only_file=m)
+                        finally: _release_sweep_lock("autostamp")
+                except Exception:
+                    pass
+            for m, dl in list(_autostamp_retry.items()):
+                if dl <= now:
+                    _autostamp_retry.pop(m, None)
+        except Exception as e:
+            print(f"[rad-autostamp-retry] {e}")
+        time.sleep(_AUTOSTAMP_RETRY_EVERY)
+
 def _radiology_autostamp_loop():
     """Background auto-stamp worker — same claim pattern as auto-file so exactly one
     sweep runs per window across gunicorn workers. Gated by rad_autostamp_enabled."""
@@ -14371,6 +14415,7 @@ def start_scheduler():
     threading.Thread(target=_rad_reconcile_loop, daemon=True).start()   # nightly billed-vs-performed reconciliation
     threading.Thread(target=_radiology_autofile_loop, daemon=True).start()
     threading.Thread(target=_radiology_autostamp_loop, daemon=True).start()
+    threading.Thread(target=_radiology_autostamp_retry_loop, daemon=True).start()   # 5-min retry queue for manual "Stamp now"
     threading.Thread(target=_radiology_stage_sweep_loop, daemon=True).start()   # keeps store stage/ledger warm viewer-independently
     threading.Thread(target=_consent_refile_loop, daemon=True).start()          # retries un-filed consents onto the Siratech file
     threading.Thread(target=_cdxfer_cleanup_loop, daemon=True).start()

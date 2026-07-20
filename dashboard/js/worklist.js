@@ -1988,17 +1988,23 @@ async function wlStampIndication(mrno, btn) {
   try {
     const d = await API.post(`/radiology/patient/${encodeURIComponent(mrno)}/autostamp`, {}) || {};
     const n = d.stamped || 0;
-    if (n) {
-      toast(`Stamped ${n} stud${n === 1 ? 'y' : 'ies'} on DePACS ✓`);
-    } else if (Array.isArray(d.already) && d.already.length) {
-      // The study already carries its clinical indication (HIS wrote it first) — show it so
-      // the radiologist sees it's genuinely there, not that the button failed.
-      const ind = (d.already[0].indication || '').trim();
-      toast(`Already on DePACS: “${ind.length > 80 ? ind.slice(0, 79) + '…' : ind}”`, 'ok');
+    const pend = d.pendingCount || 0;         // fresh studies not stamped yet (images/order still landing)
+    const had = d.alreadyCount || 0;          // studies that already carried their indication
+    // The server now keeps retrying for ~5 min, so any not-yet-stamped exam gets picked up as
+    // its images arrive — the message says so instead of the old misleading "already".
+    const keep = d.retrying ? ' — keeping watch for 5 min ⏳' : '';
+    if (n && pend) {
+      toast(`Stamped ${n} ✓ · ${pend} more will stamp as images arrive${keep}`);
+    } else if (n) {
+      toast(`Stamped ${n} stud${n === 1 ? 'y' : 'ies'} on DePACS ✓${pend ? keep : ''}`);
+    } else if (pend) {
+      toast(`Waiting for ${pend} exam${pend === 1 ? '' : 's'} to reach DePACS${keep}`, 'ok');
+    } else if (had) {
+      toast(`Already stamped on DePACS ✓`, 'ok');
     } else if (!d.freshStudies) {
-      toast(d.totalStudies ? 'No study from today/yesterday to stamp' : 'No DePACS study found for this patient', 'ok');
+      toast(`No study on DePACS yet${keep || ' for this patient'}`, 'ok');
     } else {
-      toast('Fresh study found, but no matching order to take the indication from', 'err');
+      toast(`Couldn't match the order yet${keep}`, 'ok');
     }
   } catch (e) {
     toast(e.message || 'Stamp failed', 'err');
