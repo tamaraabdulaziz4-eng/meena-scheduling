@@ -13,7 +13,7 @@ async function openConsentQR(prefill, onDone) {
   _consent = { prefill: prefill || {}, onDone: onDone || null, drawing: false, hasInk: false };
   let ov = document.getElementById('consent-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'consent-overlay'; document.body.appendChild(ov); }
-  ov.innerHTML = `<div class="cn-sheet cn-fable"><div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div>
+  ov.innerHTML = `<div class="cn-sheet cnq-plat"><div class="cn-head"><div><div class="cn-title">Non-Pregnancy Consent</div>
     <div class="cn-sub">Radiology · Meena Health</div></div><button class="cn-x" onclick="closeConsent()">✕</button></div>
     <div class="cn-body" style="text-align:center"><div class="mini-spin"></div><p style="margin-top:10px;color:var(--muted)">Preparing link…</p></div></div>`;
   try {
@@ -41,7 +41,7 @@ function renderConsentQR(ov, r) {
       <div class="cnq-patient">
         <div class="cnq-ava">${escapeHtml(initial)}</div>
         <div class="cnq-pinfo">
-          <b>${escapeHtml(p.name || '—')}</b>
+          <b>${escapeHtml(p.name_en || p.name || '—')}</b>
           <span>${escapeHtml([`File ${p.mrno || p.file_no || '—'}`, p.procedure || ''].filter(Boolean).join(' · '))}</span>
         </div>
         <span class="cnq-type ${isER ? 'er' : ''}">${isER ? 'ER' : 'OPD'}</span>
