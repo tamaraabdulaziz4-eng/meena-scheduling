@@ -83,16 +83,55 @@ async function loginWithBrowser() {
       if (!u) return null; if (!u.id) u.id = '__msuser'; return '#' + u.id;
     });
     const pwSel = await page.evaluate(() => { const p = document.querySelector('input[type=password]'); if (!p.id) p.id = '__mspass'; return '#' + p.id; });
-    if (userSel) { await page.click(userSel); await page.type(userSel, USER, { delay: 30 }); }
-    await page.click(pwSel); await page.type(pwSel, PASS, { delay: 30 });
+    // Fill an input WITHOUT depending on a physical click. page.click() throws
+    // "Node is either not clickable or not an Element" when the field is rendered
+    // hidden/zero-size/covered (RadCare's login page does this behind its WAF).
+    // Chain: real click → JS focus; type → set value directly + fire input events.
+    const fill = async (sel, value) => {
+      try { await page.click(sel, { delay: 20 }); }
+      catch (e) {
+        if (dbg) console.log('[millensys] click failed on', sel, '-', String(e.message || e).slice(0, 80), '— falling back to JS focus');
+        await page.evaluate((s) => { const el = document.querySelector(s); if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); } }, sel);
+      }
+      try { await page.type(sel, value, { delay: 30 }); }
+      catch (e) {
+        if (dbg) console.log('[millensys] type failed on', sel, '— setting value directly');
+        await page.evaluate((s, v) => {
+          const el = document.querySelector(s);
+          if (!el) return;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, v);   // native setter so React/Angular/Knockout bindings see it
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, sel, value);
+      }
+    };
+    if (userSel) await fill(userSel, USER);
+    await fill(pwSel, PASS);
     await Promise.all([
       page.keyboard.press('Enter'),
       page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {}),
     ]);
-    // Submit button fallback if Enter didn't navigate.
+    // Submit button fallback if Enter didn't navigate — same story: a physical
+    // click can throw on an unclickable node, so fall back to a JS click, then to
+    // submitting the form directly.
     if (/login|signin|account/i.test(page.url())) {
+      const nav = () => page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
       const btn = await page.$('button[type=submit], input[type=submit], button');
-      if (btn) { await Promise.all([btn.click().catch(() => {}), page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})]); }
+      if (btn) {
+        await Promise.all([
+          btn.click().catch(() => page.evaluate((s) => {
+            const b = document.querySelector(s); if (b) b.click();
+            else { const f = document.querySelector('form'); if (f) (f.requestSubmit ? f.requestSubmit() : f.submit()); }
+          }, 'button[type=submit], input[type=submit], button').catch(() => {})),
+          nav(),
+        ]);
+      } else {
+        await Promise.all([
+          page.evaluate(() => { const f = document.querySelector('form'); if (f) (f.requestSubmit ? f.requestSubmit() : f.submit()); }).catch(() => {}),
+          nav(),
+        ]);
+      }
     }
     const cookies = await page.cookies();
     const header = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
