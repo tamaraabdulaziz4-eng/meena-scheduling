@@ -1342,7 +1342,7 @@ function wlExpandHtml(it, st) {
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')" onmouseenter="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')" ontouchstart="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
       <button class="btn" onclick="wlStampIndication('${jsAttr(mrn)}',this)" title="Write this patient's clinical indication onto the DePACS study now">🖊 Stamp now</button>
       <button class="btn" onclick="wlFlagCritical('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(acc)}',${it.genPatBillingId != null ? it.genPatBillingId : 'null'},${it.site != null ? "'" + jsAttr(String(it.site)) + "'" : 'null'},'${jsAttr(it.doctorName || '')}')">🚨 Flag critical</button>
-      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
+      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}','${jsAttr(it.providerId || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
       ${wlWorkflowBtns(it, st)}
     </div>
   </div>`;
@@ -1672,7 +1672,7 @@ function wlPickConsentName(patient, fallbackEn) {
   const isArab = arScript && (!nat || WL_ARAB_NAT.test(nat));
   return { display: (isArab && ar) ? ar : (en || ar), en: en || ar };
 }
-async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
+async function wlConsent(mrno, name, exam, doctor, branch, bill, site, provId) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
   // Keys must match the /consent/link backend: physician (not referring_doctor),
@@ -1689,8 +1689,11 @@ async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // Carry the identity + vitals the HIS already has (DOB, weight, height) so the form
   // prints COMPLETE — the worklist row alone doesn't have these, and without them the
   // signed PDF came out with blank patient fields.
+  // The form asks for "Physician (Name +ID No)" — the worklist row carries the HIS
+  // ordering-doctor id (providerId), so print "Name (id)" like the technologist line.
+  const physician = (doctor || '') + (provId ? ` (${provId})` : '');
   const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: display, name_en: en, procedure: exam,
-                    physician: doctor || '', branch: branch || '',
+                    physician: physician, branch: branch || '',
                     dob: (pat.dob || '').trim ? (pat.dob || '').trim() : (pat.dob || ''),
                     gender: pat.gender || '',
                     weight: (pat.weight != null ? String(pat.weight) : ''),

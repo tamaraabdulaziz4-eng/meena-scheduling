@@ -10482,6 +10482,27 @@ def _consent_signer(user):
             return r["name"] + (f" ({r['employee_id']})" if r.get("employee_id") else "")
     return user.get("username") or "Radiology Specialist"
 
+
+def _consent_autohcg(mrn, site=None):
+    """Best-effort auto-fill of the consent's HCG field from the patient's REAL lab
+    record (the connector's /labs/pregnancy check: resulted β-hCG/pregnancy tests in
+    the last ~120 days). Returns 'Negative' / 'Positive' / 'Pending' or '' when no
+    recent pregnancy test exists or the HIS is unreachable — never raises."""
+    try:
+        qs = "?mrno=" + urllib.parse.quote(str(mrn))
+        s = _coerce_site(site)
+        if s:
+            qs += "&site=" + str(s)
+        d = _bridge_request("/his/labs/pregnancy" + qs, timeout=30)
+        if not (isinstance(d, dict) and d.get("ok") and d.get("hasPregnancyTest")):
+            return ""
+        if not d.get("resulted"):
+            return "Pending"
+        v = str(d.get("verdict") or "").lower()
+        return {"negative": "Negative", "positive": "Positive"}.get(v, "")
+    except Exception:
+        return ""
+
 def _ksa_now():
     try:
         from zoneinfo import ZoneInfo
@@ -10582,11 +10603,14 @@ async def create_consent(request: Request, user=Depends(require_radiology)):
     # so we pass BOTH names — the Arabic name prints on the RIGHT (by the Arabic label) and
     # the English name on the LEFT (by the English label).
     name_en = (b.get("name_en") or "").strip()
+    # HCG: use the entered value; when none was entered, pull the REAL result from
+    # the patient's lab record (best-effort — blank if no recent pregnancy test).
+    hcg = (b.get("hcg") or "").strip() or _consent_autohcg((b.get("mrn") or file_no).strip(), b.get("site"))
     data = {
         "name": name, "name_en": name_en, "mrn": (b.get("mrn") or file_no).strip(),
         "dob": (b.get("dob") or "").strip(), "procedure": (b.get("procedure") or "").strip(),
         "weight": (b.get("weight") or "").strip(), "height": (b.get("height") or "").strip(),
-        "hcg": (b.get("hcg") or "").strip(), "patient_type": patient_type,
+        "hcg": hcg, "patient_type": patient_type,
         "reason": reason, "lmp_date": lmp, "undersigned": name or name_en,
         "physician": (b.get("physician") or "").strip(), "technologist": tech,
         "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
@@ -10752,17 +10776,20 @@ async def create_consent_link(request: Request, user=Depends(require_radiology))
     token = secrets.token_urlsafe(24)
     tech = _consent_signer(user)
     _lnk_name = (b.get("name") or "").strip()
+    # Pull the patient's REAL β-hCG result from the lab record now (best-effort), so
+    # the pre-printed form she reads on her phone — and the signed PDF — carry it.
+    _lnk_hcg = (b.get("hcg") or "").strip() or _consent_autohcg((b.get("mrn") or file_no).strip(), b.get("site"))
     row = q("""INSERT INTO scheduling.consents
                  (kind, file_no, mrn, patient_name, patient_name_en, procedure, patient_type, physician, technologist,
-                  bill_no, site, dob, branch, weight, height, token, status, created_by, created_by_name, expires_at)
-               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '12 hours')
+                  bill_no, site, dob, branch, weight, height, hcg, token, status, created_by, created_by_name, expires_at)
+               VALUES ('non_pregnancy',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s, NOW() + interval '12 hours')
                RETURNING id""",
             (file_no, (b.get("mrn") or file_no).strip(), _lnk_name, ((b.get("name_en") or "").strip() or _lnk_name),
              (b.get("procedure") or "").strip(), patient_type or None, (b.get("physician") or "").strip() or None,
              tech, (b.get("bill_no") or None), _coerce_site(b.get("site")),
              (b.get("dob") or "").strip() or None, (b.get("branch") or "").strip() or None,
              (b.get("weight") or "").strip() or None, (b.get("height") or "").strip() or None,
-             token, user["id"], tech), one=True)
+             _lnk_hcg or None, token, user["id"], tech), one=True)
     base = str(request.base_url).rstrip("/")
     # Honour the forwarded host so the link is the public https URL, not the internal one.
     xf_host = request.headers.get("x-forwarded-host")
@@ -11163,6 +11190,7 @@ def public_consent_form_image(token: str):
         "mrn": r.get("mrn") or r.get("file_no") or "",
         "dob": r.get("dob") or "", "procedure": r.get("procedure") or "",
         "weight": r.get("weight") or "", "height": r.get("height") or "",
+        "hcg": r.get("hcg") or "",
         "patient_type": r.get("patient_type") or "", "physician": r.get("physician") or "",
         "technologist": r.get("technologist") or "",
     }
@@ -11209,7 +11237,9 @@ async def public_consent_sign(token: str, request: Request):
     now = _ksa_now()
     weight = (b.get("weight") or r.get("weight") or "").strip()
     height = (b.get("height") or r.get("height") or "").strip()
-    hcg = (b.get("hcg") or "").strip()
+    # HCG: what the patient page sent (nothing today), else the lab result fetched
+    # and stored when the link was created.
+    hcg = (b.get("hcg") or r.get("hcg") or "").strip()
     # Bilingual consent → print BOTH names: Arabic on the right, English on the left.
     _name_ar = (r.get("patient_name") or "").strip()
     _name_en = (r.get("patient_name_en") or "").strip()

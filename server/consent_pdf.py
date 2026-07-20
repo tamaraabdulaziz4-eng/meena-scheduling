@@ -194,18 +194,20 @@ _CELL_FIELDS = {
 }
 
 # Pure Latin / numeric values — crisp Helvetica at exact baselines. Language-neutral
-# digits are stamped on BOTH sides of the bilingual form: (x, y) per side.
+# digits are stamped on BOTH sides of the bilingual form: (x, y, anchor) per side,
+# where anchor 'l' starts the text at x (beside an English label) and 'r' ENDS the
+# text at x — right-aligned to sit flush against an Arabic label's colon.
 _TEXT_FIELDS = {
-    "mrn":      [(132, 151)],
-    "dob":      [(132, 166)],
-    "weight":   [(132, 197)],
-    "height":   [(132, 212)],
+    "mrn":      [(132, 151, "l"), (484, 151, "r")],   # "رقم الملف الطبي:" colon x=488
+    "dob":      [(132, 166, "l"), (498, 166, "r")],   # "تاريخ الولادة:" colon x=502
+    "weight":   [(132, 197, "l"), (527, 197, "r")],   # "الوزن:" colon x=531
+    "height":   [(132, 212, "l"), (523, 212, "r")],   # "الطول:" colon x=527
     # LMP date: English blank x=202–278, Arabic blank x=364–446 (same row, y≈410).
-    "lmp_date": [(222, 410), (372, 410)],
-    # Bottom row: "Date:"/"Time:" on the left; "الوقت:" colon at x=398 (value ends
-    # ≈395) and "التاريخ:" colon at x=525 (value ends ≈522) on the right.
-    "date":     [(80, 765), (474, 765)],
-    "time":     [(220, 765), (368, 765)],
+    "lmp_date": [(222, 410, "l"), (443, 410, "r")],
+    # Bottom row: "Date:"/"Time:" on the left; "الوقت:" colon at x=398 and
+    # "التاريخ:" colon at x=525 on the right.
+    "date":     [(80, 765, "l"), (521, 765, "r")],
+    "time":     [(220, 765, "l"), (394, 765, "r")],
 }
 
 # Checkbox marks — the form has PAIRS of checkboxes: English side + Arabic side
@@ -242,7 +244,11 @@ def _stamp(page, data, signature_png=None, mark_declaration=True):
         text = str(text).strip()
         if not text:
             return
-        page.insert_text((point[0], point[1]), text, fontsize=size,
+        x, y = point[0], point[1]
+        # anchor 'r' → x is where the text must END (flush against an Arabic label).
+        if len(point) > 2 and point[2] == "r":
+            x -= fitz.get_text_length(text, fontname="helv", fontsize=size)
+        page.insert_text((x, y), text, fontsize=size,
                          fontname="helv", color=(0, 0, 0))
 
     def put_html(box, text, size, side):
