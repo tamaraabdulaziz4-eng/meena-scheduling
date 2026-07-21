@@ -48,7 +48,9 @@ export async function POST(req: NextRequest) {
     const token = await authenticate();
 
     const origin = req.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
-    const orderNumber = `RA-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    // Encode the plan in the order number — Paylink echoes it back on Get Invoice,
+    // so verification can trust which plan was actually paid for.
+    const orderNumber = `RA-${plan}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 
     const res = await fetch(`${BASE}/api/addInvoice`, {
       method: "POST",

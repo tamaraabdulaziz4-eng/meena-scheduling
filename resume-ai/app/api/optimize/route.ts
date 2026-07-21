@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyPass, ACCESS_COOKIE, FREE_COOKIE, FREE_LIMIT } from "@/app/lib/access";
 
 /**
  * Provider-agnostic optimizer.
@@ -186,6 +187,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Input too long. Please trim your resume or job description." }, { status: 400 });
     }
 
+    // ── Access gate ──
+    // Paid pass → unlimited. Otherwise allow FREE_LIMIT free scans, then require payment.
+    const hasPass = !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, Date.now());
+    const freeUsed = parseInt(req.cookies.get(FREE_COOKIE)?.value || "0") || 0;
+    if (!hasPass && freeUsed >= FREE_LIMIT) {
+      return NextResponse.json(
+        { error: "You've used your free optimization. Unlock unlimited access to continue.", paywall: true },
+        { status: 402 }
+      );
+    }
+
     const generate = () =>
       PROVIDER === "anthropic"
         ? callAnthropic(resume, jobDescription)
@@ -206,7 +218,18 @@ export async function POST(req: NextRequest) {
     }
     if (!result) throw lastErr ?? new Error("Failed to parse AI response");
 
-    return NextResponse.json(result);
+    const response = NextResponse.json(result);
+    // Count the free scan only on a successful, non-paid run.
+    if (!hasPass) {
+      response.cookies.set(FREE_COOKIE, String(freeUsed + 1), {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 365 * 24 * 60 * 60,
+      });
+    }
+    return response;
   } catch (err) {
     console.error("Optimize error:", err);
     const msg = err instanceof Error ? err.message : "Unknown error";

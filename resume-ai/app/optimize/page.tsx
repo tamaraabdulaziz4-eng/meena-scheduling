@@ -25,6 +25,7 @@ export default function OptimizePage() {
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
+  const [paywall, setPaywall] = useState(false);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -82,6 +83,7 @@ export default function OptimizePage() {
     setError("");
     setResult(null);
     setCoverLetter("");
+    setPaywall(false);
     setLoading(true);
 
     try {
@@ -91,6 +93,10 @@ export default function OptimizePage() {
         body: JSON.stringify({ resume, jobDescription }),
       });
       const data = await res.json();
+      if (res.status === 402 || data.paywall) {
+        setPaywall(true);
+        return;
+      }
       if (!res.ok) throw new Error(data.error || "Failed");
       setResult(data);
       setTab("resume");
@@ -122,6 +128,16 @@ export default function OptimizePage() {
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-12">
+        {paywall && (
+          <div className="card mx-auto mb-8 max-w-2xl p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+            <div className="chip mb-4">● Free scan used</div>
+            <h2 className="text-2xl font-bold">Unlock unlimited optimizations</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+              You&apos;ve used your free scan. Get a one-time pass for $9 or go unlimited for $19/mo — every resume optimized, cover letters included.
+            </p>
+            <a href="/#pricing" className="btn-accent mt-6 inline-block px-8 py-3">See plans →</a>
+          </div>
+        )}
         {!result && (
           <div className="mb-10 text-center">
             <div className="chip mb-4">● Free scan</div>
