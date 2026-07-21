@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 

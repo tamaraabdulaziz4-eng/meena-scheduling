@@ -14,12 +14,12 @@ import { hasActiveEntitlement } from "@/app/lib/entitlements";
  */
 
 // Allow up to 60s — LLM generation of a full rewritten resume can take a while.
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 
 const PROMPT = (resume: string, jobDescription: string) =>
-  `You are an expert ATS resume optimizer and career coach. Analyze the resume and job description below, then provide a complete optimization.
+  `You are a senior ATS (applicant tracking system) analyst and executive resume writer. Perform a rigorous, honest analysis of this resume against this job description.
 
 RESUME:
 ${resume}
@@ -27,25 +27,38 @@ ${resume}
 JOB DESCRIPTION:
 ${jobDescription}
 
+ANALYSIS METHOD (do this carefully before writing the JSON):
+1. Extract from the JOB DESCRIPTION: the exact job title, 8-15 hard skills/tools/technologies, 3-5 soft skills, required years of experience, required qualifications/certifications, and domain-specific terminology.
+2. Check each extracted item against the RESUME (including synonyms and abbreviations — e.g. "JS" = "JavaScript", "CRM" matches "Salesforce").
+3. Score honestly using this weighted rubric:
+   - Hard skills & tools match: 40 points
+   - Job title / seniority alignment: 15 points
+   - Relevant experience & achievements: 20 points
+   - Required qualifications/certifications: 10 points
+   - Keyword & terminology coverage: 15 points
+   Do NOT inflate the score. A resume missing most hard skills must score below 50.
+
 Return a JSON object with exactly this structure:
 {
-  "matchScore": <number 0-100>,
-  "matchSummary": "<2-sentence summary of how well the resume matches>",
-  "missingKeywords": ["keyword1", "keyword2"],
-  "presentKeywords": ["keyword1", "keyword2"],
-  "skillsGap": ["skill1", "skill2"],
+  "matchScore": <number 0-100 from the rubric above>,
+  "matchSummary": "<2-3 honest sentences: the score's main drivers, the biggest gap, and whether this application is worth pursuing>",
+  "missingKeywords": ["<every important hard skill, tool, certification, or term from the job description that is absent from the resume — be exhaustive>"],
+  "presentKeywords": ["<job-description keywords genuinely present in the resume>"],
+  "skillsGap": ["<skills the candidate appears to truly lack (not just unmentioned) — things they should learn or honestly address>"],
   "improvements": [
-    {"area": "area name", "issue": "what's wrong", "fix": "how to fix it"}
+    {"area": "<section name>", "issue": "<specific problem>", "fix": "<specific, actionable fix>"}
+    // 4-6 improvements covering: summary, experience bullets, skills section, keyword placement, formatting
   ],
-  "optimizedResume": "<complete rewritten resume with all improvements applied, ATS keywords injected naturally, bullets strengthened with metrics and strong verbs>"
+  "optimizedResume": "<the COMPLETE rewritten resume as plain text with ALL improvements applied>"
 }
 
-Requirements for optimizedResume:
-- Keep the candidate's real experience and facts — never invent
-- Inject relevant keywords from the job description naturally
-- Rewrite bullet points to start with strong action verbs and include metrics where plausible
-- Ensure every section is ATS-friendly (clear headings, no tables/graphics)
-- Make it professional and compelling
+Rules for optimizedResume — follow ALL of them:
+- NEVER invent employers, roles, dates, degrees, or achievements. Only rephrase and reorganize what exists.
+- Structure: Name/contact, PROFESSIONAL SUMMARY (3 lines, tailored to this job, containing the job title), SKILLS (grouped, front-loading the job's required skills the candidate genuinely has), EXPERIENCE (reverse-chronological), EDUCATION, then any other sections.
+- Every experience bullet: start with a strong action verb, weave in job-description keywords where truthful, add metrics ONLY where the original resume implies them (say "quantify this: [what to measure]" as a placeholder if the candidate should add a number).
+- Where the candidate lacks a required skill, do NOT fake it — instead surface adjacent/transferable experience.
+- Plain text only: no tables, no columns, no graphics, standard section headings (ATS-parseable).
+- Keep it concise — cut filler, keep substance.
 
 Return only the JSON, no other text.`;
 
@@ -127,7 +140,7 @@ async function callNvidia(resume: string, jobDescription: string): Promise<strin
       model,
       temperature: 0.4,
       top_p: 0.9,
-      max_tokens: 3000,
+      max_tokens: 4096,
       // Force the model to emit a single syntactically valid JSON object.
       response_format: { type: "json_object" },
       messages: [
