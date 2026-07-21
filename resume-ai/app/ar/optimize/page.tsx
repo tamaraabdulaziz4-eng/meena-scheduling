@@ -165,7 +165,7 @@ export default function ArOptimizePage() {
           <div className="mb-10 text-center">
             <div className="chip mb-4">● فحص مجاني</div>
             <h1 className="text-4xl font-extrabold tracking-tight">افحص سيرتك ضد نظام التوظيف</h1>
-            <p className="mt-3" style={{ color: "var(--muted)" }}>الصق سيرتك (عربي أو إنجليزي) وإعلان الوظيفة — والنتيجة سيرة إنجليزية محسّنة.</p>
+            <p className="mt-3" style={{ color: "var(--muted)" }}>ارفع أو الصق سيرتك القديمة (عربي أو إنجليزي) — نحسّنها ونعطيك سيرة إنجليزية جديدة. إعلان الوظيفة اختياري.</p>
           </div>
         )}
 
@@ -185,14 +185,14 @@ export default function ArOptimizePage() {
                 className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none" style={inputStyle} />
             </div>
             <div>
-              <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>إعلان الوظيفة</label>
-              <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={18} required
-                placeholder="الصق إعلان الوظيفة كاملاً — المسمى والمتطلبات والمهام..."
+              <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>إعلان الوظيفة (اختياري)</label>
+              <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={18}
+                placeholder="اختياري — الصق إعلان وظيفة لتفصيل السيرة عليه، أو اتركه فارغاً لتحسين شامل للسيرة."
                 className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none" style={inputStyle} />
             </div>
             <div className="text-center md:col-span-2">
               {error && <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>{error}</div>}
-              <button type="submit" disabled={loading || !resume.trim() || !jobDescription.trim()}
+              <button type="submit" disabled={loading || !resume.trim()}
                 className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
                 {loading ? "جارٍ الفحص والتحسين…" : "⚡ افحص وحسّن"}
               </button>

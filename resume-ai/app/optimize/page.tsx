@@ -194,7 +194,7 @@ export default function OptimizePage() {
           <div className="mb-10 text-center">
             <div className="chip mb-4">● Free scan</div>
             <h1 className="text-4xl font-extrabold tracking-tight">Run your resume through the scanner</h1>
-            <p className="mt-3" style={{ color: "var(--muted)" }}>Paste both sides. We&apos;ll show you the score and the rewrite.</p>
+            <p className="mt-3" style={{ color: "var(--muted)" }}>Upload or paste your resume. Add a job posting to tailor to it — or leave it empty and we&apos;ll improve the resume overall.</p>
           </div>
         )}
 
@@ -222,13 +222,12 @@ export default function OptimizePage() {
             </div>
 
             <div>
-              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Job description</label>
+              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>(optional)</span></label>
               <textarea
                 value={jobDescription}
                 onChange={(e) => setJobDescription(e.target.value)}
-                placeholder="Paste the job posting here...&#10;&#10;Title, requirements, responsibilities, qualifications..."
+                placeholder="Optional — paste a job posting to tailor the resume to it, or leave empty for a general improvement."
                 rows={20}
-                required
                 className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none"
                 style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }}
               />
@@ -243,7 +242,7 @@ export default function OptimizePage() {
               )}
               <button
                 type="submit"
-                disabled={loading || !resume.trim() || !jobDescription.trim()}
+                disabled={loading || !resume.trim()}
                 className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
                 {loading ? (
                   <span className="flex items-center justify-center gap-3">

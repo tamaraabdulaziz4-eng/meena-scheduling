@@ -18,15 +18,16 @@ export const maxDuration = 300;
 
 const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 
-const PROMPT = (resume: string, jobDescription: string) =>
-  `You are a senior ATS (applicant tracking system) analyst and executive resume writer. Perform a rigorous, honest analysis of this resume against this job description.
+const PROMPT = (resume: string, jobDescription: string) => {
+  const hasJd = jobDescription.trim().length >= 30;
+  return `You are a senior ATS (applicant tracking system) analyst and executive resume writer. ${hasJd ? "Perform a rigorous, honest analysis of this resume against this job description." : "The user provided ONLY a resume (no target job). Perform a rigorous GENERAL improvement: infer their likely target role from the resume itself and make the resume as strong as possible for that role."}
 
 LANGUAGE HANDLING: The resume or job description may be in Arabic, English, or mixed. Understand both. The optimizedResume must ALWAYS be professional ENGLISH (translate Arabic input — global ATS systems require English). If the user's resume was mostly Arabic, write matchSummary, improvements, and your ANALYSIS bullets in Arabic; otherwise in English. Keywords stay in English (that's what ATS systems match on).
 
 RESUME:
 ${resume}
 
-JOB DESCRIPTION:
+${hasJd ? `JOB DESCRIPTION:
 ${jobDescription}
 
 ANALYSIS METHOD (do this carefully before writing the JSON):
@@ -38,7 +39,17 @@ ANALYSIS METHOD (do this carefully before writing the JSON):
    - Relevant experience & achievements: 20 points
    - Required qualifications/certifications: 10 points
    - Keyword & terminology coverage: 15 points
-   Do NOT inflate the score. A resume missing most hard skills must score below 50.
+   Do NOT inflate the score. A resume missing most hard skills must score below 50.` : `NO JOB DESCRIPTION — GENERAL MODE:
+1. Infer the candidate's target role from their experience and skills.
+2. Score the resume's overall QUALITY honestly on this rubric:
+   - Impact & quantification of bullets: 30 points
+   - ATS-safe structure & standard headings: 20 points
+   - Skills coverage for the inferred role (industry-standard keywords): 25 points
+   - Professional summary strength & clarity: 15 points
+   - Conciseness / no filler: 10 points
+   Do NOT inflate. A vague, unquantified resume must score below 50.
+3. For "missingKeywords": list industry-standard keywords for the inferred role that the resume lacks.
+4. For "presentKeywords": strong keywords already in the resume.`}
 
 Return a JSON object with exactly this structure:
 {
@@ -65,6 +76,7 @@ OUTPUT FORMAT — two parts, in this order:
 2. Then the exact line "RESULT" followed by the JSON object.
 
 Keep the optimizedResume under 350 words — tight and high-impact. No other text after the JSON.`;
+};
 
 /** Flatten a resume that came back as a nested object into readable plain text. */
 function objectToResumeText(obj: unknown, depth = 0): string {
@@ -255,16 +267,18 @@ export async function POST(req: NextRequest) {
   try {
     const { resume, jobDescription } = await req.json();
 
-    if (!resume || !jobDescription) {
-      return NextResponse.json({ error: "Resume and job description are required." }, { status: 400 });
+    if (!resume) {
+      return NextResponse.json({ error: "Resume is required." }, { status: 400 });
     }
     if (resume.trim().length < 50) {
       return NextResponse.json({ error: "Please paste a fuller resume (at least a few lines)." }, { status: 400 });
     }
-    if (jobDescription.trim().length < 30) {
-      return NextResponse.json({ error: "Please paste the full job description, not just a title or code — the AI needs the requirements to match against." }, { status: 400 });
+    // Job description is OPTIONAL: with one we match against it; without, general improvement.
+    const jd = String(jobDescription ?? "");
+    if (jd.trim().length > 0 && jd.trim().length < 30) {
+      return NextResponse.json({ error: "That job description looks too short — paste the full posting, or leave it empty for a general improvement." }, { status: 400 });
     }
-    if (resume.length > 8000 || jobDescription.length > 4000) {
+    if (resume.length > 8000 || jd.length > 4000) {
       return NextResponse.json({ error: "Input too long. Please trim your resume or job description." }, { status: 400 });
     }
 
@@ -290,43 +304,48 @@ export async function POST(req: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         const send = (obj: object) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
-        try {
-          let inThinking = true;
-          let pending = "";
-          let lastPing = Date.now();
-          const raw = await (PROVIDER === "anthropic"
-            ? callAnthropic(resume, jobDescription)
-            : streamNvidia(resume, jobDescription, (delta) => {
-                if (!inThinking) {
-                  // Keep the connection alive while the (hidden) JSON generates.
-                  if (Date.now() - lastPing > 3000) {
-                    send({ t: "ping" });
-                    lastPing = Date.now();
-                  }
-                  return;
+        // The model occasionally emits malformed JSON — retry once; only the
+        // first attempt streams thinking to the user (the retry is silent).
+        let done = false;
+        for (let attempt = 0; attempt < 2 && !done; attempt++) {
+          try {
+            let inThinking = attempt === 0;
+            let pending = "";
+            let lastPing = Date.now();
+            const keepAlive = (delta: string) => {
+              if (!inThinking) {
+                if (Date.now() - lastPing > 3000) {
+                  send({ t: "ping" });
+                  lastPing = Date.now();
                 }
-                pending += delta;
-                // Stop forwarding once the model transitions to the JSON part.
-                const cut = pending.search(/RESULT|\{/);
-                if (cut !== -1) {
-                  const visible = pending.slice(0, cut);
-                  if (visible) send({ t: "think", d: visible });
-                  inThinking = false;
-                } else {
-                  send({ t: "think", d: pending });
-                  pending = "";
-                }
-              }));
+                return;
+              }
+              pending += delta;
+              // Stop forwarding once the model transitions to the JSON part.
+              const cut = pending.search(/RESULT|\{/);
+              if (cut !== -1) {
+                const visible = pending.slice(0, cut);
+                if (visible) send({ t: "think", d: visible });
+                inThinking = false;
+              } else {
+                send({ t: "think", d: pending });
+                pending = "";
+              }
+            };
+            const raw = await (PROVIDER === "anthropic"
+              ? callAnthropic(resume, jd)
+              : streamNvidia(resume, jd, keepAlive));
 
-          if (!raw.trim()) throw new Error("Empty response from AI provider");
-          const result = normalizeResult(parseModelJson(raw));
-          send({ t: "result", d: result });
-        } catch (err) {
-          console.error("Optimize stream error:", err);
-          send({ t: "error", d: "Failed to optimize resume. Please try again." });
-        } finally {
-          controller.close();
+            if (!raw.trim()) throw new Error("Empty response from AI provider");
+            const result = normalizeResult(parseModelJson(raw));
+            send({ t: "result", d: result });
+            done = true;
+          } catch (err) {
+            console.error(`Optimize stream error (attempt ${attempt + 1}):`, err);
+            if (attempt === 1) send({ t: "error", d: "Failed to optimize resume. Please try again." });
+          }
         }
+        controller.close();
       },
     });
 
