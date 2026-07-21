@@ -36,8 +36,9 @@ export async function GET(req: NextRequest) {
     const status = String(inv.orderStatus || "").toLowerCase();
     const paid = status === "paid";
 
-    // Derive the plan from our own order number (RA-<plan>-...), which Paylink echoes back.
-    const orderNumber = String(inv.orderNumber || "");
+    // Derive the plan from our own order number (RA-<plan>-...). Paylink returns
+    // it nested under gatewayOrderRequest, not at the top level.
+    const orderNumber = String(inv.orderNumber || inv.gatewayOrderRequest?.orderNumber || "");
     const plan = orderNumber.split("-")[1] === "monthly" ? "monthly" : "single";
 
     const res2 = NextResponse.json({
