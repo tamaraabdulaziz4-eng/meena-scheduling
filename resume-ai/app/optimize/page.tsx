@@ -20,11 +20,68 @@ export default function OptimizePage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"resume" | "analysis">("resume");
   const [copied, setCopied] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedName, setUploadedName] = useState("");
+  const [coverLetter, setCoverLetter] = useState("");
+  const [coverLoading, setCoverLoading] = useState(false);
+  const [coverCopied, setCoverCopied] = useState(false);
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setUploading(true);
+    setUploadedName("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/extract", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to read file");
+      setResume(data.text);
+      setUploadedName(file.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to read file.");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
+
+  function download(filename: string, text: string) {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function generateCoverLetter() {
+    setCoverLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/cover-letter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resume, jobDescription }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setCoverLetter(data.coverLetter);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate cover letter.");
+    } finally {
+      setCoverLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setResult(null);
+    setCoverLetter("");
     setLoading(true);
 
     try {
@@ -76,11 +133,18 @@ export default function OptimizePage() {
         {!result ? (
           <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
             <div>
-              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Your current resume</label>
+              <div className="mb-3 flex items-center justify-between">
+                <label className="font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Your current resume</label>
+                <label className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
+                  style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  {uploading ? "Reading…" : uploadedName ? `✓ ${uploadedName.slice(0, 22)}` : "↑ Upload PDF / Word"}
+                  <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
+                </label>
+              </div>
               <textarea
                 value={resume}
                 onChange={(e) => setResume(e.target.value)}
-                placeholder="Paste your full resume here...&#10;&#10;Work experience, education, skills, contact info..."
+                placeholder="Paste your resume — or upload a PDF/Word file above.&#10;&#10;Work experience, education, skills, contact info..."
                 rows={20}
                 required
                 className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none"
@@ -156,18 +220,65 @@ export default function OptimizePage() {
 
             {tab === "resume" && (
               <div>
-                <div className="mb-4 flex items-center justify-between">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-xl font-bold">Your optimized resume</h2>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
-                    className="rounded-lg px-4 py-2 text-sm font-semibold"
-                    style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                    {copied ? "✓ Copied" : "Copy to clipboard"}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
+                      className="rounded-lg px-4 py-2 text-sm font-semibold"
+                      style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                      {copied ? "✓ Copied" : "Copy"}
+                    </button>
+                    <button
+                      onClick={() => download("optimized-resume.txt", result.optimizedResume)}
+                      className="rounded-lg px-4 py-2 text-sm font-semibold"
+                      style={{ background: "var(--accent)", color: "#05130a" }}>
+                      ↓ Download
+                    </button>
+                  </div>
                 </div>
                 <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
                   style={{ color: "rgba(244,245,243,0.85)" }}>
                   {result.optimizedResume}
+                </div>
+
+                {/* Cover letter generator */}
+                <div className="card mt-6 p-6" style={{ borderColor: "rgba(74,222,128,0.25)" }}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold">Matching cover letter</h3>
+                      <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>Generate a tailored cover letter from the same job post.</p>
+                    </div>
+                    {!coverLetter ? (
+                      <button
+                        onClick={generateCoverLetter}
+                        disabled={coverLoading}
+                        className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
+                        {coverLoading ? "Writing…" : "✨ Generate cover letter"}
+                      </button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(coverLetter); setCoverCopied(true); setTimeout(() => setCoverCopied(false), 1800); }}
+                          className="rounded-lg px-4 py-2 text-sm font-semibold"
+                          style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                          {coverCopied ? "✓ Copied" : "Copy"}
+                        </button>
+                        <button
+                          onClick={() => download("cover-letter.txt", coverLetter)}
+                          className="rounded-lg px-4 py-2 text-sm font-semibold"
+                          style={{ background: "var(--accent)", color: "#05130a" }}>
+                          ↓ Download
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {coverLetter && (
+                    <div className="card mt-4 whitespace-pre-wrap p-5 text-sm leading-relaxed"
+                      style={{ background: "rgba(255,255,255,0.02)", color: "rgba(244,245,243,0.85)" }}>
+                      {coverLetter}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
