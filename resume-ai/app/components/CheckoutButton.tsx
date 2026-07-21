@@ -18,6 +18,7 @@ export default function CheckoutButton({
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -30,7 +31,7 @@ export default function CheckoutButton({
       const res = await fetch("/api/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan, name, mobile }),
+        body: JSON.stringify({ plan, name, email, mobile }),
       });
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error(data.error || "Checkout failed");
@@ -75,6 +76,15 @@ export default function CheckoutButton({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Full name"
+                required
+                className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none"
+                style={{ background: "var(--bg)", border: "1px solid var(--line)", color: "var(--fg)" }}
+              />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email (unlocks your access)"
                 required
                 className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none"
                 style={{ background: "var(--bg)", border: "1px solid var(--line)", color: "var(--fg)" }}

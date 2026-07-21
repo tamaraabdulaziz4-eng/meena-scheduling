@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { setOrderEmail } from "@/app/lib/entitlements";
 
 export const maxDuration = 30;
 
@@ -34,12 +35,15 @@ async function authenticate(): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
-    const { plan, name, mobile } = await req.json();
+    const { plan, name, email, mobile } = await req.json();
 
     const chosen = PLANS[plan];
     if (!chosen) return NextResponse.json({ error: "Unknown plan." }, { status: 400 });
     if (!name || String(name).trim().length < 2) {
       return NextResponse.json({ error: "Please enter your name." }, { status: 400 });
+    }
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) {
+      return NextResponse.json({ error: "Please enter a valid email — it's how your access is unlocked." }, { status: 400 });
     }
     if (!mobile || !/^\d{6,15}$/.test(String(mobile).replace(/[\s+]/g, ""))) {
       return NextResponse.json({ error: "Please enter a valid mobile number." }, { status: 400 });
@@ -77,6 +81,13 @@ export async function POST(req: NextRequest) {
     }
     const invoice = await res.json();
     if (!invoice.url) throw new Error("Paylink did not return a payment URL");
+
+    // Remember which email bought this order so verification can unlock the account.
+    try {
+      await setOrderEmail(orderNumber, String(email));
+    } catch (e) {
+      console.error("setOrderEmail failed:", e);
+    }
 
     return NextResponse.json({ url: invoice.url, orderNumber, transactionNo: invoice.transactionNo });
   } catch (err) {

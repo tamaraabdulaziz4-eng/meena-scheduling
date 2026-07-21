@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { grantPass, ACCESS_COOKIE } from "@/app/lib/access";
-import { readSession, SESSION_COOKIE } from "@/app/lib/session";
-import { grantEntitlement } from "@/app/lib/entitlements";
+import { readSession, createSession, SESSION_COOKIE } from "@/app/lib/session";
+import { grantEntitlement, getOrderEmail } from "@/app/lib/entitlements";
 
 export const maxDuration = 30;
 
@@ -59,15 +59,25 @@ export async function GET(req: NextRequest) {
         path: "/",
         maxAge: windowSec,
       });
-      // If the buyer is signed in, persist the entitlement to their account so it
-      // works across devices (not just this browser's cookie).
-      const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
-      if (email) {
+      // Persist the entitlement to the buyer's account so it works across
+      // devices: prefer the email captured at checkout, else the signed-in session.
+      const buyerEmail =
+        (await getOrderEmail(orderNumber)) ||
+        readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
+      if (buyerEmail) {
         try {
-          await grantEntitlement(email, now + windowSec * 1000);
+          await grantEntitlement(buyerEmail, now + windowSec * 1000);
         } catch (e) {
           console.error("grantEntitlement failed:", e);
         }
+        // Auto-sign the buyer in on this device — paying IS proof of the email's owner intent.
+        res2.cookies.set(SESSION_COOKIE, createSession(buyerEmail, now), {
+          httpOnly: true,
+          secure: true,
+          sameSite: "lax",
+          path: "/",
+          maxAge: 30 * 24 * 60 * 60,
+        });
       }
     }
     return res2;
