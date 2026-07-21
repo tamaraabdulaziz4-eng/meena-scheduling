@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 
 interface OptimizeResult {
@@ -26,6 +26,12 @@ export default function OptimizePage() {
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
   const [paywall, setPaywall] = useState(false);
+  const [thinking, setThinking] = useState("");
+  const thinkRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
+  }, [thinking]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -84,6 +90,7 @@ export default function OptimizePage() {
     setResult(null);
     setCoverLetter("");
     setPaywall(false);
+    setThinking("");
     setLoading(true);
 
     try {
@@ -92,13 +99,43 @@ export default function OptimizePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resume, jobDescription }),
       });
-      const data = await res.json();
-      if (res.status === 402 || data.paywall) {
-        setPaywall(true);
-        return;
+
+      // Non-streaming replies (validation errors, paywall) are plain JSON.
+      const ctype = res.headers.get("content-type") || "";
+      if (!ctype.includes("ndjson")) {
+        const data = await res.json();
+        if (res.status === 402 || data.paywall) {
+          setPaywall(true);
+          return;
+        }
+        throw new Error(data.error || "Failed");
       }
-      if (!res.ok) throw new Error(data.error || "Failed");
-      setResult(data);
+
+      // Streaming: read NDJSON lines — live thinking, then the final result.
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let got: OptimizeResult | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.t === "think") setThinking((prev) => prev + msg.d);
+            else if (msg.t === "result") got = msg.d;
+            else if (msg.t === "error") throw new Error(msg.d);
+          } catch (e) {
+            if (e instanceof Error && e.message !== line) throw e;
+          }
+        }
+      }
+      if (!got) throw new Error("The analysis didn't complete. Please try again.");
+      setResult(got);
       setTab("resume");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
@@ -129,6 +166,19 @@ export default function OptimizePage() {
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-12">
+        {loading && thinking && (
+          <div className="card mx-auto mb-8 max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
+            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+              <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>AI analyzing your resume — live</span>
+            </div>
+            <div ref={thinkRef} className="max-h-64 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed"
+              style={{ color: "rgba(244,245,243,0.75)" }}>
+              {thinking.replace(/^ANALYSIS\s*/i, "")}
+              <span className="animate-pulse text-accent">▌</span>
+            </div>
+          </div>
+        )}
         {paywall && (
           <div className="card mx-auto mb-8 max-w-2xl p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
             <div className="chip mb-4">● Free scan used</div>

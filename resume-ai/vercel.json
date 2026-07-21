@@ -2,5 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "functions": {
+    "app/api/optimize/route.ts": { "maxDuration": 300 },
+    "app/api/cover-letter/route.ts": { "maxDuration": 300 }
+  }
 }
