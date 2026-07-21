@@ -269,13 +269,22 @@ export default function Home() {
 
       {/* ── Footer ── */}
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
-        <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">
-          <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold"
-              style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
-            <span className="text-sm font-bold">ResumeAI</span>
+        <div className="mx-auto max-w-5xl">
+          <nav className="mb-8 flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm">
+            <Link href="/ats-resume-checker" style={{ color: "var(--muted)" }}>ATS Resume Checker</Link>
+            <Link href="/free-resume-checker" style={{ color: "var(--muted)" }}>Free Resume Checker</Link>
+            <Link href="/jobscan-alternative" style={{ color: "var(--muted)" }}>Jobscan Alternative</Link>
+            <Link href="/optimize" style={{ color: "var(--muted)" }}>Optimize Now</Link>
+            <Link href="/#pricing" style={{ color: "var(--muted)" }}>Pricing</Link>
+          </nav>
+          <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
+            <div className="flex items-center gap-2">
+              <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold"
+                style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+              <span className="text-sm font-bold">ResumeAI</span>
+            </div>
+            <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the bots</p>
           </div>
-          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the bots</p>
         </div>
       </footer>
     </main>
