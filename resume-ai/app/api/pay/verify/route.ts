@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { grantPass, ACCESS_COOKIE } from "@/app/lib/access";
+import { readSession, SESSION_COOKIE } from "@/app/lib/session";
+import { grantEntitlement } from "@/app/lib/entitlements";
 
 export const maxDuration = 30;
 
@@ -48,15 +50,25 @@ export async function GET(req: NextRequest) {
 
     // On confirmed payment, grant a signed access pass as an httpOnly cookie.
     if (paid) {
-      const pass = grantPass(plan, Date.now());
-      const maxAge = plan === "monthly" ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
-      res2.cookies.set(ACCESS_COOKIE, pass, {
+      const now = Date.now();
+      const windowSec = plan === "monthly" ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
+      res2.cookies.set(ACCESS_COOKIE, grantPass(plan, now), {
         httpOnly: true,
         secure: true,
         sameSite: "lax",
         path: "/",
-        maxAge,
+        maxAge: windowSec,
       });
+      // If the buyer is signed in, persist the entitlement to their account so it
+      // works across devices (not just this browser's cookie).
+      const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
+      if (email) {
+        try {
+          await grantEntitlement(email, now + windowSec * 1000);
+        } catch (e) {
+          console.error("grantEntitlement failed:", e);
+        }
+      }
     }
     return res2;
   } catch (err) {

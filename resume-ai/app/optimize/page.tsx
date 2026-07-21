@@ -121,9 +121,10 @@ export default function OptimizePage() {
               style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
-          <a href="/#pricing" className="btn-accent px-4 py-2 text-sm">
-            Unlock unlimited →
-          </a>
+          <div className="flex items-center gap-5">
+            <Link href="/login" className="text-sm" style={{ color: "var(--muted)" }}>Sign in</Link>
+            <a href="/#pricing" className="btn-accent px-4 py-2 text-sm">Unlock unlimited →</a>
+          </div>
         </div>
       </nav>
 

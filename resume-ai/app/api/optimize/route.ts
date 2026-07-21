@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyPass, ACCESS_COOKIE, FREE_COOKIE, FREE_LIMIT } from "@/app/lib/access";
+import { readSession, SESSION_COOKIE } from "@/app/lib/session";
+import { hasActiveEntitlement } from "@/app/lib/entitlements";
 
 /**
  * Provider-agnostic optimizer.
@@ -188,8 +190,11 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Access gate ──
-    // Paid pass → unlimited. Otherwise allow FREE_LIMIT free scans, then require payment.
-    const hasPass = !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, Date.now());
+    // Unlimited if: signed-in account with an active entitlement, OR a valid paid
+    // cookie pass. Otherwise allow FREE_LIMIT free scans, then require payment.
+    const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, Date.now());
+    const accountUnlimited = email ? await hasActiveEntitlement(email, Date.now()) : false;
+    const hasPass = accountUnlimited || !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, Date.now());
     const freeUsed = parseInt(req.cookies.get(FREE_COOKIE)?.value || "0") || 0;
     if (!hasPass && freeUsed >= FREE_LIMIT) {
       return NextResponse.json(
