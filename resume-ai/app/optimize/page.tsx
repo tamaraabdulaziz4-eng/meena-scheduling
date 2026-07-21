@@ -115,7 +115,7 @@ export default function OptimizePage() {
               style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
-          <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "#"} className="btn-accent px-4 py-2 text-sm">
+          <a href="/#pricing" className="btn-accent px-4 py-2 text-sm">
             Unlock unlimited →
           </a>
         </div>
@@ -332,7 +332,7 @@ export default function OptimizePage() {
               <h3 className="text-2xl font-bold">Applying to more than one job?</h3>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Go unlimited for $19/mo — every application optimized, cover letters included.</p>
               <div className="mt-6 flex flex-wrap justify-center gap-4">
-                <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "#"} className="btn-accent px-8 py-3">Go unlimited — $19/mo →</a>
+                <a href="/#pricing" className="btn-accent px-8 py-3">Go unlimited — $19/mo →</a>
                 <button
                   onClick={() => { setResult(null); setResume(""); setJobDescription(""); }}
                   className="btn-ghost px-8 py-3 font-semibold" style={{ color: "var(--fg)" }}>

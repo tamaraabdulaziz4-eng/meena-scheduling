@@ -1,8 +1,6 @@
 import Link from "next/link";
 import ScanDemo from "./components/ScanDemo";
-
-const PAY_SINGLE = process.env.NEXT_PUBLIC_PAYLINK_SINGLE || "/optimize";
-const PAY_MONTHLY = process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "/optimize";
+import CheckoutButton from "./components/CheckoutButton";
 
 export default function Home() {
   return (
@@ -221,9 +219,9 @@ export default function Home() {
                 </li>
               ))}
             </ul>
-            <a href={PAY_SINGLE} className="btn-ghost mt-8 block py-3 text-center font-semibold" style={{ color: "var(--fg)" }}>
-              Get one optimization
-            </a>
+            <div className="mt-8">
+              <CheckoutButton plan="single" label="Get one optimization" variant="ghost" />
+            </div>
           </div>
 
           <div className="card p-8" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.05)", position: "relative" }}>
@@ -242,9 +240,9 @@ export default function Home() {
                 </li>
               ))}
             </ul>
-            <a href={PAY_MONTHLY} className="btn-accent mt-8 block py-3 text-center">
-              Go unlimited →
-            </a>
+            <div className="mt-8">
+              <CheckoutButton plan="monthly" label="Go unlimited →" variant="accent" />
+            </div>
           </div>
         </div>
         <p className="mt-8 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>
