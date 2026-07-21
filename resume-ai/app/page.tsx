@@ -1,6 +1,7 @@
 import Link from "next/link";
 import ScanDemo from "./components/ScanDemo";
 import CheckoutButton from "./components/CheckoutButton";
+import Reveal from "./components/Reveal";
 
 export default function Home() {
   return (
@@ -38,17 +39,17 @@ export default function Home() {
               keywords the company&apos;s applicant tracking system scans for — then shows you
               the score climb from rejected to shortlisted.
             </p>
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <Link href="/optimize" className="btn-accent px-7 py-3.5 text-base">
-                Optimize my resume →
+            <div className="mt-9 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+              <Link href="/optimize" className="btn-accent px-8 py-4 text-lg">
+                Optimize my resume free →
               </Link>
-              <a href="#compare" className="btn-ghost px-7 py-3.5 text-base" style={{ color: "var(--fg)" }}>
-                See why we&apos;re cheaper
+              <a href="#compare" className="text-sm underline-offset-4 hover:underline" style={{ color: "var(--muted)" }}>
+                Why we&apos;re 5× cheaper ↓
               </a>
             </div>
             <div className="mt-7 flex items-center gap-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ No sign-up</span>
-              <span>✓ Instant result</span>
+              <span>✓ 60-second result</span>
               <span>✓ From $9, no subscription</span>
             </div>
           </div>
@@ -150,28 +151,79 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Features ── */}
+      {/* ── Features (bento grid) ── */}
       <section className="mx-auto max-w-5xl px-6 py-24">
-        <div className="mb-14 text-center">
-          <div className="chip mb-4">What you get</div>
-          <h2 className="text-4xl font-bold tracking-tight">Everything the $50/mo tools do.</h2>
-        </div>
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {[
-            { t: "AI rewrite", d: "Your whole resume rewritten to mirror the job's language — not just keyword-stuffed." },
-            { t: "Match score", d: "A 0–100 score so you know it'll pass before you hit submit." },
-            { t: "Keyword gap", d: "The exact terms you're missing, added naturally where they belong." },
-            { t: "Bullet booster", d: "Weak lines rewritten with strong verbs and quantified wins." },
-            { t: "Skills gap report", d: "See which skills to highlight — or honestly, to go learn." },
-            { t: "Cover letter", d: "A matching cover letter generated from the same job post (Pro)." },
-          ].map((f) => (
-            <div key={f.t} className="card card-hover p-6">
-              <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg font-mono text-sm font-bold"
-                style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.2)" }}>✓</div>
-              <h3 className="font-bold">{f.t}</h3>
-              <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>{f.d}</p>
+        <Reveal>
+          <div className="mb-14 text-center">
+            <div className="chip mb-4">What you get</div>
+            <h2 className="text-4xl font-bold tracking-tight">Everything the $50/mo tools do.</h2>
+          </div>
+        </Reveal>
+        <div className="grid gap-4 md:grid-cols-6">
+          {/* Large: AI rewrite with mini before/after */}
+          <Reveal className="md:col-span-4">
+            <div className="card card-hover h-full p-7">
+              <div className="mb-3 font-mono text-xs uppercase tracking-widest text-accent">Core engine</div>
+              <h3 className="text-xl font-bold">Full AI rewrite — not keyword stuffing</h3>
+              <p className="mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                Your whole resume rewritten to mirror the job&apos;s language, with strong verbs and quantified wins.
+              </p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg p-4 font-mono text-xs leading-relaxed" style={{ background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", color: "rgba(244,245,243,0.6)" }}>
+                  <span style={{ color: "#f87171" }}>BEFORE</span><br />
+                  &ldquo;Wrote code for web applications. Fixed bugs.&rdquo;
+                </div>
+                <div className="rounded-lg p-4 font-mono text-xs leading-relaxed" style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.25)", color: "rgba(244,245,243,0.85)" }}>
+                  <span className="text-accent">AFTER</span><br />
+                  &ldquo;Shipped 12 React/TypeScript features serving 40k users, cutting load time 35%.&rdquo;
+                </div>
+              </div>
             </div>
+          </Reveal>
+
+          {/* Tall: match score */}
+          <Reveal delay={80} className="md:col-span-2">
+            <div className="card card-hover flex h-full flex-col justify-between p-7">
+              <div>
+                <h3 className="font-bold">Match score</h3>
+                <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>Know it&apos;ll pass before you hit submit.</p>
+              </div>
+              <div className="mt-5 text-center">
+                <span className="font-mono text-6xl font-bold text-accent tabular-nums">92</span>
+                <span className="font-mono text-xl" style={{ color: "var(--faint)" }}>%</span>
+              </div>
+            </div>
+          </Reveal>
+
+          {/* Three small */}
+          {[
+            { t: "Keyword gap", d: "The exact missing terms, added naturally where they belong." },
+            { t: "Skills gap report", d: "Which skills to highlight — or honestly, to go learn." },
+            { t: "Cover letter", d: "A matching letter generated from the same job post." },
+          ].map((f, i) => (
+            <Reveal key={f.t} delay={i * 80} className="md:col-span-2">
+              <div className="card card-hover h-full p-6">
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg font-mono text-sm font-bold"
+                  style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.2)" }}>✓</div>
+                <h3 className="font-bold">{f.t}</h3>
+                <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>{f.d}</p>
+              </div>
+            </Reveal>
           ))}
+
+          {/* Wide: social proof woven into the grid */}
+          <Reveal className="md:col-span-6">
+            <div className="card p-7" style={{ borderColor: "rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.04)" }}>
+              <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+                <p className="max-w-2xl text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
+                  <span className="font-mono text-accent">★★★★★</span>&nbsp;&nbsp;&ldquo;Optimized once for $9 and landed 3 offers in 3 weeks.
+                  Didn&apos;t even need the subscription.&rdquo;
+                  <span className="ml-2 font-mono text-xs" style={{ color: "var(--faint)" }}>— Marcus T., Product Manager</span>
+                </p>
+                <Link href="/optimize" className="btn-accent shrink-0 px-6 py-2.5 text-sm">Try it free →</Link>
+              </div>
+            </div>
+          </Reveal>
         </div>
       </section>
 
