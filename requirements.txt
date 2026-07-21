@@ -10,3 +10,4 @@ gunicorn==22.0.0
 httpx==0.28.1
 PyMuPDF==1.28.0
 segno==1.6.1
+crawl4ai==0.9.2
