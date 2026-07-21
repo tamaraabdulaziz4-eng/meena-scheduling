@@ -14,12 +14,12 @@ import { hasActiveEntitlement } from "@/app/lib/entitlements";
  */
 
 // Allow up to 60s — LLM generation of a full rewritten resume can take a while.
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 
 const PROMPT = (resume: string, jobDescription: string) =>
-  `You are an expert ATS resume optimizer and career coach. Analyze the resume and job description below, then provide a complete optimization.
+  `You are a senior ATS (applicant tracking system) analyst and executive resume writer. Perform a rigorous, honest analysis of this resume against this job description.
 
 RESUME:
 ${resume}
@@ -27,25 +27,36 @@ ${resume}
 JOB DESCRIPTION:
 ${jobDescription}
 
+ANALYSIS METHOD (do this carefully before writing the JSON):
+1. Extract from the JOB DESCRIPTION: the exact job title, 8-15 hard skills/tools/technologies, 3-5 soft skills, required years of experience, required qualifications/certifications, and domain-specific terminology.
+2. Check each extracted item against the RESUME (including synonyms and abbreviations — e.g. "JS" = "JavaScript").
+3. Score honestly using this weighted rubric:
+   - Hard skills & tools match: 40 points
+   - Job title / seniority alignment: 15 points
+   - Relevant experience & achievements: 20 points
+   - Required qualifications/certifications: 10 points
+   - Keyword & terminology coverage: 15 points
+   Do NOT inflate the score. A resume missing most hard skills must score below 50.
+
 Return a JSON object with exactly this structure:
 {
-  "matchScore": <number 0-100>,
-  "matchSummary": "<2-sentence summary of how well the resume matches>",
-  "missingKeywords": ["keyword1", "keyword2"],
-  "presentKeywords": ["keyword1", "keyword2"],
-  "skillsGap": ["skill1", "skill2"],
+  "matchScore": <number 0-100 from the rubric>,
+  "matchSummary": "<2-3 honest sentences: score drivers, biggest gap, is this application worth pursuing>",
+  "missingKeywords": ["<every important hard skill/tool/cert from the job description absent from the resume>"],
+  "presentKeywords": ["<job-description keywords genuinely present>"],
+  "skillsGap": ["<skills the candidate truly lacks — should learn or honestly address>"],
   "improvements": [
-    {"area": "area name", "issue": "what's wrong", "fix": "how to fix it"}
+    {"area": "<section>", "issue": "<specific problem>", "fix": "<specific actionable fix>"}
   ],
-  "optimizedResume": "<complete rewritten resume with all improvements applied, ATS keywords injected naturally, bullets strengthened with metrics and strong verbs>"
+  "optimizedResume": "<the COMPLETE rewritten resume as plain text>"
 }
 
-Requirements for optimizedResume:
-- Keep the candidate's real experience and facts — never invent
-- Inject relevant keywords from the job description naturally
-- Rewrite bullet points to start with strong action verbs and include metrics where plausible
-- Ensure every section is ATS-friendly (clear headings, no tables/graphics)
-- Make it professional and compelling
+Rules for optimizedResume:
+- NEVER invent employers, roles, dates, degrees, or achievements — only rephrase what exists
+- Structure: Name/contact, PROFESSIONAL SUMMARY (3 lines, contains the job title), SKILLS (grouped, front-loading required skills the candidate genuinely has), EXPERIENCE (reverse-chronological), EDUCATION
+- Bullets: strong action verbs, job keywords where truthful; where a metric should exist but wasn't given, write [add number]
+- Where a required skill is missing, surface adjacent/transferable experience — never fake it
+- Plain text, standard headings, ATS-parseable
 
 OUTPUT FORMAT — two parts, in this order:
 1. A section starting with the exact line "ANALYSIS" — your reasoning as short, punchy bullet lines (one finding per line, e.g. "• Job requires React — NOT in resume", "• 4+ yrs required — resume shows 4 ✓"). Shown to the user live, so keep each line concrete. EXACTLY 8-12 lines, no more.
@@ -114,6 +125,38 @@ function extractJson(text: string): string {
     return cleaned.slice(start, end + 1);
   }
   return cleaned;
+}
+
+
+/** Escape raw newlines/tabs that models sometimes emit inside JSON strings. */
+function repairJson(s: string): string {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  for (const ch of s) {
+    if (inStr) {
+      if (esc) { out += ch; esc = false; continue; }
+      if (ch === "\\") { out += ch; esc = true; continue; }
+      if (ch === '"') { inStr = false; out += ch; continue; }
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") continue;
+      if (ch === "\t") { out += "\\t"; continue; }
+      out += ch;
+    } else {
+      if (ch === '"') inStr = true;
+      out += ch;
+    }
+  }
+  return out;
+}
+
+function parseModelJson(raw: string): Record<string, unknown> {
+  const extracted = extractJson(raw);
+  try {
+    return JSON.parse(extracted);
+  } catch {
+    return JSON.parse(repairJson(extracted));
+  }
 }
 
 /**
@@ -274,7 +317,7 @@ export async function POST(req: NextRequest) {
               }));
 
           if (!raw.trim()) throw new Error("Empty response from AI provider");
-          const result = normalizeResult(JSON.parse(extractJson(raw)));
+          const result = normalizeResult(parseModelJson(raw));
           send({ t: "result", d: result });
         } catch (err) {
           console.error("Optimize stream error:", err);

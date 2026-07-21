@@ -15,6 +15,7 @@ export default function Home() {
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </div>
           <div className="flex items-center gap-6">
+            <Link href="/build" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>CV Builder</Link>
             <a href="#compare" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>vs Others</a>
             <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>Pricing</a>
             <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
@@ -325,6 +326,7 @@ export default function Home() {
           <nav className="mb-8 flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm">
             <Link href="/ats-resume-checker" style={{ color: "var(--muted)" }}>ATS Resume Checker</Link>
             <Link href="/free-resume-checker" style={{ color: "var(--muted)" }}>Free Resume Checker</Link>
+            <Link href="/build" style={{ color: "var(--muted)" }}>CV Builder</Link>
             <Link href="/jobscan-alternative" style={{ color: "var(--muted)" }}>Jobscan Alternative</Link>
             <Link href="/optimize" style={{ color: "var(--muted)" }}>Optimize Now</Link>
             <Link href="/#pricing" style={{ color: "var(--muted)" }}>Pricing</Link>
