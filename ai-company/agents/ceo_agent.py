@@ -1,4 +1,4 @@
-"""CEO Agent — runs daily, reads all agent outputs, makes top-level decisions, sets weekly priorities."""
+"""CEO Agent — orchestrates all 8 agents, writes daily brief, makes top-level decisions."""
 import sys, datetime
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
 
@@ -7,7 +7,7 @@ from config.settings import MODEL_CEO, PRODUCT_NAME
 
 AGENT = "ceo"
 
-def get_all_recent_decisions(limit: int = 20) -> str:
+def get_all_recent_decisions(limit=25) -> str:
     conn = get_db()
     rows = conn.execute(
         "SELECT agent, decision, rationale, created_at FROM decisions ORDER BY created_at DESC LIMIT ?",
@@ -16,10 +16,8 @@ def get_all_recent_decisions(limit: int = 20) -> str:
     conn.close()
     if not rows:
         return "No decisions logged yet."
-    lines = []
-    for r in rows:
-        lines.append(f"  [{r['agent'].upper()}] {r['decision']}: {(r['rationale'] or '')[:100]}")
-    return "\n".join(lines)
+    return "\n".join(f"  [{r['agent'].upper()}] {r['decision']}: {(r['rationale'] or '')[:100]}"
+                     for r in rows)
 
 def get_cost_summary() -> str:
     conn = get_db()
@@ -29,92 +27,112 @@ def get_cost_summary() -> str:
     ).fetchall()
     conn.close()
     lines = []
-    total_cost = 0
+    total = 0
     for r in rows:
-        lines.append(f"  {r['agent']}: {r['runs']} runs, {r['tokens']:,} tokens, ${r['cost']:.4f}")
-        total_cost += r['cost'] or 0
-    lines.append(f"  TOTAL 7-day cost: ${total_cost:.4f}")
-    return "\n".join(lines) if lines else "No agent activity yet."
+        lines.append(f"  {r['agent']:12s}: {r['runs']:3d} runs | {(r['tokens'] or 0):>8,} tokens | ${r['cost'] or 0:.4f}")
+        total += r['cost'] or 0
+    lines.append(f"  {'TOTAL':12s}: {'':>3s}      | {'':>8s}        | ${total:.4f}")
+    return "\n".join(lines) if lines else "No activity yet."
+
+def get_content_queue_summary() -> str:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT platform, COUNT(*) as count FROM content WHERE status='draft' GROUP BY platform"
+    ).fetchall()
+    conn.close()
+    return ", ".join(f"{r['platform']}:{r['count']}" for r in rows) if rows else "empty"
 
 def ceo_daily_brief() -> str:
     metrics = get_latest_metrics()
     decisions = get_all_recent_decisions()
     costs = get_cost_summary()
+    content = get_content_queue_summary()
 
-    prompt = f"""You are the CEO of {PRODUCT_NAME}, an AI-run bootstrapped SaaS company.
-Today is {datetime.date.today().isoformat()}.
+    prompt = f"""You are the CEO of {PRODUCT_NAME}, a bootstrapped AI SaaS company run by autonomous agents.
+Today: {datetime.date.today().isoformat()}
 
-COMPANY METRICS:
-- MRR: ${metrics.get('mrr', 0)}
-- Active Subscribers: {metrics.get('active_subscribers', 0)}
-- Conversion Rate: {metrics.get('conversion_rate', 0)}%
-- Weekly Visitors: {metrics.get('visitors', 0)}
-- Churn (recent): {metrics.get('churn_count', 0)}
+━━ COMPANY METRICS ━━
+MRR:                ${metrics.get('mrr', 0):.0f}
+Active Subscribers: {metrics.get('active_subscribers', 0)}
+Conversion Rate:    {metrics.get('conversion_rate', 0)}%
+Weekly Visitors:    {metrics.get('visitors', 0):,}
+Churn (recent):     {metrics.get('churn_count', 0)}
+Revenue Today:      ${metrics.get('revenue_single', 0) + metrics.get('revenue_monthly', 0):.0f}
 
-RECENT AGENT DECISIONS:
-{decisions}
-
-AGENT COSTS (7 days):
+━━ AGENT ACTIVITY (7 DAYS) ━━
 {costs}
 
-As CEO, write a daily brief that covers:
-1. **Company Status** (1 sentence: green/yellow/red and why)
-2. **Top Priority This Week** (one specific thing to focus on)
-3. **Blocker / Risk** (what could kill growth right now)
-4. **Decision**: one concrete action to take TODAY
-5. **Agent Instructions**: tell each agent what to prioritize differently this week
-6. **30-day Goal**: specific, measurable target
+━━ RECENT DECISIONS ━━
+{decisions}
 
-Be direct. This is for an automated company — every word becomes an action."""
+━━ CONTENT QUEUE ━━
+{content}
+
+Write the Daily CEO Brief:
+## Status: [GREEN/YELLOW/RED]
+One sentence on company health.
+
+## Top Priority This Week
+Single most important thing. Be specific.
+
+## Risk / Blocker
+What could kill growth right now.
+
+## Today's Decision
+One concrete action to take today.
+
+## Agent Instructions
+Quick directive for each agent: Analytics | BI | Pricing | Marketing | Growth | Design | Support | Product
+
+## 30-Day Target
+Specific MRR/subscriber goal.
+
+Be sharp. Every word is an action for an autonomous system."""
 
     brief, tokens, cost = ask_claude(prompt, MODEL_CEO,
-        system="You are a decisive startup CEO. Be specific and action-oriented. No fluff.",
-        max_tokens=1500)
+        system="You are a decisive startup CEO. Direct, specific, no fluff.", max_tokens=1500)
     log_agent(AGENT, "daily_brief", brief[:500], tokens, cost)
-    save_decision(AGENT, "daily_brief_complete", brief[:300])
+    save_decision(AGENT, "daily_brief", brief[:300])
     return brief
 
 def run():
-    print(f"\n{'='*60}")
-    print(f"  {PRODUCT_NAME} — CEO AGENT  [{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}]")
-    print(f"{'='*60}\n")
+    sep = "═" * 62
+    print(f"\n{sep}")
+    print(f"  🤖 {PRODUCT_NAME} — AI COMPANY OS  [{datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')}]")
+    print(f"{sep}\n")
     init_db()
 
-    # Run all agents in sequence
-    print("▶ Running Analytics Agent...")
-    import analytics_agent
-    analytics_result = analytics_agent.run()
+    agents = [
+        ("📊 Analytics",   "analytics_agent"),
+        ("💼 Business BI",  "bi_agent"),
+        ("💰 Pricing",      "pricing_agent"),
+        ("📢 Marketing",    "marketing_agent"),
+        ("🚀 Growth",       "growth_agent"),
+        ("🎨 Design/CRO",  "design_agent"),
+        ("🎧 Support",      "support_agent"),
+        ("🔧 Product",      "product_agent"),
+    ]
 
-    print("\n▶ Running Pricing Agent...")
-    import pricing_agent
-    pricing_result = pricing_agent.run()
+    results = {}
+    for label, module_name in agents:
+        print(f"▶ Running {label} Agent...")
+        try:
+            mod = __import__(module_name)
+            results[module_name] = mod.run()
+            print(f"  ✅ {label} complete\n")
+        except Exception as e:
+            print(f"  ❌ {label} error: {e}\n")
+            log_agent(AGENT, f"agent_error_{module_name}", str(e))
 
-    print("\n▶ Running Marketing Agent...")
-    import marketing_agent
-    marketing_result = marketing_agent.run()
-
-    print("\n▶ Running Growth Agent...")
-    import growth_agent
-    growth_result = growth_agent.run()
-
-    print("\n▶ Running Design Agent...")
-    import design_agent
-    design_result = design_agent.run()
-
-    print("\n▶ Running Support Agent...")
-    import support_agent
-    support_result = support_agent.run()
-
-    # CEO synthesizes everything
-    print(f"\n{'='*60}")
-    print("  CEO DAILY BRIEF")
-    print(f"{'='*60}\n")
+    print(f"\n{sep}")
+    print("  🧠 CEO DAILY BRIEF")
+    print(f"{sep}\n")
     brief = ceo_daily_brief()
     print(brief)
 
-    print(f"\n{'='*60}")
-    print("  ALL AGENTS COMPLETE")
-    print(f"{'='*60}\n")
+    print(f"\n{sep}")
+    print(f"  ✅ ALL 8 AGENTS COMPLETE — {datetime.datetime.now().strftime('%H:%M UTC')}")
+    print(f"{sep}\n")
     return brief
 
 if __name__ == "__main__":
