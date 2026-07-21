@@ -64,7 +64,7 @@ export default function CheckoutButton({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-1 font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>
-              {plan === "single" ? "One-time · $9" : "Unlimited · $19/mo"}
+              {plan === "single" ? "One-time · SAR 35 (~$9)" : "Unlimited · SAR 75/mo (~$19)"}
             </div>
             <h3 className="text-xl font-bold">Checkout</h3>
             <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
