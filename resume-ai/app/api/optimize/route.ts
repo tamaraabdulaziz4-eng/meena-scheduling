@@ -10,6 +10,9 @@ import { NextRequest, NextResponse } from "next/server";
  *   NVIDIA_API_KEY / ANTHROPIC_API_KEY   the credential for the chosen provider
  */
 
+// Allow up to 60s — LLM generation of a full rewritten resume can take a while.
+export const maxDuration = 60;
+
 const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 
 const PROMPT = (resume: string, jobDescription: string) =>
@@ -43,6 +46,58 @@ Requirements for optimizedResume:
 
 Return only the JSON, no other text.`;
 
+/** Flatten a resume that came back as a nested object into readable plain text. */
+function objectToResumeText(obj: unknown, depth = 0): string {
+  if (obj == null) return "";
+  if (typeof obj === "string") return obj;
+  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
+  const pad = "  ".repeat(depth);
+  if (Array.isArray(obj)) {
+    return obj.map((v) => `${pad}• ${objectToResumeText(v, depth + 1).trim()}`).join("\n");
+  }
+  if (typeof obj === "object") {
+    return Object.entries(obj as Record<string, unknown>)
+      .map(([k, v]) => {
+        const val = objectToResumeText(v, depth + 1);
+        const isBlock = typeof v === "object" && v !== null;
+        return isBlock ? `${pad}${k}:\n${val}` : `${pad}${k}: ${val}`;
+      })
+      .join("\n");
+  }
+  return String(obj);
+}
+
+/** Force a field into a string[] no matter what the model returned. */
+function toStringArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : String(x)));
+  if (typeof v === "string" && v.trim()) return v.split(/,\s*/).map((s) => s.trim());
+  return [];
+}
+
+/** Normalize a raw parsed result into the exact shape the UI expects. */
+function normalizeResult(r: Record<string, unknown>) {
+  const improvementsRaw = Array.isArray(r.improvements) ? r.improvements : [];
+  return {
+    matchScore: typeof r.matchScore === "number" ? r.matchScore : parseInt(String(r.matchScore)) || 0,
+    matchSummary: typeof r.matchSummary === "string" ? r.matchSummary : "",
+    missingKeywords: toStringArray(r.missingKeywords),
+    presentKeywords: toStringArray(r.presentKeywords),
+    skillsGap: toStringArray(r.skillsGap),
+    improvements: improvementsRaw.map((i) => {
+      const it = (i ?? {}) as Record<string, unknown>;
+      return {
+        area: String(it.area ?? ""),
+        issue: String(it.issue ?? ""),
+        fix: String(it.fix ?? ""),
+      };
+    }),
+    optimizedResume:
+      typeof r.optimizedResume === "string"
+        ? r.optimizedResume
+        : objectToResumeText(r.optimizedResume),
+  };
+}
+
 /** Robustly pull the first complete JSON object out of a model response. */
 function extractJson(text: string): string {
   const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -57,7 +112,7 @@ function extractJson(text: string): string {
 async function callNvidia(resume: string, jobDescription: string): Promise<string> {
   const key = process.env.NVIDIA_API_KEY;
   if (!key) throw new Error("NVIDIA_API_KEY is not set");
-  const model = process.env.AI_MODEL || "meta/llama-3.3-70b-instruct";
+  const model = process.env.AI_MODEL || "meta/llama-3.1-8b-instruct";
 
   const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
     method: "POST",
@@ -69,7 +124,7 @@ async function callNvidia(resume: string, jobDescription: string): Promise<strin
       model,
       temperature: 0.4,
       top_p: 0.9,
-      max_tokens: 4096,
+      max_tokens: 3000,
       messages: [
         { role: "system", content: "You are an expert ATS resume optimizer. You always respond with a single valid JSON object and nothing else." },
         { role: "user", content: PROMPT(resume, jobDescription) },
@@ -130,7 +185,7 @@ export async function POST(req: NextRequest) {
 
     if (!raw.trim()) throw new Error("Empty response from AI provider");
 
-    const result = JSON.parse(extractJson(raw));
+    const result = normalizeResult(JSON.parse(extractJson(raw)));
     return NextResponse.json(result);
   } catch (err) {
     console.error("Optimize error:", err);
