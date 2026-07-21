@@ -27,6 +27,13 @@ const PROMPT = (d: {
   jobDescription: string;
 }) => `You are an executive CV writer. Write a COMPLETE, professional CV for this person from their plain-language answers. They may have written casually — your job is to transform their words into polished, high-impact CV language.
 
+IMPORTANT — LANGUAGE HANDLING:
+- The candidate may answer in Arabic, English, or a mix. Understand it all.
+- The CV itself must ALWAYS be written in professional ENGLISH (global ATS systems and Gulf employers require English CVs) — translate and professionally rephrase any Arabic input.
+- Keep proper nouns sensible: transliterate Arabic names/companies to their common English forms.
+- If the candidate wrote mostly in Arabic, write the "tips" array in Arabic; otherwise in English.
+- In your ANALYSIS section, use the candidate's language (Arabic if they wrote Arabic).
+
 CANDIDATE ANSWERS:
 - Name: ${d.name}
 - Contact: ${d.contact}

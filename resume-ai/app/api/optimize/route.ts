@@ -21,6 +21,8 @@ const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 const PROMPT = (resume: string, jobDescription: string) =>
   `You are a senior ATS (applicant tracking system) analyst and executive resume writer. Perform a rigorous, honest analysis of this resume against this job description.
 
+LANGUAGE HANDLING: The resume or job description may be in Arabic, English, or mixed. Understand both. The optimizedResume must ALWAYS be professional ENGLISH (translate Arabic input — global ATS systems require English). If the user's resume was mostly Arabic, write matchSummary, improvements, and your ANALYSIS bullets in Arabic; otherwise in English. Keywords stay in English (that's what ATS systems match on).
+
 RESUME:
 ${resume}
 

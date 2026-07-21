@@ -15,6 +15,7 @@ export default function Home() {
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </div>
           <div className="flex items-center gap-6">
+            <Link href="/ar" className="text-sm font-semibold" style={{ color: "var(--accent)" }}>عربي</Link>
             <Link href="/build" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>CV Builder</Link>
             <a href="#compare" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>vs Others</a>
             <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>Pricing</a>
