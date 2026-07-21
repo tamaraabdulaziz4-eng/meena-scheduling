@@ -19,6 +19,7 @@ export default function OptimizePage() {
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"resume" | "analysis">("resume");
+  const [copied, setCopied] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,172 +44,170 @@ export default function OptimizePage() {
     }
   }
 
-  const scoreColor = result
-    ? result.matchScore >= 80 ? "#22c55e"
-    : result.matchScore >= 60 ? "#f59e0b"
-    : "#ef4444"
-    : "#6366f1";
+  const score = result?.matchScore ?? 0;
+  const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
+  const verdict = score >= 75 ? "SHORTLISTED" : score >= 55 ? "BORDERLINE" : "REJECTED BY ATS";
 
   return (
-    <main className="min-h-screen" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
+    <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
       {/* Nav */}
-      <nav className="flex items-center justify-between px-6 py-5 max-w-6xl mx-auto" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>R</div>
-          <span className="font-bold text-lg text-white">ResumeAI</span>
-        </Link>
-        <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "#"}
-          className="text-white text-sm font-semibold px-5 py-2 rounded-lg"
-          style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-          Unlock Unlimited →
-        </a>
+      <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold"
+              style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+          </Link>
+          <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "#"} className="btn-accent px-4 py-2 text-sm">
+            Unlock unlimited →
+          </a>
+        </div>
       </nav>
 
-      <div className="max-w-6xl mx-auto px-6 py-10">
-        <div className="text-center mb-10">
-          <h1 className="text-4xl font-extrabold text-white mb-3">Resume Optimizer</h1>
-          <p style={{ opacity: 0.5 }}>Paste your resume and the job description to get started</p>
-        </div>
+      <div className="mx-auto max-w-6xl px-6 py-12">
+        {!result && (
+          <div className="mb-10 text-center">
+            <div className="chip mb-4">● Free scan</div>
+            <h1 className="text-4xl font-extrabold tracking-tight">Run your resume through the scanner</h1>
+            <p className="mt-3" style={{ color: "var(--muted)" }}>Paste both sides. We&apos;ll show you the score and the rewrite.</p>
+          </div>
+        )}
 
         {!result ? (
-          <form onSubmit={handleSubmit} className="grid md:grid-cols-2 gap-6">
+          <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
             <div>
-              <label className="block text-sm font-semibold mb-3 text-white">Your Current Resume</label>
+              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Your current resume</label>
               <textarea
                 value={resume}
                 onChange={(e) => setResume(e.target.value)}
-                placeholder="Paste your full resume here...&#10;&#10;Include: Work experience, education, skills, contact info..."
+                placeholder="Paste your full resume here...&#10;&#10;Work experience, education, skills, contact info..."
                 rows={20}
                 required
-                className="w-full rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0f0f5" }}
+                className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }}
               />
-              <p className="text-xs mt-2" style={{ opacity: 0.4 }}>{resume.length}/8000 characters</p>
+              <p className="mt-2 font-mono text-xs" style={{ color: "var(--faint)" }}>{resume.length}/8000</p>
             </div>
 
             <div>
-              <label className="block text-sm font-semibold mb-3 text-white">Job Description</label>
+              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Job description</label>
               <textarea
                 value={jobDescription}
                 onChange={(e) => setJobDescription(e.target.value)}
-                placeholder="Paste the job posting here...&#10;&#10;Include: Job title, requirements, responsibilities, qualifications..."
+                placeholder="Paste the job posting here...&#10;&#10;Title, requirements, responsibilities, qualifications..."
                 rows={20}
                 required
-                className="w-full rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0f0f5" }}
+                className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }}
               />
-              <p className="text-xs mt-2" style={{ opacity: 0.4 }}>{jobDescription.length}/4000 characters</p>
+              <p className="mt-2 font-mono text-xs" style={{ color: "var(--faint)" }}>{jobDescription.length}/4000</p>
             </div>
 
-            <div className="md:col-span-2 text-center">
+            <div className="text-center md:col-span-2">
               {error && (
-                <div className="mb-4 px-4 py-3 rounded-xl text-sm" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171" }}>
+                <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
                   {error}
                 </div>
               )}
               <button
                 type="submit"
                 disabled={loading || !resume.trim() || !jobDescription.trim()}
-                className="text-white font-bold px-12 py-4 rounded-xl text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
+                className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
                 {loading ? (
-                  <span className="flex items-center gap-3 justify-center">
-                    <span className="inline-block w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Analyzing & Optimizing...
+                  <span className="flex items-center justify-center gap-3">
+                    <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                    Scanning &amp; optimizing...
                   </span>
-                ) : "⚡ Optimize My Resume"}
+                ) : "⚡ Scan & optimize"}
               </button>
-              <p className="mt-3 text-sm" style={{ opacity: 0.4 }}>Takes about 30-60 seconds</p>
+              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~30–60 seconds</p>
             </div>
           </form>
         ) : (
           <div>
             {/* Score banner */}
-            <div className="rounded-2xl p-8 mb-8 text-center" style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)" }}>
-              <div className="text-sm font-bold tracking-widest mb-3" style={{ opacity: 0.5 }}>ATS MATCH SCORE</div>
-              <div className="text-8xl font-extrabold mb-3" style={{ color: scoreColor }}>{result.matchScore}</div>
-              <div className="text-sm mb-4" style={{ opacity: 0.5 }}>out of 100</div>
-              <p className="text-sm max-w-xl mx-auto" style={{ opacity: 0.7 }}>{result.matchSummary}</p>
+            <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
+              <div className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>ATS Match Score</div>
+              <div className="my-2 flex items-baseline justify-center gap-1">
+                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{score}</span>
+                <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
+              </div>
+              <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold tracking-wider"
+                style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>
+                {verdict}
+              </div>
+              <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-6">
+            <div className="mb-6 flex gap-2">
               {(["resume", "analysis"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className="px-5 py-2 rounded-lg text-sm font-semibold capitalize transition-all"
+                  className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
                   style={tab === t
-                    ? { background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "white" }
-                    : { background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                  {t === "resume" ? "✨ Optimized Resume" : "📊 Full Analysis"}
+                    ? { background: "var(--accent)", color: "#05130a" }
+                    : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  {t === "resume" ? "Optimized resume" : "Full analysis"}
                 </button>
               ))}
             </div>
 
             {tab === "resume" && (
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold text-white">Your Optimized Resume</h2>
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-xl font-bold">Your optimized resume</h2>
                   <button
-                    onClick={() => navigator.clipboard.writeText(result.optimizedResume)}
-                    className="text-sm px-4 py-2 rounded-lg font-semibold"
-                    style={{ background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.3)" }}>
-                    📋 Copy to Clipboard
+                    onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold"
+                    style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    {copied ? "✓ Copied" : "Copy to clipboard"}
                   </button>
                 </div>
-                <div className="rounded-xl p-6 text-sm leading-relaxed whitespace-pre-wrap"
-                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", color: "#d4d4e0", fontFamily: "monospace" }}>
+                <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
+                  style={{ color: "rgba(244,245,243,0.85)" }}>
                   {result.optimizedResume}
                 </div>
               </div>
             )}
 
             {tab === "analysis" && (
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Missing Keywords */}
-                <div className="rounded-xl p-6" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
-                  <h3 className="font-bold text-white mb-4">❌ Missing Keywords ({result.missingKeywords.length})</h3>
+              <div className="grid gap-6 md:grid-cols-2">
+                <div className="card p-6" style={{ borderColor: "rgba(248,113,113,0.2)" }}>
+                  <h3 className="mb-4 font-bold">Missing keywords ({result.missingKeywords.length})</h3>
                   <div className="flex flex-wrap gap-2">
                     {result.missingKeywords.map((k) => (
-                      <span key={k} className="px-3 py-1 rounded-full text-xs font-medium"
-                        style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>{k}</span>
+                      <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(248,113,113,0.14)", color: "#f87171" }}>{k}</span>
                     ))}
                   </div>
                 </div>
 
-                {/* Present Keywords */}
-                <div className="rounded-xl p-6" style={{ background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.2)" }}>
-                  <h3 className="font-bold text-white mb-4">✅ Present Keywords ({result.presentKeywords.length})</h3>
+                <div className="card p-6" style={{ borderColor: "rgba(74,222,128,0.2)" }}>
+                  <h3 className="mb-4 font-bold">Present keywords ({result.presentKeywords.length})</h3>
                   <div className="flex flex-wrap gap-2">
                     {result.presentKeywords.map((k) => (
-                      <span key={k} className="px-3 py-1 rounded-full text-xs font-medium"
-                        style={{ background: "rgba(34,197,94,0.15)", color: "#4ade80" }}>{k}</span>
+                      <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{k}</span>
                     ))}
                   </div>
                 </div>
 
-                {/* Skills Gap */}
-                <div className="rounded-xl p-6" style={{ background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.2)" }}>
-                  <h3 className="font-bold text-white mb-4">⚠️ Skills to Highlight ({result.skillsGap.length})</h3>
+                <div className="card p-6" style={{ borderColor: "rgba(251,191,36,0.2)" }}>
+                  <h3 className="mb-4 font-bold">Skills to highlight ({result.skillsGap.length})</h3>
                   <ul className="space-y-2">
                     {result.skillsGap.map((s) => (
-                      <li key={s} className="flex items-center gap-2 text-sm" style={{ color: "#fbbf24" }}>
-                        <span>→</span> {s}
-                      </li>
+                      <li key={s} className="flex items-center gap-2 text-sm" style={{ color: "#fbbf24" }}><span>→</span> {s}</li>
                     ))}
                   </ul>
                 </div>
 
-                {/* Improvements */}
-                <div className="rounded-xl p-6" style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.2)" }}>
-                  <h3 className="font-bold text-white mb-4">🔧 Improvements Made</h3>
+                <div className="card p-6" style={{ borderColor: "rgba(74,222,128,0.15)" }}>
+                  <h3 className="mb-4 font-bold">Improvements made</h3>
                   <ul className="space-y-4">
                     {result.improvements.map((imp) => (
                       <li key={imp.area}>
-                        <div className="text-xs font-bold mb-1" style={{ color: "#a5b4fc" }}>{imp.area}</div>
-                        <div className="text-xs mb-1" style={{ opacity: 0.5 }}>{imp.issue}</div>
+                        <div className="mb-1 font-mono text-xs font-bold text-accent">{imp.area}</div>
+                        <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>{imp.issue}</div>
                         <div className="text-xs" style={{ color: "#86efac" }}>✓ {imp.fix}</div>
                       </li>
                     ))}
@@ -218,20 +217,15 @@ export default function OptimizePage() {
             )}
 
             {/* Bottom CTA */}
-            <div className="mt-10 rounded-2xl p-8 text-center" style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15))", border: "1px solid rgba(99,102,241,0.3)" }}>
-              <h3 className="text-2xl font-bold text-white mb-3">Want Unlimited Optimizations?</h3>
-              <p className="text-sm mb-6" style={{ opacity: 0.6 }}>Optimize for every job you apply to. Cover letter generator included.</p>
-              <div className="flex gap-4 justify-center flex-wrap">
-                <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "#"}
-                  className="text-white font-bold px-8 py-3 rounded-xl"
-                  style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-                  Get Unlimited — $19/mo →
-                </a>
+            <div className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+              <h3 className="text-2xl font-bold">Applying to more than one job?</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Go unlimited for $19/mo — every application optimized, cover letters included.</p>
+              <div className="mt-6 flex flex-wrap justify-center gap-4">
+                <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "#"} className="btn-accent px-8 py-3">Go unlimited — $19/mo →</a>
                 <button
                   onClick={() => { setResult(null); setResume(""); setJobDescription(""); }}
-                  className="font-semibold px-8 py-3 rounded-xl"
-                  style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.6)" }}>
-                  Optimize Another
+                  className="btn-ghost px-8 py-3 font-semibold" style={{ color: "var(--fg)" }}>
+                  Optimize another
                 </button>
               </div>
             </div>

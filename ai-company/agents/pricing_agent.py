@@ -1,9 +1,25 @@
 """Pricing Agent — monitors conversion rates, recommends and logs pricing experiments."""
-import datetime
+import datetime, json, pathlib
 from base import get_db, log_agent, ask_claude, save_decision, get_latest_metrics
 from config.settings import MODEL_DEFAULT, PRODUCT_NAME, PRICE_SINGLE, PRICE_MONTHLY
 
 AGENT = "pricing"
+
+RESEARCH_PATH = pathlib.Path(__file__).parent.parent / "research" / "market_research.json"
+
+def load_competitor_intel() -> str:
+    """Real competitor pricing gathered via Crawl4AI market research."""
+    try:
+        data = json.loads(RESEARCH_PATH.read_text())
+    except Exception:
+        return "No competitor research available."
+    lines = []
+    for c in data.get("competitors", []):
+        paid = ", ".join(c.get("paid", []))
+        lines.append(f"  {c['name']}: {paid} (free: {c.get('free','n/a')}) — weakness: {c.get('weakness','')}")
+    wedge = data.get("positioning_wedge", {})
+    return ("\n".join(lines) +
+            f"\n\nMarket wedge: {wedge.get('insight','')} Our play: {wedge.get('our_play','')}")
 
 PRICING_VARIANTS = [
     {"name": "control",   "single": 9,  "monthly": 19},
@@ -30,6 +46,7 @@ def get_pricing_history() -> str:
 def recommend_pricing() -> dict:
     metrics = get_latest_metrics()
     history = get_pricing_history()
+    competitor_intel = load_competitor_intel()
 
     prompt = f"""You are the Pricing Agent for {PRODUCT_NAME}, an AI resume optimizer.
 
@@ -39,6 +56,9 @@ Current metrics:
 - Subscribers: {metrics.get('active_subscribers', 0)}
 - Conversion rate: {metrics.get('conversion_rate', 0)}%
 - Weekly visitors: ~{metrics.get('visitors', 0)}
+
+REAL competitor pricing (from Crawl4AI market research):
+{competitor_intel}
 
 Pricing test history:
 {history}

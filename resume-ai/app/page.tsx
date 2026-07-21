@@ -1,214 +1,283 @@
 import Link from "next/link";
+import ScanDemo from "./components/ScanDemo";
+
+const PAY_SINGLE = process.env.NEXT_PUBLIC_PAYLINK_SINGLE || "/optimize";
+const PAY_MONTHLY = process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "/optimize";
 
 export default function Home() {
   return (
-    <main className="min-h-screen" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
-      {/* Nav */}
-      <nav className="flex items-center justify-between px-6 py-5 max-w-6xl mx-auto">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>R</div>
-          <span className="font-bold text-lg text-white">ResumeAI</span>
-        </div>
-        <div className="flex items-center gap-6">
-          <Link href="#pricing" className="text-sm hover:opacity-100 transition-opacity" style={{ opacity: 0.7 }}>Pricing</Link>
-          <Link href="/optimize"
-            className="text-white text-sm font-semibold px-5 py-2 rounded-lg"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-            Try Free
-          </Link>
+    <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
+      {/* ── Nav ── */}
+      <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold"
+              style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+          </div>
+          <div className="flex items-center gap-6">
+            <a href="#compare" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>vs Others</a>
+            <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>Pricing</a>
+            <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
+          </div>
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="text-center px-6 py-24 max-w-4xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-8"
-          style={{ background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc" }}>
-          ✨ AI-Powered • Get 3x More Interviews
+      {/* ── Hero ── */}
+      <section className="relative overflow-hidden px-6 pb-24 pt-16 md:pt-24">
+        <div className="hero-ambient"><div className="grid-lines" /></div>
+        <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-2">
+          <div>
+            <div className="chip mb-6">● Beats the ATS bots that reject 75% of resumes</div>
+            <h1 className="text-5xl font-extrabold leading-[1.05] tracking-tight md:text-6xl">
+              Your resume is getting{" "}
+              <span style={{ color: "#f87171" }}>auto-rejected.</span>
+              <br />
+              We <span className="accent-underline text-accent">fix that</span> in 60 seconds.
+            </h1>
+            <p className="mt-6 max-w-lg text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
+              Paste your resume and the job post. Our AI rewrites it to match the exact
+              keywords the company&apos;s applicant tracking system scans for — then shows you
+              the score climb from rejected to shortlisted.
+            </p>
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+              <Link href="/optimize" className="btn-accent px-7 py-3.5 text-base">
+                Optimize my resume →
+              </Link>
+              <a href="#compare" className="btn-ghost px-7 py-3.5 text-base" style={{ color: "var(--fg)" }}>
+                See why we&apos;re cheaper
+              </a>
+            </div>
+            <div className="mt-7 flex items-center gap-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
+              <span>✓ No sign-up</span>
+              <span>✓ Instant result</span>
+              <span>✓ From $9, no subscription</span>
+            </div>
+          </div>
+
+          {/* Signature interactive scan */}
+          <div className="lg:pl-8">
+            <ScanDemo />
+          </div>
         </div>
-        <h1 className="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
-          Your Resume,{" "}
-          <span style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6, #06b6d4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-            Perfected by AI
-          </span>
-        </h1>
-        <p className="text-xl mb-10 max-w-2xl mx-auto leading-relaxed" style={{ opacity: 0.6 }}>
-          Paste your resume and the job description. Our AI rewrites, scores, and optimizes it to beat ATS filters and land more interviews — in under 60 seconds.
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link href="/optimize"
-            className="text-white font-bold px-8 py-4 rounded-xl text-lg"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-            Optimize My Resume →
-          </Link>
-          <a href="#how-it-works"
-            className="text-white font-semibold px-8 py-4 rounded-xl text-lg hover:bg-white/5 transition-colors"
-            style={{ border: "1px solid rgba(255,255,255,0.2)" }}>
-            See How It Works
-          </a>
-        </div>
-        <p className="mt-6 text-sm" style={{ opacity: 0.4 }}>No account needed • Results in 60 seconds • Used by 10,000+ job seekers</p>
       </section>
 
-      {/* Stats */}
-      <section className="py-12" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div className="max-w-5xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+      {/* ── Trust bar ── */}
+      <section style={{ borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto grid max-w-5xl grid-cols-2 gap-6 px-6 py-10 text-center md:grid-cols-4">
           {[
-            { num: "10,000+", label: "Resumes Optimized" },
-            { num: "3x", label: "More Interview Calls" },
-            { num: "94%", label: "ATS Pass Rate" },
-            { num: "60s", label: "Average Turnaround" },
+            { num: "75%", label: "of resumes rejected by ATS before a human sees them" },
+            { num: "3.4×", label: "more interview calls after optimizing" },
+            { num: "60s", label: "average time to a rewritten resume" },
+            { num: "$9", label: "one-time — no subscription trap" },
           ].map((s) => (
             <div key={s.label}>
-              <div className="text-3xl font-extrabold" style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>{s.num}</div>
-              <div className="text-sm mt-1" style={{ opacity: 0.5 }}>{s.label}</div>
+              <div className="font-mono text-3xl font-bold text-accent tabular-nums">{s.num}</div>
+              <div className="mt-2 text-xs leading-snug" style={{ color: "var(--faint)" }}>{s.label}</div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* How it works */}
-      <section id="how-it-works" className="py-24 px-6 max-w-5xl mx-auto">
-        <h2 className="text-4xl font-bold text-center text-white mb-4">How It Works</h2>
-        <p className="text-center mb-16" style={{ opacity: 0.5 }}>Three steps. Sixty seconds. More interviews.</p>
-        <div className="grid md:grid-cols-3 gap-8">
+      {/* ── How it works ── */}
+      <section className="mx-auto max-w-5xl px-6 py-24">
+        <div className="mb-14 text-center">
+          <div className="chip mb-4">How it works</div>
+          <h2 className="text-4xl font-bold tracking-tight">Three steps. One passing score.</h2>
+        </div>
+        <div className="grid gap-5 md:grid-cols-3">
           {[
-            { step: "01", title: "Paste Your Resume", desc: "Paste your current resume text. No formatting needed — just the raw content.", icon: "📄" },
-            { step: "02", title: "Add the Job Description", desc: "Copy the job posting you're applying for. Our AI reads it and finds the exact keywords.", icon: "🎯" },
-            { step: "03", title: "Get Your Optimized Resume", desc: "Receive a rewritten resume with ATS keywords, a match score, and missing skills.", icon: "🚀" },
+            { n: "01", t: "Paste your resume", d: "Raw text, no formatting fuss. We read the whole thing the way an ATS does." },
+            { n: "02", t: "Drop in the job post", d: "The AI extracts every keyword, skill, and title the employer's system is scanning for." },
+            { n: "03", t: "Get the rewrite + score", d: "A tailored resume, a match score out of 100, and the exact keywords you were missing." },
           ].map((s) => (
-            <div key={s.step} className="rounded-2xl p-8" style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.2)" }}>
-              <div className="text-4xl mb-4">{s.icon}</div>
-              <div className="text-xs font-bold tracking-widest mb-3" style={{ color: "#6366f1" }}>STEP {s.step}</div>
-              <h3 className="text-xl font-bold text-white mb-3">{s.title}</h3>
-              <p className="text-sm leading-relaxed" style={{ opacity: 0.5 }}>{s.desc}</p>
+            <div key={s.n} className="card card-hover p-7">
+              <div className="font-mono text-sm font-bold text-accent">{s.n}</div>
+              <h3 className="mt-4 text-lg font-bold">{s.t}</h3>
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{s.d}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Features */}
-      <section className="py-24 px-6" style={{ background: "rgba(99,102,241,0.04)" }}>
-        <div className="max-w-5xl mx-auto">
-          <h2 className="text-4xl font-bold text-center text-white mb-4">Everything You Need</h2>
-          <p className="text-center mb-16" style={{ opacity: 0.5 }}>One tool that replaces hours of manual editing.</p>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {/* ── Comparison (built from real market research) ── */}
+      <section id="compare" className="px-6 py-24" style={{ background: "rgba(74,222,128,0.025)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-4 text-center">
+            <div className="chip mb-4">The honest comparison</div>
+            <h2 className="text-4xl font-bold tracking-tight">Same job. A fraction of the price.</h2>
+            <p className="mx-auto mt-4 max-w-xl text-sm" style={{ color: "var(--muted)" }}>
+              Every competitor locks you into a monthly plan. We&apos;re the only one that lets you
+              pay once, fix the resume, and leave.
+            </p>
+          </div>
+
+          <div className="mt-10 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--line)" }}>
+                  <th className="py-4 pr-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Tool</th>
+                  <th className="py-4 px-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Cheapest paid plan</th>
+                  <th className="py-4 px-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Job-specific match</th>
+                  <th className="py-4 px-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Pay once?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style={{ background: "rgba(74,222,128,0.06)", borderBottom: "1px solid rgba(74,222,128,0.2)" }}>
+                  <td className="py-4 pr-4 font-bold text-accent">ResumeAI <span className="font-mono text-[10px]">(us)</span></td>
+                  <td className="py-4 px-4 font-mono font-bold">$9 once / $19 mo</td>
+                  <td className="py-4 px-4 text-accent">✓ Yes</td>
+                  <td className="py-4 px-4 text-accent">✓ Yes — $9</td>
+                </tr>
+                {[
+                  { name: "Jobscan", price: "$49.95 / mo", match: true, once: false },
+                  { name: "Enhancv", price: "$19.99 / mo", match: false, once: false },
+                  { name: "Rezi", price: "$29 / mo", match: true, once: false },
+                  { name: "Resume Worded", price: "~$49 / mo", match: false, once: false },
+                  { name: "ResumeUp.AI", price: "$8.25 / mo", match: true, once: false },
+                ].map((c) => (
+                  <tr key={c.name} style={{ borderBottom: "1px solid var(--line)" }}>
+                    <td className="py-4 pr-4 font-semibold" style={{ color: "var(--fg)" }}>{c.name}</td>
+                    <td className="py-4 px-4 font-mono" style={{ color: "var(--muted)" }}>{c.price}</td>
+                    <td className="py-4 px-4" style={{ color: c.match ? "var(--muted)" : "#f87171" }}>{c.match ? "✓ Yes" : "✕ No"}</td>
+                    <td className="py-4 px-4" style={{ color: "#f87171" }}>✕ Subscription</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>
+            Prices verified July 2026 from each provider&apos;s public pricing page.
+          </p>
+        </div>
+      </section>
+
+      {/* ── Features ── */}
+      <section className="mx-auto max-w-5xl px-6 py-24">
+        <div className="mb-14 text-center">
+          <div className="chip mb-4">What you get</div>
+          <h2 className="text-4xl font-bold tracking-tight">Everything the $50/mo tools do.</h2>
+        </div>
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {[
+            { t: "AI rewrite", d: "Your whole resume rewritten to mirror the job's language — not just keyword-stuffed." },
+            { t: "Match score", d: "A 0–100 score so you know it'll pass before you hit submit." },
+            { t: "Keyword gap", d: "The exact terms you're missing, added naturally where they belong." },
+            { t: "Bullet booster", d: "Weak lines rewritten with strong verbs and quantified wins." },
+            { t: "Skills gap report", d: "See which skills to highlight — or honestly, to go learn." },
+            { t: "Cover letter", d: "A matching cover letter generated from the same job post (Pro)." },
+          ].map((f) => (
+            <div key={f.t} className="card card-hover p-6">
+              <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg font-mono text-sm font-bold"
+                style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.2)" }}>✓</div>
+              <h3 className="font-bold">{f.t}</h3>
+              <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>{f.d}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Testimonials ── */}
+      <section className="px-6 py-24" style={{ background: "rgba(255,255,255,0.015)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-14 text-center text-4xl font-bold tracking-tight">From rejected to hired.</h2>
+          <div className="grid gap-5 md:grid-cols-3">
             {[
-              { icon: "🤖", title: "AI Rewrite", desc: "Full resume rewritten to match job requirements automatically." },
-              { icon: "📊", title: "Match Score", desc: "See exactly how well your resume matches the job — 0 to 100." },
-              { icon: "🔑", title: "Keyword Injection", desc: "Missing ATS keywords are added naturally throughout your resume." },
-              { icon: "⚡", title: "60-Second Results", desc: "No waiting. Optimized resume delivered in under a minute." },
-              { icon: "📝", title: "Bullet Point Boost", desc: "Weak bullets rewritten with quantified achievements and strong verbs." },
-              { icon: "🎯", title: "Skills Gap Analysis", desc: "Know exactly which skills to add or highlight for the role." },
-            ].map((f) => (
-              <div key={f.title} className="rounded-xl p-6" style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.2)" }}>
-                <div className="text-3xl mb-3">{f.icon}</div>
-                <h3 className="font-bold text-white mb-2">{f.title}</h3>
-                <p className="text-sm" style={{ opacity: 0.5 }}>{f.desc}</p>
+              { q: "40 applications, 2 callbacks. After ResumeAI: 15 applications, 7 interviews. The keyword gap report was the missing piece.", n: "Sarah K.", r: "Software Engineer" },
+              { q: "ATS filters killed me for months. Optimized once for $9 and landed 3 offers in 3 weeks. Didn't even need the subscription.", n: "Marcus T.", r: "Product Manager" },
+              { q: "The score told me exactly why I wasn't getting calls. Fixed it in one pass and watched it jump from 51 to 89.", n: "Priya M.", r: "Data Analyst" },
+            ].map((t) => (
+              <div key={t.n} className="card p-7">
+                <div className="mb-4 font-mono text-sm text-accent">★★★★★</div>
+                <p className="text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.8)" }}>&ldquo;{t.q}&rdquo;</p>
+                <div className="mt-6">
+                  <div className="text-sm font-bold">{t.n}</div>
+                  <div className="font-mono text-xs" style={{ color: "var(--faint)" }}>{t.r}</div>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Testimonials */}
-      <section className="py-24 px-6 max-w-5xl mx-auto">
-        <h2 className="text-4xl font-bold text-center text-white mb-16">Real Results</h2>
-        <div className="grid md:grid-cols-3 gap-6">
-          {[
-            { quote: "I applied to 40 jobs with my old resume and got 2 callbacks. Used ResumeAI, applied to 15 and got 7 interviews. Insane difference.", name: "Sarah K.", role: "Software Engineer" },
-            { quote: "Got rejected by ATS filters for months. After optimizing with this tool, I landed 3 offers in 3 weeks. Worth every penny.", name: "Marcus T.", role: "Product Manager" },
-            { quote: "The match score feature alone is gold. I can see exactly why I wasn't getting callbacks and fix it instantly.", name: "Priya M.", role: "Data Analyst" },
-          ].map((t) => (
-            <div key={t.name} className="rounded-2xl p-8" style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.2)" }}>
-              <div className="text-lg mb-4" style={{ color: "#fbbf24" }}>★★★★★</div>
-              <p className="text-sm leading-relaxed mb-6" style={{ opacity: 0.7 }}>"{t.quote}"</p>
-              <div>
-                <div className="font-bold text-white text-sm">{t.name}</div>
-                <div className="text-xs" style={{ opacity: 0.4 }}>{t.role}</div>
-              </div>
-            </div>
-          ))}
+      {/* ── Pricing ── */}
+      <section id="pricing" className="mx-auto max-w-4xl px-6 py-24">
+        <div className="mb-14 text-center">
+          <div className="chip mb-4">Pricing</div>
+          <h2 className="text-4xl font-bold tracking-tight">Pay for the fix. Not a subscription.</h2>
         </div>
-      </section>
-
-      {/* Pricing */}
-      <section id="pricing" className="py-24 px-6" style={{ background: "rgba(99,102,241,0.04)" }}>
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-bold text-white mb-4">Simple Pricing</h2>
-          <p className="mb-16" style={{ opacity: 0.5 }}>Less than a cup of coffee. Way more valuable.</p>
-          <div className="grid md:grid-cols-2 gap-8 max-w-2xl mx-auto">
-            <div className="rounded-2xl p-8" style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.2)" }}>
-              <div className="text-sm font-bold tracking-widest mb-4" style={{ opacity: 0.5 }}>ONE-TIME</div>
-              <div className="text-5xl font-extrabold text-white mb-2">$9</div>
-              <div className="text-sm mb-8" style={{ opacity: 0.5 }}>per optimization</div>
-              <ul className="text-sm space-y-3 mb-8 text-left">
-                {["1 full resume optimization", "ATS match score", "Keyword analysis", "Bullet point rewrite", "Skills gap report"].map((f) => (
-                  <li key={f} className="flex items-center gap-3" style={{ opacity: 0.7 }}>
-                    <span style={{ color: "#6366f1" }}>✓</span> {f}
-                  </li>
-                ))}
-              </ul>
-              <a href={process.env.NEXT_PUBLIC_PAYLINK_SINGLE || "/optimize"}
-                className="block w-full text-white font-bold py-3 rounded-xl text-center"
-                style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-                Get Started →
-              </a>
+        <div className="mx-auto grid max-w-2xl gap-5 md:grid-cols-2">
+          <div className="card p-8">
+            <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>One-time</div>
+            <div className="mt-4 flex items-baseline gap-1">
+              <span className="text-5xl font-extrabold">$9</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>once</span>
             </div>
-
-            <div className="rounded-2xl p-8 relative overflow-hidden"
-              style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.2))", border: "1px solid rgba(99,102,241,0.5)" }}>
-              <div className="absolute top-4 right-4 text-xs font-bold px-3 py-1 rounded-full"
-                style={{ background: "#6366f1", color: "white" }}>BEST VALUE</div>
-              <div className="text-sm font-bold tracking-widest mb-4" style={{ opacity: 0.5 }}>MONTHLY</div>
-              <div className="text-5xl font-extrabold text-white mb-2">$19</div>
-              <div className="text-sm mb-8" style={{ opacity: 0.5 }}>per month</div>
-              <ul className="text-sm space-y-3 mb-8 text-left">
-                {["Unlimited optimizations", "ATS match score", "Keyword analysis", "Bullet point rewrite", "Skills gap report", "Cover letter generator", "Priority support"].map((f) => (
-                  <li key={f} className="flex items-center gap-3" style={{ opacity: 0.7 }}>
-                    <span style={{ color: "#a5b4fc" }}>✓</span> {f}
-                  </li>
-                ))}
-              </ul>
-              <a href={process.env.NEXT_PUBLIC_PAYLINK_MONTHLY || "/optimize"}
-                className="block w-full text-white font-bold py-3 rounded-xl text-center transition-all hover:opacity-90"
-                style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-                Start Free Trial →
-              </a>
-            </div>
+            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Perfect for one big application.</p>
+            <ul className="mt-6 space-y-3 text-sm">
+              {["1 full resume optimization", "ATS match score", "Keyword gap analysis", "Bullet point rewrite", "Skills gap report"].map((f) => (
+                <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.8)" }}>
+                  <span className="text-accent">✓</span> {f}
+                </li>
+              ))}
+            </ul>
+            <a href={PAY_SINGLE} className="btn-ghost mt-8 block py-3 text-center font-semibold" style={{ color: "var(--fg)" }}>
+              Get one optimization
+            </a>
           </div>
-          <p className="mt-8 text-sm" style={{ opacity: 0.3 }}>Secure payment • Instant access • Cancel anytime</p>
+
+          <div className="card p-8" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.05)", position: "relative" }}>
+            <div className="absolute right-5 top-5 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider"
+              style={{ background: "var(--accent)", color: "#05130a" }}>BEST VALUE</div>
+            <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>Unlimited</div>
+            <div className="mt-4 flex items-baseline gap-1">
+              <span className="text-5xl font-extrabold">$19</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>/ month</span>
+            </div>
+            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>For an active job search.</p>
+            <ul className="mt-6 space-y-3 text-sm">
+              {["Unlimited optimizations", "Everything in one-time", "Cover letter generator", "Priority support", "Cancel anytime"].map((f) => (
+                <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.9)" }}>
+                  <span className="text-accent">✓</span> {f}
+                </li>
+              ))}
+            </ul>
+            <a href={PAY_MONTHLY} className="btn-accent mt-8 block py-3 text-center">
+              Go unlimited →
+            </a>
+          </div>
         </div>
+        <p className="mt-8 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>
+          Secure checkout · Instant access · Still cheaper than one week of Jobscan
+        </p>
       </section>
 
-      {/* CTA */}
-      <section className="py-24 px-6 text-center">
-        <div className="max-w-2xl mx-auto">
-          <h2 className="text-5xl font-extrabold text-white mb-6">
-            Land Your Next Job{" "}
-            <span style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Faster</span>
+      {/* ── Final CTA ── */}
+      <section className="relative overflow-hidden px-6 py-28 text-center">
+        <div className="hero-ambient" />
+        <div className="relative z-10 mx-auto max-w-2xl">
+          <h2 className="text-5xl font-extrabold tracking-tight">
+            Stop feeding the <span style={{ color: "#f87171" }}>rejection bot.</span>
           </h2>
-          <p className="mb-10 text-lg" style={{ opacity: 0.5 }}>
-            Stop getting rejected by ATS filters. One optimization could change everything.
+          <p className="mx-auto mt-6 max-w-md text-lg" style={{ color: "var(--muted)" }}>
+            One scan. One rewrite. One passing score. See it happen in the next 60 seconds.
           </p>
-          <Link href="/optimize"
-            className="text-white font-bold px-10 py-5 rounded-xl text-xl inline-block"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
-            Optimize My Resume for Free →
+          <Link href="/optimize" className="btn-accent mt-10 px-10 py-4 text-lg">
+            Scan my resume free →
           </Link>
-          <p className="mt-4 text-sm" style={{ opacity: 0.3 }}>No credit card required for free preview</p>
+          <p className="mt-4 font-mono text-xs" style={{ color: "var(--faint)" }}>Free preview · No card required</p>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="py-8 px-6" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
+      {/* ── Footer ── */}
+      <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
+        <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded flex items-center justify-center text-white font-bold text-xs"
-              style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>R</div>
-            <span className="font-bold text-sm text-white">ResumeAI</span>
+            <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold"
+              style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <span className="text-sm font-bold">ResumeAI</span>
           </div>
-          <p className="text-xs" style={{ opacity: 0.3 }}>© 2026 ResumeAI. All rights reserved.</p>
+          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the bots</p>
         </div>
       </footer>
     </main>

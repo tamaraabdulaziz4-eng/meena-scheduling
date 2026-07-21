@@ -1,0 +1,29 @@
+{
+  "generated": "2026-07-21",
+  "method": "Crawl4AI HTTP crawl + web search",
+  "category": "AI resume optimizer / ATS matcher",
+  "competitors": [
+    {"name": "Jobscan", "url": "https://www.jobscan.co", "free": "5 scans/30 days", "paid": ["$49.95/mo", "$89.95/quarter (~$30/mo)"], "strength": "deepest ATS scanner", "weakness": "most expensive, dated UI"},
+    {"name": "Enhancv", "url": "https://enhancv.com", "free": "1 watermarked resume", "paid": ["$19.99/mo", "$24.99/wk", "$39.99/quarter (~$13.33/mo)"], "strength": "best-looking resumes", "weakness": "cannot match to a specific job posting"},
+    {"name": "Rezi", "url": "https://www.rezi.ai", "free": "limited", "paid": ["$29/mo", "$99/mo Pro", "$149 lifetime"], "strength": "AI resume builder", "weakness": "builder-first, complex onboarding"},
+    {"name": "ResumeUp.AI", "url": "https://resumeup.ai", "free": "limited", "paid": ["$8.25/mo"], "strength": "cheapest", "weakness": "thin feature set"},
+    {"name": "Resume Worded", "url": "https://resumeworded.com", "free": "limited", "paid": ["~$49/mo"], "strength": "line-by-line scoring", "weakness": "expensive, no job-specific match"}
+  ],
+  "market_size": "Jobscan alone ~$10M+/yr revenue; category growing with AI hiring tools",
+  "positioning_wedge": {
+    "insight": "Every major competitor forces a monthly subscription. Almost none offer a one-time price.",
+    "our_play": "$9 one-time single-optimization removes subscription friction; $19/mo unlimited for power users (job seekers applying to many roles).",
+    "differentiator": "Job-specific matching (beats Enhancv) + affordable (beats Jobscan/Rezi) + no subscription lock-in (beats everyone)"
+  },
+  "pricing_recommendation": {
+    "single": 9,
+    "monthly": 19,
+    "rationale": "Undercuts Enhancv monthly ($19.99) at parity, massively undercuts Jobscan ($49.95). One-time $9 captures the 'I just need this one application fixed' buyer that no competitor serves well.",
+    "test_variants": [
+      {"name": "control", "single": 9, "monthly": 19},
+      {"name": "premium", "single": 14, "monthly": 29},
+      {"name": "value", "single": 7, "monthly": 15},
+      {"name": "lifetime", "single": 9, "monthly": 19, "lifetime": 149}
+    ]
+  }
+}
