@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import PdfExport from "../components/PdfExport";
 
 interface OptimizeResult {
   matchScore: number;
@@ -299,9 +300,10 @@ export default function OptimizePage() {
                     <button
                       onClick={() => download("optimized-resume.txt", result.optimizedResume)}
                       className="rounded-lg px-4 py-2 text-sm font-semibold"
-                      style={{ background: "var(--accent)", color: "#05130a" }}>
-                      ↓ Download
+                      style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                      ↓ .txt
                     </button>
+                    <PdfExport text={result.optimizedResume} />
                   </div>
                 </div>
                 <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"

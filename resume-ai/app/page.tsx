@@ -327,6 +327,8 @@ export default function Home() {
             <Link href="/ats-resume-checker" style={{ color: "var(--muted)" }}>ATS Resume Checker</Link>
             <Link href="/free-resume-checker" style={{ color: "var(--muted)" }}>Free Resume Checker</Link>
             <Link href="/build" style={{ color: "var(--muted)" }}>CV Builder</Link>
+            <Link href="/linkedin" style={{ color: "var(--muted)" }}>LinkedIn Optimizer</Link>
+            <Link href="/interview" style={{ color: "var(--muted)" }}>Interview Prep</Link>
             <Link href="/jobscan-alternative" style={{ color: "var(--muted)" }}>Jobscan Alternative</Link>
             <Link href="/optimize" style={{ color: "var(--muted)" }}>Optimize Now</Link>
             <Link href="/#pricing" style={{ color: "var(--muted)" }}>Pricing</Link>
