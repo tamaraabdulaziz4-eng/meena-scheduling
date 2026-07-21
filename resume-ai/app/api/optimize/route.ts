@@ -125,8 +125,10 @@ async function callNvidia(resume: string, jobDescription: string): Promise<strin
       temperature: 0.4,
       top_p: 0.9,
       max_tokens: 3000,
+      // Force the model to emit a single syntactically valid JSON object.
+      response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are an expert ATS resume optimizer. You always respond with a single valid JSON object and nothing else." },
+        { role: "system", content: "You are an expert ATS resume optimizer. You always respond with a single valid JSON object and nothing else. Never include unescaped quotes or newlines inside JSON string values." },
         { role: "user", content: PROMPT(resume, jobDescription) },
       ],
     }),
@@ -174,18 +176,36 @@ export async function POST(req: NextRequest) {
     if (!resume || !jobDescription) {
       return NextResponse.json({ error: "Resume and job description are required." }, { status: 400 });
     }
+    if (resume.trim().length < 50) {
+      return NextResponse.json({ error: "Please paste a fuller resume (at least a few lines)." }, { status: 400 });
+    }
+    if (jobDescription.trim().length < 30) {
+      return NextResponse.json({ error: "Please paste the full job description, not just a title or code — the AI needs the requirements to match against." }, { status: 400 });
+    }
     if (resume.length > 8000 || jobDescription.length > 4000) {
       return NextResponse.json({ error: "Input too long. Please trim your resume or job description." }, { status: 400 });
     }
 
-    const raw =
+    const generate = () =>
       PROVIDER === "anthropic"
-        ? await callAnthropic(resume, jobDescription)
-        : await callNvidia(resume, jobDescription);
+        ? callAnthropic(resume, jobDescription)
+        : callNvidia(resume, jobDescription);
 
-    if (!raw.trim()) throw new Error("Empty response from AI provider");
+    // Small models occasionally emit malformed JSON. Try twice before giving up.
+    let result;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const raw = await generate();
+        if (!raw.trim()) throw new Error("Empty response from AI provider");
+        result = normalizeResult(JSON.parse(extractJson(raw)));
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!result) throw lastErr ?? new Error("Failed to parse AI response");
 
-    const result = normalizeResult(JSON.parse(extractJson(raw)));
     return NextResponse.json(result);
   } catch (err) {
     console.error("Optimize error:", err);
