@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
 import BeforeAfter from "../components/BeforeAfter";
+import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
 
@@ -522,11 +523,25 @@ export default function OptimizePage() {
                     ) : (
                       <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
                         <div className="chip mb-3">🔒 Your rewritten resume is ready</div>
-                        <h3 className="text-xl font-bold">Unlock your full ATS-optimized resume</h3>
+                        <h3 className="text-xl font-bold">
+                          {typeof result.afterScore === "number"
+                            ? `Unlock to turn your ${score} into a projected ${result.afterScore}.`
+                            : "Unlock your full ATS-optimized resume"}
+                        </h3>
                         <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                           You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or the SAR 99 Complete Pack (no subscription).
                         </p>
-                        <a href="/#pricing" className="btn-accent mt-5 inline-block px-8 py-3">Unlock my resume →</a>
+                        <p className="mx-auto mt-3 max-w-md text-xs" style={{ color: "var(--faint)" }}>
+                          One-time SAR 35 — Jobscan and Rezi charge that much every month.
+                        </p>
+                        <div className="mx-auto mt-5 max-w-xs space-y-3">
+                          <CheckoutButton plan="single" label="Unlock my resume — SAR 35" variant="accent" />
+                          <CheckoutButton plan="complete" label="Or get the Complete Pack (SAR 99)" variant="ghost" />
+                        </div>
+                        <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
+                          <a href="/terms" className="underline underline-offset-2">7-day money-back guarantee</a> — refunded if it didn&apos;t deliver.
+                        </p>
+                        <a href="/#pricing" className="mt-2 inline-block text-xs underline underline-offset-2" style={{ color: "var(--faint)" }}>Compare plans</a>
                       </div>
                     )}
                   </div>

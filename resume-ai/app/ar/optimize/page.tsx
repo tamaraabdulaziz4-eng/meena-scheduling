@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
 import BeforeAfter from "../../components/BeforeAfter";
+import CheckoutButton from "../../components/CheckoutButton";
 import AuthNav from "../../components/AuthNav";
 import { addScan, saveResume } from "../../lib/localdata";
 
@@ -439,11 +440,25 @@ export default function ArOptimizePage() {
                 ) : (
                   <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
                     <div className="chip mb-3">🔒 سيرتك الجديدة جاهزة</div>
-                    <h3 className="text-xl font-bold">افتح سيرتك الكاملة المحسّنة</h3>
+                    <h3 className="text-xl font-bold">
+                      {typeof result.afterScore === "number"
+                        ? `افتح لترفع نتيجتك من ${score} إلى ${result.afterScore} (متوقّعة).`
+                        : "افتح سيرتك الكاملة المحسّنة"}
+                    </h3>
                     <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                       شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو الحزمة الكاملة ٩٩ ريال دفعة واحدة بدون اشتراك.
                     </p>
-                    <a href="/ar#pricing" className="btn-accent mt-5 inline-block px-8 py-3">افتح سيرتي ←</a>
+                    <p className="mx-auto mt-3 max-w-md text-xs" style={{ color: "var(--faint)" }}>
+                      ٣٥ ريالاً مرة واحدة — أدوات مثل Jobscan تاخذ هذا المبلغ شهرياً.
+                    </p>
+                    <div className="mx-auto mt-5 max-w-xs space-y-3">
+                      <CheckoutButton ar plan="single" label="افتح سيرتي — ٣٥ ريالاً" variant="accent" />
+                      <CheckoutButton ar plan="complete" label="أو الحزمة الكاملة (٩٩ ريالاً)" variant="ghost" />
+                    </div>
+                    <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
+                      <a href="/terms" className="underline underline-offset-2">ضمان استرجاع خلال ٧ أيام</a> — نرجّع لك إن لم تنفع الخدمة.
+                    </p>
+                    <a href="/ar#pricing" className="mt-2 inline-block text-xs underline underline-offset-2" style={{ color: "var(--faint)" }}>قارن الباقات</a>
                   </div>
                 )}
               </div>

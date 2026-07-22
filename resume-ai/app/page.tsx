@@ -260,25 +260,20 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Testimonials ── */}
+      {/* ── Why you can trust the rewrite ── */}
       <section className="px-6 py-24" style={{ background: "rgba(255,255,255,0.015)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto max-w-5xl">
-          <h2 className="mb-3 text-center text-4xl font-bold tracking-tight">What a typical result looks like.</h2>
-          <p className="mb-12 text-center font-mono text-[11px] uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>
-            Illustrative examples — not verified testimonials
-          </p>
+          <h2 className="mb-12 text-center text-4xl font-bold tracking-tight">Why you can trust the rewrite.</h2>
           <div className="grid gap-5 md:grid-cols-3">
             {[
-              { q: "40 applications, 2 callbacks. After ResumeAI: 15 applications, 7 interviews. The keyword gap report was the missing piece.", n: "Sarah K.", r: "Software Engineer" },
-              { q: "ATS filters killed me for months. Optimized once for $9 and landed 3 offers in 3 weeks. Didn't even need the subscription.", n: "Marcus T.", r: "Product Manager" },
-              { q: "The score told me exactly why I wasn't getting calls. Fixed it in one pass and watched it jump from 51 to 89.", n: "Priya M.", r: "Data Analyst" },
-            ].map((t) => (
-              <div key={t.n} className="card p-7">
-                <p className="text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.8)" }}>&ldquo;{t.q}&rdquo;</p>
-                <div className="mt-6">
-                  <div className="text-sm font-bold">{t.n}</div>
-                  <div className="font-mono text-xs" style={{ color: "var(--faint)" }}>{t.r}</div>
-                </div>
+              { t: "No invented achievements", d: "The AI never adds a number, employer, or skill you didn't provide. Where a metric would help but you didn't give one, it writes [add your real number] for you to fill in." },
+              { t: "Your resume is never stored", d: "Your resume is processed instantly to generate the result and is never stored on our servers. Drafts stay in your browser only." },
+              { t: "7-day money-back guarantee", d: "If you paid and the service failed to deliver, you get a full refund within 7 days — processed via Paylink. No lock-in, no subscription." },
+            ].map((c) => (
+              <div key={c.t} className="card p-7">
+                <div className="text-lg text-accent">✓</div>
+                <h3 className="mt-3 text-sm font-bold">{c.t}</h3>
+                <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.8)" }}>{c.d}</p>
               </div>
             ))}
           </div>
@@ -300,7 +295,7 @@ export default function Home() {
             </div>
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Perfect for one big application.</p>
             <ul className="mt-6 space-y-3 text-sm">
-              {["1 full resume optimization", "ATS match score", "Keyword gap analysis", "Bullet point rewrite", "Skills gap report"].map((f) => (
+              {["1 full resume optimization · 24-hour access", "ATS match score", "Keyword gap analysis", "Bullet point rewrite", "Skills gap report"].map((f) => (
                 <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.8)" }}>
                   <span className="text-accent">✓</span> {f}
                 </li>
@@ -333,7 +328,7 @@ export default function Home() {
           </div>
         </div>
         <p className="mt-8 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>
-          Secure checkout · Instant access · Still cheaper than one week of Jobscan
+          Secure checkout · Instant access · Still cheaper than one week of Jobscan · 7-day money-back guarantee
         </p>
       </section>
 

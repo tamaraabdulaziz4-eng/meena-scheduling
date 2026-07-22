@@ -154,7 +154,7 @@ export default function ArabicHome() {
             </div>
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>مثالية لوظيفة واحدة مهمة.</p>
             <ul className="mt-6 space-y-3 text-sm">
-              {["تحسين كامل للسيرة", "نسبة التطابق ATS", "تحليل الكلمات المفتاحية", "إعادة كتابة النقاط", "تقرير فجوة المهارات"].map((f) => (
+              {["تحسين كامل للسيرة · وصول كامل ٢٤ ساعة", "نسبة التطابق ATS", "تحليل الكلمات المفتاحية", "إعادة كتابة النقاط", "تقرير فجوة المهارات"].map((f) => (
                 <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.8)" }}>
                   <span className="text-accent">✓</span> {f}
                 </li>
@@ -184,6 +184,9 @@ export default function ArabicHome() {
             </div>
           </div>
         </div>
+        <p className="mt-8 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>
+          دفع آمن · وصول فوري · ضمان استرجاع خلال ٧ أيام
+        </p>
       </section>
 
       {/* CTA */}

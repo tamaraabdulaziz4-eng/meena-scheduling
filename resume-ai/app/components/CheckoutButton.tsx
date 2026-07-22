@@ -38,6 +38,10 @@ export default function CheckoutButton({
         starting: "جارٍ بدء الدفع الآمن…",
         cancel: "إلغاء",
         failed: "تعذّر بدء الدفع، حاول مرة أخرى.",
+        methods: "مدى · Visa · Mastercard",
+        secure: "دفع آمن عبر Paylink",
+        guarantee: "ضمان استرجاع خلال ٧ أيام.",
+        anchor: "مرة واحدة — أدوات مثل Jobscan تاخذ هذا المبلغ شهرياً.",
       }
     : {
         planLine: plan === "single" ? "One-time · SAR 35 (~$9)" : "Complete Pack · SAR 99 · one-time (~$26)",
@@ -50,6 +54,10 @@ export default function CheckoutButton({
         starting: "Starting secure checkout…",
         cancel: "Cancel",
         failed: "Checkout failed. Please try again.",
+        methods: "mada · Visa · Mastercard",
+        secure: "Secure checkout via Paylink",
+        guarantee: "7-day money-back guarantee.",
+        anchor: "One-time — Jobscan and Rezi charge this much every month.",
       };
 
   async function submit(e: React.FormEvent) {
@@ -151,6 +159,14 @@ export default function CheckoutButton({
               >
                 {t.cancel}
               </button>
+              {plan === "single" && (
+                <p className="text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>{t.anchor}</p>
+              )}
+              <div className="flex flex-col items-center gap-1 pt-1 text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>
+                <div>🔒 {t.methods}</div>
+                <div>{t.secure}</div>
+                <div>{t.guarantee}</div>
+              </div>
             </form>
           </div>
         </div>
