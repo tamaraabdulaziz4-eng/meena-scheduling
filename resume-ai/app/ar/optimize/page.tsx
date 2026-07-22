@@ -17,6 +17,19 @@ interface OptimizeResult {
 
 const inputStyle = { background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" };
 
+// تجربة نموذجية: يشوف الزائر النتيجة كاملة بدون ما يرفع بياناته.
+const SAMPLE_RESUME = `سارة العتيبي
+sara.alotaibi@email.com · 05x xxx xxxx · الرياض
+
+اشتغلت منسقة تسويق في شركة تجزئة ثلاث سنوات. كنت أدير حسابات التواصل الاجتماعي وحملات الإيميل وأساعد في تنظيم إطلاق المنتجات. قبلها متدربة تسويق سنة في وكالة صغيرة أسوي محتوى وتقارير.
+
+المهارات: سوشال ميديا، إيميل ماركتنق، إكسل، كانفا، شوي قوقل أناليتكس
+
+التعليم: بكالوريوس إعلام، جامعة الملك سعود، ٢٠٢٠`;
+
+const SAMPLE_JD = `أخصائي تسويق رقمي — علامة تجارة إلكترونية
+نبحث عن مسوّق يعتمد على البيانات لإدارة قنوات الإيميل والسوشال. المتطلبات: خبرة سنتين+ في التسويق الرقمي، خبرة عملية بأتمتة الإيميل (Klaviyo/Mailchimp)، حملات إعلانات مدفوعة، Google Analytics، اختبارات A/B، وتقارير معدلات التحويل. مهارات كتابة قوية. خبرة التجارة الإلكترونية أفضلية.`;
+
 export default function ArOptimizePage() {
   const [resume, setResume] = useState("");
   const [jobDescription, setJobDescription] = useState("");
@@ -31,6 +44,7 @@ export default function ArOptimizePage() {
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
   const [hasAccess, setHasAccess] = useState(false);
+  const [mode, setMode] = useState<"general" | "target">("general");
   const thinkRef = useRef<HTMLDivElement>(null);
 
   // هل هذا المتصفح عنده وصول مدفوع؟ المشترك اللي فحص قبل الدفع لسه معه
@@ -137,6 +151,11 @@ export default function ArOptimizePage() {
   }
 
   async function runScan() {
+    // وضع الاستهداف يوعد بتفصيل السيرة على الوظيفة — الإعلان إلزامي فيه.
+    if (mode === "target" && jobDescription.trim().length < 30) {
+      setError("وضع «تخصيص لوظيفة» يحتاج إعلان الوظيفة — الصقه، أو بدّل إلى «تقييم عام».");
+      return;
+    }
     setError("");
     setResult(null);
     setCoverLetter("");
@@ -147,7 +166,8 @@ export default function ArOptimizePage() {
       const res = await fetch("/api/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resume, jobDescription }),
+        // «تقييم عام» يتجاهل الإعلان فعلاً — الوضع يَعِد بذلك فنلتزم به.
+        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "" }),
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
@@ -223,9 +243,40 @@ export default function ArOptimizePage() {
             <div className="chip mb-4">● فحص مجاني</div>
             <h1 className="text-4xl font-extrabold tracking-tight">افحص سيرتك ضد نظام التوظيف</h1>
             <p className="mt-3" style={{ color: "var(--muted)" }}>ارفع أو الصق سيرتك القديمة (عربي أو إنجليزي) — نحسّنها ونعطيك سيرة إنجليزية جديدة. إعلان الوظيفة اختياري.</p>
+            {/* وش بتحصل — توقعات واضحة قبل طلب البيانات */}
+            <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2 font-mono text-xs" style={{ color: "var(--faint)" }}>
+              <span>✓ نسبة التطابق وسببها</span>
+              <span>✓ الكلمات الناقصة</span>
+              <span>✓ فجوة المهارات</span>
+              <span>✓ الجمل الضعيفة</span>
+              <span>✓ النسخة المحسّنة</span>
+            </div>
+            {!resume && !loading && (
+              <button
+                onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }}
+                className="btn-ghost mt-5 px-5 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>
+                👀 جرّب بسيرة نموذجية — بدون ما ترفع بياناتك
+              </button>
+            )}
           </div>
         )}
 
+        {!result && !loading && (
+          <div className="mb-6 flex justify-center gap-2">
+            {([
+              { id: "general" as const, label: "تقييم عام" },
+              { id: "target" as const, label: "تخصيص لوظيفة محددة" },
+            ]).map((m) => (
+              <button key={m.id} type="button" onClick={() => setMode(m.id)}
+                className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
+                style={mode === m.id
+                  ? { background: "var(--accent)", color: "#05130a" }
+                  : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
         {!result ? (
           <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
             <div>
@@ -250,7 +301,9 @@ export default function ArOptimizePage() {
               </p>
             </div>
             <div>
-              <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>إعلان الوظيفة (اختياري)</label>
+              <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>
+                إعلان الوظيفة {mode === "target" ? "(إلزامي للتخصيص)" : "(لا يُستخدم في التقييم العام — بدّل الوضع للتخصيص)"}
+              </label>
               <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={14} maxLength={4000}
                 placeholder="اختياري — الصق إعلان وظيفة لتفصيل السيرة عليه، أو اتركه فارغاً لتحسين شامل للسيرة."
                 className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />

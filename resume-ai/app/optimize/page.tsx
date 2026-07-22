@@ -15,6 +15,20 @@ interface OptimizeResult {
   locked?: boolean;
 }
 
+// Try-before-you-share: a realistic sample so visitors can see a full result
+// without uploading their own data (privacy critique #6).
+const SAMPLE_RESUME = `Sarah Mitchell
+sarah.mitchell@email.com · +1 555 0192 · Chicago, IL
+
+Worked as a marketing coordinator at a retail company for 3 years. Managed social media accounts and email campaigns. Helped organize product launches. Before that, was a marketing intern for a year at a small agency doing content and reports.
+
+Skills: social media, email marketing, Excel, Canva, some Google Analytics
+
+Education: BA Communications, University of Illinois, 2020`;
+
+const SAMPLE_JD = `Digital Marketing Specialist — E-commerce brand
+We're looking for a data-driven marketer to own our email and social channels. Requirements: 2+ years in digital marketing, hands-on experience with email automation (Klaviyo/Mailchimp), paid social campaigns, Google Analytics, A/B testing, and reporting on conversion metrics. Strong copywriting skills. E-commerce experience preferred.`;
+
 export default function OptimizePage() {
   const [resume, setResume] = useState("");
   const [jobDescription, setJobDescription] = useState("");
@@ -31,6 +45,7 @@ export default function OptimizePage() {
   const [paywall, setPaywall] = useState(false);
   const [thinking, setThinking] = useState("");
   const [hasAccess, setHasAccess] = useState(false);
+  const [mode, setMode] = useState<"general" | "target">("general");
   const thinkRef = useRef<HTMLDivElement>(null);
 
   // Does this browser have paid access? Drives the locked-result card: a paid
@@ -145,6 +160,11 @@ export default function OptimizePage() {
   }
 
   async function runScan() {
+    // Target mode promises job-specific tailoring — a job post is required there.
+    if (mode === "target" && jobDescription.trim().length < 30) {
+      setError("Target-a-job mode needs the job posting — paste it, or switch to General review.");
+      return;
+    }
     setError("");
     setResult(null);
     setCoverLetter("");
@@ -160,7 +180,9 @@ export default function OptimizePage() {
       const res = await fetch("/api/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resume, jobDescription }),
+        // General review deliberately ignores the JD field — the mode label
+        // promises that, so honor it.
+        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "" }),
       });
 
       // Non-streaming replies (validation errors, paywall) are plain JSON.
@@ -257,9 +279,40 @@ export default function OptimizePage() {
             <div className="chip mb-4">● Free scan</div>
             <h1 className="text-4xl font-extrabold tracking-tight">Run your resume through the scanner</h1>
             <p className="mt-3" style={{ color: "var(--muted)" }}>Upload or paste your resume. Add a job posting to tailor to it — or leave it empty and we&apos;ll improve the resume overall.</p>
+            {/* What you'll get — set expectations before asking for data */}
+            <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2 font-mono text-xs" style={{ color: "var(--faint)" }}>
+              <span>✓ Match score + why</span>
+              <span>✓ Missing keywords</span>
+              <span>✓ Skills gap</span>
+              <span>✓ Weak lines flagged</span>
+              <span>✓ Rewritten version</span>
+            </div>
+            {!resume && !loading && (
+              <button
+                onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }}
+                className="btn-ghost mt-5 px-5 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>
+                👀 Try it with a sample resume — no data needed
+              </button>
+            )}
           </div>
         )}
 
+        {!result && (
+          <div className="mb-6 flex justify-center gap-2">
+            {([
+              { id: "general" as const, label: "General review" },
+              { id: "target" as const, label: "Target a specific job" },
+            ]).map((m) => (
+              <button key={m.id} type="button" onClick={() => setMode(m.id)}
+                className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
+                style={mode === m.id
+                  ? { background: "var(--accent)", color: "#05130a" }
+                  : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
         {!result ? (
           <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
             <div>
@@ -292,7 +345,9 @@ export default function OptimizePage() {
             </div>
 
             <div>
-              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>(optional)</span></label>
+              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>
+                Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>{mode === "target" ? "(required for tailoring)" : "(not used in general review — switch mode to tailor)"}</span>
+              </label>
               <textarea
                 value={jobDescription}
                 onChange={(e) => setJobDescription(e.target.value)}

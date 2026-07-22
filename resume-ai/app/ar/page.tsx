@@ -73,7 +73,7 @@ export default function ArabicHome() {
             </div>
           </div>
           <div className="lg:pr-8" dir="ltr">
-            <ScanDemo />
+            <ScanDemo ar />
           </div>
         </div>
       </section>

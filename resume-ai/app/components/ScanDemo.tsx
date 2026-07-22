@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
  * dramatizing the exact before/after the product delivers. Loops forever
  * (video-like hero): scan → pass → hold → rewind → scan again.
  */
-export default function ScanDemo() {
+export default function ScanDemo({ ar = false }: { ar?: boolean }) {
   const [score, setScore] = useState(47);
   const [phase, setPhase] = useState<"scanning" | "done">("scanning");
   const ref = useRef<HTMLDivElement>(null);
@@ -71,16 +71,32 @@ export default function ScanDemo() {
 
   const passing = score >= 75;
   const accent = passing ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
-  const verdict = passing ? "STRONG MATCH" : "LOW MATCH";
+  const verdict = passing ? (ar ? "تطابق قوي" : "STRONG MATCH") : (ar ? "تطابق منخفض" : "LOW MATCH");
+  const t = {
+    header: ar ? "فحص ATS · تجريبي" : "ATS Scan · Demo",
+    scanning: ar ? "…جارٍ الفحص" : "SCANNING…",
+    matchScore: ar ? "نسبة التطابق" : "Match Score",
+    before: ar ? "قبل · ٤٧٪" : "BEFORE · 47%",
+    after: ar ? "بعد · ٩٢٪" : "AFTER · 92%",
+  };
 
-  const lines = [
-    { w: "72%", key: "keywords", present: passing },
-    { w: "90%", key: "title match", present: true },
-    { w: "58%", key: "skills", present: passing },
-    { w: "84%", key: "experience", present: true },
-    { w: "45%", key: "hard skills", present: passing },
-    { w: "66%", key: "seniority", present: passing },
-  ];
+  const lines = ar
+    ? [
+        { w: "72%", key: "الكلمات المفتاحية", present: passing },
+        { w: "90%", key: "تطابق المسمى", present: true },
+        { w: "58%", key: "المهارات", present: passing },
+        { w: "84%", key: "الخبرة", present: true },
+        { w: "45%", key: "مهارات تقنية", present: passing },
+        { w: "66%", key: "الأقدمية", present: passing },
+      ]
+    : [
+        { w: "72%", key: "keywords", present: passing },
+        { w: "90%", key: "title match", present: true },
+        { w: "58%", key: "skills", present: passing },
+        { w: "84%", key: "experience", present: true },
+        { w: "45%", key: "hard skills", present: passing },
+        { w: "66%", key: "seniority", present: passing },
+      ];
 
   return (
     <div ref={ref} className="relative mx-auto w-full max-w-md">
@@ -104,14 +120,14 @@ export default function ScanDemo() {
               className="font-mono text-[11px] uppercase tracking-[0.2em]"
               style={{ color: "rgba(244,245,243,0.5)" }}
             >
-              ATS Scan · Demo
+              {t.header}
             </span>
           </div>
           <span
             className="font-mono text-[11px] tracking-wider transition-colors"
             style={{ color: accent }}
           >
-            {phase === "scanning" ? "SCANNING…" : verdict}
+            {phase === "scanning" ? t.scanning : verdict}
           </span>
         </div>
 
@@ -159,7 +175,7 @@ export default function ScanDemo() {
         <div className="mt-6 flex items-end justify-between border-t pt-5" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
           <div>
             <div className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: "rgba(244,245,243,0.4)" }}>
-              Match Score
+              {t.matchScore}
             </div>
             <div className="mt-1 flex items-baseline gap-1">
               <span className="font-mono text-5xl font-bold tabular-nums transition-colors" style={{ color: accent }}>
@@ -178,7 +194,7 @@ export default function ScanDemo() {
               border: `1px solid ${accent}40`,
             }}
           >
-            {phase === "scanning" ? "···" : passing ? "✓ PASS" : "✕ FAIL"}
+            {phase === "scanning" ? "···" : passing ? (ar ? "✓ قوي" : "✓ STRONG") : (ar ? "✕ ضعيف" : "✕ WEAK")}
           </div>
         </div>
       </div>
@@ -188,7 +204,7 @@ export default function ScanDemo() {
         className="absolute -bottom-4 -left-4 rotate-[-6deg] rounded-lg px-3 py-1.5 font-mono text-[10px] font-bold tracking-wider"
         style={{ background: "#f87171", color: "#1a0505", boxShadow: "0 10px 30px -8px rgba(248,113,113,0.5)" }}
       >
-        BEFORE · 47%
+        {t.before}
       </div>
       {/* after badge, floats top-right, appears when done */}
       <div
@@ -201,7 +217,7 @@ export default function ScanDemo() {
           transform: phase === "done" ? "translateY(0) rotate(6deg)" : "translateY(8px) rotate(6deg)",
         }}
       >
-        AFTER · 92%
+        {t.after}
       </div>
     </div>
   );
