@@ -50,6 +50,7 @@ export default function ArChatBuilderPage() {
   const [cv, setCv] = useState("");
   const [tips, setTips] = useState<string[]>([]);
   const [genError, setGenError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   // البيانات المتراكمة
   const [data, setData] = useState({ name: "", contact: "", targetRole: "", education: "", skills: "", extras: "" });
@@ -67,6 +68,10 @@ export default function ArChatBuilderPage() {
         const s = JSON.parse(saved);
         if (s.msgs?.length > 1) {
           setMsgs(s.msgs); setStep(s.step); setData(s.data); setExps(s.exps || []); setCurExp(s.curExp || { role: "", company: "", dates: "", duties: "" });
+          // On reload the persisted step can be 'generate' (persistence fires while
+          // generation is in flight/errored), but generate() only refires via ask() —
+          // so surface the retry button instead of a dead, spinner-less screen.
+          if (s.step === "generate") setGenError("تعذّر توليد السيرة — اضغط «حاول مرة أخرى».");
         }
       }
     } catch { /* تجاهل */ }
@@ -161,6 +166,16 @@ export default function ArChatBuilderPage() {
     setInput(pending.en);
     setPending(null);
     setMsgs((m) => [...m, { who: "ai", text: "عدّل النص بالأسفل وأرسله — بيُعتمد مثل ما تكتبه." }]);
+  }
+
+  function download(filename: string, text: string) {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function generate() {
@@ -303,7 +318,8 @@ export default function ArChatBuilderPage() {
             <h2 className="mb-4 text-2xl font-bold">سيرتك جاهزة 🎉</h2>
             <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{cv}</div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => { navigator.clipboard.writeText(cv); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>نسخ</button>
+              <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>{copied ? "✓ نُسخت" : "نسخ"}</button>
+              <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>
               <PdfExport text={cv} label="↓ تنزيل PDF" />
             </div>
             <PublishLink ar text={cv} name={data.name} role={data.targetRole} />

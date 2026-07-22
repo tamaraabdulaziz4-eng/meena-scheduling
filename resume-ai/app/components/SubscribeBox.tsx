@@ -36,7 +36,7 @@ export default function SubscribeBox({ ar = false }: { ar?: boolean }) {
         ) : (
           <form onSubmit={submit} className="mt-5 flex gap-2">
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t.ph} required dir="ltr"
-              className="flex-1 rounded-xl px-4 py-3 text-sm focus:outline-none"
+              className={`flex-1 rounded-xl px-4 py-3 text-sm focus:outline-none ${ar ? "text-right" : ""}`}
               style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }} />
             <button type="submit" disabled={state === "busy"} className="btn-accent px-6 py-3 text-sm disabled:opacity-50">
               {state === "busy" ? "…" : t.cta}

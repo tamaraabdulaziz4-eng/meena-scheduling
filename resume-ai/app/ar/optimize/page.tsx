@@ -113,7 +113,14 @@ export default function ArOptimizePage() {
       const res = await fetch("/api/extract", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error("تعذّرت قراءة الملف — الصق النص يدوياً.");
-      setResume(data.text);
+      // الـ maxLength يحد الكتابة فقط، لا النص المستخرَج — نقصّه ونحذّر بالعربي
+      // قبل الفحص بدل رسالة «Input too long» الإنجليزية من الخادم.
+      if (typeof data.text === "string" && data.text.length > 8000) {
+        setResume(data.text.slice(0, 8000));
+        setError("سيرتك طويلة — اقتصرنا على أول ٨٠٠٠ حرف. راجع النص قبل الفحص.");
+      } else {
+        setResume(data.text);
+      }
       setUploadedName(file.name);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذّرت قراءة الملف.");
@@ -152,7 +159,8 @@ export default function ArOptimizePage() {
           setCoverPaywalled(true);
           throw new Error("انتهت صلاحية وصولك — افتح الوصول من جديد لإنشاء خطابات التعريف.");
         }
-        throw new Error(data.error || "حدث خطأ.");
+        // لا نعرض رسالة الخادم الإنجليزية داخل الواجهة العربية — رسالة عربية موحّدة.
+        throw new Error("تعذّر إنشاء خطاب التعريف — حاول مرة أخرى.");
       }
       setCoverLetter(data.coverLetter);
     } catch (err) {
@@ -188,8 +196,9 @@ export default function ArOptimizePage() {
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
-        const data = await res.json();
-        throw new Error(data.error || "حدث خطأ، حاول مرة أخرى.");
+        // رسائل الخادم كلها إنجليزية — لا نعرضها داخل واجهة عربية. رسالة موحّدة.
+        await res.json().catch(() => ({}));
+        throw new Error("تعذّر الفحص — تأكد أن سيرتك مكتملة (بضعة أسطر على الأقل) وضمن الحد الأقصى ٨٠٠٠ حرف، ثم حاول مجدداً.");
       }
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
@@ -440,12 +449,16 @@ export default function ArOptimizePage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="font-bold">خطاب تعريف مطابق</h3>
-                  <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>خطاب تعريف مفصّل على نفس إعلان الوظيفة.</p>
+                  <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                    {jobDescription.trim().length < 30
+                      ? "ألصق إعلان الوظيفة في وضع «تخصيص لوظيفة» لإنشاء خطاب تعريف مطابق"
+                      : "خطاب تعريف مفصّل على نفس إعلان الوظيفة."}
+                  </p>
                 </div>
                 {result.locked ? (
                   <a href="/ar#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 افتح الوصول لإنشائه</a>
                 ) : !coverLetter ? (
-                  <button onClick={generateCoverLetter} disabled={coverLoading} className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
+                  <button onClick={generateCoverLetter} disabled={coverLoading || jobDescription.trim().length < 30} className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
                     {coverLoading ? "جارٍ الكتابة…" : "✨ أنشئ خطاب التعريف"}
                   </button>
                 ) : (

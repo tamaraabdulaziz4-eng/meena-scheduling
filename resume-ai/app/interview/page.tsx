@@ -124,8 +124,8 @@ export default function InterviewPage() {
               <div className="card p-6" style={{ borderColor: "rgba(248,113,113,0.25)" }}>
                 <h3 className="mb-3 font-bold">They may probe these — be ready</h3>
                 <ul className="space-y-2">
-                  {result.redFlags.map((r) => (
-                    <li key={r} className="flex gap-2 text-sm" style={{ color: "var(--muted)" }}><span style={{ color: "#f87171" }}>!</span> {r}</li>
+                  {result.redFlags.map((r, i) => (
+                    <li key={`${r}-${i}`} className="flex gap-2 text-sm" style={{ color: "var(--muted)" }}><span style={{ color: "#f87171" }}>!</span> {r}</li>
                   ))}
                 </ul>
               </div>

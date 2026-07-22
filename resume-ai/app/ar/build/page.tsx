@@ -89,6 +89,16 @@ export default function ArBuildPage() {
     setExps((prev) => prev.map((e, j) => (j === i ? { ...e, [field]: v } : e)));
   }
 
+  function download(filename: string, text: string) {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function generate() {
     setError("");
     setThinking("");
@@ -308,6 +318,7 @@ export default function ArBuildPage() {
                   className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
                   {copied ? "✓ نُسخت" : "نسخ"}
                 </button>
+                <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>
                 <PdfExport text={cv} label="↓ تنزيل PDF" />
               </div>
             </div>

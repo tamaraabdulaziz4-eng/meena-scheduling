@@ -11,10 +11,16 @@ function LoginInner() {
   // Survive refresh/back after sending — otherwise users re-request duplicates.
   useEffect(() => {
     try {
+      // Arriving via an expired link must show that message in the form — not the
+      // stale "Check your inbox" view restored from a previous request.
+      if (params.get("error") === "expired") {
+        sessionStorage.removeItem("ra_login_sent");
+        return;
+      }
       const saved = sessionStorage.getItem("ra_login_sent");
       if (saved) { setEmail(saved); setState("sent"); }
     } catch { /* noop */ }
-  }, []);
+  }, [params]);
   const [error, setError] = useState(params.get("error") === "expired" ? "That link expired — request a new one." : "");
 
   async function submit(e: React.FormEvent) {
@@ -51,6 +57,11 @@ function LoginInner() {
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
               We sent a sign-in link to <strong>{email}</strong>. Click it to continue — it expires in 15 minutes.
             </p>
+            <button
+              onClick={() => { try { sessionStorage.removeItem("ra_login_sent"); } catch { /* noop */ } setEmail(""); setState("idle"); }}
+              className="mt-4 text-sm font-semibold" style={{ color: "var(--accent)" }}>
+              Use a different email →
+            </button>
           </>
         ) : (
           <>

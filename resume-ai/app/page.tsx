@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import ScanDemo from "./components/ScanDemo";
 import CheckoutButton from "./components/CheckoutButton";
@@ -8,6 +9,15 @@ import MobileMenu from "./components/MobileMenu";
 import LiveTicker from "./components/LiveTicker";
 import SubscribeBox from "./components/SubscribeBox";
 import AtsMarquee from "./components/AtsMarquee";
+
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
+
+export const metadata: Metadata = {
+  alternates: {
+    canonical: `${BASE}/`,
+    languages: { en: `${BASE}/`, ar: `${BASE}/ar`, "x-default": `${BASE}/` },
+  },
+};
 
 export default function Home() {
   return (
@@ -264,7 +274,6 @@ export default function Home() {
               { q: "The score told me exactly why I wasn't getting calls. Fixed it in one pass and watched it jump from 51 to 89.", n: "Priya M.", r: "Data Analyst" },
             ].map((t) => (
               <div key={t.n} className="card p-7">
-                <div className="mb-4 font-mono text-sm text-accent">★★★★★</div>
                 <p className="text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.8)" }}>&ldquo;{t.q}&rdquo;</p>
                 <div className="mt-6">
                   <div className="text-sm font-bold">{t.n}</div>

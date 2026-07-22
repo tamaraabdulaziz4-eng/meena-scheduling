@@ -162,7 +162,8 @@ export default function OptimizePage() {
           setCoverPaywalled(true);
           throw new Error("Your access has expired — unlock again to generate cover letters.");
         }
-        throw new Error(data.error || "Failed");
+        // Don't echo the raw server string — use a clean, friendly message.
+        throw new Error("Couldn't generate the cover letter — please try again.");
       }
       setCoverLetter(data.coverLetter);
     } catch (err) {
@@ -530,14 +531,18 @@ export default function OptimizePage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h3 className="font-bold">Matching cover letter</h3>
-                      <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>Generate a tailored cover letter from the same job post.</p>
+                      <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                        {jobDescription.trim().length < 30
+                          ? "Paste the job posting on the scan screen to generate a matching cover letter"
+                          : "Generate a tailored cover letter from the same job post."}
+                      </p>
                     </div>
                     {result.locked ? (
                       <a href="/#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 Unlock to generate</a>
                     ) : !coverLetter ? (
                       <button
                         onClick={generateCoverLetter}
-                        disabled={coverLoading}
+                        disabled={coverLoading || jobDescription.trim().length < 30}
                         className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
                         {coverLoading ? "Writing…" : "✨ Generate cover letter"}
                       </button>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyPass, ACCESS_COOKIE } from "@/app/lib/access";
 import { readSession, SESSION_COOKIE } from "@/app/lib/session";
 import { hasActiveEntitlement } from "@/app/lib/entitlements";
+import { allow, clientIp } from "@/app/lib/ratelimit";
 
 export const maxDuration = 300;
 
@@ -67,13 +68,21 @@ async function callAnthropic(resume: string, jobDescription: string): Promise<st
 
 export async function POST(req: NextRequest) {
   try {
-    const { resume, jobDescription } = await req.json();
+    // Paid feature, but a single pass can hammer it with no length cap — throttle.
+    if (!allow(`cover:${clientIp(req)}`, 10, 10 * 60 * 1000)) {
+      return NextResponse.json({ error: "Too many requests. Please wait a minute." }, { status: 429 });
+    }
+
+    let { resume, jobDescription } = await req.json();
     if (!resume || !jobDescription) {
       return NextResponse.json({ error: "Resume and job description are required." }, { status: 400 });
     }
     if (resume.trim().length < 50 || jobDescription.trim().length < 30) {
       return NextResponse.json({ error: "Please provide a fuller resume and job description." }, { status: 400 });
     }
+    // Cap inputs before the model call (matches the tools route caps).
+    resume = resume.slice(0, 8000);
+    jobDescription = jobDescription.slice(0, 4000);
 
     // Cover letters are a paid feature — gate them like the rewritten resume.
     const now = Date.now();

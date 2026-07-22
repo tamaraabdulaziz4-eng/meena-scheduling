@@ -376,6 +376,7 @@ export async function POST(req: NextRequest) {
           try {
             let inThinking = attempt === 0;
             let pending = "";
+            let forwarded = 0;
             let lastPing = Date.now();
             const keepAlive = (delta: string) => {
               if (!inThinking) {
@@ -392,9 +393,17 @@ export async function POST(req: NextRequest) {
                 const visible = pending.slice(0, cut);
                 if (visible) send({ t: "think", d: visible });
                 inThinking = false;
-              } else {
-                send({ t: "think", d: pending });
-                pending = "";
+              } else if (pending.length > 16) {
+                // Carry over a 16-char tail so a marker split across token
+                // boundaries (e.g. "SCORE" + ":") is still reassembled next delta
+                // instead of leaking the whole paid rewrite into the think box.
+                const out = pending.slice(0, -16);
+                send({ t: "think", d: out });
+                forwarded += out.length;
+                pending = pending.slice(-16);
+                // Backstop: even if SCORE: never appears, never stream the full
+                // rewrite to a free user — cut off past a generous analysis cap.
+                if (forwarded > 4000) inThinking = false;
               }
             };
             const raw = await (PROVIDER === "anthropic"

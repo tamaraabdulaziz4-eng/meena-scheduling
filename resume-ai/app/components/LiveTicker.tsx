@@ -53,10 +53,7 @@ export default function LiveTicker({ ar = false }: { ar?: boolean }) {
         transition: "opacity 0.35s ease, transform 0.35s ease",
       }}
     >
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" style={{ background: "var(--accent)" }} />
-        <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: "var(--accent)" }} />
-      </span>
+      <span className="font-bold" style={{ color: "var(--faint)" }}>{ar ? "مثال:" : "Example:"}</span>
       <span style={{ color: "var(--muted)" }}>
         {e.n} · {e.d}
       </span>
@@ -65,7 +62,6 @@ export default function LiveTicker({ ar = false }: { ar?: boolean }) {
         <span style={{ color: "var(--faint)" }}> → </span>
         <span style={{ color: "var(--accent)" }}>{e.to}%</span>
       </span>
-      <span style={{ color: "var(--faint)" }}>{ar ? "· مثال" : "· sample"}</span>
     </div>
   );
 }

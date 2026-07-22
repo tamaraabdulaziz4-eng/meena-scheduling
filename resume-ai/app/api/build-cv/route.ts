@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { allow, clientIp } from "@/app/lib/ratelimit";
 
 export const maxDuration = 300;
 
@@ -116,6 +117,12 @@ async function streamNvidia(prompt: string, onDelta: (t: string) => void): Promi
 
 export async function POST(req: NextRequest) {
   try {
+    // Most expensive AI call in the app (3600 max_tokens) and otherwise wide
+    // open — cap per-IP volume so it can't be hammered as a cost vector.
+    if (!allow(`buildcv:${clientIp(req)}`, 10, 10 * 60 * 1000)) {
+      return NextResponse.json({ error: "بطّئ شوي 🙂 — حاول بعد دقيقة." }, { status: 429 });
+    }
+
     const body = await req.json();
     const { name, contact, targetRole, experiences, education, skills, extras, jobDescription } = body;
 
@@ -176,9 +183,12 @@ export async function POST(req: NextRequest) {
                 const visible = pending.slice(0, cut);
                 if (visible) send({ t: "think", d: visible });
                 inThinking = false;
-              } else {
-                send({ t: "think", d: pending });
-                pending = "";
+              } else if (pending.length > 16) {
+                // Carry over a 16-char tail so a marker split across token
+                // boundaries (e.g. "FINAL" + "_CV:") is still reassembled next
+                // delta instead of leaking the whole CV into the think box.
+                send({ t: "think", d: pending.slice(0, -16) });
+                pending = pending.slice(-16);
               }
             });
 

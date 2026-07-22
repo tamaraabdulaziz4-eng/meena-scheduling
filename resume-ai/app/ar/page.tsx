@@ -13,7 +13,10 @@ export const metadata: Metadata = {
   title: "ResumeAI — حسّن سيرتك الذاتية بصدق وبدون اختلاق",
   description:
     "اكتب بالعربي والذكاء الاصطناعي يبني لك سيرة إنجليزية احترافية أوضح وأقوى ومتوافقة مع متطلبات الوظيفة — بدون اختلاق أي معلومة. الفحص والتحليل مجاني.",
-  alternates: { canonical: `${BASE}/ar` },
+  alternates: {
+    canonical: `${BASE}/ar`,
+    languages: { en: `${BASE}/`, ar: `${BASE}/ar`, "x-default": `${BASE}/` },
+  },
 };
 
 export default function ArabicHome() {

@@ -113,8 +113,8 @@ export default function LinkedInPage() {
                 <button onClick={() => copy("s", result.skills.join(", "))} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "s" ? "✓ Copied" : "Copy"}</button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {result.skills.map((s) => (
-                  <span key={s} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{s}</span>
+                {result.skills.map((s, i) => (
+                  <span key={`${s}-${i}`} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{s}</span>
                 ))}
               </div>
             </div>
@@ -122,8 +122,8 @@ export default function LinkedInPage() {
               <div className="card p-6" style={{ borderColor: "rgba(251,191,36,0.25)" }}>
                 <h3 className="mb-3 font-bold">Profile tips</h3>
                 <ul className="space-y-2">
-                  {result.tips.map((t) => (
-                    <li key={t} className="flex gap-2 text-sm" style={{ color: "var(--muted)" }}><span style={{ color: "#fbbf24" }}>→</span> {t}</li>
+                  {result.tips.map((t, i) => (
+                    <li key={`${t}-${i}`} className="flex gap-2 text-sm" style={{ color: "var(--muted)" }}><span style={{ color: "#fbbf24" }}>→</span> {t}</li>
                   ))}
                 </ul>
               </div>
