@@ -30,7 +30,14 @@ export default function ArOptimizePage() {
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
+  const [hasAccess, setHasAccess] = useState(false);
   const thinkRef = useRef<HTMLDivElement>(null);
+
+  // هل هذا المتصفح عنده وصول مدفوع؟ المشترك اللي فحص قبل الدفع لسه معه
+  // النتيجة المقصوصة القديمة — يحتاج زر إعادة فحص، مو بطاقة دفع ثانية.
+  useEffect(() => {
+    fetch("/api/auth/me").then((r) => r.json()).then((d) => setHasAccess(!!d.hasAccess)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
@@ -126,6 +133,10 @@ export default function ArOptimizePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    await runScan();
+  }
+
+  async function runScan() {
     setError("");
     setResult(null);
     setCoverLetter("");
@@ -293,14 +304,30 @@ export default function ArOptimizePage() {
                     {"• Rewrote every bullet with strong action verbs and quantified impact\n• Front-loaded the exact ATS keywords\n• …the full rewritten resume continues…"}
                   </div>
                 </div>
-                <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-                  <div className="chip mb-3">🔒 سيرتك الجديدة جاهزة</div>
-                  <h3 className="text-xl font-bold">افتح سيرتك الكاملة المحسّنة</h3>
-                  <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                    شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو ٧٥ ريال شهرياً غير محدود.
-                  </p>
-                  <a href="/ar#pricing" className="btn-accent mt-5 inline-block px-8 py-3">افتح سيرتي ←</a>
-                </div>
+                {hasAccess ? (
+                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.07)" }}>
+                    <div className="chip mb-3">✓ اشتراكك مفعّل</div>
+                    <h3 className="text-xl font-bold">الدفع مؤكّد — استلم سيرتك الكاملة</h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                      هذي النتيجة انولدت قبل ماتدفع فماتحمل إلا المعاينة. أعد الفحص الآن (~١٠ ثوانٍ) وتستلم السيرة الكاملة المعاد كتابتها.
+                    </p>
+                    <button onClick={runScan} disabled={loading || !resume.trim()} className="btn-accent mt-5 inline-block px-8 py-3 disabled:opacity-50">
+                      {loading ? "جارٍ الفتح…" : "⚡ استلم سيرتي الكاملة الآن"}
+                    </button>
+                    {!resume.trim() && (
+                      <p className="mt-3 text-xs" style={{ color: "#fbbf24" }}>نص سيرتك مو محفوظ على هذا الجهاز — الصقه فوق أولاً.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                    <div className="chip mb-3">🔒 سيرتك الجديدة جاهزة</div>
+                    <h3 className="text-xl font-bold">افتح سيرتك الكاملة المحسّنة</h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                      شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو ٧٥ ريال شهرياً غير محدود.
+                    </p>
+                    <a href="/ar#pricing" className="btn-accent mt-5 inline-block px-8 py-3">افتح سيرتي ←</a>
+                  </div>
+                )}
               </div>
             ) : (
               <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>

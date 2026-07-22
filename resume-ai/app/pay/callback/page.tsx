@@ -24,6 +24,12 @@ function CallbackInner() {
           setState("paid");
           setPlan(d.plan === "monthly" ? "monthly" : "single");
           setDetail(`Order ${d.orderNumber || tx} confirmed.`);
+          // Old results were generated locked (pre-payment) — clear them so the
+          // next scan comes back complete instead of showing the stale preview.
+          try {
+            localStorage.removeItem("ra_optimize_result");
+            localStorage.removeItem("ra_ar_optimize_result");
+          } catch { /* non-fatal */ }
         } else if (d.paid && d.amountOk === false) {
           setState("failed");
           setDetail("The amount paid didn't match the plan price. If you were charged, contact support and we'll sort it out.");

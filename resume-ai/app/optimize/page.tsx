@@ -30,7 +30,15 @@ export default function OptimizePage() {
   const [coverCopied, setCoverCopied] = useState(false);
   const [paywall, setPaywall] = useState(false);
   const [thinking, setThinking] = useState("");
+  const [hasAccess, setHasAccess] = useState(false);
   const thinkRef = useRef<HTMLDivElement>(null);
+
+  // Does this browser have paid access? Drives the locked-result card: a paid
+  // user who scanned BEFORE paying still holds the old truncated result — they
+  // need a one-click rescan, not another "pay" CTA.
+  useEffect(() => {
+    fetch("/api/auth/me").then((r) => r.json()).then((d) => setHasAccess(!!d.hasAccess)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
@@ -133,6 +141,10 @@ export default function OptimizePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    await runScan();
+  }
+
+  async function runScan() {
     setError("");
     setResult(null);
     setCoverLetter("");
@@ -378,14 +390,30 @@ export default function OptimizePage() {
                         {"• Rewrote every bullet with strong action verbs and quantified impact\n• Front-loaded the exact keywords the ATS scans for\n• Restructured into an ATS-safe, single-column layout\n• …the full rewritten resume continues…"}
                       </div>
                     </div>
-                    <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-                      <div className="chip mb-3">🔒 Your rewritten resume is ready</div>
-                      <h3 className="text-xl font-bold">Unlock your full ATS-optimized resume</h3>
-                      <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                        You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or unlimited SAR 75/mo.
-                      </p>
-                      <a href="/#pricing" className="btn-accent mt-5 inline-block px-8 py-3">Unlock my resume →</a>
-                    </div>
+                    {hasAccess ? (
+                      <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.07)" }}>
+                        <div className="chip mb-3">✓ You&apos;re unlocked</div>
+                        <h3 className="text-xl font-bold">Payment confirmed — get your full resume</h3>
+                        <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                          This result was generated before your purchase, so it only holds the preview. Rescan now (takes ~10 seconds) to receive the complete rewritten resume.
+                        </p>
+                        <button onClick={runScan} disabled={loading || !resume.trim()} className="btn-accent mt-5 inline-block px-8 py-3 disabled:opacity-50">
+                          {loading ? "Unlocking…" : "⚡ Get my full resume now"}
+                        </button>
+                        {!resume.trim() && (
+                          <p className="mt-3 text-xs" style={{ color: "#fbbf24" }}>Your resume text isn&apos;t saved on this device — paste it again above first.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                        <div className="chip mb-3">🔒 Your rewritten resume is ready</div>
+                        <h3 className="text-xl font-bold">Unlock your full ATS-optimized resume</h3>
+                        <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                          You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or unlimited SAR 75/mo.
+                        </p>
+                        <a href="/#pricing" className="btn-accent mt-5 inline-block px-8 py-3">Unlock my resume →</a>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
