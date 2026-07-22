@@ -11,7 +11,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${base}/login?error=expired`);
   }
 
-  const res = NextResponse.redirect(`${base}/optimize`);
+  // Land on the account page with a welcome flag — the user must SEE that
+  // sign-in worked (redirecting into a tool with an unchanged nav looked broken).
+  const res = NextResponse.redirect(`${base}/account?welcome=1`);
   res.cookies.set(SESSION_COOKIE, createSession(email, Date.now()), {
     httpOnly: true,
     secure: true,

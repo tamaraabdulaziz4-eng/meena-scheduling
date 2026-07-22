@@ -5,15 +5,18 @@ import { useEffect, useRef, useState } from "react";
 /**
  * The signature hero element: a live-feeling ATS scan that sweeps a resume,
  * then counts the match score up from a failing 47 to a passing 92 —
- * dramatizing the exact before/after the product delivers.
+ * dramatizing the exact before/after the product delivers. Loops forever
+ * (video-like hero): scan → pass → hold → rewind → scan again.
  */
 export default function ScanDemo() {
   const [score, setScore] = useState(47);
   const [phase, setPhase] = useState<"scanning" | "done">("scanning");
   const ref = useRef<HTMLDivElement>(null);
   const started = useRef(false);
+  const alive = useRef(true);
 
   useEffect(() => {
+    alive.current = true;
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver(
@@ -26,28 +29,44 @@ export default function ScanDemo() {
       { threshold: 0.4 }
     );
     io.observe(el);
-    return () => io.disconnect();
+    return () => {
+      alive.current = false;
+      io.disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function runSequence() {
+    if (!alive.current) return;
     // Let the scan line sweep, then count the score up.
     const scanMs = 1600;
-    const t = setTimeout(() => {
+    setTimeout(() => {
+      if (!alive.current) return;
       setPhase("done");
       const target = 92;
       const start = 47;
       const dur = 1100;
       const t0 = performance.now();
       const tick = (now: number) => {
+        if (!alive.current) return;
         const p = Math.min(1, (now - t0) / dur);
         const eased = 1 - Math.pow(1 - p, 3);
         setScore(Math.round(start + (target - start) * eased));
         if (p < 1) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
+      // Hold the passing state, then rewind and loop — unless the user
+      // prefers reduced motion (then the final state simply stays).
+      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      if (!reduced) {
+        setTimeout(() => {
+          if (!alive.current) return;
+          setScore(47);
+          setPhase("scanning");
+          runSequence();
+        }, 5200);
+      }
     }, scanMs);
-    return () => clearTimeout(t);
   }
 
   const passing = score >= 75;

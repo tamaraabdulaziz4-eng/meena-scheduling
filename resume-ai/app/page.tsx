@@ -3,6 +3,7 @@ import ScanDemo from "./components/ScanDemo";
 import CheckoutButton from "./components/CheckoutButton";
 import Reveal from "./components/Reveal";
 import Counter from "./components/Counter";
+import NavAccountLink from "./components/NavAccountLink";
 
 export default function Home() {
   return (
@@ -18,8 +19,8 @@ export default function Home() {
           <div className="flex items-center gap-6">
             <Link href="/ar" className="text-sm font-semibold" style={{ color: "var(--accent)" }}>عربي</Link>
             <Link href="/build" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>CV Builder</Link>
-            <a href="#compare" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>vs Others</a>
             <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>Pricing</a>
+            <NavAccountLink />
             <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
           </div>
         </div>
@@ -27,7 +28,12 @@ export default function Home() {
 
       {/* ── Hero ── */}
       <section className="relative overflow-hidden px-6 pb-24 pt-16 md:pt-24">
-        <div className="hero-ambient"><div className="grid-lines" /></div>
+        <div className="hero-ambient">
+          <div className="orb orb-a" />
+          <div className="orb orb-b" />
+          <div className="orb orb-c" />
+          <div className="grid-lines" />
+        </div>
         <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-2">
           <div>
             <div className="chip mb-6">● Beats the ATS bots that reject 75% of resumes</div>

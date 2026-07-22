@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
+import AuthNav from "../../components/AuthNav";
 
 interface OptimizeResult {
   matchScore: number;
@@ -11,6 +12,7 @@ interface OptimizeResult {
   skillsGap: string[];
   improvements: { area: string; issue: string; fix: string }[];
   optimizedResume: string;
+  locked?: boolean;
 }
 
 const inputStyle = { background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" };
@@ -22,15 +24,46 @@ export default function ArOptimizePage() {
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [paywall, setPaywall] = useState(false);
   const [thinking, setThinking] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState("");
+  const [coverLetter, setCoverLetter] = useState("");
+  const [coverLoading, setCoverLoading] = useState(false);
+  const [coverCopied, setCoverCopied] = useState(false);
   const thinkRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
+
+  // حفظ تلقائي للمسودة والنتيجة — التحديث أو الخروج مايضيّع شي.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ra_ar_optimize_draft");
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (typeof d.resume === "string") setResume(d.resume);
+        if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
+      }
+      const savedResult = localStorage.getItem("ra_ar_optimize_result");
+      if (savedResult) setResult(JSON.parse(savedResult));
+    } catch { /* تجاهل */ }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (resume || jobDescription) {
+        localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription }));
+      }
+    } catch { /* تجاهل */ }
+  }, [resume, jobDescription]);
+
+  useEffect(() => {
+    try {
+      if (result) localStorage.setItem("ra_ar_optimize_result", JSON.stringify(result));
+      else localStorage.removeItem("ra_ar_optimize_result");
+    } catch { /* تجاهل */ }
+  }, [result]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -64,14 +97,33 @@ export default function ArOptimizePage() {
     URL.revokeObjectURL(url);
   }
 
+  async function generateCoverLetter() {
+    setCoverLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/cover-letter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resume, jobDescription }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.paywall ? "خطاب التعريف ميزة مدفوعة — افتح الوصول أولاً." : data.error || "حدث خطأ.");
+      setCoverLetter(data.coverLetter);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "تعذّر إنشاء خطاب التعريف.");
+    } finally {
+      setCoverLoading(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setResult(null);
-    setPaywall(false);
+    setCoverLetter("");
     setThinking("");
     setLoading(true);
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // ملاحظة: بدون إعادة محاولة من المتصفح — السيرفر يعيد المحاولة داخلياً.
     try {
       const res = await fetch("/api/optimize", {
         method: "POST",
@@ -81,11 +133,6 @@ export default function ArOptimizePage() {
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
         const data = await res.json();
-        if (res.status === 402 || data.paywall) {
-          setPaywall(true);
-          setLoading(false);
-          return;
-        }
         throw new Error(data.error || "حدث خطأ، حاول مرة أخرى.");
       }
       const reader = res.body!.getReader();
@@ -112,14 +159,11 @@ export default function ArOptimizePage() {
       }
       if (!got) throw new Error("لم يكتمل التحليل — حاول مرة أخرى.");
       setResult(got);
-      setLoading(false);
-      return;
     } catch (err) {
-      if (attempt === 0) { setThinking(""); continue; }
       setError(err instanceof Error ? err.message : "حدث خطأ، حاول مرة أخرى.");
+    } finally {
+      setLoading(false);
     }
-    }
-    setLoading(false);
   }
 
   const score = result?.matchScore ?? 0;
@@ -136,33 +180,22 @@ export default function ArOptimizePage() {
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/optimize" className="text-sm" style={{ color: "var(--muted)" }}>English</Link>
-            <a href="/ar#pricing" className="btn-accent px-4 py-2 text-sm">فتح غير محدود ←</a>
+            <AuthNav ar />
           </div>
         </div>
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-12">
-        {loading && thinking && (
+        {loading && (
           <div className="card mx-auto mb-8 max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
             <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
               <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
               <span className="font-mono text-xs tracking-wider" style={{ color: "var(--accent)" }}>الذكاء الاصطناعي يحلل سيرتك — مباشرة</span>
             </div>
-            <div ref={thinkRef} className="max-h-64 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>
-              {thinking.replace(/^ANALYSIS\s*/i, "")}
+            <div ref={thinkRef} className="max-h-64 min-h-20 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>
+              {thinking.replace(/^ANALYSIS\s*/i, "") || "جارٍ قراءة سيرتك…"}
               <span className="animate-pulse text-accent">▌</span>
             </div>
-          </div>
-        )}
-
-        {paywall && (
-          <div className="card mx-auto mb-8 max-w-2xl p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-            <div className="chip mb-4">● انتهى الفحص المجاني</div>
-            <h2 className="text-2xl font-bold">افتح التحسينات غير المحدودة</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-              استخدمت فحصك المجاني. احصل على فحص واحد بـ ٩ دولار أو غير محدود بـ ١٩ دولار شهرياً.
-            </p>
-            <a href="/ar#pricing" className="btn-accent mt-6 inline-block px-8 py-3">شاهد الباقات ←</a>
           </div>
         )}
 
@@ -185,15 +218,21 @@ export default function ArOptimizePage() {
                   <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
                 </label>
               </div>
-              <textarea value={resume} onChange={(e) => setResume(e.target.value)} rows={18} required
+              <textarea value={resume} onChange={(e) => setResume(e.target.value)} rows={14} maxLength={8000} required
                 placeholder="الصق سيرتك هنا بأي لغة — أو ارفع ملف PDF/Word من الزر أعلاه..."
-                className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none" style={inputStyle} />
+                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />
+              <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>
+                {resume.length}/8000{resume.length >= 8000 ? " — وصلت الحد الأقصى" : ""}
+              </p>
             </div>
             <div>
               <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>إعلان الوظيفة (اختياري)</label>
-              <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={18}
+              <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={14} maxLength={4000}
                 placeholder="اختياري — الصق إعلان وظيفة لتفصيل السيرة عليه، أو اتركه فارغاً لتحسين شامل للسيرة."
-                className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none" style={inputStyle} />
+                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />
+              <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: jobDescription.length > 3700 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>
+                {jobDescription.length}/4000
+              </p>
             </div>
             <div className="text-center md:col-span-2">
               {error && <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>{error}</div>}
@@ -214,51 +253,92 @@ export default function ArOptimizePage() {
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold" style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>{verdict}</div>
               <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>
+              <a href={`/score/${score}`} target="_blank" rel="noopener noreferrer"
+                className="mt-5 inline-block rounded-lg px-5 py-2 text-sm font-semibold"
+                style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                📣 شارك نتيجتي
+              </a>
             </div>
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-bold">سيرتك المحسّنة (بالإنجليزية)</h2>
-              <div className="flex gap-2">
-                <button onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
-                  className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                  {copied ? "✓ نُسخت" : "نسخ"}
-                </button>
-                <button onClick={() => download("optimized-resume.txt", result.optimizedResume)}
-                  className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                  ↓ نص
-                </button>
-                <PdfExport text={result.optimizedResume} label="↓ تنزيل PDF" />
-              </div>
-            </div>
-            <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
-              {result.optimizedResume}
+              {!result.locked && (
+                <div className="flex gap-2">
+                  <button onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    {copied ? "✓ نُسخت" : "نسخ"}
+                  </button>
+                  <button onClick={() => download("optimized-resume.txt", result.optimizedResume)}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    ↓ نص
+                  </button>
+                  <PdfExport text={result.optimizedResume} label="↓ تنزيل PDF" />
+                </div>
+              )}
             </div>
 
-            <div className="mt-6 grid gap-6 md:grid-cols-2">
-              <div className="card p-6" style={{ borderColor: "rgba(248,113,113,0.2)" }}>
-                <h3 className="mb-4 font-bold">كلمات مفتاحية ناقصة ({result.missingKeywords.length})</h3>
-                <div className="flex flex-wrap gap-2" dir="ltr">
-                  {result.missingKeywords.map((k) => (
-                    <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(248,113,113,0.14)", color: "#f87171" }}>{k}</span>
-                  ))}
+            {result.locked ? (
+              <div>
+                <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
+                  {result.optimizedResume}
+                  <div className="pointer-events-none mt-2 select-none blur-sm" style={{ color: "rgba(244,245,243,0.5)" }}>
+                    {"• Rewrote every bullet with strong action verbs and quantified impact\n• Front-loaded the exact ATS keywords\n• …the full rewritten resume continues…"}
+                  </div>
+                </div>
+                <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                  <div className="chip mb-3">🔒 سيرتك الجديدة جاهزة</div>
+                  <h3 className="text-xl font-bold">افتح سيرتك الكاملة المحسّنة</h3>
+                  <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                    شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو ٧٥ ريال شهرياً غير محدود.
+                  </p>
+                  <a href="/ar#pricing" className="btn-accent mt-5 inline-block px-8 py-3">افتح سيرتي ←</a>
                 </div>
               </div>
-              <div className="card p-6" style={{ borderColor: "rgba(74,222,128,0.2)" }}>
-                <h3 className="mb-4 font-bold">كلمات موجودة ({result.presentKeywords.length})</h3>
-                <div className="flex flex-wrap gap-2" dir="ltr">
-                  {result.presentKeywords.map((k) => (
-                    <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{k}</span>
-                  ))}
-                </div>
+            ) : (
+              <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
+                {result.optimizedResume}
               </div>
+            )}
+
+            {/* خطاب التعريف */}
+            <div className="card mt-6 p-6" style={{ borderColor: "rgba(74,222,128,0.25)" }}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-bold">خطاب تعريف مطابق</h3>
+                  <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>خطاب تعريف مفصّل على نفس إعلان الوظيفة.</p>
+                </div>
+                {result.locked ? (
+                  <a href="/ar#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 افتح الوصول لإنشائه</a>
+                ) : !coverLetter ? (
+                  <button onClick={generateCoverLetter} disabled={coverLoading} className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
+                    {coverLoading ? "جارٍ الكتابة…" : "✨ أنشئ خطاب التعريف"}
+                  </button>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={() => { navigator.clipboard.writeText(coverLetter); setCoverCopied(true); setTimeout(() => setCoverCopied(false), 1800); }}
+                      className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                      {coverCopied ? "✓ نُسخ" : "نسخ"}
+                    </button>
+                    <button onClick={() => download("cover-letter.txt", coverLetter)}
+                      className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "var(--accent)", color: "#05130a" }}>
+                      ↓ تنزيل
+                    </button>
+                  </div>
+                )}
+              </div>
+              {coverLetter && (
+                <div dir="ltr" className="card mt-4 whitespace-pre-wrap p-5 text-left text-sm leading-relaxed" style={{ background: "rgba(255,255,255,0.02)", color: "rgba(244,245,243,0.85)" }}>
+                  {coverLetter}
+                </div>
+              )}
             </div>
 
             <div className="card mt-8 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
               <h3 className="text-2xl font-bold">تقدّم على أكثر من وظيفة؟</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>غير محدود بـ ١٩ دولار شهرياً — كل تقديم بسيرة مخصصة.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>غير محدود بـ ٧٥ ريال شهرياً — كل تقديم بسيرة مخصصة وخطاب تعريف.</p>
               <div className="mt-6 flex flex-wrap justify-center gap-4">
                 <a href="/ar#pricing" className="btn-accent px-8 py-3">اشترك الآن ←</a>
-                <button onClick={() => { setResult(null); setResume(""); setJobDescription(""); }}
+                <button onClick={() => { setResult(null); setResume(""); setJobDescription(""); setCoverLetter(""); try { localStorage.removeItem("ra_ar_optimize_draft"); } catch { /* تجاهل */ } }}
                   className="btn-ghost px-8 py-3 font-semibold" style={{ color: "var(--fg)" }}>
                   حسّن سيرة أخرى
                 </button>

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 interface Me {
   signedIn: boolean;
@@ -11,8 +11,9 @@ interface Me {
   until?: number;
 }
 
-export default function AccountPage() {
+function AccountInner() {
   const router = useRouter();
+  const welcome = useSearchParams().get("welcome") === "1";
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
@@ -64,6 +65,12 @@ export default function AccountPage() {
           </div>
         ) : (
           <div className="card p-8">
+            {welcome && (
+              <div className="mb-5 rounded-xl px-4 py-3 text-sm font-semibold"
+                style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.35)", color: "var(--accent)" }}>
+                ✓ You&apos;re signed in — welcome back!
+              </div>
+            )}
             <div className="chip mb-4">● My account</div>
             <h1 className="text-2xl font-bold">Account</h1>
 
@@ -101,5 +108,13 @@ export default function AccountPage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function AccountPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen" style={{ background: "var(--bg)" }} />}>
+      <AccountInner />
+    </Suspense>
   );
 }

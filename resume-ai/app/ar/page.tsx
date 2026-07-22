@@ -33,7 +33,12 @@ export default function ArabicHome() {
 
       {/* Hero */}
       <section className="relative overflow-hidden px-6 pb-24 pt-16 md:pt-24">
-        <div className="hero-ambient"><div className="grid-lines" /></div>
+        <div className="hero-ambient">
+          <div className="orb orb-a" />
+          <div className="orb orb-b" />
+          <div className="orb orb-c" />
+          <div className="grid-lines" />
+        </div>
         <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-2">
           <div>
             <div className="chip mb-6">● ٧٥٪ من السير الذاتية يرفضها الروبوت قبل الإنسان</div>
@@ -58,7 +63,7 @@ export default function ArabicHome() {
             <div className="mt-7 flex flex-wrap items-center gap-5 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ بدون تسجيل</span>
               <span>✓ النتيجة في ٦٠ ثانية</span>
-              <span>✓ من ٩ دولار بدون اشتراك</span>
+              <span>✓ من ٣٥ ريال بدون اشتراك</span>
             </div>
           </div>
           <div className="lg:pr-8" dir="ltr">
@@ -129,7 +134,7 @@ export default function ArabicHome() {
           <div className="card p-8">
             <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>مرة واحدة</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">$9</span>
+              <span className="text-5xl font-extrabold">٣٥ ﷼</span>
               <span className="text-sm" style={{ color: "var(--muted)" }}>فقط</span>
             </div>
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>مثالية لوظيفة واحدة مهمة.</p>
@@ -148,7 +153,7 @@ export default function ArabicHome() {
             <div className="absolute left-5 top-5 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider" style={{ background: "var(--accent)", color: "#05130a" }}>الأفضل قيمة</div>
             <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>غير محدود</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">$19</span>
+              <span className="text-5xl font-extrabold">٧٥ ﷼</span>
               <span className="text-sm" style={{ color: "var(--muted)" }}>/ شهرياً</span>
             </div>
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>لبحث نشط عن وظيفة.</p>
@@ -188,9 +193,12 @@ export default function ArabicHome() {
             <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
             <span className="text-sm font-bold">ResumeAI</span>
           </div>
-          <div className="flex gap-5 text-sm">
+          <div className="flex flex-wrap justify-center gap-5 text-sm">
             <Link href="/ar/build" style={{ color: "var(--muted)" }}>إنشاء سيرة</Link>
             <Link href="/ar/optimize" style={{ color: "var(--muted)" }}>تحسين سيرة</Link>
+            <Link href="/resume-templates/jadarat" style={{ color: "var(--muted)" }}>قالب جدارات</Link>
+            <Link href="/resume-templates" style={{ color: "var(--muted)" }}>القوالب</Link>
+            <Link href="/account" style={{ color: "var(--muted)" }}>حسابي</Link>
             <Link href="/" style={{ color: "var(--muted)" }}>English</Link>
           </div>
           <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI</p>

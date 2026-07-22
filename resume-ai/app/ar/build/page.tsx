@@ -35,6 +35,40 @@ export default function ArBuildPage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // حفظ تلقائي: كل الخطوات والحقول تنحفظ — التحديث أو الخروج مايضيّع الكتابة.
+  const DRAFT_KEY = "ra_ar_build_draft";
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (typeof d.name === "string") setName(d.name);
+        if (typeof d.contact === "string") setContact(d.contact);
+        if (typeof d.targetRole === "string") setTargetRole(d.targetRole);
+        if (Array.isArray(d.exps) && d.exps.length) setExps(d.exps);
+        if (typeof d.education === "string") setEducation(d.education);
+        if (typeof d.skills === "string") setSkills(d.skills);
+        if (typeof d.extras === "string") setExtras(d.extras);
+        if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
+        if (typeof d.step === "number") setStep(d.step);
+      }
+    } catch { /* تجاهل */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      const hasContent = name || contact || targetRole || education || skills || extras || jobDescription || exps.some((e) => e.role || e.company || e.duties);
+      if (hasContent) {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, contact, targetRole, exps, education, skills, extras, jobDescription, step }));
+      }
+    } catch { /* تجاهل */ }
+  }, [name, contact, targetRole, exps, education, skills, extras, jobDescription, step]);
+
+  function clearDraft() {
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* تجاهل */ }
+  }
+
   function setExp(i: number, field: keyof Exp, v: string) {
     setExps((prev) => prev.map((e, j) => (j === i ? { ...e, [field]: v } : e)));
   }
@@ -85,6 +119,7 @@ export default function ArBuildPage() {
       if (!got) throw new Error("لم يكتمل الإنشاء — حاول مرة أخرى.");
       setCv(got.cv);
       setTips(got.tips);
+      clearDraft();
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ.");
     } finally {
@@ -132,7 +167,7 @@ export default function ArBuildPage() {
                     style={i <= step ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--faint)", border: "1px solid var(--line)" }}>
                     {i + 1}
                   </div>
-                  <span className="hidden text-xs sm:block" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
+                  <span className="text-[11px] sm:text-xs" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
                   {i < steps.length - 1 && <div className="h-px w-6" style={{ background: "var(--line)" }} />}
                 </div>
               ))}
@@ -225,7 +260,7 @@ export default function ArBuildPage() {
                     التالي ←
                   </button>
                 ) : (
-                  <button onClick={generate} className="btn-accent px-8 py-2.5 text-sm">✨ ابنِ سيرتي</button>
+                  <button onClick={generate} disabled={loading} className="btn-accent px-8 py-2.5 text-sm disabled:opacity-40">✨ ابنِ سيرتي</button>
                 )}
               </div>
             </div>
@@ -278,7 +313,7 @@ export default function ArBuildPage() {
               <Link href="/ar/optimize" className="btn-accent mt-5 inline-block px-8 py-3">افحصها الآن — مجاناً ←</Link>
             </div>
 
-            <button onClick={() => { setCv(""); setTips([]); setStep(0); }} className="mx-auto mt-6 block text-sm" style={{ color: "var(--faint)" }}>
+            <button onClick={() => { setCv(""); setTips([]); setStep(0); setName(""); setContact(""); setTargetRole(""); setExps([{ role: "", company: "", dates: "", duties: "" }]); setEducation(""); setSkills(""); setExtras(""); setJobDescription(""); clearDraft(); }} className="mx-auto mt-6 block text-sm" style={{ color: "var(--faint)" }}>
               ابدأ من جديد
             </button>
           </div>
