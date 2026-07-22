@@ -97,8 +97,16 @@ const scouted = await parallel(
 const allFindings = scouted.filter(Boolean).flatMap((s) => s.findings || [])
 log(`Scouts returned ${allFindings.length} findings`)
 
+// An optional focus (passed via Workflow args) biases the manager toward a
+// theme — e.g. "growth" to prioritize SEO/content that pulls organic customers.
+const focus = typeof args === 'string' ? args : args?.focus
+const focusLine = focus
+  ? `\n\nSHIFT FOCUS (bias your pick toward this unless a critical bug outranks it): ${focus}. ` +
+    `For growth focus specifically: prefer adding real SEO surface (new programmatic pages for high-intent job-search keywords, better metadata, internal links, sitemap coverage) — the compounding channel that brings organic customers with no ad spend. Never fabricate stats or reviews.`
+  : ''
+
 const plan = await agent(
-  `${CTX}\n\nYou are the MANAGER. Here are this shift's scout findings as JSON:\n${JSON.stringify(allFindings, null, 2)}\n\n` +
+  `${CTX}${focusLine}\n\nYou are the MANAGER. Here are this shift's scout findings as JSON:\n${JSON.stringify(allFindings, null, 2)}\n\n` +
     `Pick the SINGLE highest-value, lowest-risk change to ship this shift (one coherent change, not a bundle). ` +
     `Write a concrete implementation spec and acceptance criteria the engineer and QA can follow exactly. ` +
     `If genuinely nothing is worth the risk on a live payment product, set ship=false and explain.`,
