@@ -3,10 +3,10 @@ import sqlite3
 import datetime
 from pathlib import Path
 from typing import Any
-import anthropic
-from config.settings import ANTHROPIC_API_KEY, DB_PATH, LOG_DIR
+import os
+import urllib.request
+from config.settings import DB_PATH, LOG_DIR
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 def get_db():
     DB_PATH.parent.mkdir(exist_ok=True)
@@ -83,16 +83,24 @@ def log_agent(agent: str, action: str, result: Any, tokens: int = 0, cost: float
         f.write(f"[{datetime.datetime.now().isoformat()}] {action}: {str(result)[:500]}\n")
 
 def ask_claude(prompt: str, model: str, system: str = "", max_tokens: int = 2048) -> tuple[str, int, float]:
-    msgs = [{"role": "user", "content": prompt}]
-    kwargs = {"model": model, "max_tokens": max_tokens, "messages": msgs}
-    if system:
-        kwargs["system"] = system
-    response = client.messages.create(**kwargs)
-    text = response.content[0].text
-    tokens = response.usage.input_tokens + response.usage.output_tokens
-    # Approximate cost: haiku ~$0.001/1k, sonnet ~$0.015/1k
-    cost = tokens * (0.000001 if "haiku" in model else 0.000015)
-    return text, tokens, cost
+    """LLM call via NVIDIA's free OpenAI-compatible API (model arg is ignored;
+    NVIDIA_MODEL env or the default free model is used). Cost is $0."""
+    key = os.environ.get("NVIDIA_API_KEY", "")
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY is not set")
+    nmodel = os.environ.get("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
+    msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    body = json.dumps({"model": nmodel, "max_tokens": max_tokens,
+                       "temperature": 0.4, "messages": msgs}).encode()
+    req = urllib.request.Request(
+        "https://integrate.api.nvidia.com/v1/chat/completions", data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=280) as resp:
+        data = json.loads(resp.read())
+    text = data["choices"][0]["message"]["content"]
+    usage = data.get("usage", {})
+    tokens = (usage.get("prompt_tokens", 0) or 0) + (usage.get("completion_tokens", 0) or 0)
+    return text, tokens, 0.0
 
 def get_latest_metrics() -> dict:
     conn = get_db()

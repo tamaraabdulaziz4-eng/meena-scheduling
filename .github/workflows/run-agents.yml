@@ -1,0 +1,42 @@
+name: Run AI Company Agents
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # daily 08:00 UTC — CEO + all agents
+  workflow_dispatch:       # manual "Run" button
+
+permissions:
+  contents: write
+
+jobs:
+  agents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install --quiet sqlite-utils apscheduler
+
+      - name: Run all agents (CEO + team)
+        working-directory: ai-company
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: python run_company.py
+
+      - name: Export today's brief to markdown
+        working-directory: ai-company
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: python export_report.py
+
+      - name: Commit agent output
+        run: |
+          git config user.name "AI Company Bot"
+          git config user.email "bot@resumeai.local"
+          git add ai-company/data ai-company/reports 2>/dev/null || true
+          git commit -m "Daily agent run: $(date -u +%Y-%m-%d)" || echo "nothing to commit"
+          git push || echo "push skipped"

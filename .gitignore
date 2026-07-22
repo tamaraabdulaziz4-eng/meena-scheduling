@@ -20,3 +20,4 @@ mockups/
 
 # Production seed — real staff + bcrypt admin hashes. Never track (keep local only).
 seed_prod.sql
+ai-company/data/*.db
