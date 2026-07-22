@@ -63,6 +63,12 @@ export default function BuildPage() {
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
         if (typeof d.step === "number") setStep(d.step);
       }
+      const savedResult = localStorage.getItem("ra_build_result");
+      if (savedResult) {
+        const r = JSON.parse(savedResult);
+        if (typeof r.cv === "string") setCv(r.cv);
+        if (Array.isArray(r.tips)) setTips(r.tips);
+      }
     } catch {
       /* ignore corrupt/unavailable storage */
     }
@@ -144,7 +150,8 @@ export default function BuildPage() {
       if (!got) throw new Error("The build didn't complete. Please try again.");
       setCv(got.cv);
       setTips(got.tips);
-      clearDraft();
+      // Keep the draft (enables "edit answers & regenerate"); persist the result.
+      try { localStorage.setItem("ra_build_result", JSON.stringify({ cv: got.cv, tips: got.tips })); } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -337,12 +344,22 @@ export default function BuildPage() {
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                 Run your new CV through the optimizer against a real job posting to get your match score.
               </p>
-              <Link href="/optimize" className="btn-accent mt-5 inline-block px-8 py-3">Scan it now — free →</Link>
+              <Link href="/optimize" className="btn-accent mt-5 inline-block px-8 py-3"
+                onClick={() => { try { localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume: cv, jobDescription, mode: jobDescription.trim().length >= 30 ? "target" : "general" })); localStorage.removeItem("ra_optimize_result"); } catch { /* noop */ } }}>
+                Scan it now — free →
+              </Link>
             </div>
 
-            <button onClick={() => { setCv(""); setTips([]); setStep(0); setName(""); setContact(""); setTargetRole(""); setExps([{ role: "", company: "", dates: "", duties: "" }]); setEducation(""); setSkills(""); setExtras(""); setJobDescription(""); clearDraft(); }} className="mx-auto mt-6 block text-sm" style={{ color: "var(--faint)" }}>
-              Start over
-            </button>
+            <div className="mx-auto mt-6 flex justify-center gap-5">
+              <button onClick={() => { setCv(""); setTips([]); try { localStorage.removeItem("ra_build_result"); } catch { /* noop */ } }}
+                className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+                ← Edit my answers &amp; regenerate
+              </button>
+              <button onClick={() => { setCv(""); setTips([]); setStep(0); setName(""); setContact(""); setTargetRole(""); setExps([{ role: "", company: "", dates: "", duties: "" }]); setEducation(""); setSkills(""); setExtras(""); setJobDescription(""); clearDraft(); try { localStorage.removeItem("ra_build_result"); } catch { /* noop */ } }}
+                className="text-sm" style={{ color: "var(--faint)" }}>
+                Start over
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -73,6 +73,10 @@ export default function ArOptimizePage() {
         const d = JSON.parse(saved);
         if (typeof d.resume === "string") setResume(d.resume);
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
+        // نحفظ الوضع أيضاً — عشان إعادة الفحص بعد الدفع ما تسقط إعلان الوظيفة.
+        if (d.mode === "target" || (typeof d.jobDescription === "string" && d.jobDescription.trim().length >= 30)) {
+          setMode("target");
+        }
       }
       const savedResult = localStorage.getItem("ra_ar_optimize_result");
       if (savedResult) setResult(JSON.parse(savedResult));
@@ -82,10 +86,10 @@ export default function ArOptimizePage() {
   useEffect(() => {
     try {
       if (resume || jobDescription) {
-        localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription }));
+        localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription, mode }));
       }
     } catch { /* تجاهل */ }
-  }, [resume, jobDescription]);
+  }, [resume, jobDescription, mode]);
 
   useEffect(() => {
     try {
@@ -126,9 +130,13 @@ export default function ArOptimizePage() {
     URL.revokeObjectURL(url);
   }
 
+  const [coverError, setCoverError] = useState("");
+  const [coverPaywalled, setCoverPaywalled] = useState(false);
+
   async function generateCoverLetter() {
     setCoverLoading(true);
-    setError("");
+    setCoverError("");
+    setCoverPaywalled(false);
     try {
       const res = await fetch("/api/cover-letter", {
         method: "POST",
@@ -136,10 +144,16 @@ export default function ArOptimizePage() {
         body: JSON.stringify({ resume, jobDescription }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.paywall ? "خطاب التعريف ميزة مدفوعة — افتح الوصول أولاً." : data.error || "حدث خطأ.");
+      if (!res.ok) {
+        if (res.status === 402 || data.paywall) {
+          setCoverPaywalled(true);
+          throw new Error("انتهت صلاحية وصولك — افتح الوصول من جديد لإنشاء خطابات التعريف.");
+        }
+        throw new Error(data.error || "حدث خطأ.");
+      }
       setCoverLetter(data.coverLetter);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "تعذّر إنشاء خطاب التعريف.");
+      setCoverError(err instanceof Error ? err.message : "تعذّر إنشاء خطاب التعريف.");
     } finally {
       setCoverLoading(false);
     }
@@ -218,7 +232,10 @@ export default function ArOptimizePage() {
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <div className="flex items-center gap-5">
-            <Link href="/optimize" className="text-sm" style={{ color: "var(--muted)" }}>English</Link>
+            <Link href="/optimize" className="text-sm" style={{ color: "var(--muted)" }}
+              onClick={() => { try { localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); } catch { /* noop */ } }}>
+              English
+            </Link>
             <AuthNav ar />
           </div>
         </div>
@@ -338,7 +355,13 @@ export default function ArOptimizePage() {
             </div>
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-bold">سيرتك المحسّنة (بالإنجليزية)</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-xl font-bold">سيرتك المحسّنة (بالإنجليزية)</h2>
+                <button onClick={() => { setResult(null); setCoverLetter(""); setCoverError(""); }}
+                  className="btn-ghost px-3 py-1.5 text-xs font-semibold" style={{ color: "var(--fg)" }}>
+                  فحص جديد ←
+                </button>
+              </div>
               {!result.locked && (
                 <div className="flex gap-2">
                   <button onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
@@ -419,6 +442,14 @@ export default function ArOptimizePage() {
                   </div>
                 )}
               </div>
+              {coverError && (
+                <div className="mt-3 rounded-lg px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
+                  {coverError}
+                  {coverPaywalled && (
+                    <a href="/ar#pricing" className="mr-2 font-semibold underline" style={{ color: "var(--accent)" }}>شاهد الباقات ←</a>
+                  )}
+                </div>
+              )}
               {coverLetter && (
                 <div dir="ltr" className="card mt-4 whitespace-pre-wrap p-5 text-left text-sm leading-relaxed" style={{ background: "rgba(255,255,255,0.02)", color: "rgba(244,245,243,0.85)" }}>
                   {coverLetter}

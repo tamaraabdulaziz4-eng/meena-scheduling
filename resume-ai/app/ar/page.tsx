@@ -154,8 +154,8 @@ export default function ArabicHome() {
                 </li>
               ))}
             </ul>
-            <div className="mt-8" dir="ltr">
-              <CheckoutButton plan="single" label="اشترِ تحسيناً واحداً" variant="ghost" />
+            <div className="mt-8">
+              <CheckoutButton ar plan="single" label="اشترِ تحسيناً واحداً" variant="ghost" />
             </div>
           </div>
           <div className="card p-8" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.05)", position: "relative" }}>
@@ -173,8 +173,8 @@ export default function ArabicHome() {
                 </li>
               ))}
             </ul>
-            <div className="mt-8" dir="ltr">
-              <CheckoutButton plan="monthly" label="← اشترك الآن" variant="accent" />
+            <div className="mt-8">
+              <CheckoutButton ar plan="monthly" label="اشترك الآن ←" variant="accent" />
             </div>
           </div>
         </div>

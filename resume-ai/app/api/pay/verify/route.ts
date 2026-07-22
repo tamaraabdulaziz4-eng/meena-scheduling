@@ -12,8 +12,8 @@ const BASE = process.env.PAYLINK_BASE_URL || "https://restapi.paylink.sa";
 // checks the amount Paylink actually collected against this so an underpaid or
 // tampered invoice can't unlock a full entitlement.
 const PLAN_PRICE: Record<string, number> = {
-  single: Number(process.env.PRICE_SINGLE || 9),
-  monthly: Number(process.env.PRICE_MONTHLY || 19),
+  single: Number(process.env.PRICE_SINGLE || 35),
+  monthly: Number(process.env.PRICE_MONTHLY || 75),
 };
 
 async function authenticate(): Promise<string> {

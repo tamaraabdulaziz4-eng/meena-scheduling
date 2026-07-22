@@ -11,11 +11,11 @@ export const maxDuration = 30;
  */
 
 const BASE = process.env.PAYLINK_BASE_URL || "https://restapi.paylink.sa";
-const CURRENCY = process.env.PAY_CURRENCY || "USD";
+const CURRENCY = process.env.PAY_CURRENCY || "SAR";
 
 const PLANS: Record<string, { title: string; amount: number }> = {
-  single: { title: "ResumeAI — Single Optimization", amount: Number(process.env.PRICE_SINGLE || 9) },
-  monthly: { title: "ResumeAI — Unlimited (1 month)", amount: Number(process.env.PRICE_MONTHLY || 19) },
+  single: { title: "ResumeAI — Single Optimization", amount: Number(process.env.PRICE_SINGLE || 35) },
+  monthly: { title: "ResumeAI — Unlimited (1 month)", amount: Number(process.env.PRICE_MONTHLY || 75) },
 };
 
 async function authenticate(): Promise<string> {
@@ -36,7 +36,8 @@ async function authenticate(): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
-    const { plan, name, email, mobile } = await req.json();
+    const { plan, name, email, mobile, locale } = await req.json();
+    const lang = locale === "ar" ? "ar" : "en";
 
     const chosen = PLANS[plan];
     if (!chosen) return NextResponse.json({ error: "Unknown plan." }, { status: 400 });
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
         currency: CURRENCY,
         clientName: String(name).trim(),
         clientMobile: String(mobile).replace(/[\s+]/g, ""),
-        callBackUrl: `${origin}/pay/callback`,
+        callBackUrl: `${origin}/pay/callback?lang=${lang}`,
         note: chosen.title,
         products: [{ title: chosen.title, price: chosen.amount, qty: 1 }],
       }),

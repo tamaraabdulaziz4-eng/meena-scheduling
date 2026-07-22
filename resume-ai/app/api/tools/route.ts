@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { allow, clientIp } from "@/app/lib/ratelimit";
 
 export const maxDuration = 300;
 
@@ -100,6 +101,11 @@ export async function POST(req: NextRequest) {
     }
     if (inputA.length > 8000 || inputB.length > 4000) {
       return NextResponse.json({ error: "Input too long." }, { status: 400 });
+    }
+
+    // Free LLM endpoints need the same abuse cap as /api/optimize.
+    if (!allow(`tools:${clientIp(req)}`, 10, 10 * 60 * 1000)) {
+      return NextResponse.json({ error: "You're going a bit fast. Please wait a minute and try again." }, { status: 429 });
     }
 
     const key = process.env.NVIDIA_API_KEY;

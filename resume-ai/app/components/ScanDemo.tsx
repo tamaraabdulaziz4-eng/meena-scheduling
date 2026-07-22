@@ -76,8 +76,8 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
     header: ar ? "فحص ATS · تجريبي" : "ATS Scan · Demo",
     scanning: ar ? "…جارٍ الفحص" : "SCANNING…",
     matchScore: ar ? "نسبة التطابق" : "Match Score",
-    before: ar ? "قبل · ٤٧٪" : "BEFORE · 47%",
-    after: ar ? "بعد · ٩٢٪" : "AFTER · 92%",
+    before: ar ? "قبل · 47%" : "BEFORE · 47%",
+    after: ar ? "بعد · 92%" : "AFTER · 92%",
   };
 
   const lines = ar

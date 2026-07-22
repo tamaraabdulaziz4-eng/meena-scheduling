@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -8,6 +8,13 @@ function LoginInner() {
   const params = useSearchParams();
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  // Survive refresh/back after sending — otherwise users re-request duplicates.
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("ra_login_sent");
+      if (saved) { setEmail(saved); setState("sent"); }
+    } catch { /* noop */ }
+  }, []);
   const [error, setError] = useState(params.get("error") === "expired" ? "That link expired — request a new one." : "");
 
   async function submit(e: React.FormEvent) {
@@ -23,6 +30,7 @@ function LoginInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
       setState("sent");
+      try { sessionStorage.setItem("ra_login_sent", email); } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setState("idle");

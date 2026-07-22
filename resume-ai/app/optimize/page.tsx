@@ -42,7 +42,6 @@ export default function OptimizePage() {
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
-  const [paywall, setPaywall] = useState(false);
   const [thinking, setThinking] = useState("");
   const [hasAccess, setHasAccess] = useState(false);
   const [mode, setMode] = useState<"general" | "target">("general");
@@ -76,6 +75,11 @@ export default function OptimizePage() {
         const d = JSON.parse(saved);
         if (typeof d.resume === "string") setResume(d.resume);
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
+        // Persist the MODE too — a paid user's post-payment rescan must not
+        // silently drop the job description because mode reset to "general".
+        if (d.mode === "target" || (typeof d.jobDescription === "string" && d.jobDescription.trim().length >= 30)) {
+          setMode("target");
+        }
       }
       const savedResult = localStorage.getItem("ra_optimize_result");
       if (savedResult) setResult(JSON.parse(savedResult));
@@ -87,12 +91,12 @@ export default function OptimizePage() {
   useEffect(() => {
     try {
       if (resume || jobDescription) {
-        localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription }));
+        localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription, mode }));
       }
     } catch {
       /* storage full or blocked — non-fatal */
     }
-  }, [resume, jobDescription]);
+  }, [resume, jobDescription, mode]);
 
   useEffect(() => {
     try {
@@ -135,9 +139,13 @@ export default function OptimizePage() {
     URL.revokeObjectURL(url);
   }
 
+  const [coverError, setCoverError] = useState("");
+  const [coverPaywalled, setCoverPaywalled] = useState(false);
+
   async function generateCoverLetter() {
     setCoverLoading(true);
-    setError("");
+    setCoverError("");
+    setCoverPaywalled(false);
     try {
       const res = await fetch("/api/cover-letter", {
         method: "POST",
@@ -145,10 +153,17 @@ export default function OptimizePage() {
         body: JSON.stringify({ resume, jobDescription }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      if (!res.ok) {
+        // 402 = pass expired mid-session → show the unlock CTA, not a dead button.
+        if (res.status === 402 || data.paywall) {
+          setCoverPaywalled(true);
+          throw new Error("Your access has expired — unlock again to generate cover letters.");
+        }
+        throw new Error(data.error || "Failed");
+      }
       setCoverLetter(data.coverLetter);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate cover letter.");
+      setCoverError(err instanceof Error ? err.message : "Failed to generate the cover letter. Please try again.");
     } finally {
       setCoverLoading(false);
     }
@@ -168,7 +183,6 @@ export default function OptimizePage() {
     setError("");
     setResult(null);
     setCoverLetter("");
-    setPaywall(false);
     setThinking("");
     setLoading(true);
 
@@ -189,11 +203,6 @@ export default function OptimizePage() {
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
         const data = await res.json();
-        if (res.status === 402 || data.paywall) {
-          setPaywall(true);
-          setLoading(false);
-          return;
-        }
         throw new Error(data.error || "Failed");
       }
 
@@ -245,6 +254,14 @@ export default function OptimizePage() {
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <div className="flex items-center gap-5">
+            <Link href="/ar/optimize" className="text-sm font-semibold" style={{ color: "var(--accent)" }}
+              onClick={() => {
+                // Carry the draft across the language switch — separate storage
+                // keys otherwise make it look like the user's text vanished.
+                try { localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); } catch { /* noop */ }
+              }}>
+              عربي
+            </Link>
             <AuthNav />
           </div>
         </div>
@@ -264,16 +281,8 @@ export default function OptimizePage() {
             </div>
           </div>
         )}
-        {paywall && (
-          <div className="card mx-auto mb-8 max-w-2xl p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-            <div className="chip mb-4">● Free scan used</div>
-            <h2 className="text-2xl font-bold">Unlock unlimited optimizations</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-              You&apos;ve used your free scan. Get a one-time pass for $9 or go unlimited for $19/mo — every resume optimized, cover letters included.
-            </p>
-            <a href="/#pricing" className="btn-accent mt-6 inline-block px-8 py-3">See plans →</a>
-          </div>
-        )}
+        {/* (dead "free scan used" card removed — the scan+analysis is always
+            free by design; only the rewrite is gated via result.locked) */}
         {!result && (
           <div className="mb-10 text-center">
             <div className="chip mb-4">● Free scan</div>
@@ -403,19 +412,27 @@ export default function OptimizePage() {
               </a>
             </div>
 
-            {/* Tabs */}
-            <div className="mb-6 flex gap-2">
-              {(["resume", "analysis"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
-                  style={tab === t
-                    ? { background: "var(--accent)", color: "#05130a" }
-                    : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                  {t === "resume" ? "Optimized resume" : "Full analysis"}
-                </button>
-              ))}
+            {/* Tabs + a visible way OUT of a stale result (it rehydrates on
+                every visit — without this, returning users are stuck on it) */}
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex gap-2">
+                {(["resume", "analysis"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTab(t)}
+                    className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
+                    style={tab === t
+                      ? { background: "var(--accent)", color: "#05130a" }
+                      : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                    {t === "resume" ? "Optimized resume" : "Full analysis"}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => { setResult(null); setCoverLetter(""); setCoverError(""); }}
+                className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>
+                ← New scan
+              </button>
             </div>
 
             {tab === "resume" && (
@@ -515,6 +532,14 @@ export default function OptimizePage() {
                       </div>
                     )}
                   </div>
+                  {coverError && (
+                    <div className="mt-3 rounded-lg px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
+                      {coverError}
+                      {coverPaywalled && (
+                        <a href="/#pricing" className="ml-2 font-semibold underline" style={{ color: "var(--accent)" }}>See plans →</a>
+                      )}
+                    </div>
+                  )}
                   {coverLetter && (
                     <div className="card mt-4 whitespace-pre-wrap p-5 text-sm leading-relaxed"
                       style={{ background: "rgba(255,255,255,0.02)", color: "rgba(244,245,243,0.85)" }}>
@@ -572,11 +597,15 @@ export default function OptimizePage() {
             {/* Bottom CTA */}
             <div className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
               <h3 className="text-2xl font-bold">Applying to more than one job?</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Go unlimited for $19/mo — every application optimized, cover letters included.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Go unlimited for SAR 75/mo — every application optimized, cover letters included.</p>
               <div className="mt-6 flex flex-wrap justify-center gap-4">
-                <a href="/#pricing" className="btn-accent px-8 py-3">Go unlimited — $19/mo →</a>
+                <a href="/#pricing" className="btn-accent px-8 py-3">Go unlimited — SAR 75/mo →</a>
                 <button
-                  onClick={() => { setResult(null); setResume(""); setJobDescription(""); }}
+                  onClick={() => {
+                    setResult(null); setResume(""); setJobDescription(""); setCoverLetter("");
+                    setCoverError(""); setUploadedName(""); setMode("general");
+                    try { localStorage.removeItem("ra_optimize_draft"); } catch { /* noop */ }
+                  }}
                   className="btn-ghost px-8 py-3 font-semibold" style={{ color: "var(--fg)" }}>
                   Optimize another
                 </button>

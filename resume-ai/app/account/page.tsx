@@ -14,9 +14,31 @@ interface Me {
 function AccountInner() {
   const router = useRouter();
   const welcome = useSearchParams().get("welcome") === "1";
+  // Strip the flag from the URL so refresh/bookmark doesn't re-show the banner.
+  useEffect(() => {
+    if (welcome) router.replace("/account", { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
+  const [links, setLinks] = useState<{ slug: string; url: string; token: string; created?: string }[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("ra_published");
+      if (raw) setLinks(JSON.parse(raw));
+    } catch { /* noop */ }
+  }, []);
+
+  async function removeLink(slug: string, token: string) {
+    try {
+      await fetch(`/api/publish?slug=${encodeURIComponent(slug)}&token=${encodeURIComponent(token)}`, { method: "DELETE" });
+    } catch { /* best-effort */ }
+    const next = links.filter((l) => l.slug !== slug);
+    setLinks(next);
+    try { localStorage.setItem("ra_published", JSON.stringify(next)); } catch { /* noop */ }
+  }
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -95,6 +117,21 @@ function AccountInner() {
 
             {!me.unlimited && (
               <Link href="/#pricing" className="btn-accent mt-6 block w-full py-3 text-center">Unlock unlimited →</Link>
+            )}
+
+            {links.length > 0 && (
+              <div className="mt-8">
+                <h2 className="mb-3 text-sm font-bold" style={{ color: "var(--muted)" }}>My public resume links</h2>
+                <ul className="space-y-2">
+                  {links.map((l) => (
+                    <li key={l.slug} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)" }}>
+                      <a href={l.url} target="_blank" rel="noopener noreferrer" className="truncate text-accent" dir="ltr">{l.url}</a>
+                      <button onClick={() => removeLink(l.slug, l.token)} className="shrink-0 text-xs" style={{ color: "#f87171" }}>Unpublish</button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs" style={{ color: "var(--faint)" }}>Links are remembered on this device.</p>
+              </div>
             )}
 
             <button

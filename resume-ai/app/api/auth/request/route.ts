@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createMagicToken } from "@/app/lib/session";
-import { allow, clientIp } from "@/app/lib/ratelimit";
+import { allow, peek, clientIp } from "@/app/lib/ratelimit";
 
 export const maxDuration = 20;
 
@@ -15,11 +15,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Please enter a valid email address." }, { status: 400 });
     }
 
-    // Throttle to stop email-bombing: max 4 links/hour per IP and per address.
-    const tooMany =
-      !allow(`auth:ip:${clientIp(req)}`, 8, 60 * 60 * 1000) ||
-      !allow(`auth:em:${String(email).toLowerCase()}`, 4, 60 * 60 * 1000);
-    if (tooMany) {
+    // Throttle to stop email-bombing: max 4 links/hour per address, 8 per IP.
+    // Checked here but only CHARGED after a successful send — failed sends
+    // (bouncing address, provider hiccup) must not burn the user's quota.
+    const ipKey = `auth:ip:${clientIp(req)}`;
+    const emKey = `auth:em:${String(email).toLowerCase()}`;
+    if (!peek(ipKey, 8, 60 * 60 * 1000) || !peek(emKey, 4, 60 * 60 * 1000)) {
       return NextResponse.json({ error: "Too many sign-in requests. Please wait a bit and try again." }, { status: 429 });
     }
 
@@ -49,6 +50,9 @@ export async function POST(req: NextRequest) {
     });
     if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
 
+    // Send succeeded — now charge the quota.
+    allow(ipKey, 8, 60 * 60 * 1000);
+    allow(emKey, 4, 60 * 60 * 1000);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Auth request error:", err);

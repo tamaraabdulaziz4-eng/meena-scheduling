@@ -22,6 +22,13 @@ export function clientIp(req: NextRequest): string {
  * @param limit  max actions per window
  * @param windowMs window length in ms
  */
+/** Check without consuming: true if at least one action remains in the window. */
+export function peek(key: string, limit: number, windowMs: number): boolean {
+  const hit = buckets.get(key);
+  if (!hit || Date.now() > hit.reset) return true;
+  return hit.count < limit;
+}
+
 export function allow(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
   const hit = buckets.get(key);

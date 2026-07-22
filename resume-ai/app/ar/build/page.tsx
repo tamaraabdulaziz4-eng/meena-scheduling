@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
+import PublishLink from "../../components/PublishLink";
 
 interface Exp {
   role: string;
@@ -59,6 +60,12 @@ export default function ArBuildPage() {
         if (typeof d.extras === "string") setExtras(d.extras);
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
         if (typeof d.step === "number") setStep(d.step);
+      }
+      const savedResult = localStorage.getItem("ra_ar_build_result");
+      if (savedResult) {
+        const r = JSON.parse(savedResult);
+        if (typeof r.cv === "string") setCv(r.cv);
+        if (Array.isArray(r.tips)) setTips(r.tips);
       }
     } catch { /* تجاهل */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,7 +134,7 @@ export default function ArBuildPage() {
       if (!got) throw new Error("لم يكتمل الإنشاء — حاول مرة أخرى.");
       setCv(got.cv);
       setTips(got.tips);
-      clearDraft();
+      try { localStorage.setItem("ra_ar_build_result", JSON.stringify({ cv: got.cv, tips: got.tips })); } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ.");
     } finally {
@@ -301,6 +308,7 @@ export default function ArBuildPage() {
               </div>
             </div>
             <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
+            <PublishLink ar text={cv} name={name} role={targetRole} />
 
             {tips.length > 0 && (
               <div className="card mt-6 p-6" style={{ borderColor: "rgba(251,191,36,0.25)" }}>
@@ -318,12 +326,20 @@ export default function ArBuildPage() {
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                 افحص سيرتك الجديدة ضد إعلان وظيفة حقيقي واعرف نسبة تطابقك.
               </p>
-              <Link href="/ar/optimize" className="btn-accent mt-5 inline-block px-8 py-3">افحصها الآن — مجاناً ←</Link>
+              <Link href="/ar/optimize" className="btn-accent mt-5 inline-block px-8 py-3"
+                onClick={() => { try { localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume: cv, jobDescription, mode: jobDescription.trim().length >= 30 ? "target" : "general" })); localStorage.removeItem("ra_ar_optimize_result"); } catch { /* noop */ } }}>افحصها الآن — مجاناً ←</Link>
             </div>
 
-            <button onClick={() => { setCv(""); setTips([]); setStep(0); setName(""); setContact(""); setTargetRole(""); setExps([{ role: "", company: "", dates: "", duties: "" }]); setEducation(""); setSkills(""); setExtras(""); setJobDescription(""); clearDraft(); }} className="mx-auto mt-6 block text-sm" style={{ color: "var(--faint)" }}>
-              ابدأ من جديد
-            </button>
+            <div className="mx-auto mt-6 flex justify-center gap-5">
+              <button onClick={() => { setCv(""); setTips([]); try { localStorage.removeItem("ra_ar_build_result"); } catch { /* noop */ } }}
+                className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+                عدّل إجاباتي وأعد التوليد ←
+              </button>
+              <button onClick={() => { setCv(""); setTips([]); setStep(0); setName(""); setContact(""); setTargetRole(""); setExps([{ role: "", company: "", dates: "", duties: "" }]); setEducation(""); setSkills(""); setExtras(""); setJobDescription(""); clearDraft(); try { localStorage.removeItem("ra_ar_build_result"); } catch { /* noop */ } }}
+                className="text-sm" style={{ color: "var(--faint)" }}>
+                ابدأ من جديد
+              </button>
+            </div>
           </div>
         )}
       </div>
