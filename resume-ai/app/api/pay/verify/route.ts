@@ -13,7 +13,8 @@ const BASE = process.env.PAYLINK_BASE_URL || "https://restapi.paylink.sa";
 // tampered invoice can't unlock a full entitlement.
 const PLAN_PRICE: Record<string, number> = {
   single: Number(process.env.PRICE_SINGLE || 35),
-  monthly: Number(process.env.PRICE_MONTHLY || 75),
+  complete: Number(process.env.PRICE_COMPLETE || 99),
+  monthly: Number(process.env.PRICE_MONTHLY || 75), // legacy (backward-compat)
 };
 
 async function authenticate(): Promise<string> {
@@ -48,9 +49,11 @@ export async function GET(req: NextRequest) {
     // The order number carries the plan we invoiced (RA-<plan>-...). Paylink
     // returns it nested under gatewayOrderRequest, not at the top level.
     const orderNumber = String(inv.orderNumber || inv.gatewayOrderRequest?.orderNumber || "");
+    const orderPlanRaw = orderNumber.split("-")[1];
     const orderPlan =
-      orderNumber.split("-")[1] === "monthly" ? "monthly"
-      : orderNumber.split("-")[1] === "single" ? "single"
+      orderPlanRaw === "complete" ? "complete"
+      : orderPlanRaw === "monthly" ? "monthly"
+      : orderPlanRaw === "single" ? "single"
       : "";
 
     // Derive the plan from what Paylink ACTUALLY collected — the amount is the
@@ -60,8 +63,10 @@ export async function GET(req: NextRequest) {
     // wins (grant exactly what was paid for — never more, never a downgrade).
     const EPS = 0.01;
     const paidAmount = Number(inv.amount) || 0;
+    // Ladder from highest price down — grant exactly the tier the amount covers.
     const amountPlan =
-      paidAmount + EPS >= PLAN_PRICE.monthly ? "monthly"
+      paidAmount + EPS >= PLAN_PRICE.complete ? "complete"
+      : paidAmount + EPS >= PLAN_PRICE.monthly ? "monthly"
       : paidAmount + EPS >= PLAN_PRICE.single ? "single"
       : "";
     const plan = amountPlan || orderPlan || "single";
@@ -97,13 +102,16 @@ export async function GET(req: NextRequest) {
     // number is one of ours (RA-<plan>-...). Either proof grants the same-device
     // pass; only the bind cookie is trusted enough to ALSO auto-sign-in / write
     // the account entitlement (that path is unchanged below).
-    const orderIsOurs = /^RA-(single|monthly)-/.test(orderNumber);
-    const reverified = orderIsOurs && (amountPlan === "monthly" || amountPlan === "single");
+    const orderIsOurs = /^RA-(single|complete|monthly)-/.test(orderNumber);
+    const reverified = orderIsOurs && amountPlan !== "";
     const grantDevicePass = entitled && (boundToCaller || reverified);
 
     if (grantDevicePass) {
       const now = Date.now();
-      const windowSec = plan === "monthly" ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
+      const windowSec =
+        plan === "complete" ? 90 * 24 * 60 * 60
+        : plan === "monthly" ? 30 * 24 * 60 * 60
+        : 24 * 60 * 60;
       res2.cookies.set(ACCESS_COOKIE, grantPass(plan, now), {
         httpOnly: true,
         secure: true,

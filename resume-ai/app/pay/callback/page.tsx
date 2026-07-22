@@ -22,6 +22,7 @@ function CallbackInner() {
         statusLine: (st: string) => `\u062d\u0627\u0644\u0629 \u0627\u0644\u062f\u0641\u0639: ${st || "\u063a\u064a\u0631 \u0645\u0643\u062a\u0645\u0644\u0629"}.`,
         verifyFail: "\u062a\u0639\u0630\u0651\u0631 \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u062f\u0641\u0639. \u0625\u0630\u0627 \u062e\u064f\u0635\u0645 \u0645\u0646\u0643 \u0627\u0644\u0645\u0628\u0644\u063a\u060c \u062a\u0648\u0627\u0635\u0644 \u0645\u0639\u0646\u0627.",
         monthlyMsg: "\u0643\u0644 \u0634\u064a\u0621 \u062c\u0627\u0647\u0632 \u2014 \u0634\u0643\u0631\u0627\u064b \u0644\u0643! \u0648\u0635\u0648\u0644\u0643 \u063a\u064a\u0631 \u0627\u0644\u0645\u062d\u062f\u0648\u062f \u0645\u0641\u0639\u0651\u0644 \u0644\u0645\u062f\u0629 \u0663\u0660 \u064a\u0648\u0645\u0627\u064b.",
+        completeMsg: "\u0643\u0644 \u0634\u064a\u0621 \u062c\u0627\u0647\u0632 \u2014 \u0634\u0643\u0631\u0627\u064b \u0644\u0643! \u0627\u0644\u062d\u0632\u0645\u0629 \u0627\u0644\u0643\u0627\u0645\u0644\u0629 \u0645\u0641\u0639\u0651\u0644\u0629: \u0627\u0644\u0633\u064a\u0631\u0629 + \u062e\u0637\u0627\u0628 \u0627\u0644\u062a\u0639\u0631\u064a\u0641 + \u0644\u064a\u0646\u0643\u062f\u0625\u0646 + \u062a\u062d\u0636\u064a\u0631 \u0627\u0644\u0645\u0642\u0627\u0628\u0644\u0629\u060c \u0648\u0635\u0648\u0644 \u0643\u0627\u0645\u0644 \u0644\u0645\u062f\u0629 \u0669\u0660 \u064a\u0648\u0645\u0627\u064b.",
         singleMsg: "\u0643\u0644 \u0634\u064a\u0621 \u062c\u0627\u0647\u0632 \u2014 \u0634\u0643\u0631\u0627\u064b \u0644\u0643! \u0628\u0627\u0642\u062a\u0643 \u0645\u0641\u0639\u0651\u0644\u0629 \u0644\u0645\u062f\u0629 \u0662\u0664 \u0633\u0627\u0639\u0629.",
         start: "\u0627\u0628\u062f\u0623 \u0627\u0644\u062a\u062d\u0633\u064a\u0646 \u2190",
         back: "\u0627\u0644\u0631\u062c\u0648\u0639 \u0644\u0644\u0623\u0633\u0639\u0627\u0631",
@@ -40,23 +41,27 @@ function CallbackInner() {
         statusLine: (st: string) => `Payment status: ${st || "not completed"}.`,
         verifyFail: "We couldn't verify the payment. If you were charged, contact support.",
         monthlyMsg: "You're all set — thank you! Your unlimited access is active for the next 30 days. Optimize as many resumes as you need.",
+        completeMsg: "You're all set — thank you! Your Complete Pack is active: resume + cover letter + LinkedIn + interview prep, full access for 90 days.",
         singleMsg: "You're all set — thank you! Your single optimization pass is active for the next 24 hours.",
         start: "Start optimizing →",
         back: "Back to pricing",
       };
   const [state, setState] = useState<"checking" | "paid" | "failed" | "pending">("checking");
   const [detail, setDetail] = useState("");
-  const [plan, setPlan] = useState<"single" | "monthly" | "">("");
+  const [plan, setPlan] = useState<"single" | "complete" | "monthly" | "">("");
+
+  // One-time SAR value per plan — used for ad conversion tracking.
+  const PLAN_VALUE: Record<string, number> = { single: 35, complete: 99, monthly: 75 };
 
   // Google Ads conversion tracking — fires ONLY on a confirmed payment so ad
   // spend is measured against real revenue, not clicks. Fully dormant until the
   // account's conversion ID/label are set as env vars (no ID → nothing loads,
   // zero effect on the page), so this can ship now and activate with no redeploy.
-  function reportPurchase(paidPlan: "single" | "monthly", orderId: string) {
+  function reportPurchase(paidPlan: "single" | "complete" | "monthly", orderId: string) {
     const adsId = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID;        // e.g. AW-1234567890
     const label = process.env.NEXT_PUBLIC_GOOGLE_ADS_CONV_LABEL; // e.g. AbC-D_efg123
     if (!adsId || !label) return;
-    const value = paidPlan === "monthly" ? 75 : 35;
+    const value = PLAN_VALUE[paidPlan] ?? 35;
     try {
       const w = window as unknown as { gtag?: (...a: unknown[]) => void; dataLayer?: unknown[] };
       if (!w.gtag) {
@@ -80,8 +85,8 @@ function CallbackInner() {
 
   // Meta Pixel Purchase — fires only on a confirmed payment. No-op unless the
   // pixel is loaded (NEXT_PUBLIC_META_PIXEL_ID set), so it's safe to ship now.
-  function reportMetaPurchase(paidPlan: "single" | "monthly", orderId: string) {
-    const value = paidPlan === "monthly" ? 75 : 35;
+  function reportMetaPurchase(paidPlan: "single" | "complete" | "monthly", orderId: string) {
+    const value = PLAN_VALUE[paidPlan] ?? 35;
     try {
       const w = window as unknown as { fbq?: (...a: unknown[]) => void };
       if (typeof w.fbq !== "function") return;
@@ -109,7 +114,7 @@ function CallbackInner() {
       .then((r) => r.json())
       .then((d) => {
         if (d.paid && d.amountOk !== false) {
-          const paidPlan = d.plan === "monthly" ? "monthly" : "single";
+          const paidPlan = d.plan === "complete" ? "complete" : d.plan === "monthly" ? "monthly" : "single";
           setState("paid");
           setPlan(paidPlan);
           setDetail(t.confirmed(d.orderNumber || tx));
@@ -171,7 +176,7 @@ function CallbackInner() {
         {state === "paid" && (
           <>
             <p className="mt-6 text-sm" style={{ color: "rgba(244,245,243,0.8)" }}>
-              {plan === "monthly" ? t.monthlyMsg : t.singleMsg}
+              {plan === "complete" ? t.completeMsg : plan === "monthly" ? t.monthlyMsg : t.singleMsg}
             </p>
             <Link href={ar ? "/ar/optimize" : "/optimize"} className="btn-accent mt-6 inline-block px-8 py-3">{t.start}</Link>
           </>

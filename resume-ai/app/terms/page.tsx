@@ -46,7 +46,7 @@ export default function TermsPage() {
         <Section title="٢. الأسعار">
           <ul className="mr-5 list-disc space-y-1">
             <li><strong>تحسين واحد — ٣٥ ريالاً (دفعة واحدة):</strong> وصول لمدة ٢٤ ساعة يشمل السيرة المحسّنة كاملة وخطاب التعريف.</li>
-            <li><strong>باحث نشط — ٧٥ ريالاً شهرياً:</strong> تحسينات غير محدودة وكل المزايا لمدة ٣٠ يوماً. التجديد يدوي (لا يوجد خصم تلقائي حالياً).</li>
+            <li><strong>الحزمة الكاملة — ٩٩ ريالاً دفعة واحدة:</strong> السيرة + خطاب التعريف + لينكدإن + تحضير المقابلة، وصول كامل لمدة ٩٠ يوماً. دفعة واحدة بدون اشتراك ولا تجديد.</li>
             <li>فحص الدرجة والتحليل مجاني دائماً بدون بطاقة.</li>
           </ul>
         </Section>
@@ -87,7 +87,7 @@ export default function TermsPage() {
           <h2 className="mb-3 text-lg font-bold">English summary</h2>
           <ul className="ml-5 list-disc space-y-1 text-sm" style={{ color: "rgba(244,245,243,0.75)" }}>
             <li>ResumeAI is an editorial AI aid — we don&apos;t guarantee hiring outcomes or passage through any specific ATS.</li>
-            <li>Pricing: SAR 35 one-time (24h full access) or SAR 75/month (30 days unlimited, manual renewal — no auto-charge).</li>
+            <li>Pricing: SAR 35 one-time (24h full access) or SAR 99 one-time Complete Pack (90 days full access, no subscription).</li>
             <li><strong>Refunds:</strong> full refund within 7 days if you paid and the service failed to deliver. Processed within 3 business days via Paylink.</li>
             <li>Payments handled by licensed Saudi gateway Paylink; we never see your card details.</li>
             <li>Contact: alanziabdulaziz4@gmail.com</li>

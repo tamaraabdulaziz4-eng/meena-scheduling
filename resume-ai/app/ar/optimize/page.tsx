@@ -441,7 +441,7 @@ export default function ArOptimizePage() {
                     <div className="chip mb-3">🔒 سيرتك الجديدة جاهزة</div>
                     <h3 className="text-xl font-bold">افتح سيرتك الكاملة المحسّنة</h3>
                     <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                      شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو ٧٥ ريال شهرياً غير محدود.
+                      شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو الحزمة الكاملة ٩٩ ريال دفعة واحدة بدون اشتراك.
                     </p>
                     <a href="/ar#pricing" className="btn-accent mt-5 inline-block px-8 py-3">افتح سيرتي ←</a>
                   </div>
@@ -500,7 +500,7 @@ export default function ArOptimizePage() {
 
             <div className="card mt-8 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
               <h3 className="text-2xl font-bold">تقدّم على أكثر من وظيفة؟</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>غير محدود بـ ٧٥ ريال شهرياً — كل تقديم بسيرة مخصصة وخطاب تعريف.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>الحزمة الكاملة بـ ٩٩ ريال دفعة واحدة — خطاب تعريف ولينكدإن وتحضير مقابلة، بدون اشتراك.</p>
               <div className="mt-6 flex flex-wrap justify-center gap-4">
                 <a href="/ar#pricing" className="btn-accent px-8 py-3">اشترك الآن ←</a>
                 <button onClick={() => { setResult(null); setResume(""); setJobDescription(""); setCoverLetter(""); try { localStorage.removeItem("ra_ar_optimize_draft"); } catch { /* تجاهل */ } }}

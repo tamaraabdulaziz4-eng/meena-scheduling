@@ -14,7 +14,7 @@ export default function CheckoutButton({
   variant = "accent",
   ar = false,
 }: {
-  plan: "single" | "monthly";
+  plan: "single" | "complete";
   label: string;
   variant?: "accent" | "ghost";
   ar?: boolean;
@@ -28,7 +28,7 @@ export default function CheckoutButton({
 
   const t = ar
     ? {
-        planLine: plan === "single" ? "مرة واحدة · ٣٥ ريالاً" : "غير محدود · ٧٥ ريالاً / شهرياً",
+        planLine: plan === "single" ? "مرة واحدة · ٣٥ ريالاً" : "الحزمة الكاملة · ٩٩ ريالاً · دفعة واحدة",
         title: "إتمام الشراء",
         sub: "دفع آمن عبر Paylink (مدى، فيزا، ماستركارد). أدخل بياناتك للمتابعة.",
         name: "الاسم الكامل",
@@ -40,7 +40,7 @@ export default function CheckoutButton({
         failed: "تعذّر بدء الدفع، حاول مرة أخرى.",
       }
     : {
-        planLine: plan === "single" ? "One-time · SAR 35 (~$9)" : "Unlimited · SAR 75/mo (~$20)",
+        planLine: plan === "single" ? "One-time · SAR 35 (~$9)" : "Complete Pack · SAR 99 · one-time (~$26)",
         title: "Checkout",
         sub: "Secure payment via Paylink. Enter your details to continue.",
         name: "Full name",

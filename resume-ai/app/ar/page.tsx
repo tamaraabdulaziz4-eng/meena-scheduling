@@ -166,21 +166,21 @@ export default function ArabicHome() {
           </div>
           <div className="card p-8" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.05)", position: "relative" }}>
             <div className="absolute left-5 top-5 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider" style={{ background: "var(--accent)", color: "#05130a" }}>الأفضل قيمة</div>
-            <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>غير محدود</div>
+            <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>الحزمة الكاملة · دفعة واحدة</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">٧٥ ﷼</span>
-              <span className="text-sm" style={{ color: "var(--muted)" }}>/ شهرياً</span>
+              <span className="text-5xl font-extrabold">٩٩ ﷼</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>مرة واحدة</span>
             </div>
-            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>لبحث نشط عن وظيفة.</p>
+            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>كل ما تحتاجه لبحثك عن وظيفة — بدون اشتراك.</p>
             <ul className="mt-6 space-y-3 text-sm">
-              {["تحسينات غير محدودة", "كل مزايا الباقة الأولى", "خطابات تقديم", "أولوية الدعم", "إلغاء بأي وقت"].map((f) => (
+              {["كل مزايا الباقة الأولى", "خطابات تقديم", "تحسين لينكدإن", "تحضير المقابلات", "وصول كامل ٩٠ يوماً"].map((f) => (
                 <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.9)" }}>
                   <span className="text-accent">✓</span> {f}
                 </li>
               ))}
             </ul>
             <div className="mt-8">
-              <CheckoutButton ar plan="monthly" label="اشترك الآن ←" variant="accent" />
+              <CheckoutButton ar plan="complete" label="احصل على الحزمة الكاملة ←" variant="accent" />
             </div>
           </div>
         </div>

@@ -15,6 +15,10 @@ const CURRENCY = process.env.PAY_CURRENCY || "SAR";
 
 const PLANS: Record<string, { title: string; amount: number }> = {
   single: { title: "ResumeAI — Single Optimization", amount: Number(process.env.PRICE_SINGLE || 35) },
+  // One-time "complete pack" — replaces the old monthly subscription (the Saudi
+  // market pays once for an episodic need; see MARKET_RESEARCH.md).
+  complete: { title: "ResumeAI — Complete Pack", amount: Number(process.env.PRICE_COMPLETE || 99) },
+  // Kept for backward-compat with any invoice created before the switch; not offered in the UI.
   monthly: { title: "ResumeAI — Unlimited (1 month)", amount: Number(process.env.PRICE_MONTHLY || 75) },
 };
 

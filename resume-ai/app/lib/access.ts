@@ -29,7 +29,8 @@ export const ENT_COOKIE = "ra_ent";
 
 const WINDOW_MS: Record<string, number> = {
   single: 24 * 60 * 60 * 1000, // day pass
-  monthly: 30 * 24 * 60 * 60 * 1000, // 30 days
+  complete: 90 * 24 * 60 * 60 * 1000, // one-time complete pack — 90 days full access
+  monthly: 30 * 24 * 60 * 60 * 1000, // legacy 30-day plan (backward-compat)
 };
 
 export interface Pass {

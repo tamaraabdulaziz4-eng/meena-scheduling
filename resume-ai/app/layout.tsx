@@ -31,7 +31,7 @@ const structuredData = {
   description: "AI resume optimizer that scores your resume against a job description, finds missing ATS keywords, and rewrites it to pass applicant tracking systems.",
   offers: [
     { "@type": "Offer", price: "35", priceCurrency: "SAR", name: "Single optimization" },
-    { "@type": "Offer", price: "75", priceCurrency: "SAR", name: "Unlimited monthly" },
+    { "@type": "Offer", price: "99", priceCurrency: "SAR", name: "Complete Pack (one-time)" },
   ],
 };
 

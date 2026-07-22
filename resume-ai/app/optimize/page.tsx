@@ -524,7 +524,7 @@ export default function OptimizePage() {
                         <div className="chip mb-3">🔒 Your rewritten resume is ready</div>
                         <h3 className="text-xl font-bold">Unlock your full ATS-optimized resume</h3>
                         <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                          You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or unlimited SAR 75/mo.
+                          You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or the SAR 99 Complete Pack (no subscription).
                         </p>
                         <a href="/#pricing" className="btn-accent mt-5 inline-block px-8 py-3">Unlock my resume →</a>
                       </div>
@@ -656,9 +656,9 @@ export default function OptimizePage() {
             {/* Bottom CTA */}
             <div className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
               <h3 className="text-2xl font-bold">Applying to more than one job?</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Go unlimited for SAR 75/mo — every application optimized, cover letters included.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Get the Complete Pack — SAR 99 once, no subscription: cover letters, LinkedIn, and interview prep included.</p>
               <div className="mt-6 flex flex-wrap justify-center gap-4">
-                <a href="/#pricing" className="btn-accent px-8 py-3">Go unlimited — SAR 75/mo →</a>
+                <a href="/#pricing" className="btn-accent px-8 py-3">Get the Complete Pack — SAR 99 →</a>
                 <button
                   onClick={() => {
                     setResult(null); setResume(""); setJobDescription(""); setCoverLetter("");
