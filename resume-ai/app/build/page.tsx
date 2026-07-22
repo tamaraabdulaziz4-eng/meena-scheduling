@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
+import DocxExport from "../components/DocxExport";
 import PublishLink from "../components/PublishLink";
 import { saveResume } from "../lib/localdata";
 
@@ -327,6 +328,7 @@ export default function BuildPage() {
                   ↓ .txt
                 </button>
                 <PdfExport text={cv} />
+                <DocxExport text={cv} />
               </div>
             </div>
             <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>

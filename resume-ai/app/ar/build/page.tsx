@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
+import DocxExport from "../../components/DocxExport";
 import PublishLink from "../../components/PublishLink";
 import { saveResume } from "../../lib/localdata";
 
@@ -320,6 +321,7 @@ export default function ArBuildPage() {
                 </button>
                 <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>
                 <PdfExport text={cv} label="↓ تنزيل PDF" />
+                <DocxExport text={cv} label="↓ تنزيل Word" filename="resume-ar.docx" />
               </div>
             </div>
             <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>

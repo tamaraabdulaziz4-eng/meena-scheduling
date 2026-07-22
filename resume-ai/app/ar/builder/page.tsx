@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
+import DocxExport from "../../components/DocxExport";
 import PublishLink from "../../components/PublishLink";
 import { saveResume } from "../../lib/localdata";
 
@@ -332,6 +333,7 @@ export default function ArChatBuilderPage() {
               <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>{copied ? "✓ نُسخت" : "نسخ"}</button>
               <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>
               <PdfExport text={cv} label="↓ تنزيل PDF" />
+              <DocxExport text={cv} label="↓ تنزيل Word" filename="resume-ar.docx" />
             </div>
             <PublishLink ar text={cv} name={data.name} role={data.targetRole} />
             {tips.length > 0 && (

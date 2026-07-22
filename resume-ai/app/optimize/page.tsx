@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
+import DocxExport from "../components/DocxExport";
 import BeforeAfter from "../components/BeforeAfter";
 import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
@@ -493,6 +494,7 @@ export default function OptimizePage() {
                         ↓ .txt
                       </button>
                       <PdfExport text={result.optimizedResume} />
+                      <DocxExport text={result.optimizedResume} />
                     </div>
                   )}
                 </div>
