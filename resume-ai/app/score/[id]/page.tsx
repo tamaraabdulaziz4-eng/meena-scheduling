@@ -9,8 +9,8 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const parsed = parseInt(id);
-  if (Number.isNaN(parsed)) notFound();
-  const score = Math.max(0, Math.min(100, parsed));
+  if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) notFound();
+  const score = parsed;
   const img = `${BASE}/api/og?score=${score}`;
   const title = `My resume scored ${score}/100 on ATS — check yours free`;
   return {
@@ -24,8 +24,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 export default async function ScorePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const parsed = parseInt(id);
-  if (Number.isNaN(parsed)) notFound();
-  const score = Math.max(0, Math.min(100, parsed));
+  if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) notFound();
+  const score = parsed;
   const accent = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
   const label = score >= 75 ? "Shortlisted" : score >= 55 ? "Borderline" : "Needs work";
   const shareUrl = `${BASE}/score/${score}`;
