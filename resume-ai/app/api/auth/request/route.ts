@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createMagicToken } from "@/app/lib/session";
+import { allow, clientIp } from "@/app/lib/ratelimit";
 
 export const maxDuration = 20;
 
@@ -12,6 +13,14 @@ export async function POST(req: NextRequest) {
     const { email } = await req.json();
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return NextResponse.json({ error: "Please enter a valid email address." }, { status: 400 });
+    }
+
+    // Throttle to stop email-bombing: max 4 links/hour per IP and per address.
+    const tooMany =
+      !allow(`auth:ip:${clientIp(req)}`, 8, 60 * 60 * 1000) ||
+      !allow(`auth:em:${String(email).toLowerCase()}`, 4, 60 * 60 * 1000);
+    if (tooMany) {
+      return NextResponse.json({ error: "Too many sign-in requests. Please wait a bit and try again." }, { status: 429 });
     }
 
     const token = createMagicToken(email, Date.now());

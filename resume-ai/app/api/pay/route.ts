@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { setOrderEmail } from "@/app/lib/entitlements";
+import { signTx, PAY_BIND_COOKIE } from "@/app/lib/paybind";
 
 export const maxDuration = 30;
 
@@ -89,7 +90,20 @@ export async function POST(req: NextRequest) {
       console.error("setOrderEmail failed:", e);
     }
 
-    return NextResponse.json({ url: invoice.url, orderNumber, transactionNo: invoice.transactionNo });
+    const out = NextResponse.json({ url: invoice.url, orderNumber, transactionNo: invoice.transactionNo });
+    // Bind this checkout to the buyer's browser: verify will only auto-sign-in
+    // / grant the account entitlement if this signed cookie matches the
+    // transactionNo — so a leaked/guessed transactionNo can't sign in as them.
+    if (invoice.transactionNo) {
+      out.cookies.set(PAY_BIND_COOKIE, `${invoice.transactionNo}.${signTx(String(invoice.transactionNo))}`, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 2 * 60 * 60, // 2h — long enough to complete the hosted payment
+      });
+    }
+    return out;
   } catch (err) {
     console.error("Pay error:", err);
     return NextResponse.json(

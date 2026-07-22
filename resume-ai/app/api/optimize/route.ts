@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyPass, ACCESS_COOKIE } from "@/app/lib/access";
 import { readSession, SESSION_COOKIE } from "@/app/lib/session";
 import { hasActiveEntitlement } from "@/app/lib/entitlements";
+import { allow, clientIp } from "@/app/lib/ratelimit";
 
 /**
  * Provider-agnostic optimizer.
@@ -327,6 +328,11 @@ export async function POST(req: NextRequest) {
     }
     if (resume.length > 8000 || jd.length > 4000) {
       return NextResponse.json({ error: "Input too long. Please trim your resume or job description." }, { status: 400 });
+    }
+
+    // Abuse guard: the scan is free, so cap per-IP volume (each is an LLM call).
+    if (!allow(`optimize:${clientIp(req)}`, 15, 10 * 60 * 1000)) {
+      return NextResponse.json({ error: "You're going a bit fast. Please wait a minute and try again." }, { status: 429 });
     }
 
     // ── Freemium gate ──

@@ -35,8 +35,8 @@ export default function OptimizePage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
-  // Draft autosave: rehydrate on mount so a refresh / accidental navigation
-  // never wipes what the user typed.
+  // Draft + result autosave: rehydrate on mount so a refresh / accidental
+  // navigation never wipes what the user typed OR the result they just got.
   useEffect(() => {
     try {
       const saved = localStorage.getItem("ra_optimize_draft");
@@ -45,6 +45,8 @@ export default function OptimizePage() {
         if (typeof d.resume === "string") setResume(d.resume);
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
       }
+      const savedResult = localStorage.getItem("ra_optimize_result");
+      if (savedResult) setResult(JSON.parse(savedResult));
     } catch {
       /* ignore corrupt/unavailable storage */
     }
@@ -59,6 +61,15 @@ export default function OptimizePage() {
       /* storage full or blocked — non-fatal */
     }
   }, [resume, jobDescription]);
+
+  useEffect(() => {
+    try {
+      if (result) localStorage.setItem("ra_optimize_result", JSON.stringify(result));
+      else localStorage.removeItem("ra_optimize_result");
+    } catch {
+      /* non-fatal */
+    }
+  }, [result]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -198,15 +209,15 @@ export default function OptimizePage() {
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-12">
-        {loading && thinking && (
+        {loading && (
           <div className="card mx-auto mb-8 max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
             <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
               <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
               <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>AI analyzing your resume — live</span>
             </div>
-            <div ref={thinkRef} className="max-h-64 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed"
+            <div ref={thinkRef} className="max-h-64 min-h-20 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed"
               style={{ color: "rgba(244,245,243,0.75)" }}>
-              {thinking.replace(/^ANALYSIS\s*/i, "")}
+              {thinking.replace(/^ANALYSIS\s*/i, "") || "Reading your resume…"}
               <span className="animate-pulse text-accent">▌</span>
             </div>
           </div>
@@ -244,12 +255,15 @@ export default function OptimizePage() {
                 value={resume}
                 onChange={(e) => setResume(e.target.value)}
                 placeholder="Paste your resume — or upload a PDF/Word file above.&#10;&#10;Work experience, education, skills, contact info..."
-                rows={20}
+                rows={14}
+                maxLength={8000}
                 required
-                className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none"
-                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }}
+                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "12rem" }}
               />
-              <p className="mt-2 font-mono text-xs" style={{ color: "var(--faint)" }}>{resume.length}/8000</p>
+              <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>
+                {resume.length}/8000{resume.length >= 8000 ? " — limit reached" : resume.length > 7500 ? " — approaching limit" : ""}
+              </p>
             </div>
 
             <div>
@@ -258,11 +272,14 @@ export default function OptimizePage() {
                 value={jobDescription}
                 onChange={(e) => setJobDescription(e.target.value)}
                 placeholder="Optional — paste a job posting to tailor the resume to it, or leave empty for a general improvement."
-                rows={20}
-                className="w-full resize-none rounded-xl px-4 py-3 text-sm focus:outline-none"
-                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }}
+                rows={14}
+                maxLength={4000}
+                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "12rem" }}
               />
-              <p className="mt-2 font-mono text-xs" style={{ color: "var(--faint)" }}>{jobDescription.length}/4000</p>
+              <p className="mt-2 font-mono text-xs" style={{ color: jobDescription.length > 3700 ? "#fbbf24" : "var(--faint)" }}>
+                {jobDescription.length}/4000{jobDescription.length >= 4000 ? " — limit reached" : ""}
+              </p>
             </div>
 
             <div className="text-center md:col-span-2">

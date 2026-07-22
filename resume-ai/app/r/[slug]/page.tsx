@@ -14,6 +14,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return {
     title,
     description: `${r.name}'s professional resume${r.role ? " for " + r.role : ""}.`,
+    // Shareable by link, but keep personal resumes (PII) out of search indexes.
+    robots: { index: false, follow: true },
     openGraph: { title, description: `View ${r.name}'s resume.`, type: "profile" },
   };
 }

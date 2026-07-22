@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { grantPass, ACCESS_COOKIE } from "@/app/lib/access";
 import { readSession, createSession, SESSION_COOKIE } from "@/app/lib/session";
 import { grantEntitlement, getOrderEmail } from "@/app/lib/entitlements";
+import { signTx, PAY_BIND_COOKIE } from "@/app/lib/paybind";
 
 export const maxDuration = 30;
 
@@ -65,7 +66,14 @@ export async function GET(req: NextRequest) {
       amountOk,
     });
 
-    // On confirmed AND fully-paid payment, grant a signed access pass.
+    // Is this the browser that initiated the checkout? Only then do we trust it
+    // enough to auto-sign-in / write the cross-device account entitlement.
+    const bindCookie = req.cookies.get(PAY_BIND_COOKIE)?.value || "";
+    const [bindTx, bindSig] = bindCookie.split(".");
+    const boundToCaller = !!bindTx && bindTx === transactionNo && bindSig === signTx(transactionNo);
+
+    // On confirmed AND fully-paid payment, grant a signed access pass on THIS
+    // device (safe — they hold a valid paid transactionNo on this browser).
     if (entitled) {
       const now = Date.now();
       const windowSec = plan === "monthly" ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
@@ -76,12 +84,16 @@ export async function GET(req: NextRequest) {
         path: "/",
         maxAge: windowSec,
       });
-      // Persist the entitlement to the buyer's account so it works across
-      // devices: prefer the email captured at checkout, else the signed-in session.
+      // Clear the one-time binding cookie now that it's been used.
+      res2.cookies.set(PAY_BIND_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 0 });
+      // Persist the entitlement to the buyer's ACCOUNT and auto-sign-in — but
+      // ONLY for the browser that started this checkout. Without the binding,
+      // a replayed/guessed transactionNo would otherwise sign the caller in as
+      // the buyer. Prefer the email captured at checkout, else the session.
       const buyerEmail =
         (await getOrderEmail(orderNumber)) ||
         readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
-      if (buyerEmail) {
+      if (buyerEmail && boundToCaller) {
         try {
           await grantEntitlement(buyerEmail, now + windowSec * 1000);
         } catch (e) {

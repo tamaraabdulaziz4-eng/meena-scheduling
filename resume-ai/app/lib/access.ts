@@ -10,6 +10,15 @@ import crypto from "crypto";
 
 const SECRET = process.env.ACCESS_SECRET || "dev-insecure-secret-change-me";
 
+// In production the secret MUST be set — the fallback is publicly known and
+// would let anyone forge access passes / sessions. Checked at request time
+// (not module load) so `next build` doesn't fail before env vars are injected.
+function assertSecret() {
+  if (process.env.NODE_ENV === "production" && !process.env.ACCESS_SECRET) {
+    throw new Error("ACCESS_SECRET must be set in production");
+  }
+}
+
 export const ACCESS_COOKIE = "ra_access";
 export const FREE_COOKIE = "ra_free";
 export const FREE_LIMIT = 1; // free optimizations before payment is required
@@ -25,6 +34,7 @@ export interface Pass {
 }
 
 function sign(data: string): string {
+  assertSecret();
   return crypto.createHmac("sha256", SECRET).update(data).digest("base64url");
 }
 

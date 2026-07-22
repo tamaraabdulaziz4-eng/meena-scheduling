@@ -182,7 +182,7 @@ export default function BuildPage() {
                     style={i <= step ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--faint)", border: "1px solid var(--line)" }}>
                     {i + 1}
                   </div>
-                  <span className="hidden text-xs sm:block" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
+                  <span className="text-[11px] sm:text-xs" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
                   {i < steps.length - 1 && <div className="h-px w-6" style={{ background: "var(--line)" }} />}
                 </div>
               ))}
