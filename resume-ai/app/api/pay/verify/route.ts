@@ -102,73 +102,58 @@ export async function GET(req: NextRequest) {
     // number is one of ours (RA-<plan>-...). Either proof grants the same-device
     // pass; only the bind cookie is trusted enough to ALSO auto-sign-in / write
     // the account entitlement (that path is unchanged below).
-    const orderIsOurs = /^RA-(single|complete|monthly)-/.test(orderNumber);
-    const reverified = orderIsOurs && amountPlan !== "";
-    const grantDevicePass = entitled && (boundToCaller || reverified);
-
-    if (grantDevicePass) {
+    // A DEVICE pass (an anonymous httpOnly cookie that unlocks this browser with
+    // no sign-in) must be tied to the browser that actually paid — the pay-bind
+    // cookie, which is HMAC-signed over this transactionNo and set httpOnly at
+    // checkout. It CANNOT be forged from a leaked/shared transactionNo, so it is
+    // the only proof we trust for a device pass. We deliberately do NOT grant a
+    // device pass on a bare "the invoice is paid" re-verification, because anyone
+    // who obtains a valid paid transactionNo (e.g. a shared callback URL) could
+    // otherwise mint unlimited passes. Buyers without the bind cookie (cleared
+    // cookies, a different device, a very long delay) recover through the
+    // ACCOUNT entitlement below + magic-link sign-in — never a device pass.
+    if (entitled) {
       const now = Date.now();
       const windowSec =
         plan === "complete" ? 90 * 24 * 60 * 60
         : plan === "monthly" ? 30 * 24 * 60 * 60
         : 24 * 60 * 60;
-      res2.cookies.set(ACCESS_COOKIE, grantPass(plan, now), {
-        httpOnly: true,
-        secure: true,
-        sameSite: "lax",
-        path: "/",
-        maxAge: windowSec,
-      });
-      // Clear the one-time binding cookie now that it's been used.
-      res2.cookies.set(PAY_BIND_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 0 });
-      // Persist the entitlement to the buyer's ACCOUNT and auto-sign-in — but
-      // ONLY for the browser that started this checkout. Without the binding,
-      // a replayed/guessed transactionNo would otherwise sign the caller in as
-      // the buyer. Prefer the email captured at checkout, else the session.
+      const until = now + windowSec * 1000;
+
+      // ALWAYS persist the durable account entitlement, keyed strictly to the
+      // buyer's own email captured at checkout — never the caller — so it can't
+      // leak access, yet a paid buyer is never permanently locked out and can
+      // reclaim access on any device by signing in.
       const orderEmail = await getOrderEmail(orderNumber);
-      // Always write the durable, buyer-email-keyed account entitlement — even
-      // when the 2h bind cookie has expired. Keyed strictly to getOrderEmail (the
-      // buyer's own email from checkout), never the caller, so it can't leak
-      // access, yet it means a genuine buyer who later clears cookies or switches
-      // device isn't permanently locked out. The caller-device fallbacks below
-      // (auto-sign-in + ENT_COOKIE) stay gated on boundToCaller.
       if (orderEmail) {
         try {
-          await grantEntitlement(orderEmail, now + windowSec * 1000);
+          await grantEntitlement(orderEmail, until);
         } catch (e) {
           console.error("grantEntitlement (order) failed:", e);
         }
       }
-      const buyerEmail =
-        orderEmail ||
-        readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
-      if (buyerEmail && boundToCaller) {
-        const until = now + windowSec * 1000;
-        try {
-          await grantEntitlement(buyerEmail, until);
-        } catch (e) {
-          console.error("grantEntitlement failed:", e);
+
+      // Everything below unlocks THIS browser directly — gated on the bind cookie.
+      if (boundToCaller) {
+        res2.cookies.set(ACCESS_COOKIE, grantPass(plan, now), {
+          httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: windowSec,
+        });
+        // The binding is one-time — clear it now that it's been redeemed.
+        res2.cookies.set(PAY_BIND_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 0 });
+
+        const buyerEmail = orderEmail || readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
+        if (buyerEmail) {
+          // Signed httpOnly fallback read by the entitlement check when the
+          // server store misses — never grants access alone (caller must also be
+          // signed in as this same email).
+          res2.cookies.set(ENT_COOKIE, grantEntPass(buyerEmail, until), {
+            httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: windowSec,
+          });
+          // Auto-sign-in on the paying browser — paying IS proof of owner intent.
+          res2.cookies.set(SESSION_COOKIE, createSession(buyerEmail, now), {
+            httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 60 * 60,
+          });
         }
-        // Fallback record of the account entitlement: a signed httpOnly cookie
-        // read by the entitlement check when the server store misses (write
-        // failed above, or the store isn't configured) — so a paid, signed-in
-        // buyer is never locked out by an infra hiccup. Never grants access on
-        // its own: the caller must also be signed in as this same email.
-        res2.cookies.set(ENT_COOKIE, grantEntPass(buyerEmail, until), {
-          httpOnly: true,
-          secure: true,
-          sameSite: "lax",
-          path: "/",
-          maxAge: windowSec,
-        });
-        // Auto-sign the buyer in on this device — paying IS proof of the email's owner intent.
-        res2.cookies.set(SESSION_COOKIE, createSession(buyerEmail, now), {
-          httpOnly: true,
-          secure: true,
-          sameSite: "lax",
-          path: "/",
-          maxAge: 30 * 24 * 60 * 60,
-        });
       }
     }
     return res2;

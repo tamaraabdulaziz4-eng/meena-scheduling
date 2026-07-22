@@ -105,7 +105,11 @@ export async function POST(req: NextRequest) {
         secure: true,
         sameSite: "lax",
         path: "/",
-        maxAge: 2 * 60 * 60, // 2h — long enough to complete the hosted payment
+        maxAge: 72 * 60 * 60, // 72h — covers even a very delayed payment so the
+        // secure device-pass path (which requires this cookie) never wrongly
+        // denies a genuine buyer. It stays the ONLY proof trusted for a device
+        // pass, so widening the window costs no security — a leaked transactionNo
+        // still can't forge this HMAC-signed, httpOnly binding.
       });
     }
     return out;
