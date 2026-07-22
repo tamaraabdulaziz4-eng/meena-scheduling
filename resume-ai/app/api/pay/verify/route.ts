@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { grantPass, ACCESS_COOKIE } from "@/app/lib/access";
+import { grantPass, grantEntPass, ACCESS_COOKIE, ENT_COOKIE } from "@/app/lib/access";
 import { readSession, createSession, SESSION_COOKIE } from "@/app/lib/session";
 import { grantEntitlement, getOrderEmail } from "@/app/lib/entitlements";
 import { signTx, PAY_BIND_COOKIE } from "@/app/lib/paybind";
@@ -45,16 +45,31 @@ export async function GET(req: NextRequest) {
     const status = String(inv.orderStatus || "").toLowerCase();
     const paid = status === "paid";
 
-    // Derive the plan from our own order number (RA-<plan>-...). Paylink returns
-    // it nested under gatewayOrderRequest, not at the top level.
+    // The order number carries the plan we invoiced (RA-<plan>-...). Paylink
+    // returns it nested under gatewayOrderRequest, not at the top level.
     const orderNumber = String(inv.orderNumber || inv.gatewayOrderRequest?.orderNumber || "");
-    const plan = orderNumber.split("-")[1] === "monthly" ? "monthly" : "single";
+    const orderPlan =
+      orderNumber.split("-")[1] === "monthly" ? "monthly"
+      : orderNumber.split("-")[1] === "single" ? "single"
+      : "";
+
+    // Derive the plan from what Paylink ACTUALLY collected — the amount is the
+    // source of truth for entitlement value, so a monthly buyer is never
+    // silently downgraded to single just because the order number was missing or
+    // garbled. Cross-checked with the order plan: if they disagree the amount
+    // wins (grant exactly what was paid for — never more, never a downgrade).
+    const EPS = 0.01;
+    const paidAmount = Number(inv.amount) || 0;
+    const amountPlan =
+      paidAmount + EPS >= PLAN_PRICE.monthly ? "monthly"
+      : paidAmount + EPS >= PLAN_PRICE.single ? "single"
+      : "";
+    const plan = amountPlan || orderPlan || "single";
 
     // Guard against underpaid / tampered invoices: the amount Paylink actually
-    // collected must cover the plan's price before we grant any entitlement.
-    const paidAmount = Number(inv.amount) || 0;
+    // collected must cover the resolved plan's price before we grant anything.
     const expected = PLAN_PRICE[plan] ?? Infinity;
-    const amountOk = paidAmount + 0.01 >= expected;
+    const amountOk = paidAmount + EPS >= expected;
     const entitled = paid && amountOk;
 
     const res2 = NextResponse.json({
@@ -72,9 +87,21 @@ export async function GET(req: NextRequest) {
     const [bindTx, bindSig] = bindCookie.split(".");
     const boundToCaller = !!bindTx && bindTx === transactionNo && bindSig === signTx(transactionNo);
 
-    // On confirmed AND fully-paid payment, grant a signed access pass on THIS
-    // device (safe — they hold a valid paid transactionNo on this browser).
-    if (entitled) {
+    // A device pass must be EARNED — never handed out on a bare transactionNo, or
+    // a leaked/shared reference would unlock free access (revenue leak). The
+    // strongest proof is the pay-bind cookie (this browser started the checkout).
+    // But that cookie has only a 2h TTL, so a genuine buyer who lingers on the
+    // hosted payment page would be wrongly denied once it expires. For them we
+    // fall back to the server-side re-verification we just performed: the invoice
+    // is confirmed PAID, the amount matches a known plan price, and the order
+    // number is one of ours (RA-<plan>-...). Either proof grants the same-device
+    // pass; only the bind cookie is trusted enough to ALSO auto-sign-in / write
+    // the account entitlement (that path is unchanged below).
+    const orderIsOurs = /^RA-(single|monthly)-/.test(orderNumber);
+    const reverified = orderIsOurs && (amountPlan === "monthly" || amountPlan === "single");
+    const grantDevicePass = entitled && (boundToCaller || reverified);
+
+    if (grantDevicePass) {
       const now = Date.now();
       const windowSec = plan === "monthly" ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
       res2.cookies.set(ACCESS_COOKIE, grantPass(plan, now), {
@@ -94,11 +121,24 @@ export async function GET(req: NextRequest) {
         (await getOrderEmail(orderNumber)) ||
         readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
       if (buyerEmail && boundToCaller) {
+        const until = now + windowSec * 1000;
         try {
-          await grantEntitlement(buyerEmail, now + windowSec * 1000);
+          await grantEntitlement(buyerEmail, until);
         } catch (e) {
           console.error("grantEntitlement failed:", e);
         }
+        // Fallback record of the account entitlement: a signed httpOnly cookie
+        // read by the entitlement check when the server store misses (write
+        // failed above, or the store isn't configured) — so a paid, signed-in
+        // buyer is never locked out by an infra hiccup. Never grants access on
+        // its own: the caller must also be signed in as this same email.
+        res2.cookies.set(ENT_COOKIE, grantEntPass(buyerEmail, until), {
+          httpOnly: true,
+          secure: true,
+          sameSite: "lax",
+          path: "/",
+          maxAge: windowSec,
+        });
         // Auto-sign the buyer in on this device — paying IS proof of the email's owner intent.
         res2.cookies.set(SESSION_COOKIE, createSession(buyerEmail, now), {
           httpOnly: true,

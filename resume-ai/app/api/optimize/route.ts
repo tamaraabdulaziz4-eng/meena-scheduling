@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyPass, ACCESS_COOKIE } from "@/app/lib/access";
+import { verifyPass, verifyEntPass, ACCESS_COOKIE, ENT_COOKIE } from "@/app/lib/access";
 import { readSession, SESSION_COOKIE } from "@/app/lib/session";
 import { hasActiveEntitlement } from "@/app/lib/entitlements";
 import { allow, clientIp } from "@/app/lib/ratelimit";
@@ -23,7 +23,7 @@ const PROMPT = (resume: string, jobDescription: string, uiLang?: string) => {
   const hasJd = jobDescription.trim().length >= 30;
   return `You are a senior ATS (applicant tracking system) analyst and executive resume writer. ${hasJd ? "Perform a rigorous, honest analysis of this resume against this job description." : "The user provided ONLY a resume (no target job). Perform a rigorous GENERAL improvement: infer their likely target role from the resume itself and make the resume as strong as possible for that role."}
 
-LANGUAGE HANDLING: The resume or job description may be in Arabic, English, or mixed. Understand both. The optimizedResume must ALWAYS be 100% professional ENGLISH — translate EVERYTHING including Arabic job titles and role names (never leave an Arabic word inside an English sentence). ${uiLang === "ar" ? "The user is on the ARABIC interface: write matchSummary, improvements (issue/fix), and ANALYSIS bullets in ARABIC." : "If the user's resume was mostly Arabic, write matchSummary, improvements, and ANALYSIS bullets in Arabic; otherwise in English."} Keywords stay in English (that's what ATS systems match on).
+LANGUAGE HANDLING: The resume or job description may be in Arabic, English, or mixed. Understand both. The optimizedResume must ALWAYS be 100% professional ENGLISH — translate EVERYTHING including Arabic job titles and role names (never leave an Arabic word inside an English sentence). ${uiLang === "ar" ? "CRITICAL — THE USER'S INTERFACE IS ARABIC. You MUST write the SUMMARY, EVERY IMPROVEMENTS line (both the problem and the fix), and EVERY ANALYSIS bullet in ARABIC. This is mandatory and non-negotiable: write them in Arabic EVEN IF the resume and the job description are entirely in English. Do NOT output these sections in English under any circumstance. Only the keyword lists (MISSING/PRESENT/GAPS) and the optimizedResume stay in English." : "If the user's resume was mostly Arabic, write matchSummary, improvements, and ANALYSIS bullets in Arabic; otherwise in English."} Keywords stay in English (that's what ATS systems match on).
 
 RESUME:
 ${resume}
@@ -353,9 +353,16 @@ export async function POST(req: NextRequest) {
     // is ALWAYS free — that's the hook that pulls traffic and creates the desire
     // to fix the gaps. The rewritten resume itself is the paid unlock. Paid if:
     // signed-in account with an active entitlement, OR a valid paid cookie pass.
-    const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, Date.now());
-    const accountUnlimited = email ? await hasActiveEntitlement(email, Date.now()) : false;
-    const hasPass = accountUnlimited || !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, Date.now());
+    const now = Date.now();
+    const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
+    // Account entitlement from the server store, with the signed cookie as a
+    // fallback when the store misses — but only when it's for THIS signed-in
+    // email (the cookie never grants access to a different/absent account).
+    const entCookie = verifyEntPass(req.cookies.get(ENT_COOKIE)?.value, now);
+    const accountUnlimited = email
+      ? (await hasActiveEntitlement(email, now)) || entCookie?.email === email.toLowerCase().trim()
+      : false;
+    const hasPass = accountUnlimited || !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, now);
 
     // ── Streaming response: NDJSON lines ──
     //   {"t":"think","d":"<chunk of the AI's live analysis>"}

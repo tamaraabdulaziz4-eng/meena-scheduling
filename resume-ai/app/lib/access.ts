@@ -20,8 +20,12 @@ function assertSecret() {
 }
 
 export const ACCESS_COOKIE = "ra_access";
-export const FREE_COOKIE = "ra_free";
-export const FREE_LIMIT = 1; // free optimizations before payment is required
+// Signed, httpOnly fallback record of an ACCOUNT entitlement (email + expiry),
+// written on purchase alongside the server store. If the store write misses
+// (not configured, or the API call fails) a paid, signed-in buyer still keeps
+// unlimited access on this browser because the entitlement check reads this
+// cookie as a fallback. Mirrors the paid-pass pattern below.
+export const ENT_COOKIE = "ra_ent";
 
 const WINDOW_MS: Record<string, number> = {
   single: 24 * 60 * 60 * 1000, // day pass
@@ -52,6 +56,35 @@ export function verifyPass(token: string | undefined, now: number): Pass | null 
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf-8")) as Pass;
     if (typeof payload.exp !== "number" || payload.exp < now) return null; // expired
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+export interface EntPass {
+  email: string;
+  exp: number; // epoch ms
+}
+
+/** Signed cookie value recording an account entitlement — fallback for when the
+ * server-side entitlement store (Edge Config / Upstash) can't be read/written. */
+export function grantEntPass(email: string, exp: number): string {
+  const payload: EntPass = { email: email.toLowerCase().trim(), exp };
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${body}.${sign(body)}`;
+}
+
+/** Returns the entitlement (email + expiry) if the cookie is validly signed and
+ * unexpired, else null. Callers must still confirm the email matches the caller. */
+export function verifyEntPass(token: string | undefined, now: number): EntPass | null {
+  if (!token || !token.includes(".")) return null;
+  const [body, sig] = token.split(".");
+  if (sign(body) !== sig) return null; // bad signature
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf-8")) as EntPass;
+    if (typeof payload.exp !== "number" || payload.exp < now) return null; // expired
+    if (typeof payload.email !== "string" || !payload.email) return null;
     return payload;
   } catch {
     return null;

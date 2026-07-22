@@ -41,6 +41,29 @@ export default function PdfExport({ text, label = "↓ Download PDF" }: { text: 
         }
       };
 
+      // splitTextToSize only wraps on spaces, so a single very long token
+      // (email / URL in the contact line) overflows the page. Wrap word by
+      // word and hard-break any token wider than the column into char chunks.
+      // Assumes the caller has already set the font/size for measurement.
+      const wrapBreaking = (s: string, maxW: number): string[] => {
+        const out: string[] = [];
+        let cur = "";
+        for (const word of s.split(/\s+/).filter(Boolean)) {
+          const cand = cur ? `${cur} ${word}` : word;
+          if (doc.getTextWidth(cand) <= maxW) { cur = cand; continue; }
+          if (cur) { out.push(cur); cur = ""; }
+          if (doc.getTextWidth(word) <= maxW) { cur = word; continue; }
+          let chunk = "";
+          for (const ch of word) {
+            if (chunk && doc.getTextWidth(chunk + ch) > maxW) { out.push(chunk); chunk = ch; }
+            else chunk += ch;
+          }
+          cur = chunk;
+        }
+        if (cur) out.push(cur);
+        return out.length ? out : [""];
+      };
+
       const lines = text.split("\n");
       let first = true;
       let second = false;
@@ -72,7 +95,7 @@ export default function PdfExport({ text, label = "↓ Download PDF" }: { text: 
           doc.setFont("helvetica", "normal");
           doc.setFontSize(9.5);
           doc.setTextColor(90);
-          const wrapped = doc.splitTextToSize(line, W);
+          const wrapped = wrapBreaking(line, W);
           pageBreak(wrapped.length * 4.5);
           doc.text(wrapped, M, y);
           y += wrapped.length * 4.5 + 1.5;

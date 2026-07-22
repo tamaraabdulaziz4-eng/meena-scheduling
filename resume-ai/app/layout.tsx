@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
@@ -40,9 +41,14 @@ const structuredData = {
 // ship now and activate the moment the ad account is connected.
 const META_PIXEL_ID = process.env.NEXT_PUBLIC_META_PIXEL_ID;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // The Arabic UI lives under /ar — serve it with the correct lang/dir on the
+  // <html> root (proxy.ts forwards the pathname). Fixes lang="en" on /ar (a11y/SEO).
+  const pathname = (await headers()).get("x-pathname") || "";
+  const isArabic = pathname === "/ar" || pathname.startsWith("/ar/");
+
   return (
-    <html lang="en">
+    <html lang={isArabic ? "ar" : "en"} dir={isArabic ? "rtl" : "ltr"}>
       <body style={{ margin: 0, padding: 0 }}>
         {children}
         <div className="grain-overlay" aria-hidden="true" />

@@ -1,9 +1,11 @@
 import crypto from "crypto";
 
 /**
- * Stateless signed tokens for auth: session cookies and one-time magic links.
+ * Stateless signed tokens for auth: session cookies and short-lived magic links.
  * Both are `base64url(payload).hmac`, signed with ACCESS_SECRET — no DB needed
  * to issue or validate them (entitlements live in Redis; see lib/entitlements).
+ * Note: with no server-side state a magic link isn't truly single-use — it stays
+ * valid for its full 15-minute window, so keep that window short.
  */
 
 const SECRET = process.env.ACCESS_SECRET || "dev-insecure-secret-change-me";

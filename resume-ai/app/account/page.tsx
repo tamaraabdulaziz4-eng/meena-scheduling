@@ -33,7 +33,10 @@ const STATUS_COLORS: Record<JobStatus, string> = {
 
 function AccountInner() {
   const router = useRouter();
-  const welcome = useSearchParams().get("welcome") === "1";
+  // Capture the welcome flag once into state — router.replace below strips the
+  // param, which flips the reactive searchParams value back to false and would
+  // otherwise make the banner flash and immediately vanish.
+  const [welcome] = useState(useSearchParams().get("welcome") === "1");
   useEffect(() => {
     if (welcome) router.replace("/account", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps

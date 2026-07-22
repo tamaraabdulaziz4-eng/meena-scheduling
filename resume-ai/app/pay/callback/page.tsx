@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -12,6 +12,9 @@ function CallbackInner() {
         checking: "\u062c\u0627\u0631\u064d \u062a\u0623\u0643\u064a\u062f \u0627\u0644\u062f\u0641\u0639\u2026",
         paidTitle: "\u062a\u0645 \u0627\u0644\u062f\u0641\u0639 \u0628\u0646\u062c\u0627\u062d",
         failedTitle: "\u0644\u0645 \u064a\u0643\u062a\u0645\u0644 \u0627\u0644\u062f\u0641\u0639",
+        pendingTitle: "\u062c\u0627\u0631\u064d \u0645\u0639\u0627\u0644\u062c\u0629 \u0627\u0644\u062f\u0641\u0639",
+        pendingMsg: "\u062f\u0641\u0639\u062a\u0643 \u0642\u064a\u062f \u0627\u0644\u0645\u0639\u0627\u0644\u062c\u0629 \u0648\u0644\u0645 \u062a\u0643\u062a\u0645\u0644 \u0628\u0639\u062f. \u0644\u0627 \u062a\u062f\u0641\u0639 \u0645\u0631\u0629 \u0623\u062e\u0631\u0649 \u2014 \u0627\u0636\u063a\u0637 \u201c\u062a\u062d\u062f\u064a\u062b \u0627\u0644\u062d\u0627\u0644\u0629\u201d \u0628\u0639\u062f \u0644\u062d\u0638\u0627\u062a.",
+        refresh: "\u062a\u062d\u062f\u064a\u062b \u0627\u0644\u062d\u0627\u0644\u0629",
         wait: "\u0644\u062d\u0638\u0629 \u0645\u0646 \u0641\u0636\u0644\u0643.",
         noTx: "\u0644\u0645 \u064a\u0635\u0644\u0646\u0627 \u0631\u0642\u0645 \u0627\u0644\u0639\u0645\u0644\u064a\u0629.",
         confirmed: (o: string) => `\u062a\u0645 \u062a\u0623\u0643\u064a\u062f \u0627\u0644\u0637\u0644\u0628 ${o}.`,
@@ -27,6 +30,9 @@ function CallbackInner() {
         checking: "Confirming your payment…",
         paidTitle: "Payment successful",
         failedTitle: "Payment not completed",
+        pendingTitle: "Payment processing",
+        pendingMsg: "Your payment is still being processed and hasn't completed yet. Don't pay again — tap “Refresh status” in a moment.",
+        refresh: "Refresh status",
         wait: "Please wait a moment.",
         noTx: "No transaction reference was returned.",
         confirmed: (o: string) => `Order ${o} confirmed.`,
@@ -38,7 +44,7 @@ function CallbackInner() {
         start: "Start optimizing →",
         back: "Back to pricing",
       };
-  const [state, setState] = useState<"checking" | "paid" | "failed">("checking");
+  const [state, setState] = useState<"checking" | "paid" | "failed" | "pending">("checking");
   const [detail, setDetail] = useState("");
   const [plan, setPlan] = useState<"single" | "monthly" | "">("");
 
@@ -83,13 +89,22 @@ function CallbackInner() {
     } catch { /* never break the confirmation page */ }
   }
 
-  useEffect(() => {
+  // Statuses that mean the payment is definitively over and unsuccessful. Anything
+  // else that isn't "paid" (pending, processing, under_process, unknown/blank) is
+  // still IN PROGRESS — we must NOT call it "failed", or we'd nudge the buyer into
+  // paying a second time for a charge that may still land.
+  const isDeadStatus = (status: string) =>
+    /cancel|declin|fail|expir|refund|void|error|reject/i.test(status || "");
+
+  const checkStatus = useCallback(() => {
     const tx = params.get("transactionNo") || params.get("TransactionNo");
     if (!tx) {
       setState("failed");
       setDetail(t.noTx);
       return;
     }
+    setState("checking");
+    setDetail("");
     fetch(`/api/pay/verify?transactionNo=${encodeURIComponent(tx)}`)
       .then((r) => r.json())
       .then((d) => {
@@ -108,18 +123,30 @@ function CallbackInner() {
             localStorage.removeItem("ra_ar_optimize_result");
           } catch { /* non-fatal */ }
         } else if (d.paid && d.amountOk === false) {
+          // Charged, but the amount didn't cover the plan — a support case, not a retry.
           setState("failed");
           setDetail(t.amountMismatch);
-        } else {
+        } else if (isDeadStatus(d.status)) {
           setState("failed");
           setDetail(t.statusLine(d.status));
+        } else {
+          // Not paid yet, but not dead either — keep it as "pending" and let the
+          // buyer re-poll instead of showing a scary "failed" + pay-again path.
+          setState("pending");
+          setDetail(t.pendingMsg);
         }
       })
       .catch(() => {
-        setState("failed");
+        // A network/verify blip is not a failed payment — let them retry the check.
+        setState("pending");
         setDetail(t.verifyFail);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
+
+  useEffect(() => {
+    checkStatus();
+  }, [checkStatus]);
 
   const accent = state === "paid" ? "#4ade80" : state === "failed" ? "#f87171" : "#fbbf24";
 
@@ -128,10 +155,16 @@ function CallbackInner() {
       <div className="card w-full max-w-md p-10 text-center" style={{ borderColor: `${accent}55` }}>
         <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full font-mono text-3xl"
           style={{ background: `${accent}1a`, color: accent, border: `1px solid ${accent}40` }}>
-          {state === "checking" ? "…" : state === "paid" ? "✓" : "✕"}
+          {state === "checking" || state === "pending" ? "…" : state === "paid" ? "✓" : "✕"}
         </div>
         <h1 className="text-2xl font-bold">
-          {state === "checking" ? t.checking : state === "paid" ? t.paidTitle : t.failedTitle}
+          {state === "checking"
+            ? t.checking
+            : state === "paid"
+            ? t.paidTitle
+            : state === "pending"
+            ? t.pendingTitle
+            : t.failedTitle}
         </h1>
         <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}>{detail || t.wait}</p>
 
@@ -142,6 +175,16 @@ function CallbackInner() {
             </p>
             <Link href={ar ? "/ar/optimize" : "/optimize"} className="btn-accent mt-6 inline-block px-8 py-3">{t.start}</Link>
           </>
+        )}
+        {state === "pending" && (
+          <div className="mt-6 flex flex-col items-center gap-3">
+            <button onClick={checkStatus} className="btn-accent inline-block px-8 py-3">
+              {t.refresh}
+            </button>
+            <Link href={ar ? "/ar#pricing" : "/#pricing"} className="btn-ghost inline-block px-8 py-3" style={{ color: "var(--fg)" }}>
+              {t.back}
+            </Link>
+          </div>
         )}
         {state === "failed" && (
           <Link href={ar ? "/ar#pricing" : "/#pricing"} className="btn-ghost mt-6 inline-block px-8 py-3" style={{ color: "var(--fg)" }}>

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createMagicToken } from "@/app/lib/session";
-import { allow, peek, clientIp } from "@/app/lib/ratelimit";
+import { allow, clientIp } from "@/app/lib/ratelimit";
 
 export const maxDuration = 20;
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
-const FROM = process.env.EMAIL_FROM || "ResumeAI <onboarding@resend.dev>";
+// No sandbox fallback: if EMAIL_FROM is unset we refuse to send (below) rather
+// than silently mailing from an unverified sandbox address.
+const FROM = process.env.EMAIL_FROM;
 
 /** Sends a magic sign-in link to the given email via Resend. */
 export async function POST(req: NextRequest) {
@@ -16,11 +18,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Throttle to stop email-bombing: max 4 links/hour per address, 8 per IP.
-    // Checked here but only CHARGED after a successful send — failed sends
-    // (bouncing address, provider hiccup) must not burn the user's quota.
+    // Charged up front, before the send — a failed send (bouncing address,
+    // provider hiccup) must still count, otherwise a bad address could drive
+    // unbounded outbound attempts by never consuming the quota.
     const ipKey = `auth:ip:${clientIp(req)}`;
     const emKey = `auth:em:${String(email).toLowerCase()}`;
-    if (!peek(ipKey, 8, 60 * 60 * 1000) || !peek(emKey, 4, 60 * 60 * 1000)) {
+    if (!allow(ipKey, 8, 60 * 60 * 1000) || !allow(emKey, 4, 60 * 60 * 1000)) {
       return NextResponse.json({ error: "Too many sign-in requests. Please wait a bit and try again." }, { status: 429 });
     }
 
@@ -28,8 +31,9 @@ export async function POST(req: NextRequest) {
     const link = `${BASE}/api/auth/verify?token=${encodeURIComponent(token)}`;
 
     const key = process.env.RESEND_API_KEY;
-    if (!key) {
-      // Not configured yet — surface a clear message rather than pretending to send.
+    if (!key || !FROM) {
+      // Not configured (missing API key or sender) — surface a clear message
+      // rather than pretending to send or mailing from a sandbox address.
       return NextResponse.json({ error: "Email sign-in isn't configured yet." }, { status: 503 });
     }
 
@@ -50,9 +54,6 @@ export async function POST(req: NextRequest) {
     });
     if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
 
-    // Send succeeded — now charge the quota.
-    allow(ipKey, 8, 60 * 60 * 1000);
-    allow(emKey, 4, 60 * 60 * 1000);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Auth request error:", err);

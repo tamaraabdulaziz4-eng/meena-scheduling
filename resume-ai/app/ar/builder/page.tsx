@@ -24,7 +24,7 @@ type StepId =
   | "company" | "jobTitle" | "dates" | "duties" | "moreJobs"
   | "education" | "skills" | "extras" | "generate";
 
-const QUESTIONS: Record<string, { q: string; refine?: string; multiline?: boolean; skippable?: boolean }> = {
+const QUESTIONS: Record<string, { q: string; refine?: string; multiline?: boolean }> = {
   name: { q: "أهلاً! أنا مساعدك لبناء سيرة إنجليزية احترافية. بنمشي خطوة خطوة وكل إجابة أحسّنها لك وتعتمدها قبل ما ننتقل.\n\nأول شي — وش اسمك الكامل؟", refine: "name" },
   contact: { q: "تمام! عطني وسائل التواصل: رقم جوالك، إيميلك، ومدينتك.", refine: "contact" },
   targetRole: { q: "وش الوظيفة اللي تستهدفها؟ (اكتبها بالعربي عادي وأنا أطلع لك مسماها المعتمد بالإنجليزي)", refine: "role" },
@@ -35,10 +35,8 @@ const QUESTIONS: Record<string, { q: string; refine?: string; multiline?: boolea
   moreJobs: { q: "أضفتها ✓ — عندك وظيفة سابقة ثانية تبي تضيفها؟ (اكتب: نعم / لا)" },
   education: { q: "وش تعليمك؟ (الشهادة، التخصص، الجامعة، السنة)", refine: "education" },
   skills: { q: "اذكر مهاراتك — تقنية أو شخصية، بأي لغة، وأنا أرتّبها.", refine: "skills" },
-  extras: { q: "آخر سؤال: عندك شهادات مهنية، دورات، أو لغات؟ (اكتب «لا يوجد» إذا ما عندك)", refine: "extras", skippable: true },
+  extras: { q: "آخر سؤال: عندك شهادات مهنية، دورات، أو لغات؟ (اكتب «لا يوجد» إذا ما عندك)", refine: "extras" },
 };
-
-const ORDER: StepId[] = ["name", "contact", "targetRole", "company", "jobTitle", "dates", "duties", "moreJobs", "education", "skills", "extras", "generate"];
 
 export default function ArChatBuilderPage() {
   const [msgs, setMsgs] = useState<Msg[]>([{ who: "ai", text: QUESTIONS.name.q }]);
@@ -68,6 +66,9 @@ export default function ArChatBuilderPage() {
         const s = JSON.parse(saved);
         if (s.msgs?.length > 1) {
           setMsgs(s.msgs); setStep(s.step); setData(s.data); setExps(s.exps || []); setCurExp(s.curExp || { role: "", company: "", dates: "", duties: "" });
+          // Restore the pending suggestion too — otherwise a reload leaves the
+          // "✨ اقتراحي" bubble on screen with no accept/edit buttons (orphaned).
+          if (s.pending?.en) setPending(s.pending);
           // On reload the persisted step can be 'generate' (persistence fires while
           // generation is in flight/errored), but generate() only refires via ask() —
           // so surface the retry button instead of a dead, spinner-less screen.
@@ -78,9 +79,9 @@ export default function ArChatBuilderPage() {
   }, []);
   useEffect(() => {
     try {
-      if (msgs.length > 1 && !cv) localStorage.setItem("ra_ar_chat", JSON.stringify({ msgs, step, data, exps, curExp }));
+      if (msgs.length > 1 && !cv) localStorage.setItem("ra_ar_chat", JSON.stringify({ msgs, step, data, exps, curExp, pending }));
     } catch { /* تجاهل */ }
-  }, [msgs, step, data, exps, curExp, cv]);
+  }, [msgs, step, data, exps, curExp, cv, pending]);
 
   function ask(next: StepId, extraMsgs: Msg[] = []) {
     setStep(next);

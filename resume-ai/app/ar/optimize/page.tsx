@@ -77,7 +77,9 @@ export default function ArOptimizePage() {
         if (typeof d.resume === "string") setResume(d.resume);
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
         // نحفظ الوضع أيضاً — عشان إعادة الفحص بعد الدفع ما تسقط إعلان الوظيفة.
-        if (d.mode === "target" || (typeof d.jobDescription === "string" && d.jobDescription.trim().length >= 30)) {
+        // نرجّع وضع «التخصيص» فقط إذا كان الوضع المحفوظ فعلاً «target» ومعه إعلان —
+        // وجود نص إعلان قديم وحده ما يفرض وضع التخصيص على مسودة اختار فيها المستخدم «تقييم عام».
+        if (d.mode === "target" && typeof d.jobDescription === "string" && d.jobDescription.trim().length >= 30) {
           setMode("target");
         }
       }
@@ -90,6 +92,9 @@ export default function ArOptimizePage() {
     try {
       if (resume || jobDescription) {
         localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription, mode }));
+      } else {
+        // فرّغ المستخدم الحقلين — نحذف المسودة المحفوظة حتى لا يعيد التحديث نصاً حذفه للتو.
+        localStorage.removeItem("ra_ar_optimize_draft");
       }
     } catch { /* تجاهل */ }
   }, [resume, jobDescription, mode]);
@@ -245,7 +250,11 @@ export default function ArOptimizePage() {
 
   const score = result?.matchScore ?? 0;
   const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
-  const verdict = score >= 75 ? "تطابق قوي ✓" : score >= 55 ? "على الحد" : "تحتاج تقوية";
+  // كلمة «تطابق» ما لها معنى إلا مقابل وظيفة. في التقييم العام (بدون إعلان) ما فيه
+  // شي نطابقه — نستخدم صياغة محايدة عن جودة السيرة بدلاً منها.
+  const verdict = mode === "target"
+    ? (score >= 75 ? "تطابق قوي ✓" : score >= 55 ? "على الحد" : "تحتاج تقوية")
+    : (score >= 75 ? "سيرة قوية ✓" : score >= 55 ? "بداية جيدة" : "تحتاج تقوية");
 
   return (
     <main dir="rtl" lang="ar" className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
@@ -364,14 +373,14 @@ export default function ArOptimizePage() {
         ) : (
           <div>
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
-              <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>نسبة التطابق ATS</div>
+              <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>{mode === "target" ? "نسبة التطابق ATS" : "تقييم جودة السيرة"}</div>
               <div className="my-2 flex items-baseline justify-center gap-1" dir="ltr">
                 <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{score}</span>
                 <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold" style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>{verdict}</div>
               <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>
-              <a href={`/score/${score}`} target="_blank" rel="noopener noreferrer"
+              <a href={`/score/${score}?lang=ar`} target="_blank" rel="noopener noreferrer"
                 className="mt-5 inline-block rounded-lg px-5 py-2 text-sm font-semibold"
                 style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
                 📣 شارك نتيجتي

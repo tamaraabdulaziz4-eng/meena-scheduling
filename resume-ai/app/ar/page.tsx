@@ -31,7 +31,7 @@ export default function ArabicHome() {
           </div>
           <div className="flex items-center gap-5">
             <Link href="/" className="text-sm" style={{ color: "var(--muted)" }}>English</Link>
-            <Link href="/ar/build" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>إنشاء سيرة</Link>
+            <Link href="/ar/builder" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>إنشاء سيرة</Link>
             <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>الأسعار</a>
             <Link href="/ar/optimize" className="hidden btn-accent px-4 py-2 text-sm sm:inline-block">افحص سيرتك</Link>
             <MobileMenu ar />
@@ -211,7 +211,7 @@ export default function ArabicHome() {
             <span className="text-sm font-bold">ResumeAI</span>
           </div>
           <div className="flex flex-wrap justify-center gap-5 text-sm">
-            <Link href="/ar/build" style={{ color: "var(--muted)" }}>إنشاء سيرة</Link>
+            <Link href="/ar/builder" style={{ color: "var(--muted)" }}>إنشاء سيرة</Link>
             <Link href="/ar/optimize" style={{ color: "var(--muted)" }}>تحسين سيرة</Link>
             <Link href="/resume-templates/jadarat" style={{ color: "var(--muted)" }}>قالب جدارات</Link>
             <Link href="/resume-templates" style={{ color: "var(--muted)" }}>القوالب</Link>

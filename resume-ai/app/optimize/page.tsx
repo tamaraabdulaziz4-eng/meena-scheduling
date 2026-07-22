@@ -80,7 +80,10 @@ export default function OptimizePage() {
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
         // Persist the MODE too — a paid user's post-payment rescan must not
         // silently drop the job description because mode reset to "general".
-        if (d.mode === "target" || (typeof d.jobDescription === "string" && d.jobDescription.trim().length >= 30)) {
+        // Only restore target mode when the SAVED mode was target AND a JD is
+        // present — leftover JD text alone must not force target mode on a
+        // draft the user had explicitly set to general review.
+        if (d.mode === "target" && typeof d.jobDescription === "string" && d.jobDescription.trim().length >= 30) {
           setMode("target");
         }
       }
@@ -95,6 +98,10 @@ export default function OptimizePage() {
     try {
       if (resume || jobDescription) {
         localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription, mode }));
+      } else {
+        // Both fields emptied — clear the saved draft so a refresh doesn't
+        // resurrect stale text the user just deleted.
+        localStorage.removeItem("ra_optimize_draft");
       }
     } catch {
       /* storage full or blocked — non-fatal */
@@ -258,7 +265,11 @@ export default function OptimizePage() {
 
   const score = result?.matchScore ?? 0;
   const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
-  const verdict = score >= 75 ? "STRONG MATCH" : score >= 55 ? "BORDERLINE" : "NEEDS WORK";
+  // "MATCH" language only makes sense against a job. In general review (no JD)
+  // there's nothing to match — use neutral quality-review wording instead.
+  const verdict = mode === "target"
+    ? (score >= 75 ? "STRONG MATCH" : score >= 55 ? "BORDERLINE" : "NEEDS WORK")
+    : (score >= 75 ? "STRONG RESUME" : score >= 55 ? "SOLID START" : "NEEDS WORK");
 
   return (
     <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
@@ -413,7 +424,7 @@ export default function OptimizePage() {
             {/* Score banner */}
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
               <div className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>
-                {result.locked && mode === "general" ? "Overall resume score" : "ATS Match Score"}
+                {mode === "target" ? "ATS Match Score" : "Overall resume score"}
               </div>
               <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>
                 {mode === "target" ? "Scored against the job you pasted" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
