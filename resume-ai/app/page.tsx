@@ -2,6 +2,7 @@ import Link from "next/link";
 import ScanDemo from "./components/ScanDemo";
 import CheckoutButton from "./components/CheckoutButton";
 import Reveal from "./components/Reveal";
+import Counter from "./components/Counter";
 
 export default function Home() {
   return (
@@ -67,13 +68,13 @@ export default function Home() {
       <section style={{ borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto grid max-w-5xl grid-cols-2 gap-6 px-6 py-10 text-center md:grid-cols-4">
           {[
-            { num: "75%", label: "of resumes rejected by ATS before a human sees them" },
-            { num: "3.4×", label: "more interview calls after optimizing" },
-            { num: "60s", label: "average time to a rewritten resume" },
-            { num: "$9", label: "one-time — no subscription trap" },
+            { node: <Counter value={75} suffix="%" />, label: "of resumes rejected by ATS before a human sees them" },
+            { node: <Counter value={3.4} decimals={1} suffix="×" />, label: "more interview calls after optimizing" },
+            { node: <Counter value={60} suffix="s" />, label: "average time to a rewritten resume" },
+            { node: <Counter value={35} prefix="SAR " />, label: "one-time — no subscription trap" },
           ].map((s) => (
             <div key={s.label}>
-              <div className="font-mono text-3xl font-bold text-accent tabular-nums">{s.num}</div>
+              <div className="font-mono text-3xl font-bold text-accent tabular-nums">{s.node}</div>
               <div className="mt-2 text-xs leading-snug" style={{ color: "var(--faint)" }}>{s.label}</div>
             </div>
           ))}

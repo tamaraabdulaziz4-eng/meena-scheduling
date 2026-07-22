@@ -44,6 +44,44 @@ body {
   transform: translateX(-50%);
   background: radial-gradient(ellipse at center, rgba(74, 222, 128, 0.12), transparent 65%);
   filter: blur(20px);
+  will-change: transform, opacity;
+}
+/* A second, offset glow drifting on a different cycle → layered "living" motion. */
+.hero-ambient::after {
+  content: "";
+  position: absolute;
+  top: 5%;
+  left: 35%;
+  width: 640px;
+  height: 480px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(99, 102, 241, 0.10), transparent 65%);
+  filter: blur(30px);
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hero-ambient::before { animation: glowDriftA 14s ease-in-out infinite; }
+  .hero-ambient::after { animation: glowDriftB 18s ease-in-out infinite; }
+}
+@keyframes glowDriftA {
+  0%, 100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 0.85; }
+  50% { transform: translateX(-46%) translateY(24px) scale(1.08); opacity: 1; }
+}
+@keyframes glowDriftB {
+  0%, 100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 0.7; }
+  50% { transform: translateX(-56%) translateY(-20px) scale(1.12); opacity: 0.95; }
+}
+
+/* Cinematic film-grain overlay — makes the flat dark background read as premium.
+   A single fixed layer of SVG turbulence noise at very low opacity. */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 .grid-lines {
   position: absolute;
@@ -103,7 +141,22 @@ body {
   border-radius: 12px;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   display: inline-block;
+  position: relative;
+  overflow: hidden;
 }
+/* Light sweep across the primary button on hover. */
+.btn-accent::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -80%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: skewX(-18deg);
+  transition: left 0.6s ease;
+}
+.btn-accent:hover::after { left: 130%; }
 .btn-accent:hover {
   background: #63e88f;
   transform: translateY(-2px);

@@ -11,6 +11,7 @@ interface OptimizeResult {
   skillsGap: string[];
   improvements: { area: string; issue: string; fix: string }[];
   optimizedResume: string;
+  locked?: boolean;
 }
 
 export default function OptimizePage() {
@@ -324,26 +325,49 @@ export default function OptimizePage() {
               <div>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-xl font-bold">Your optimized resume</h2>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
-                      className="rounded-lg px-4 py-2 text-sm font-semibold"
-                      style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                      {copied ? "✓ Copied" : "Copy"}
-                    </button>
-                    <button
-                      onClick={() => download("optimized-resume.txt", result.optimizedResume)}
-                      className="rounded-lg px-4 py-2 text-sm font-semibold"
-                      style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                      ↓ .txt
-                    </button>
-                    <PdfExport text={result.optimizedResume} />
+                  {!result.locked && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
+                        className="rounded-lg px-4 py-2 text-sm font-semibold"
+                        style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                        {copied ? "✓ Copied" : "Copy"}
+                      </button>
+                      <button
+                        onClick={() => download("optimized-resume.txt", result.optimizedResume)}
+                        className="rounded-lg px-4 py-2 text-sm font-semibold"
+                        style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                        ↓ .txt
+                      </button>
+                      <PdfExport text={result.optimizedResume} />
+                    </div>
+                  )}
+                </div>
+                {result.locked ? (
+                  <div className="relative">
+                    {/* Free preview: first lines, then blurred + locked. */}
+                    <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
+                      style={{ color: "rgba(244,245,243,0.85)" }}>
+                      {result.optimizedResume}
+                      <div className="pointer-events-none mt-2 select-none blur-sm" style={{ color: "rgba(244,245,243,0.5)" }}>
+                        {"• Rewrote every bullet with strong action verbs and quantified impact\n• Front-loaded the exact keywords the ATS scans for\n• Restructured into an ATS-safe, single-column layout\n• …the full rewritten resume continues…"}
+                      </div>
+                    </div>
+                    <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                      <div className="chip mb-3">🔒 Your rewritten resume is ready</div>
+                      <h3 className="text-xl font-bold">Unlock your full ATS-optimized resume</h3>
+                      <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                        You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or unlimited SAR 75/mo.
+                      </p>
+                      <a href="/#pricing" className="btn-accent mt-5 inline-block px-8 py-3">Unlock my resume →</a>
+                    </div>
                   </div>
-                </div>
-                <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
-                  style={{ color: "rgba(244,245,243,0.85)" }}>
-                  {result.optimizedResume}
-                </div>
+                ) : (
+                  <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
+                    style={{ color: "rgba(244,245,243,0.85)" }}>
+                    {result.optimizedResume}
+                  </div>
+                )}
 
                 {/* Cover letter generator */}
                 <div className="card mt-6 p-6" style={{ borderColor: "rgba(74,222,128,0.25)" }}>
@@ -352,7 +376,9 @@ export default function OptimizePage() {
                       <h3 className="font-bold">Matching cover letter</h3>
                       <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>Generate a tailored cover letter from the same job post.</p>
                     </div>
-                    {!coverLetter ? (
+                    {result.locked ? (
+                      <a href="/#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 Unlock to generate</a>
+                    ) : !coverLetter ? (
                       <button
                         onClick={generateCoverLetter}
                         disabled={coverLoading}

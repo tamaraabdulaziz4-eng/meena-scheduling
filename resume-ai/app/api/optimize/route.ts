@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyPass, ACCESS_COOKIE, FREE_COOKIE, FREE_LIMIT } from "@/app/lib/access";
+import { verifyPass, ACCESS_COOKIE } from "@/app/lib/access";
 import { readSession, SESSION_COOKIE } from "@/app/lib/session";
 import { hasActiveEntitlement } from "@/app/lib/entitlements";
 
@@ -329,19 +329,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Input too long. Please trim your resume or job description." }, { status: 400 });
     }
 
-    // ── Access gate ──
-    // Unlimited if: signed-in account with an active entitlement, OR a valid paid
-    // cookie pass. Otherwise allow FREE_LIMIT free scans, then require payment.
+    // ── Freemium gate ──
+    // The ATS score + full analysis (missing/present keywords, gaps, improvements)
+    // is ALWAYS free — that's the hook that pulls traffic and creates the desire
+    // to fix the gaps. The rewritten resume itself is the paid unlock. Paid if:
+    // signed-in account with an active entitlement, OR a valid paid cookie pass.
     const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, Date.now());
     const accountUnlimited = email ? await hasActiveEntitlement(email, Date.now()) : false;
     const hasPass = accountUnlimited || !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, Date.now());
-    const freeUsed = parseInt(req.cookies.get(FREE_COOKIE)?.value || "0") || 0;
-    if (!hasPass && freeUsed >= FREE_LIMIT) {
-      return NextResponse.json(
-        { error: "You've used your free optimization. Unlock unlimited access to continue.", paywall: true },
-        { status: 402 }
-      );
-    }
 
     // ── Streaming response: NDJSON lines ──
     //   {"t":"think","d":"<chunk of the AI's live analysis>"}
@@ -389,7 +384,19 @@ export async function POST(req: NextRequest) {
 
             if (!raw.trim()) throw new Error("Empty response from AI provider");
             const result = parseSections(raw);
-            send({ t: "result", d: result });
+            // Freemium: free users see the score + full analysis, but the
+            // rewritten resume is locked behind payment. Send only a short
+            // teaser (never the full text — can't be unlocked from the network).
+            if (!hasPass) {
+              const full = result.optimizedResume;
+              const preview = full.split("\n").slice(0, 6).join("\n");
+              send({
+                t: "result",
+                d: { ...result, optimizedResume: preview, locked: true },
+              });
+            } else {
+              send({ t: "result", d: { ...result, locked: false } });
+            }
             done = true;
           } catch (err) {
             console.error(`Optimize stream error (attempt ${attempt + 1}):`, err);
@@ -400,24 +407,13 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const response = new NextResponse(stream, {
+    return new NextResponse(stream, {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
       },
     });
-    // Count the free scan for non-paid users (set up-front; streams can't set cookies later).
-    if (!hasPass) {
-      response.cookies.set(FREE_COOKIE, String(freeUsed + 1), {
-        httpOnly: true,
-        secure: true,
-        sameSite: "lax",
-        path: "/",
-        maxAge: 365 * 24 * 60 * 60,
-      });
-    }
-    return response;
   } catch (err) {
     console.error("Optimize error:", err);
     const msg = err instanceof Error ? err.message : "Unknown error";

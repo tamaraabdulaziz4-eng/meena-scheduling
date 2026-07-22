@@ -6,6 +6,8 @@ import { useState } from "react";
  *  page carries "Built with ResumeAI"). */
 export default function PublishLink({ text, name, role }: { text: string; name?: string; role?: string }) {
   const [url, setUrl] = useState("");
+  const [slug, setSlug] = useState("");
+  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -22,8 +24,25 @@ export default function PublishLink({ text, name, role }: { text: string; name?:
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
       setUrl(`${window.location.origin}${data.url}`);
+      setSlug(data.slug || "");
+      setToken(data.unpublishToken || "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not publish.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function unpublish() {
+    if (!slug || !token) return;
+    setLoading(true);
+    try {
+      await fetch(`/api/publish?slug=${encodeURIComponent(slug)}&token=${encodeURIComponent(token)}`, { method: "DELETE" });
+      setUrl("");
+      setSlug("");
+      setToken("");
+    } catch {
+      setError("Could not unpublish.");
     } finally {
       setLoading(false);
     }
@@ -41,6 +60,11 @@ export default function PublishLink({ text, name, role }: { text: string; name?:
           </button>
         </div>
         <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>Share this with recruiters or on LinkedIn — no PDF needed.</p>
+        {token && (
+          <button onClick={unpublish} disabled={loading} className="mt-2 text-xs disabled:opacity-50" style={{ color: "var(--faint)" }}>
+            {loading ? "Removing…" : "Unpublish this link"}
+          </button>
+        )}
       </div>
     );
   }

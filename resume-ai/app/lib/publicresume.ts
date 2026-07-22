@@ -40,6 +40,17 @@ export async function getPublicResume(slug: string): Promise<PublicResume | null
   }
 }
 
+export async function deletePublicResume(slug: string): Promise<void> {
+  if (!publicResumeConfigured()) throw new Error("storage not configured");
+  const team = EC_TEAM ? `?teamId=${EC_TEAM}` : "";
+  const res = await fetch(`https://api.vercel.com/v1/edge-config/${EC_ID}/items${team}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${EC_WRITE}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ items: [{ operation: "delete", key: key(slug) }] }),
+  });
+  if (!res.ok) throw new Error(`edge-config delete ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
+
 /** Build a URL-safe, human-readable slug from a name + short random suffix. */
 export function makeSlug(name: string, rand: string): string {
   const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "resume";
