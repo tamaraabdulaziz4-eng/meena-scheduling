@@ -72,6 +72,17 @@ function CallbackInner() {
     } catch { /* tracking must never break the confirmation page */ }
   }
 
+  // Meta Pixel Purchase — fires only on a confirmed payment. No-op unless the
+  // pixel is loaded (NEXT_PUBLIC_META_PIXEL_ID set), so it's safe to ship now.
+  function reportMetaPurchase(paidPlan: "single" | "monthly", orderId: string) {
+    const value = paidPlan === "monthly" ? 75 : 35;
+    try {
+      const w = window as unknown as { fbq?: (...a: unknown[]) => void };
+      if (typeof w.fbq !== "function") return;
+      w.fbq("track", "Purchase", { value, currency: "SAR", content_name: paidPlan, order_id: orderId });
+    } catch { /* never break the confirmation page */ }
+  }
+
   useEffect(() => {
     const tx = params.get("transactionNo") || params.get("TransactionNo");
     if (!tx) {
@@ -87,8 +98,9 @@ function CallbackInner() {
           setState("paid");
           setPlan(paidPlan);
           setDetail(t.confirmed(d.orderNumber || tx));
-          // Measure this sale against ad spend (no-op until the Ads env vars are set).
+          // Measure this sale against ad spend (each no-op until its env vars are set).
           reportPurchase(paidPlan, d.orderNumber || tx);
+          reportMetaPurchase(paidPlan, d.orderNumber || tx);
           // Old results were generated locked (pre-payment) — clear them so the
           // next scan comes back complete instead of showing the stale preview.
           try {
