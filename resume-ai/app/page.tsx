@@ -325,6 +325,7 @@ export default function Home() {
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
         <div className="mx-auto max-w-5xl">
           <nav className="mb-8 flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm">
+            <Link href="/resume-examples" style={{ color: "var(--muted)" }}>Resume Examples</Link>
             <Link href="/ats-resume-checker" style={{ color: "var(--muted)" }}>ATS Resume Checker</Link>
             <Link href="/free-resume-checker" style={{ color: "var(--muted)" }}>Free Resume Checker</Link>
             <Link href="/build" style={{ color: "var(--muted)" }}>CV Builder</Link>
