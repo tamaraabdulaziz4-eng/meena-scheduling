@@ -65,7 +65,7 @@ export default function LiveTicker({ ar = false }: { ar?: boolean }) {
         <span style={{ color: "var(--faint)" }}> → </span>
         <span style={{ color: "var(--accent)" }}>{e.to}%</span>
       </span>
-      <span style={{ color: "var(--faint)" }}>{ar ? "الآن" : "just now"}</span>
+      <span style={{ color: "var(--faint)" }}>{ar ? "· مثال" : "· sample"}</span>
     </div>
   );
 }

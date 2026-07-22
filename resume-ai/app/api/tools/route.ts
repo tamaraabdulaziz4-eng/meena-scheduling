@@ -149,6 +149,30 @@ export async function POST(req: NextRequest) {
       }
     }
     if (!parsed) throw lastErr ?? new Error("Failed to generate");
+
+    // Normalize to the exact shape the UI expects so a slightly-off model
+    // response can never crash the client (.map on undefined).
+    if (mode === "interview") {
+      const rawQ = Array.isArray(parsed.questions) ? parsed.questions
+        : Array.isArray(parsed) ? (parsed as unknown[]) : [];
+      const questions = rawQ
+        .map((x) => {
+          const it = (x ?? {}) as Record<string, unknown>;
+          return { q: String(it.q ?? it.question ?? ""), why: String(it.why ?? it.reason ?? ""), answer: String(it.answer ?? it.a ?? "") };
+        })
+        .filter((it) => it.q);
+      const redFlags = (Array.isArray(parsed.redFlags) ? parsed.redFlags : []).map(String);
+      if (!questions.length) throw new Error("No questions in response");
+      return NextResponse.json({ questions, redFlags });
+    }
+    if (mode === "linkedin") {
+      return NextResponse.json({
+        headline: String(parsed.headline ?? ""),
+        about: String(parsed.about ?? ""),
+        skills: (Array.isArray(parsed.skills) ? parsed.skills : []).map(String),
+        tips: (Array.isArray(parsed.tips) ? parsed.tips : []).map(String),
+      });
+    }
     return NextResponse.json(parsed);
   } catch (err) {
     console.error("Tools error:", err);

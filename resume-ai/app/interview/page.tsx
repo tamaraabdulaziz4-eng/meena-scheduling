@@ -16,6 +16,7 @@ export default function InterviewPage() {
   const [result, setResult] = useState<InterviewResult | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<number | null>(0);
+  const [copied, setCopied] = useState(false);
 
   async function run(e: React.FormEvent) {
     e.preventDefault();
@@ -30,7 +31,10 @@ export default function InterviewPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
-      setResult(data);
+      if (!Array.isArray(data.questions) || data.questions.length === 0) {
+        throw new Error("Couldn't prepare questions this time — please try again.");
+      }
+      setResult({ questions: data.questions, redFlags: Array.isArray(data.redFlags) ? data.redFlags : [] });
       setOpen(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -84,6 +88,20 @@ export default function InterviewPage() {
           </form>
         ) : (
           <div className="space-y-4">
+            <div className="mb-2 flex justify-end">
+              <button
+                onClick={() => {
+                  const txt = result.questions.map((q, i) => `${i + 1}. ${q.q}\n(${q.why})\n${q.answer}`).join("\n\n") +
+                    (result.redFlags.length ? `\n\n--- Be ready for ---\n${result.redFlags.map((r) => `• ${r}`).join("\n")}` : "");
+                  navigator.clipboard.writeText(txt);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1800);
+                }}
+                className="rounded-lg px-4 py-2 text-sm font-semibold"
+                style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                {copied ? "✓ Copied" : "Copy all"}
+              </button>
+            </div>
             {result.questions.map((item, i) => (
               <div key={i} className="card overflow-hidden">
                 <button onClick={() => setOpen(open === i ? null : i)} className="flex w-full items-start justify-between gap-3 p-5 text-left">
@@ -112,6 +130,10 @@ export default function InterviewPage() {
                 </ul>
               </div>
             )}
+            <div className="card mt-4 p-6 text-center" style={{ borderColor: "rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.04)" }}>
+              <p className="text-sm" style={{ color: "var(--muted)" }}>Make sure your resume matches this job first —</p>
+              <Link href="/optimize" className="btn-accent mt-3 inline-block px-6 py-2.5 text-sm">Scan it against this job free →</Link>
+            </div>
             <button onClick={() => setResult(null)} className="mx-auto block text-sm" style={{ color: "var(--faint)" }}>Prep another interview</button>
           </div>
         )}
