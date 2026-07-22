@@ -52,11 +52,12 @@ ANALYSIS METHOD (do this carefully before writing the JSON):
 3. For "missingKeywords": list industry-standard keywords for the inferred role that the resume lacks.
 4. For "presentKeywords": strong keywords already in the resume.`}
 
-Rules for the rewritten resume:
-- NEVER invent employers, roles, dates, degrees, or achievements — only rephrase what exists
+Rules for the rewritten resume — NO-FABRICATION CONTRACT (absolute, overrides everything):
+- FORBIDDEN: writing ANY number, percentage, metric, team size, user count, revenue figure, employer, role, date, degree, certification, technology, or achievement that does not appear in the source resume. This is the product's core promise to the user.
+- Where a metric would strengthen a bullet but the user gave none, write exactly: [add your real number] — never estimate, never make one up.
+- You may only: rephrase, reorganize, translate, use stronger verbs, and surface the user's OWN facts more clearly.
+- Where a required skill is missing, surface adjacent/transferable experience from the source — never claim the missing skill.
 - Structure: Name/contact, PROFESSIONAL SUMMARY (3 lines, contains the job title), SKILLS (grouped, front-loading required skills the candidate genuinely has), EXPERIENCE (reverse-chronological), EDUCATION
-- Bullets: strong action verbs, job keywords where truthful; where a metric should exist but wasn't given, write [add number]
-- Where a required skill is missing, surface adjacent/transferable experience — never fake it
 - Plain text, standard headings, ATS-parseable
 
 OUTPUT FORMAT — plain text with EXACTLY these section markers, in this order (NO JSON, no markdown):
@@ -244,7 +245,7 @@ async function streamNvidia(
       max_tokens: 3600,
       stream: true,
       messages: [
-        { role: "system", content: "You are an expert ATS resume analyst. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets, then the SCORE/SUMMARY/MISSING/PRESENT/GAPS/IMPROVEMENTS/RESUME sections as plain text. Never output JSON or markdown." },
+        { role: "system", content: "You are an expert ATS resume analyst. ABSOLUTE RULE: never invent any number, employer, date, degree, certification, or achievement not present in the user's input — write [add your real number] where a metric is missing. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets, then the SCORE/SUMMARY/MISSING/PRESENT/GAPS/IMPROVEMENTS/RESUME sections as plain text. Never output JSON or markdown." },
         { role: "user", content: PROMPT(resume, jobDescription) },
       ],
     }),

@@ -187,7 +187,7 @@ export default function ArOptimizePage() {
 
   const score = result?.matchScore ?? 0;
   const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
-  const verdict = score >= 75 ? "ستصل للمقابلة ✓" : score >= 55 ? "على الحد" : "سيرفضها النظام ✕";
+  const verdict = score >= 75 ? "تطابق قوي ✓" : score >= 55 ? "على الحد" : "تحتاج تقوية";
 
   return (
     <main dir="rtl" lang="ar" className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
@@ -242,6 +242,11 @@ export default function ArOptimizePage() {
                 className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />
               <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>
                 {resume.length}/8000{resume.length >= 8000 ? " — وصلت الحد الأقصى" : ""}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--faint)" }}>
+                🔒 سيرتك تُعالَج فوراً <strong>ولا تُخزَّن على خوادمنا</strong> — المسودة تبقى على جهازك فقط، ولا نستخدم بياناتك لتدريب النماذج. بالفحص أنت توافق على{" "}
+                <Link href="/privacy" className="underline" style={{ color: "var(--muted)" }}>سياسة الخصوصية</Link> و
+                <Link href="/terms" className="underline" style={{ color: "var(--muted)" }}>الشروط</Link>.
               </p>
             </div>
             <div>

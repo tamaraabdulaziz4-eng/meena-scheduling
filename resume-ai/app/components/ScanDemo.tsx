@@ -71,7 +71,7 @@ export default function ScanDemo() {
 
   const passing = score >= 75;
   const accent = passing ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
-  const verdict = passing ? "SHORTLISTED" : "REJECTED BY ATS";
+  const verdict = passing ? "STRONG MATCH" : "LOW MATCH";
 
   const lines = [
     { w: "72%", key: "keywords", present: passing },
@@ -104,7 +104,7 @@ export default function ScanDemo() {
               className="font-mono text-[11px] uppercase tracking-[0.2em]"
               style={{ color: "rgba(244,245,243,0.5)" }}
             >
-              ATS Scan
+              ATS Scan · Demo
             </span>
           </div>
           <span

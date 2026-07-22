@@ -333,7 +333,7 @@ export default function BuildPage() {
             )}
 
             <div className="card mt-6 p-7 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-              <h3 className="text-xl font-bold">Now make it beat the ATS robots</h3>
+              <h3 className="text-xl font-bold">Now check it against a real job posting</h3>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                 Run your new CV through the optimizer against a real job posting to get your match score.
               </p>

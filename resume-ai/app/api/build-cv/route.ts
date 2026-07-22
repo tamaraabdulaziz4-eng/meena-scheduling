@@ -49,11 +49,11 @@ CV FORMULA (research-backed — follow exactly):
 - Reverse-chronological, single column, plain text, standard headings — ATS-parseable
 - PROFESSIONAL SUMMARY: 3-4 lines, contains the target role title, their strongest selling points
 - SKILLS: grouped by category, front-loading what matters for the target role
-- EXPERIENCE: each role 3-5 bullets; every bullet starts with a strong action verb; aim for numbers in 60-70% of bullets. Where the candidate implied a number, use it. Where a metric clearly should exist but wasn't given, write [add number: e.g. team size, % improvement, customers served] as a placeholder.
+- EXPERIENCE: each role 3-5 bullets; every bullet starts with a strong action verb. NO-FABRICATION CONTRACT (absolute): NEVER write any number, metric, team size, percentage, employer, date, degree, certification, or achievement the candidate did not state. Where the candidate gave a number, use it. Where a metric would help but wasn't given, write exactly: [add your real number: e.g. team size, % improvement, customers served].
 - EDUCATION after experience (unless they have no experience — then education first)
 - Include certifications/languages/projects sections only if they gave content for them
 - Concise enough to fit one page; cut filler, keep impact
-- NEVER invent employers, dates, degrees, or achievements — polish, don't fabricate
+- You may only rephrase, translate, and organize the candidate's OWN facts — polish, never fabricate
 
 OUTPUT FORMAT — two parts in this order:
 1. A section starting with the exact line "ANALYSIS" — 6-10 short bullet lines about the choices you're making (e.g. "• Leading with retail management experience — matches target role", "• Converting 'helped customers' into quantified service bullets"). Shown live to the user.

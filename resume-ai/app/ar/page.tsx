@@ -8,9 +8,9 @@ import AtsMarquee from "../components/AtsMarquee";
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "ResumeAI — حسّن سيرتك الذاتية وتجاوز أنظمة التوظيف الآلية",
+  title: "ResumeAI — حسّن سيرتك الذاتية بصدق وبدون اختلاق",
   description:
-    "٧٥٪ من السير الذاتية يرفضها نظام التوظيف الآلي قبل أن يراها إنسان. اكتب بالعربي والذكاء الاصطناعي يبني لك سيرة إنجليزية احترافية تتجاوز الفلترة — أول فحص مجاني.",
+    "اكتب بالعربي والذكاء الاصطناعي يبني لك سيرة إنجليزية احترافية أوضح وأقوى ومتوافقة مع متطلبات الوظيفة — بدون اختلاق أي معلومة. الفحص والتحليل مجاني.",
   alternates: { canonical: `${BASE}/ar` },
 };
 
@@ -43,16 +43,17 @@ export default function ArabicHome() {
         </div>
         <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-2">
           <div>
-            <div className="chip mb-6">● ٧٥٪ من السير الذاتية يرفضها الروبوت قبل الإنسان</div>
+            <div className="chip mb-6">● محرّك تحسين بدون اختلاق</div>
             <h1 className="text-4xl font-extrabold leading-[1.15] tracking-tight md:text-6xl">
-              سيرتك الذاتية <span style={{ color: "#f87171" }}>تُرفض تلقائياً.</span>
+              خبرتك <span className="accent-underline text-accent">أقوى</span> مما تظهره سيرتك.
               <br />
               واحنا <span className="accent-underline text-accent">نصلّحها</span> في ١٠ ثوانٍ.
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
               اكتب بالعربي براحتك — الذكاء الاصطناعي يفهم كلامك ويحوّله لسيرة ذاتية
               <strong> إنجليزية احترافية </strong>
-              مطابقة للكلمات المفتاحية التي تفحصها أنظمة التوظيف في أرامكو وSTC والبنوك والشركات العالمية.
+              أوضح وأقوى ومتوافقة مع متطلبات الوظيفة —
+              <strong> وبدون ما يضيف رقماً أو خبرة ما ذكرتها أنت.</strong>
             </p>
             <div className="mt-9 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <Link href="/ar/optimize" className="btn-accent px-8 py-4 text-lg">
@@ -78,13 +79,13 @@ export default function ArabicHome() {
       </section>
 
       {/* ATS marquee */}
-      <AtsMarquee label="مصمّمة لتجاوز كل أنظمة التوظيف الرئيسية" />
+      <AtsMarquee label="مخرجاتنا بتنسيق متوافق مع أشهر أنظمة التوظيف" />
 
       {/* How it works */}
       <section className="mx-auto max-w-5xl px-6 py-24">
         <div className="mb-14 text-center">
           <div className="chip mb-4">كيف يعمل؟</div>
-          <h2 className="text-4xl font-bold tracking-tight">ثلاث خطوات. نتيجة تعبر الفلتر.</h2>
+          <h2 className="text-4xl font-bold tracking-tight">ثلاث خطوات. سيرة أوضح وأقوى.</h2>
         </div>
         <div className="grid gap-5 md:grid-cols-3">
           {[
@@ -184,10 +185,10 @@ export default function ArabicHome() {
         <div className="hero-ambient" />
         <div className="relative z-10 mx-auto max-w-2xl">
           <h2 className="text-4xl font-extrabold tracking-tight md:text-5xl">
-            لا تترك الروبوت <span style={{ color: "#f87171" }}>يقرر مستقبلك.</span>
+            قدّم خبرتك <span className="accent-underline text-accent">الحقيقية</span> بأفضل صورة.
           </h2>
           <p className="mx-auto mt-6 max-w-md text-lg" style={{ color: "var(--muted)" }}>
-            فحص واحد. إعادة كتابة واحدة. نتيجة تعبر. جرّبها الآن خلال ١٠ ثوانٍ.
+            فحص واحد. إعادة كتابة صادقة. سيرة أوضح وأقوى خلال ١٠ ثوانٍ.
           </p>
           <Link href="/ar/optimize" className="btn-accent mt-9 inline-block px-10 py-4 text-lg">افحص سيرتي مجاناً ←</Link>
           <p className="mt-4 font-mono text-xs" style={{ color: "var(--faint)" }}>فحص مجاني · بدون بطاقة</p>
@@ -207,9 +208,11 @@ export default function ArabicHome() {
             <Link href="/resume-templates/jadarat" style={{ color: "var(--muted)" }}>قالب جدارات</Link>
             <Link href="/resume-templates" style={{ color: "var(--muted)" }}>القوالب</Link>
             <Link href="/account" style={{ color: "var(--muted)" }}>حسابي</Link>
+            <Link href="/privacy" style={{ color: "var(--muted)" }}>الخصوصية</Link>
+            <Link href="/terms" style={{ color: "var(--muted)" }}>الشروط والاسترجاع</Link>
             <Link href="/" style={{ color: "var(--muted)" }}>English</Link>
           </div>
-          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI</p>
+          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI — خدمة سير ذاتية من رابِت</p>
         </div>
       </footer>
     </main>

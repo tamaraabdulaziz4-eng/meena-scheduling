@@ -38,24 +38,25 @@ export default function Home() {
         </div>
         <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-2">
           <div>
-            <div className="chip mb-6">● Beats the ATS bots that reject 75% of resumes</div>
+            <div className="chip mb-6">● The no-fabrication resume engine</div>
             <h1 className="text-5xl font-extrabold leading-[1.05] tracking-tight md:text-6xl">
-              Your resume is getting{" "}
-              <span style={{ color: "#f87171" }}>auto-rejected.</span>
+              Your experience is{" "}
+              <span style={{ color: "#f87171" }}>stronger</span> than your resume shows.
               <br />
               We <span className="accent-underline text-accent">fix that</span> in 10 seconds.
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
-              Paste your resume and the job post. Our AI rewrites it to match the exact
-              keywords the company&apos;s applicant tracking system scans for — then shows you
-              the score climb from rejected to shortlisted.
+              Paste your resume — and optionally the job post. Our AI makes it clearer,
+              stronger, and aligned with the job&apos;s actual requirements. And it{" "}
+              <strong style={{ color: "var(--fg)" }}>never invents</strong> a number, skill,
+              or achievement you didn&apos;t give it.
             </p>
             <div className="mt-9 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <Link href="/optimize" className="btn-accent px-8 py-4 text-lg">
                 Optimize my resume free →
               </Link>
               <a href="#compare" className="text-sm underline-offset-4 hover:underline" style={{ color: "var(--muted)" }}>
-                Why we&apos;re 5× cheaper ↓
+                Compare pricing ↓
               </a>
             </div>
             <div className="mt-7 flex items-center gap-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
@@ -79,10 +80,10 @@ export default function Home() {
       <section style={{ borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto grid max-w-5xl grid-cols-2 gap-6 px-6 py-10 text-center md:grid-cols-4">
           {[
-            { node: <Counter value={75} suffix="%" />, label: "of resumes rejected by ATS before a human sees them" },
-            { node: <Counter value={3.4} decimals={1} suffix="×" />, label: "more interview calls after optimizing" },
-            { node: <Counter value={10} suffix="s" />, label: "average time to a rewritten resume" },
-            { node: <Counter value={35} prefix="SAR " />, label: "one-time — no subscription trap" },
+            { node: <Counter value={10} suffix="s" />, label: "average time to your rewritten resume" },
+            { node: <>0</>, label: "invented facts — fabrication is blocked in the engine itself" },
+            { node: <Counter value={35} prefix="SAR " />, label: "one-time option — no subscription required" },
+            { node: <>100%</>, label: "of resumes processed without being stored on our servers" },
           ].map((s) => (
             <div key={s.label}>
               <div className="font-mono text-3xl font-bold text-accent tabular-nums">{s.node}</div>
@@ -93,7 +94,7 @@ export default function Home() {
       </section>
 
       {/* ── ATS systems marquee ── */}
-      <AtsMarquee label="Engineered to pass every major applicant tracking system" />
+      <AtsMarquee label="Output formatted for compatibility with major hiring systems" />
 
       {/* ── How it works ── */}
       <section className="mx-auto max-w-5xl px-6 py-24">
@@ -123,8 +124,8 @@ export default function Home() {
             <div className="chip mb-4">The honest comparison</div>
             <h2 className="text-4xl font-bold tracking-tight">Same job. A fraction of the price.</h2>
             <p className="mx-auto mt-4 max-w-xl text-sm" style={{ color: "var(--muted)" }}>
-              Every competitor locks you into a monthly plan. We&apos;re the only one that lets you
-              pay once, fix the resume, and leave.
+              Most tools are subscription-first. We lead with a one-time option at the lowest
+              one-time price we&apos;ve found — pay once, fix the resume, and leave.
             </p>
           </div>
 
@@ -141,22 +142,22 @@ export default function Home() {
               <tbody>
                 <tr style={{ background: "rgba(74,222,128,0.06)", borderBottom: "1px solid rgba(74,222,128,0.2)" }}>
                   <td className="py-4 pr-4 font-bold text-accent">ResumeAI <span className="font-mono text-[10px]">(us)</span></td>
-                  <td className="py-4 px-4 font-mono font-bold">$9 once / $19 mo</td>
+                  <td className="py-4 px-4 font-mono font-bold">SAR 35 (~$9) once / SAR 75 mo</td>
                   <td className="py-4 px-4 text-accent">✓ Yes</td>
-                  <td className="py-4 px-4 text-accent">✓ Yes — $9</td>
+                  <td className="py-4 px-4 text-accent">✓ Yes — SAR 35 (~$9)</td>
                 </tr>
                 {[
-                  { name: "Jobscan", price: "$49.95 / mo", match: true, once: false },
-                  { name: "Enhancv", price: "$19.99 / mo", match: false, once: false },
-                  { name: "Rezi", price: "$29 / mo", match: true, once: false },
-                  { name: "Resume Worded", price: "~$49 / mo", match: false, once: false },
-                  { name: "ResumeUp.AI", price: "$8.25 / mo", match: true, once: false },
+                  { name: "Jobscan", price: "$49.95 / mo", match: true, once: "✕ Subscription" },
+                  { name: "Enhancv", price: "$19.99 / mo", match: false, once: "✕ Subscription" },
+                  { name: "Rezi", price: "$29 / mo", match: true, once: "✓ $149 lifetime" },
+                  { name: "Resume Worded", price: "~$49 / mo", match: false, once: "✕ Subscription" },
+                  { name: "ResumeUp.AI", price: "$8.25 / mo", match: true, once: "✕ Subscription" },
                 ].map((c) => (
                   <tr key={c.name} style={{ borderBottom: "1px solid var(--line)" }}>
                     <td className="py-4 pr-4 font-semibold" style={{ color: "var(--fg)" }}>{c.name}</td>
                     <td className="py-4 px-4 font-mono" style={{ color: "var(--muted)" }}>{c.price}</td>
                     <td className="py-4 px-4" style={{ color: c.match ? "var(--muted)" : "#f87171" }}>{c.match ? "✓ Yes" : "✕ No"}</td>
-                    <td className="py-4 px-4" style={{ color: "#f87171" }}>✕ Subscription</td>
+                    <td className="py-4 px-4" style={{ color: c.once.startsWith("✓") ? "var(--muted)" : "#f87171" }}>{c.once}</td>
                   </tr>
                 ))}
               </tbody>
@@ -181,9 +182,10 @@ export default function Home() {
           <Reveal className="md:col-span-4">
             <div className="card card-hover h-full p-7">
               <div className="mb-3 font-mono text-xs uppercase tracking-widest text-accent">Core engine</div>
-              <h3 className="text-xl font-bold">Full AI rewrite — not keyword stuffing</h3>
+              <h3 className="text-xl font-bold">Full AI rewrite — without inventing a thing</h3>
               <p className="mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                Your whole resume rewritten to mirror the job&apos;s language, with strong verbs and quantified wins.
+                Your whole resume rewritten with strong verbs and the job&apos;s language. Where a
+                number would help but you didn&apos;t give one, we mark the spot — we never make one up.
               </p>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg p-4 font-mono text-xs leading-relaxed" style={{ background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", color: "rgba(244,245,243,0.6)" }}>
@@ -192,7 +194,7 @@ export default function Home() {
                 </div>
                 <div className="rounded-lg p-4 font-mono text-xs leading-relaxed" style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.25)", color: "rgba(244,245,243,0.85)" }}>
                   <span className="text-accent">AFTER</span><br />
-                  &ldquo;Shipped 12 React/TypeScript features serving 40k users, cutting load time 35%.&rdquo;
+                  &ldquo;Developed and shipped web application features in React, resolving critical bugs and cutting load time by <span style={{ color: "#fbbf24" }}>[add your real %]</span>.&rdquo;
                 </div>
               </div>
             </div>
@@ -203,7 +205,7 @@ export default function Home() {
             <div className="card card-hover flex h-full flex-col justify-between p-7">
               <div>
                 <h3 className="font-bold">Match score</h3>
-                <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>Know it&apos;ll pass before you hit submit.</p>
+                <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>See your match strength before you hit submit.</p>
               </div>
               <div className="mt-5 text-center">
                 <span className="font-mono text-6xl font-bold text-accent tabular-nums">92</span>
@@ -233,9 +235,10 @@ export default function Home() {
             <div className="card p-7" style={{ borderColor: "rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.04)" }}>
               <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                 <p className="max-w-2xl text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
-                  <span className="font-mono text-accent">★★★★★</span>&nbsp;&nbsp;&ldquo;Optimized once for $9 and landed 3 offers in 3 weeks.
-                  Didn&apos;t even need the subscription.&rdquo;
-                  <span className="ml-2 font-mono text-xs" style={{ color: "var(--faint)" }}>— Marcus T., Product Manager</span>
+                  <span className="font-mono text-accent">🛡 Our pledge:</span>&nbsp;&nbsp;we will never add a number, skill,
+                  or credential you didn&apos;t state. Missing a metric? You&apos;ll see{" "}
+                  <span className="font-mono" style={{ color: "#fbbf24" }}>[add your real number]</span> — you fill in the truth.
+                  <Link href="/privacy" className="ml-2 text-xs underline" style={{ color: "var(--faint)" }}>Read the full pledge</Link>
                 </p>
                 <Link href="/optimize" className="btn-accent shrink-0 px-6 py-2.5 text-sm">Try it free →</Link>
               </div>
@@ -247,7 +250,10 @@ export default function Home() {
       {/* ── Testimonials ── */}
       <section className="px-6 py-24" style={{ background: "rgba(255,255,255,0.015)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto max-w-5xl">
-          <h2 className="mb-14 text-center text-4xl font-bold tracking-tight">From rejected to hired.</h2>
+          <h2 className="mb-3 text-center text-4xl font-bold tracking-tight">What a typical result looks like.</h2>
+          <p className="mb-12 text-center font-mono text-[11px] uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>
+            Illustrative examples — not verified testimonials
+          </p>
           <div className="grid gap-5 md:grid-cols-3">
             {[
               { q: "40 applications, 2 callbacks. After ResumeAI: 15 applications, 7 interviews. The keyword gap report was the missing piece.", n: "Sarah K.", r: "Software Engineer" },
@@ -277,8 +283,8 @@ export default function Home() {
           <div className="card p-8">
             <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>One-time</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">$9</span>
-              <span className="text-sm" style={{ color: "var(--muted)" }}>once</span>
+              <span className="text-5xl font-extrabold">SAR 35</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>once (~$9)</span>
             </div>
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Perfect for one big application.</p>
             <ul className="mt-6 space-y-3 text-sm">
@@ -298,8 +304,8 @@ export default function Home() {
               style={{ background: "var(--accent)", color: "#05130a" }}>BEST VALUE</div>
             <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>Unlimited</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">$19</span>
-              <span className="text-sm" style={{ color: "var(--muted)" }}>/ month</span>
+              <span className="text-5xl font-extrabold">SAR 75</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>/ month (~$20)</span>
             </div>
             <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>For an active job search.</p>
             <ul className="mt-6 space-y-3 text-sm">
@@ -324,10 +330,10 @@ export default function Home() {
         <div className="hero-ambient" />
         <div className="relative z-10 mx-auto max-w-2xl">
           <h2 className="text-5xl font-extrabold tracking-tight">
-            Stop feeding the <span style={{ color: "#f87171" }}>rejection bot.</span>
+            Present your <span className="accent-underline text-accent">real experience</span> at its best.
           </h2>
           <p className="mx-auto mt-6 max-w-md text-lg" style={{ color: "var(--muted)" }}>
-            One scan. One rewrite. One passing score. See it happen in the next 10 seconds.
+            One scan. One honest rewrite. A clearer, stronger resume in the next 10 seconds.
           </p>
           <Link href="/optimize" className="btn-accent mt-10 px-10 py-4 text-lg">
             Scan my resume free →
@@ -350,14 +356,17 @@ export default function Home() {
             <Link href="/jobscan-alternative" style={{ color: "var(--muted)" }}>Jobscan Alternative</Link>
             <Link href="/optimize" style={{ color: "var(--muted)" }}>Optimize Now</Link>
             <Link href="/#pricing" style={{ color: "var(--muted)" }}>Pricing</Link>
+            <Link href="/privacy" style={{ color: "var(--muted)" }}>Privacy</Link>
+            <Link href="/terms" style={{ color: "var(--muted)" }}>Terms &amp; Refunds</Link>
           </nav>
           <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
             <div className="flex items-center gap-2">
               <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold"
                 style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
               <span className="text-sm font-bold">ResumeAI</span>
+              <span className="font-mono text-xs" style={{ color: "var(--faint)" }}>— a resume service by Rabit</span>
             </div>
-            <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the bots</p>
+            <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · cv.rabit.sa · <a href="mailto:alanziabdulaziz4@gmail.com" style={{ color: "var(--muted)" }}>Support</a></p>
           </div>
         </div>
       </footer>

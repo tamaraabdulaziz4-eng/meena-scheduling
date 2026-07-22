@@ -10,6 +10,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/ats-resume-checker", "/jobscan-alternative", "/free-resume-checker",
     "/resume-examples", "/resume-templates",
     "/ar", "/ar/build", "/ar/optimize",
+    "/privacy", "/terms",
   ];
   const examplePages = JOB_SLUGS.map((slug) => `/resume-examples/${slug}`);
   const templatePages = TEMPLATE_SLUGS.map((slug) => `/resume-templates/${slug}`);

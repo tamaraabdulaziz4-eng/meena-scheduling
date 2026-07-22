@@ -210,7 +210,7 @@ export default function OptimizePage() {
 
   const score = result?.matchScore ?? 0;
   const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
-  const verdict = score >= 75 ? "SHORTLISTED" : score >= 55 ? "BORDERLINE" : "REJECTED BY ATS";
+  const verdict = score >= 75 ? "STRONG MATCH" : score >= 55 ? "BORDERLINE" : "NEEDS WORK";
 
   return (
     <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
@@ -283,6 +283,11 @@ export default function OptimizePage() {
               />
               <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>
                 {resume.length}/8000{resume.length >= 8000 ? " — limit reached" : resume.length > 7500 ? " — approaching limit" : ""}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--faint)" }}>
+                🔒 Your resume is processed instantly and <strong>never stored on our servers</strong> — drafts stay on your device only. Nothing is used for AI training. By scanning you agree to the{" "}
+                <Link href="/privacy" className="underline" style={{ color: "var(--muted)" }}>privacy policy</Link> &amp;{" "}
+                <Link href="/terms" className="underline" style={{ color: "var(--muted)" }}>terms</Link>.
               </p>
             </div>
 

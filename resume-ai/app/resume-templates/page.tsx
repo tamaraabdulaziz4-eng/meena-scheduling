@@ -54,7 +54,7 @@ export default function Hub() {
       </div>
 
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
-        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the ATS</p>
+        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
       </footer>
     </main>
   );

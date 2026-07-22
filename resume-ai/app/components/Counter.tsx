@@ -1,7 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-/** Counts up to `value` when scrolled into view. Respects reduced-motion. */
+/**
+ * Count-up stat. SEO-critical detail: the FINAL value is rendered in the
+ * initial HTML (server + first paint), so crawlers and share previews read
+ * "35", never "0". The 0→value animation only kicks in client-side, in
+ * viewport, when motion is allowed — as a purely visual effect.
+ */
 export default function Counter({
   value,
   decimals = 0,
@@ -16,7 +21,8 @@ export default function Counter({
   duration?: number;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
-  const [display, setDisplay] = useState(0);
+  // Start AT the final value (what gets indexed); animate only as an effect.
+  const [display, setDisplay] = useState(value);
   const started = useRef(false);
 
   useEffect(() => {
@@ -24,10 +30,7 @@ export default function Counter({
     if (!el) return;
 
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) {
-      setDisplay(value);
-      return;
-    }
+    if (reduced) return; // keep the static final value
 
     const io = new IntersectionObserver(
       (entries) => {
@@ -36,7 +39,6 @@ export default function Counter({
           const start = performance.now();
           const tick = (now: number) => {
             const p = Math.min(1, (now - start) / duration);
-            // easeOutCubic
             const eased = 1 - Math.pow(1 - p, 3);
             setDisplay(value * eased);
             if (p < 1) requestAnimationFrame(tick);

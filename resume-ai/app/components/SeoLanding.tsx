@@ -88,7 +88,7 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
             <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
             <span className="text-sm font-bold">ResumeAI</span>
           </div>
-          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the bots</p>
+          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
         </div>
       </footer>
 

@@ -18,7 +18,7 @@ export default function Page() {
       eyebrow="Free ATS resume checker"
       h1="See exactly how an ATS scores your resume —"
       h1Accent="before a recruiter does"
-      intro="Over 75% of resumes are filtered out by applicant tracking systems before a human ever reads them. Our free ATS resume checker scores your resume against the exact job you're applying to, shows the keywords you're missing, and rewrites it to pass."
+      intro="Many resumes lose visibility in applicant tracking software before a recruiter reads them. Our free ATS resume checker scores your resume against the exact job you are applying to, shows the keywords you are missing, and rewrites it for clarity and alignment — without inventing anything."
       bullets={[
         { title: "Instant ATS match score", body: "A clear 0–100 score showing how well your resume matches the job description — the same signal recruiters' systems use." },
         { title: "Missing keyword detection", body: "See the exact skills, tools, and phrases the job asks for that your resume is missing, so you can add them naturally." },

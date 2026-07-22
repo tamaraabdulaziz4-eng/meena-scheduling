@@ -93,7 +93,7 @@ export default async function Page({ params }: { params: Promise<{ style: string
       </div>
 
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
-        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the ATS</p>
+        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
       </footer>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }} />
     </main>

@@ -6,19 +6,19 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE),
-  title: "ResumeAI — AI Resume Optimizer That Beats ATS Filters",
+  title: "ResumeAI — Honest AI Resume Optimizer (No-Fabrication Engine)",
   description:
-    "Optimize your resume with AI in 60 seconds. Get an ATS match score, missing keywords, and a fully rewritten resume tailored to any job description. Beat ATS filters and get more interviews.",
+    "Optimize your resume with AI in 10 seconds. Free ATS match score, missing keywords, and a rewritten resume aligned to any job description — without inventing a single fact you didn't provide.",
   keywords: "resume optimizer, ATS resume, AI resume writer, resume checker, ATS resume checker, job application, cover letter generator",
   alternates: { canonical: "/" },
   openGraph: {
-    title: "ResumeAI — Beat the ATS, Get More Interviews",
-    description: "Paste your resume + a job description, get a fully optimized resume in 60 seconds.",
+    title: "ResumeAI — Honest AI Resume Optimization in 10 Seconds",
+    description: "Free ATS score + analysis, and a rewritten resume that never invents facts you didn't provide.",
     type: "website",
     url: BASE,
     siteName: "ResumeAI",
   },
-  twitter: { card: "summary_large_image", title: "ResumeAI — Beat the ATS", description: "AI resume optimization in 60 seconds." },
+  twitter: { card: "summary_large_image", title: "ResumeAI — Honest AI Resume Optimization", description: "Free ATS score + a no-fabrication rewrite in 10 seconds." },
 };
 
 const structuredData = {
