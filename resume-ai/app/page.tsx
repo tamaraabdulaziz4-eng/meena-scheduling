@@ -5,6 +5,7 @@ import Reveal from "./components/Reveal";
 import Counter from "./components/Counter";
 import NavAccountLink from "./components/NavAccountLink";
 import LiveTicker from "./components/LiveTicker";
+import SubscribeBox from "./components/SubscribeBox";
 import AtsMarquee from "./components/AtsMarquee";
 
 export default function Home() {
@@ -341,6 +342,8 @@ export default function Home() {
           <p className="mt-4 font-mono text-xs" style={{ color: "var(--faint)" }}>Free preview · No card required</p>
         </div>
       </section>
+
+      <SubscribeBox />
 
       {/* ── Footer ── */}
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>

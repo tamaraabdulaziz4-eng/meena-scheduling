@@ -163,7 +163,7 @@ export default function ArBuildPage() {
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/build" className="text-sm" style={{ color: "var(--muted)" }}>English</Link>
-            <Link href="/ar/optimize" className="text-sm" style={{ color: "var(--muted)" }}>عندك سيرة؟ حسّنها ←</Link>
+            <Link href="/ar/builder" className="text-sm font-semibold" style={{ color: "var(--accent)" }}>✨ جرّب الوضع التفاعلي</Link>
           </div>
         </div>
       </nav>

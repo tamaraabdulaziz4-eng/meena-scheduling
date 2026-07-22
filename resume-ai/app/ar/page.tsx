@@ -3,6 +3,7 @@ import Link from "next/link";
 import ScanDemo from "../components/ScanDemo";
 import CheckoutButton from "../components/CheckoutButton";
 import LiveTicker from "../components/LiveTicker";
+import SubscribeBox from "../components/SubscribeBox";
 import AtsMarquee from "../components/AtsMarquee";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
@@ -59,8 +60,8 @@ export default function ArabicHome() {
               <Link href="/ar/optimize" className="btn-accent px-8 py-4 text-lg">
                 افحص سيرتي مجاناً ←
               </Link>
-              <Link href="/ar/build" className="text-sm underline-offset-4 hover:underline" style={{ color: "var(--muted)" }}>
-                ما عندك سيرة؟ نبنيها لك من الصفر
+              <Link href="/ar/builder" className="text-sm underline-offset-4 hover:underline" style={{ color: "var(--muted)" }}>
+                ✨ جديد: ابنِ سيرتك بمحادثة تفاعلية
               </Link>
             </div>
             <div className="mt-7 flex flex-wrap items-center gap-5 font-mono text-xs" style={{ color: "var(--faint)" }}>
@@ -112,7 +113,7 @@ export default function ArabicHome() {
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             {[
               { t: "تحسين السيرة (ATS)", d: "نسبة تطابق مع الوظيفة + إعادة كتابة كاملة بالإنجليزية.", href: "/ar/optimize" },
-              { t: "إنشاء سيرة من الصفر", d: "جاوب بالعربي على أسئلة بسيطة — تستلم سيرة إنجليزية جاهزة.", href: "/ar/build" },
+              { t: "إنشاء سيرة بالمحادثة ✨", d: "جاوب بالعربي خطوة بخطوة — الذكاء يحسّن كل إجابة وتعتمدها، ثم يكتب سيرتك.", href: "/ar/builder" },
               { t: "خطاب التقديم", d: "خطاب مخصص لنفس الوظيفة، جاهز للإرسال." },
               { t: "تحسين لينكدإن", d: "عنوان ونبذة ومهارات تجعل مسؤولي التوظيف يجدونك." },
               { t: "تجهيز المقابلة", d: "أكثر ٨ أسئلة متوقعة مع إجابات قوية من خلفيتك أنت." },
@@ -194,6 +195,8 @@ export default function ArabicHome() {
           <p className="mt-4 font-mono text-xs" style={{ color: "var(--faint)" }}>فحص مجاني · بدون بطاقة</p>
         </div>
       </section>
+
+      <SubscribeBox ar />
 
       {/* Footer */}
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>

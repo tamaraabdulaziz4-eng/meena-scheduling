@@ -14,6 +14,18 @@ export default function PdfExport({ text, label = "↓ Download PDF" }: { text: 
   async function exportPdf() {
     setBusy(true);
     try {
+      // jsPDF's built-in fonts can't render Arabic — it comes out as mojibake
+      // (þêþÌ…). The CV is meant to be 100% English; if Arabic slipped in,
+      // stop and tell the user instead of producing a corrupted PDF.
+      if (/[؀-ۿ]/.test(text)) {
+        alert(
+          "⚠ النص يحتوي كلمات عربية والـPDF يدعم الإنجليزية فقط حالياً — ستظهر مشوّهة.\n" +
+          "أعد التوليد (السيرة يجب أن تكون إنجليزية بالكامل) أو استخدم تنزيل ‎.txt.\n\n" +
+          "The text contains Arabic characters which this PDF can't render. Regenerate the CV (it should be fully English) or use the .txt download."
+        );
+        setBusy(false);
+        return;
+      }
       const { jsPDF } = await import("jspdf");
       const doc = new jsPDF({ unit: "mm", format: "a4" });
 
