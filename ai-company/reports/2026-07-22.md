@@ -2,6 +2,24 @@
 
 ## Decisions
 
+- **growth**: Experiment: Reddit
+  - _Post in r/resumes and r/cscareerquestions on Wednesday at 8pm EST with a title 'AI Optimized Resume Example: 30% More Interviews?' including a before/after example, a brief how-to use ResumeAI, and a CTA for a free trial. Engage with the top 3 comments within the first hour._
+- **growth**: Experiment: LinkedIn Organic Posting
+  - _Publish a polished, informative post on ResumeAI's LinkedIn page on Thursday at 12pm EST, titled '5 AI-Driven Tips to Perfect Your Resume in 2023'. Share personal success stories (with consent) of current subscribers. Utilize relevant hashtags (#ResumeTips #AIinHR #CareerGrowth)._
+- **growth**: Experiment: Twitter/X Organic
+  - _Launch a 5-tweet thread on Friday at 9am EST, each tweet focusing on one 'Resume Myth Busted by AI'. Tweet 1: Introduction, Tweet 2-4: Myths vs. AI Facts, Tweet 5: CTA for ResumeAI free trial. Utilize hashtags (#ResumeMyths #AIforCareers) and tag 2 relevant career influencers for potential retweets._
+- **pricing**: Test variant: value
+  - _Testing the lower-bound pricing to gauge price elasticity, potentially attracting more price-sensitive customers without significantly impacting perceived value, given the market's monthly subscription norms and ResumeAI's unique one-time offer. This also creates a broader pricing umbrella, making the $9 one-time option more 'premium' by comparison._
+- **bi**: bi_report_complete
+  - _LTV=$380 churn=0.0%_
+- **analytics**: weekly_analysis_complete
+  - _**ResumeAI Weekly Analysis (2026-07-21 to 2026-07-22)**
+
+### 1. **What's Working Well**
+- **Zero Churn (7d)**: Retention is perfect over the last week, indicating satisfied early subscribers.
+- **Revenue & MRR Growth Potential**: With only 10 subscribers, the $190 MRR suggests a strong revenue per user (RUU) of $19, implying a scalable model if conversion rates can be improved.
+
+### 2. **Top Conce_
 - **ceo**: daily_brief
   - _**Daily CEO Brief**
 
@@ -38,6 +56,17 @@ Company health is stable with no churn, steady revenue, and active experiments i
 
 ## Activity log
 
+- `2026-07-22 12:36:06` support → faq_answer
+- `2026-07-22 12:35:46` support → faq_answer
+- `2026-07-22 12:35:39` support → faq_answer
+- `2026-07-22 12:35:26` support → faq_answer
+- `2026-07-22 12:34:32` design → design_improvements
+- `2026-07-22 12:33:36` growth → growth_experiments
+- `2026-07-22 12:31:59` marketing → generate_twitter
+- `2026-07-22 12:31:37` pricing → pricing_recommendation
+- `2026-07-22 12:31:37` pricing → start_test
+- `2026-07-22 12:29:49` bi → bi_report
+- `2026-07-22 12:28:45` analytics → weekly_analysis
 - `2026-07-22 08:15:36` ceo → daily_brief
 - `2026-07-22 08:14:50` product → roadmap
 - `2026-07-22 08:14:05` product → quality_audit
@@ -52,6 +81,3 @@ Company health is stable with no churn, steady revenue, and active experiments i
 - `2026-07-22 08:11:05` pricing → start_test
 - `2026-07-22 08:11:04` pricing → pricing_recommendation
 - `2026-07-22 08:10:34` bi → bi_report
-- `2026-07-22 08:10:07` analytics → weekly_analysis
-- `2026-07-22 08:09:34` analytics → seed_metrics
-- `2026-07-21 13:55:45` analytics → seed_metrics
