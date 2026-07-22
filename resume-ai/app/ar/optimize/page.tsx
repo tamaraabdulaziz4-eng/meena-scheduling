@@ -2,11 +2,13 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
+import BeforeAfter from "../../components/BeforeAfter";
 import AuthNav from "../../components/AuthNav";
 import { addScan, saveResume } from "../../lib/localdata";
 
 interface OptimizeResult {
   matchScore: number;
+  afterScore?: number;
   matchSummary: string;
   missingKeywords: string[];
   presentKeywords: string[];
@@ -366,6 +368,10 @@ export default function ArOptimizePage() {
                 📣 شارك نتيجتي
               </a>
             </div>
+
+            {typeof result.afterScore === "number" && (
+              <BeforeAfter before={score} after={result.afterScore} ar />
+            )}
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">

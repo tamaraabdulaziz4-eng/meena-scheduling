@@ -63,7 +63,8 @@ Rules for the rewritten resume — NO-FABRICATION CONTRACT (absolute, overrides 
 OUTPUT FORMAT — plain text with EXACTLY these section markers, in this order (NO JSON, no markdown):
 ANALYSIS
 <8-12 short bullet lines of your reasoning, one finding per line, e.g. "• Job requires React — NOT in resume". Shown live to the user.>
-SCORE: <number 0-100 from the rubric>
+SCORE: <number 0-100 from the rubric — the CURRENT resume as submitted>
+AFTER: <number 0-100 — the projected score the REWRITTEN resume below would honestly achieve on the SAME rubric. A rewrite can only reorganize, reword, and surface the candidate's OWN facts more clearly — it CANNOT add skills, tools, or experience the candidate lacks. So the gain is real but bounded: never claim a perfect 100, and if the candidate is genuinely missing most hard skills the after-score must stay modest. Must be >= SCORE.>
 SUMMARY: <2-3 honest sentences on one line: score drivers, biggest gap, is it worth pursuing>
 MISSING: <comma-separated keywords absent from the resume>
 PRESENT: <comma-separated keywords genuinely present>
@@ -86,6 +87,9 @@ function parseSections(rawInput: string) {
     s.split(/[,،]/).map((x) => x.trim().replace(/^[-•*]\s*/, "")).filter((x) => x && x.length < 80);
 
   const score = parseInt(grab("SCORE").replace(/[^0-9]/g, "")) || 0;
+  // Projected score for the rewritten resume (before/after proof). Clamp so it
+  // never drops below the current score or exceeds 100 — a rewrite only helps.
+  const afterRaw = parseInt(grab("AFTER").replace(/[^0-9]/g, ""));
   const improvementsBlock = raw.match(/IMPROVEMENTS:\s*\n([\s\S]*?)\nRESUME:/i)?.[1] ?? "";
   const improvements = improvementsBlock
     .split("\n")
@@ -102,8 +106,15 @@ function parseSections(rawInput: string) {
   // so the retry actually fires — otherwise the user gets a score with a blank resume.
   if (!resume) throw new Error("Model output missing the RESUME section (likely truncated)");
   if (!score) throw new Error("Could not parse model output");
+  const clampedScore = Math.min(100, Math.max(0, score));
+  // If the model omitted/garbled AFTER, fall back to a conservative bounded lift
+  // rather than fabricating a big jump: close ~40% of the gap to 100, capped at 95.
+  const afterScore = Number.isFinite(afterRaw)
+    ? Math.min(100, Math.max(clampedScore, afterRaw))
+    : Math.min(95, clampedScore + Math.round((100 - clampedScore) * 0.4));
   return {
-    matchScore: Math.min(100, Math.max(0, score)),
+    matchScore: clampedScore,
+    afterScore,
     matchSummary: grab("SUMMARY"),
     missingKeywords: list(grab("MISSING")),
     presentKeywords: list(grab("PRESENT")),

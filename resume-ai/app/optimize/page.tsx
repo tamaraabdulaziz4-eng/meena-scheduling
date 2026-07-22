@@ -2,11 +2,13 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
+import BeforeAfter from "../components/BeforeAfter";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
 
 interface OptimizeResult {
   matchScore: number;
+  afterScore?: number;
   matchSummary: string;
   missingKeywords: string[];
   presentKeywords: string[];
@@ -430,6 +432,11 @@ export default function OptimizePage() {
                 📣 Share my score
               </a>
             </div>
+
+            {/* Before/after proof — the value shown before the paywall */}
+            {typeof result.afterScore === "number" && (
+              <BeforeAfter before={score} after={result.afterScore} />
+            )}
 
             {/* Tabs + a visible way OUT of a stale result (it rehydrates on
                 every visit — without this, returning users are stuck on it) */}
