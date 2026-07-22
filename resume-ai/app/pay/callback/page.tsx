@@ -42,6 +42,36 @@ function CallbackInner() {
   const [detail, setDetail] = useState("");
   const [plan, setPlan] = useState<"single" | "monthly" | "">("");
 
+  // Google Ads conversion tracking — fires ONLY on a confirmed payment so ad
+  // spend is measured against real revenue, not clicks. Fully dormant until the
+  // account's conversion ID/label are set as env vars (no ID → nothing loads,
+  // zero effect on the page), so this can ship now and activate with no redeploy.
+  function reportPurchase(paidPlan: "single" | "monthly", orderId: string) {
+    const adsId = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID;        // e.g. AW-1234567890
+    const label = process.env.NEXT_PUBLIC_GOOGLE_ADS_CONV_LABEL; // e.g. AbC-D_efg123
+    if (!adsId || !label) return;
+    const value = paidPlan === "monthly" ? 75 : 35;
+    try {
+      const w = window as unknown as { gtag?: (...a: unknown[]) => void; dataLayer?: unknown[] };
+      if (!w.gtag) {
+        const s = document.createElement("script");
+        s.async = true;
+        s.src = `https://www.googletagmanager.com/gtag/js?id=${adsId}`;
+        document.head.appendChild(s);
+        w.dataLayer = w.dataLayer || [];
+        w.gtag = function gtag(...args: unknown[]) { w.dataLayer!.push(args); };
+        w.gtag("js", new Date());
+        w.gtag("config", adsId);
+      }
+      w.gtag("event", "conversion", {
+        send_to: `${adsId}/${label}`,
+        value,
+        currency: "SAR",
+        transaction_id: orderId, // dedupes repeat views of the callback
+      });
+    } catch { /* tracking must never break the confirmation page */ }
+  }
+
   useEffect(() => {
     const tx = params.get("transactionNo") || params.get("TransactionNo");
     if (!tx) {
@@ -53,9 +83,12 @@ function CallbackInner() {
       .then((r) => r.json())
       .then((d) => {
         if (d.paid && d.amountOk !== false) {
+          const paidPlan = d.plan === "monthly" ? "monthly" : "single";
           setState("paid");
-          setPlan(d.plan === "monthly" ? "monthly" : "single");
+          setPlan(paidPlan);
           setDetail(t.confirmed(d.orderNumber || tx));
+          // Measure this sale against ad spend (no-op until the Ads env vars are set).
+          reportPurchase(paidPlan, d.orderNumber || tx);
           // Old results were generated locked (pre-payment) — clear them so the
           // next scan comes back complete instead of showing the stale preview.
           try {
