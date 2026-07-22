@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
+import PublishLink from "../components/PublishLink";
 
 interface Exp {
   role: string;
@@ -269,6 +270,7 @@ export default function BuildPage() {
               </div>
             </div>
             <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
+            <PublishLink text={cv} name={name} role={targetRole} />
 
             {tips.length > 0 && (
               <div className="card mt-6 p-6" style={{ borderColor: "rgba(251,191,36,0.25)" }}>
