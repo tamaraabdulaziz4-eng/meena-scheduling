@@ -475,7 +475,7 @@ export default function ArOptimizePage() {
                   <h3 className="font-bold">خطاب تعريف مطابق</h3>
                   <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
                     {jobDescription.trim().length < 30
-                      ? "ألصق إعلان الوظيفة في وضع «تخصيص لوظيفة» لإنشاء خطاب تعريف مطابق"
+                      ? "اضغط «فحص جديد ←»، أضِف إعلان الوظيفة، ثم أعد الفحص لإنشاء خطاب تعريف مطابق"
                       : "خطاب تعريف مفصّل على نفس إعلان الوظيفة."}
                   </p>
                 </div>

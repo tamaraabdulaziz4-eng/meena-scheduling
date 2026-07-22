@@ -125,8 +125,22 @@ export async function GET(req: NextRequest) {
       // ONLY for the browser that started this checkout. Without the binding,
       // a replayed/guessed transactionNo would otherwise sign the caller in as
       // the buyer. Prefer the email captured at checkout, else the session.
+      const orderEmail = await getOrderEmail(orderNumber);
+      // Always write the durable, buyer-email-keyed account entitlement — even
+      // when the 2h bind cookie has expired. Keyed strictly to getOrderEmail (the
+      // buyer's own email from checkout), never the caller, so it can't leak
+      // access, yet it means a genuine buyer who later clears cookies or switches
+      // device isn't permanently locked out. The caller-device fallbacks below
+      // (auto-sign-in + ENT_COOKIE) stay gated on boundToCaller.
+      if (orderEmail) {
+        try {
+          await grantEntitlement(orderEmail, now + windowSec * 1000);
+        } catch (e) {
+          console.error("grantEntitlement (order) failed:", e);
+        }
+      }
       const buyerEmail =
-        (await getOrderEmail(orderNumber)) ||
+        orderEmail ||
         readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
       if (buyerEmail && boundToCaller) {
         const until = now + windowSec * 1000;

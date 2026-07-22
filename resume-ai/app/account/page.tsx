@@ -46,6 +46,7 @@ function AccountInner() {
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
   const [links, setLinks] = useState<{ slug: string; url: string; token: string }[]>([]);
+  const [linkError, setLinkError] = useState<Record<string, string>>({});
   const [scans, setScans] = useState<ScanEntry[]>([]);
   const [resumes, setResumes] = useState<SavedResume[]>([]);
   const [jobs, setJobs] = useState<JobEntry[]>([]);
@@ -77,9 +78,21 @@ function AccountInner() {
   }
 
   async function removeLink(slug: string, token: string) {
+    // Only forget the link locally once the server confirms it's gone — otherwise
+    // a 403 (bad/missing token) would leave the resume live at /r/{slug} with the
+    // user's PII while we drop the only proof of ownership (the unpublish token),
+    // orphaning it forever. 404 = already gone, so treat that as success too.
+    setLinkError((e) => ({ ...e, [slug]: "" }));
     try {
-      await fetch(`/api/publish?slug=${encodeURIComponent(slug)}&token=${encodeURIComponent(token)}`, { method: "DELETE" });
-    } catch { /* best-effort */ }
+      const res = await fetch(`/api/publish?slug=${encodeURIComponent(slug)}&token=${encodeURIComponent(token)}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        setLinkError((e) => ({ ...e, [slug]: "Couldn't unpublish — try again" }));
+        return;
+      }
+    } catch {
+      setLinkError((e) => ({ ...e, [slug]: "Couldn't unpublish — try again" }));
+      return;
+    }
     const next = links.filter((l) => l.slug !== slug);
     setLinks(next);
     try { localStorage.setItem("ra_published", JSON.stringify(next)); } catch { /* noop */ }
@@ -294,9 +307,14 @@ function AccountInner() {
           ) : (
             <ul className="space-y-2">
               {links.map((l) => (
-                <li key={l.slug} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)" }}>
-                  <a href={l.url} target="_blank" rel="noopener noreferrer" className="truncate text-accent" dir="ltr">{l.url}</a>
-                  <button onClick={() => removeLink(l.slug, l.token)} className="shrink-0 text-xs" style={{ color: "#f87171" }}>Unpublish</button>
+                <li key={l.slug} className="rounded-lg px-3 py-2 text-sm" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <a href={l.url} target="_blank" rel="noopener noreferrer" className="truncate text-accent" dir="ltr">{l.url}</a>
+                    <button onClick={() => removeLink(l.slug, l.token)} className="shrink-0 text-xs" style={{ color: "#f87171" }}>Unpublish</button>
+                  </div>
+                  {linkError[l.slug] && (
+                    <p className="mt-1.5 text-xs" style={{ color: "#f87171" }}>{linkError[l.slug]}</p>
+                  )}
                 </li>
               ))}
             </ul>

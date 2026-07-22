@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyPass, ACCESS_COOKIE } from "@/app/lib/access";
+import { verifyPass, verifyEntPass, ACCESS_COOKIE, ENT_COOKIE } from "@/app/lib/access";
 import { readSession, SESSION_COOKIE } from "@/app/lib/session";
 import { hasActiveEntitlement } from "@/app/lib/entitlements";
 import { allow, clientIp } from "@/app/lib/ratelimit";
@@ -87,7 +87,8 @@ export async function POST(req: NextRequest) {
     // Cover letters are a paid feature — gate them like the rewritten resume.
     const now = Date.now();
     const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, now);
-    const accountUnlimited = email ? await hasActiveEntitlement(email, now) : false;
+    const entCookie = verifyEntPass(req.cookies.get(ENT_COOKIE)?.value, now);
+    const accountUnlimited = email ? ((await hasActiveEntitlement(email, now)) || entCookie?.email === email.toLowerCase().trim()) : false;
     const hasPass = accountUnlimited || !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, now);
     if (!hasPass) {
       return NextResponse.json(

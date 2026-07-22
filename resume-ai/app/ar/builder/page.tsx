@@ -83,11 +83,11 @@ export default function ArChatBuilderPage() {
     } catch { /* تجاهل */ }
   }, [msgs, step, data, exps, curExp, cv, pending]);
 
-  function ask(next: StepId, extraMsgs: Msg[] = []) {
+  function ask(next: StepId, extraMsgs: Msg[] = [], snapshot?: typeof data) {
     setStep(next);
     if (next === "generate") {
       setMsgs((m) => [...m, ...extraMsgs, { who: "ai", text: "ممتاز — عندي كل شي! جارٍ كتابة سيرتك الاحترافية الآن… ✨" }]);
-      void generate();
+      void generate(snapshot);
     } else {
       setMsgs((m) => [...m, ...extraMsgs, { who: "ai", text: QUESTIONS[next].q }]);
     }
@@ -111,7 +111,15 @@ export default function ArChatBuilderPage() {
       }
       case "education": setData((d) => ({ ...d, education: value })); ask("skills"); break;
       case "skills": setData((d) => ({ ...d, skills: value })); ask("extras"); break;
-      case "extras": setData((d) => ({ ...d, extras: /^(لا|no|none|لا يوجد|ما عندي|مافي)/i.test(value.trim()) ? "" : value })); ask("generate"); break;
+      case "extras": {
+        // setData + generate() fire in the same tick, so generate() would read the
+        // stale `data` closure (empty extras). Thread a merged snapshot through.
+        const extras = /^(لا|no|none|لا يوجد|ما عندي|مافي)/i.test(value.trim()) ? "" : value;
+        const merged = { ...data, extras };
+        setData(merged);
+        ask("generate", [], merged);
+        break;
+      }
     }
   }
 
@@ -179,7 +187,7 @@ export default function ArChatBuilderPage() {
     URL.revokeObjectURL(url);
   }
 
-  async function generate() {
+  async function generate(snap = data) {
     setBusy(true);
     setGenError("");
     setThinking("");
@@ -187,7 +195,7 @@ export default function ArChatBuilderPage() {
       const res = await fetch("/api/build-cv", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, experiences: exps, jobDescription: "" }),
+        body: JSON.stringify({ ...snap, experiences: exps, jobDescription: "" }),
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
@@ -223,8 +231,10 @@ export default function ArChatBuilderPage() {
         localStorage.removeItem("ra_ar_chat");
         saveResume({ title: `${data.name || "سيرتي"} — ${data.targetRole || "تفاعلي"}`, source: "built", text: got.cv });
       } catch { /* تجاهل */ }
-    } catch {
-      setGenError("تعذّر توليد السيرة — اضغط «حاول مرة أخرى».");
+    } catch (e) {
+      // Surface the server's specific message (e.g. a 429 rate-limit) so the user
+      // isn't misled by a generic retry prompt that will just fail again.
+      setGenError(e instanceof Error && e.message ? e.message : "تعذّر توليد السيرة — اضغط «حاول مرة أخرى».");
     } finally {
       setBusy(false);
     }
@@ -281,7 +291,7 @@ export default function ArChatBuilderPage() {
               {genError && (
                 <div className="rounded-2xl p-4 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
                   {genError}
-                  <button onClick={generate} className="mr-3 rounded px-3 py-1 font-semibold" style={{ background: "var(--accent)", color: "#05130a" }}>حاول مرة أخرى</button>
+                  <button onClick={() => generate()} className="mr-3 rounded px-3 py-1 font-semibold" style={{ background: "var(--accent)", color: "#05130a" }}>حاول مرة أخرى</button>
                 </div>
               )}
               <div ref={bottomRef} />

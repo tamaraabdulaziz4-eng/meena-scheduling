@@ -2,25 +2,26 @@
 import { useEffect, useState } from "react";
 
 /**
- * Real-time perception (Lumio-style): a rotating "someone just optimized"
- * chip in the hero. Cycles through curated events with a live pulse — makes
- * the product feel actively in use the second you land.
+ * A rotating illustrative sample chip in the hero: shows the kind of ATS
+ * score jump the optimizer produces for a given role. These are generic,
+ * role-only examples of the score range — no named individuals, no claimed
+ * real users (house rule: never invent testimonials/stats).
  */
 const EVENTS_EN = [
-  { n: "Sarah K.", d: "Software Engineer", from: 44, to: 91 },
-  { n: "Mohammed A.", d: "Project Manager", from: 52, to: 88 },
-  { n: "Fatima S.", d: "Accountant", from: 39, to: 86 },
-  { n: "Omar B.", d: "Sales Manager", from: 47, to: 90 },
-  { n: "Noura M.", d: "HR Specialist", from: 55, to: 93 },
-  { n: "Khalid R.", d: "Data Analyst", from: 41, to: 89 },
+  { d: "Software Engineer", from: 44, to: 91 },
+  { d: "Project Manager", from: 52, to: 88 },
+  { d: "Accountant", from: 39, to: 86 },
+  { d: "Sales Manager", from: 47, to: 90 },
+  { d: "HR Specialist", from: 55, to: 93 },
+  { d: "Data Analyst", from: 41, to: 89 },
 ];
 const EVENTS_AR = [
-  { n: "سارة", d: "مهندسة برمجيات", from: 44, to: 91 },
-  { n: "محمد", d: "مدير مشاريع", from: 52, to: 88 },
-  { n: "فاطمة", d: "محاسبة", from: 39, to: 86 },
-  { n: "عمر", d: "مدير مبيعات", from: 47, to: 90 },
-  { n: "نورة", d: "أخصائية موارد بشرية", from: 55, to: 93 },
-  { n: "خالد", d: "محلل بيانات", from: 41, to: 89 },
+  { d: "مهندس برمجيات", from: 44, to: 91 },
+  { d: "مدير مشاريع", from: 52, to: 88 },
+  { d: "محاسب", from: 39, to: 86 },
+  { d: "مدير مبيعات", from: 47, to: 90 },
+  { d: "أخصائي موارد بشرية", from: 55, to: 93 },
+  { d: "محلل بيانات", from: 41, to: 89 },
 ];
 
 export default function LiveTicker({ ar = false }: { ar?: boolean }) {
@@ -53,9 +54,9 @@ export default function LiveTicker({ ar = false }: { ar?: boolean }) {
         transition: "opacity 0.35s ease, transform 0.35s ease",
       }}
     >
-      <span className="font-bold" style={{ color: "var(--faint)" }}>{ar ? "مثال:" : "Example:"}</span>
+      <span className="font-bold" style={{ color: "var(--faint)" }}>{ar ? "مثال:" : "Sample:"}</span>
       <span style={{ color: "var(--muted)" }}>
-        {e.n} · {e.d}
+        {e.d}
       </span>
       <span dir="ltr" className="font-bold tabular-nums">
         <span style={{ color: "#f87171" }}>{e.from}%</span>

@@ -559,7 +559,7 @@ export default function OptimizePage() {
                       <h3 className="font-bold">Matching cover letter</h3>
                       <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
                         {jobDescription.trim().length < 30
-                          ? "Paste the job posting on the scan screen to generate a matching cover letter"
+                          ? "Click ‘← New scan’, add the job posting, then re-scan to generate a matching cover letter"
                           : "Generate a tailored cover letter from the same job post."}
                       </p>
                     </div>

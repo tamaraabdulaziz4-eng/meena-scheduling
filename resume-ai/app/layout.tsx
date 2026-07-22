@@ -11,7 +11,6 @@ export const metadata: Metadata = {
   description:
     "Optimize your resume with AI in 10 seconds. Free ATS match score, missing keywords, and a rewritten resume aligned to any job description — without inventing a single fact you didn't provide.",
   keywords: "resume optimizer, ATS resume, AI resume writer, resume checker, ATS resume checker, job application, cover letter generator",
-  alternates: { canonical: "/" },
   openGraph: {
     title: "ResumeAI — Honest AI Resume Optimization in 10 Seconds",
     description: "Free ATS score + analysis, and a rewritten resume that never invents facts you didn't provide.",

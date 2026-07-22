@@ -12,6 +12,9 @@ function CallbackInner() {
         checking: "\u062c\u0627\u0631\u064d \u062a\u0623\u0643\u064a\u062f \u0627\u0644\u062f\u0641\u0639\u2026",
         paidTitle: "\u062a\u0645 \u0627\u0644\u062f\u0641\u0639 \u0628\u0646\u062c\u0627\u062d",
         failedTitle: "\u0644\u0645 \u064a\u0643\u062a\u0645\u0644 \u0627\u0644\u062f\u0641\u0639",
+        // \u062a\u0645 \u0627\u0644\u062f\u0641\u0639 \u2014 \u0642\u064a\u062f \u0627\u0644\u0645\u0631\u0627\u062c\u0639\u0629 (\u0644\u0644\u0645\u0634\u062a\u0631\u064a \u0627\u0644\u0645\u062e\u0635\u0648\u0645 \u0645\u0646\u0647 \u0628\u0645\u0628\u0644\u063a \u063a\u064a\u0631 \u0645\u0637\u0627\u0628\u0642 \u2014 \u0644\u0627 \u0646\u0642\u0648\u0644 \u0644\u0647 \u201c\u0641\u0634\u0644\u201d)
+        reviewTitle: "\u062a\u0645 \u0627\u0644\u062f\u0641\u0639 \u2014 \u0642\u064a\u062f \u0627\u0644\u0645\u0631\u0627\u062c\u0639\u0629",
+        contactSupport: "\u0631\u0627\u0633\u0644\u0646\u0627",
         pendingTitle: "\u062c\u0627\u0631\u064d \u0645\u0639\u0627\u0644\u062c\u0629 \u0627\u0644\u062f\u0641\u0639",
         pendingMsg: "\u062f\u0641\u0639\u062a\u0643 \u0642\u064a\u062f \u0627\u0644\u0645\u0639\u0627\u0644\u062c\u0629 \u0648\u0644\u0645 \u062a\u0643\u062a\u0645\u0644 \u0628\u0639\u062f. \u0644\u0627 \u062a\u062f\u0641\u0639 \u0645\u0631\u0629 \u0623\u062e\u0631\u0649 \u2014 \u0627\u0636\u063a\u0637 \u201c\u062a\u062d\u062f\u064a\u062b \u0627\u0644\u062d\u0627\u0644\u0629\u201d \u0628\u0639\u062f \u0644\u062d\u0638\u0627\u062a.",
         refresh: "\u062a\u062d\u062f\u064a\u062b \u0627\u0644\u062d\u0627\u0644\u0629",
@@ -31,6 +34,9 @@ function CallbackInner() {
         checking: "Confirming your payment…",
         paidTitle: "Payment successful",
         failedTitle: "Payment not completed",
+        // For a charged buyer whose amount didn't match — don't tell them it "failed".
+        reviewTitle: "Payment received — needs review",
+        contactSupport: "Contact support",
         pendingTitle: "Payment processing",
         pendingMsg: "Your payment is still being processed and hasn't completed yet. Don't pay again — tap “Refresh status” in a moment.",
         refresh: "Refresh status",
@@ -49,6 +55,10 @@ function CallbackInner() {
   const [state, setState] = useState<"checking" | "paid" | "failed" | "pending">("checking");
   const [detail, setDetail] = useState("");
   const [plan, setPlan] = useState<"single" | "complete" | "monthly" | "">("");
+  // A charged-but-mismatched buyer is a support case, not a failure — soften the
+  // title. showSupport surfaces a real support channel wherever we ask them to reach out.
+  const [review, setReview] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
 
   // One-time SAR value per plan — used for ad conversion tracking.
   const PLAN_VALUE: Record<string, number> = { single: 35, complete: 99, monthly: 75 };
@@ -110,6 +120,8 @@ function CallbackInner() {
     }
     setState("checking");
     setDetail("");
+    setReview(false);
+    setShowSupport(false);
     fetch(`/api/pay/verify?transactionNo=${encodeURIComponent(tx)}`)
       .then((r) => r.json())
       .then((d) => {
@@ -130,6 +142,8 @@ function CallbackInner() {
         } else if (d.paid && d.amountOk === false) {
           // Charged, but the amount didn't cover the plan — a support case, not a retry.
           setState("failed");
+          setReview(true);
+          setShowSupport(true);
           setDetail(t.amountMismatch);
         } else if (isDeadStatus(d.status)) {
           setState("failed");
@@ -144,6 +158,7 @@ function CallbackInner() {
       .catch(() => {
         // A network/verify blip is not a failed payment — let them retry the check.
         setState("pending");
+        setShowSupport(true);
         setDetail(t.verifyFail);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,9 +184,18 @@ function CallbackInner() {
             ? t.paidTitle
             : state === "pending"
             ? t.pendingTitle
+            : review
+            ? t.reviewTitle
             : t.failedTitle}
         </h1>
         <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}>{detail || t.wait}</p>
+        {showSupport && (
+          <p className="mt-3 text-sm">
+            <a href="mailto:alanziabdulaziz4@gmail.com?subject=Payment%20issue" className="font-semibold underline" style={{ color: "var(--accent)" }}>
+              {t.contactSupport}
+            </a>
+          </p>
+        )}
 
         {state === "paid" && (
           <>
