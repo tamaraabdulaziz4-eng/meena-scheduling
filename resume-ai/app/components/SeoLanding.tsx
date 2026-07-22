@@ -13,13 +13,15 @@ export interface SeoLandingProps {
   bullets: { title: string; body: string }[];
   faqs: Faq[];
   ctaLine: string;
+  /** Optional transparent scoring rubric — differentiates the page and shows how the score is computed. */
+  methodology?: { label: string; weight: number; note: string }[];
 }
 
 /**
  * Shared, SEO-friendly landing layout for keyword pages.
  * Each page passes unique copy so the pages don't read as duplicates.
  */
-export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs, ctaLine }: SeoLandingProps) {
+export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs, ctaLine, methodology }: SeoLandingProps) {
   return (
     <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
       <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
@@ -58,6 +60,31 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
           ))}
         </div>
       </section>
+
+      {methodology && (
+        <section className="px-6 py-16">
+          <div className="mx-auto max-w-3xl">
+            <h2 className="mb-3 text-center text-3xl font-bold tracking-tight">How the score is calculated</h2>
+            <p className="mx-auto mb-10 max-w-xl text-center text-sm" style={{ color: "var(--muted)" }}>
+              No black box — this is the exact weighted rubric the AI is instructed to apply when a job description is provided.
+            </p>
+            <div className="card overflow-hidden">
+              {methodology.map((m, i) => (
+                <div key={m.label} className="flex items-center gap-4 px-6 py-4" style={{ borderTop: i > 0 ? "1px solid var(--line)" : "none" }}>
+                  <span className="font-mono text-lg font-bold text-accent tabular-nums" style={{ minWidth: "3.2rem" }}>{m.weight}%</span>
+                  <div>
+                    <div className="text-sm font-bold">{m.label}</div>
+                    <div className="text-xs" style={{ color: "var(--muted)" }}>{m.note}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>
+              Different employers use different ATS software — the score measures alignment and clarity, not a guaranteed outcome.
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className="px-6 py-16" style={{ background: "rgba(74,222,128,0.025)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto max-w-3xl">

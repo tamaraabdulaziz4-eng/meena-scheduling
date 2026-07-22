@@ -15,21 +15,21 @@ export const metadata: Metadata = {
 export default function Page() {
   return (
     <SeoLanding
-      eyebrow="100% free first scan"
+      eyebrow="Free check — always"
       h1="Get your resume checked by AI —"
       h1Accent="free, in under a minute"
-      intro="Upload or paste your resume and the job you want, and our AI checks it instantly: a match score, the keywords you're missing, weak bullet points to fix, and a tailored rewrite. Your first check is free — no account, no card."
+      intro="Upload or paste your resume — with or without a target job — and our AI checks it instantly: a match score with the reasons behind it, the keywords you're missing, your skills gap, and the weak lines to fix. The check and full analysis are free, every time, no account and no card. Only the complete rewritten resume is a paid unlock — and we tell you that upfront."
       bullets={[
-        { title: "Instant score & feedback", body: "See a clear match score and specific, actionable feedback — not vague tips — tailored to the exact role you're targeting." },
-        { title: "Upload PDF or Word", body: "No copy-pasting required. Drop in your existing PDF or Word resume and we'll read it automatically." },
-        { title: "Real improvements", body: "Weak bullets rewritten with metrics and strong verbs, missing keywords added, formatting made ATS-safe." },
-        { title: "Free to start", body: "Your first full check costs nothing. Upgrade only if you want unlimited checks and cover letters." },
+        { title: "What's free (always)", body: "The 0–100 score and why, missing vs present keywords, skills-gap report, and the specific weak points to fix. Unlimited checks, no card." },
+        { title: "What's paid (and why)", body: "The complete rewritten resume, PDF export, and cover letter — SAR 35 (~$9) once or SAR 75/month. The analysis tells you exactly what you'd be paying for first." },
+        { title: "Upload PDF or Word", body: "No copy-pasting required. Drop in your existing PDF or Word resume and we'll read it automatically — and never store it on our servers." },
+        { title: "No invented facts", body: "The rewrite never adds a number, skill, or credential you didn't provide. Missing metrics are marked [add your real number] for you to fill in." },
       ]}
       faqs={[
-        { q: "Is this resume checker actually free?", a: "Yes — your first complete resume check, including the score, keyword analysis, and rewrite, is free with no sign-up or credit card." },
-        { q: "What file types can I upload?", a: "PDF, Word (.docx), and plain text. The tool extracts the text automatically so you don't have to copy and paste." },
-        { q: "What does the checker analyze?", a: "It compares your resume to a specific job description and scores keyword match, skills coverage, and bullet-point strength, then rewrites your resume to improve all three." },
-        { q: "What happens after my free check?", a: "You can keep going with a $9 one-time optimization or $19/month for unlimited checks plus cover letters. There's no obligation." },
+        { q: "Is this resume checker actually free?", a: "Yes — the score, keyword analysis, skills gap, and improvement list are free every time, with no sign-up or credit card. The complete rewritten resume is the paid part (SAR 35 one-time or SAR 75/month)." },
+        { q: "What file types can I upload?", a: "PDF, Word (.docx), and plain text. The tool extracts the text automatically so you don't have to copy and paste — and your file is never stored on our servers." },
+        { q: "What does the checker analyze?", a: "In target mode it compares your resume to a specific job description: keyword match, skills coverage, and bullet strength. In general mode it scores overall quality: impact, structure, and clarity." },
+        { q: "Will it invent achievements to boost my score?", a: "Never. The engine is constrained from adding any fact you didn't provide — where a metric is missing it writes [add your real number] instead of making one up." },
       ]}
       ctaLine="Check your resume free right now"
     />
