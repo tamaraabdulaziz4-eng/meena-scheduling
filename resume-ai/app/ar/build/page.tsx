@@ -35,6 +35,14 @@ export default function ArBuildPage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // الخروج أثناء التوليد يقطع الطلب — نحذّر قبل الخروج بالغلط.
+  useEffect(() => {
+    if (!loading) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [loading]);
+
   // حفظ تلقائي: كل الخطوات والحقول تنحفظ — التحديث أو الخروج مايضيّع الكتابة.
   const DRAFT_KEY = "ra_ar_build_draft";
   useEffect(() => {

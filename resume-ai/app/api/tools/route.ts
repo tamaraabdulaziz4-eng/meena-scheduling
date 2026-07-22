@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     const key = process.env.NVIDIA_API_KEY;
     if (!key) throw new Error("NVIDIA_API_KEY is not set");
-    const model = process.env.AI_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+    const model = process.env.AI_MODEL || "meta/llama-4-maverick-17b-128e-instruct";
 
     // The free model intermittently returns an error or malformed JSON. Retry
     // once (non-streaming, small output) so a transient failure isn't user-visible.

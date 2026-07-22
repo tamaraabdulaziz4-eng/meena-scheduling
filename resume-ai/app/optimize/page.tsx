@@ -36,6 +36,14 @@ export default function OptimizePage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // Leaving mid-generation kills the request — warn before an accidental exit.
+  useEffect(() => {
+    if (!loading) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [loading]);
+
   // Draft + result autosave: rehydrate on mount so a refresh / accidental
   // navigation never wipes what the user typed OR the result they just got.
   useEffect(() => {
@@ -299,7 +307,7 @@ export default function OptimizePage() {
                   </span>
                 ) : "⚡ Scan & optimize"}
               </button>
-              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~30–60 seconds</p>
+              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~10 seconds ⚡</p>
             </div>
           </form>
         ) : (

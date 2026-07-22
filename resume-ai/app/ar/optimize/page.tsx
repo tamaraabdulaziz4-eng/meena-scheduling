@@ -36,6 +36,14 @@ export default function ArOptimizePage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // الخروج أثناء التوليد يقطع الطلب — نحذّر قبل الخروج بالغلط.
+  useEffect(() => {
+    if (!loading) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [loading]);
+
   // حفظ تلقائي للمسودة والنتيجة — التحديث أو الخروج مايضيّع شي.
   useEffect(() => {
     try {
@@ -240,7 +248,7 @@ export default function ArOptimizePage() {
                 className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
                 {loading ? "جارٍ الفحص والتحسين…" : "⚡ افحص وحسّن"}
               </button>
-              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>٣٠–٦٠ ثانية تقريباً</p>
+              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~١٠ ثوانٍ فقط ⚡</p>
             </div>
           </form>
         ) : (

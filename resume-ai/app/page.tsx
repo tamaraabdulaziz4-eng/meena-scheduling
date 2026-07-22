@@ -43,7 +43,7 @@ export default function Home() {
               Your resume is getting{" "}
               <span style={{ color: "#f87171" }}>auto-rejected.</span>
               <br />
-              We <span className="accent-underline text-accent">fix that</span> in 60 seconds.
+              We <span className="accent-underline text-accent">fix that</span> in 10 seconds.
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
               Paste your resume and the job post. Our AI rewrites it to match the exact
@@ -60,7 +60,7 @@ export default function Home() {
             </div>
             <div className="mt-7 flex items-center gap-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ No sign-up</span>
-              <span>✓ 60-second result</span>
+              <span>✓ 10-second result</span>
               <span>✓ From SAR 35, no subscription</span>
             </div>
             <div className="mt-6">
@@ -81,7 +81,7 @@ export default function Home() {
           {[
             { node: <Counter value={75} suffix="%" />, label: "of resumes rejected by ATS before a human sees them" },
             { node: <Counter value={3.4} decimals={1} suffix="×" />, label: "more interview calls after optimizing" },
-            { node: <Counter value={60} suffix="s" />, label: "average time to a rewritten resume" },
+            { node: <Counter value={10} suffix="s" />, label: "average time to a rewritten resume" },
             { node: <Counter value={35} prefix="SAR " />, label: "one-time — no subscription trap" },
           ].map((s) => (
             <div key={s.label}>
@@ -327,7 +327,7 @@ export default function Home() {
             Stop feeding the <span style={{ color: "#f87171" }}>rejection bot.</span>
           </h2>
           <p className="mx-auto mt-6 max-w-md text-lg" style={{ color: "var(--muted)" }}>
-            One scan. One rewrite. One passing score. See it happen in the next 60 seconds.
+            One scan. One rewrite. One passing score. See it happen in the next 10 seconds.
           </p>
           <Link href="/optimize" className="btn-accent mt-10 px-10 py-4 text-lg">
             Scan my resume free →

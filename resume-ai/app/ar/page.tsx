@@ -47,7 +47,7 @@ export default function ArabicHome() {
             <h1 className="text-4xl font-extrabold leading-[1.15] tracking-tight md:text-6xl">
               سيرتك الذاتية <span style={{ color: "#f87171" }}>تُرفض تلقائياً.</span>
               <br />
-              واحنا <span className="accent-underline text-accent">نصلّحها</span> في ٦٠ ثانية.
+              واحنا <span className="accent-underline text-accent">نصلّحها</span> في ١٠ ثوانٍ.
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
               اكتب بالعربي براحتك — الذكاء الاصطناعي يفهم كلامك ويحوّله لسيرة ذاتية
@@ -64,7 +64,7 @@ export default function ArabicHome() {
             </div>
             <div className="mt-7 flex flex-wrap items-center gap-5 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ بدون تسجيل</span>
-              <span>✓ النتيجة في ٦٠ ثانية</span>
+              <span>✓ النتيجة في ١٠ ثوانٍ</span>
               <span>✓ من ٣٥ ريال بدون اشتراك</span>
             </div>
             <div className="mt-6">
@@ -187,7 +187,7 @@ export default function ArabicHome() {
             لا تترك الروبوت <span style={{ color: "#f87171" }}>يقرر مستقبلك.</span>
           </h2>
           <p className="mx-auto mt-6 max-w-md text-lg" style={{ color: "var(--muted)" }}>
-            فحص واحد. إعادة كتابة واحدة. نتيجة تعبر. جرّبها الآن خلال ٦٠ ثانية.
+            فحص واحد. إعادة كتابة واحدة. نتيجة تعبر. جرّبها الآن خلال ١٠ ثوانٍ.
           </p>
           <Link href="/ar/optimize" className="btn-accent mt-9 inline-block px-10 py-4 text-lg">افحص سيرتي مجاناً ←</Link>
           <p className="mt-4 font-mono text-xs" style={{ color: "var(--faint)" }}>فحص مجاني · بدون بطاقة</p>

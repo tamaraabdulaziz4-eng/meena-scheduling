@@ -36,6 +36,14 @@ export default function BuildPage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // Leaving mid-generation kills the request — warn before an accidental exit.
+  useEffect(() => {
+    if (!loading) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [loading]);
+
   // Draft autosave: the wizard collects 10+ minutes of typing across 4 steps,
   // all in memory. Persist it so a refresh / accidental back-swipe / tab crash
   // never wipes everything. Rehydrate on mount.
