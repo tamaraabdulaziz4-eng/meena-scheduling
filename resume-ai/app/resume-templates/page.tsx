@@ -3,7 +3,7 @@ import Link from "next/link";
 import { TEMPLATES } from "../lib/templates";
 import TemplatePreview from "../components/TemplatePreview";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
   title: "Free Resume Templates (2026) — ATS-Friendly, Fill & Download",

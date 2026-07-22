@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { JOBS, JOB_SLUGS, getJob } from "../../lib/jobs";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export function generateStaticParams() {
   return JOB_SLUGS.map((job) => ({ job }));

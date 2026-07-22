@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { TEMPLATES, TEMPLATE_SLUGS, getTemplate } from "../../lib/templates";
 import TemplatePreview from "../../components/TemplatePreview";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export function generateStaticParams() {
   return TEMPLATE_SLUGS.map((style) => ({ style }));

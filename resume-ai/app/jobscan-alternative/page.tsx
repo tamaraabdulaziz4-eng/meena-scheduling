@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import SeoLanding from "../components/SeoLanding";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
   title: "The Best Jobscan Alternative (2026) — Same ATS Scan, From $9",

@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import { JOB_SLUGS } from "./lib/jobs";
 import { TEMPLATE_SLUGS } from "./lib/templates";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const routes = [

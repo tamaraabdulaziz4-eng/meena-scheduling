@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import ShareButtons from "../../components/ShareButtons";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 // id encodes the score, e.g. "92" — keeps it stateless and instantly shareable.
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {

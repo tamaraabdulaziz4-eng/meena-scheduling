@@ -3,7 +3,7 @@ import { createMagicToken } from "@/app/lib/session";
 
 export const maxDuration = 20;
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 const FROM = process.env.EMAIL_FROM || "ResumeAI <onboarding@resend.dev>";
 
 /** Sends a magic sign-in link to the given email via Resend. */

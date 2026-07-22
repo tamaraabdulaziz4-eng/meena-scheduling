@@ -8,6 +8,7 @@ function CallbackInner() {
   const params = useSearchParams();
   const [state, setState] = useState<"checking" | "paid" | "failed">("checking");
   const [detail, setDetail] = useState("");
+  const [plan, setPlan] = useState<"single" | "monthly" | "">("");
 
   useEffect(() => {
     const tx = params.get("transactionNo") || params.get("TransactionNo");
@@ -19,9 +20,13 @@ function CallbackInner() {
     fetch(`/api/pay/verify?transactionNo=${encodeURIComponent(tx)}`)
       .then((r) => r.json())
       .then((d) => {
-        if (d.paid) {
+        if (d.paid && d.amountOk !== false) {
           setState("paid");
+          setPlan(d.plan === "monthly" ? "monthly" : "single");
           setDetail(`Order ${d.orderNumber || tx} confirmed.`);
+        } else if (d.paid && d.amountOk === false) {
+          setState("failed");
+          setDetail("The amount paid didn't match the plan price. If you were charged, contact support and we'll sort it out.");
         } else {
           setState("failed");
           setDetail(`Payment status: ${d.status || "not completed"}.`);
@@ -50,7 +55,9 @@ function CallbackInner() {
         {state === "paid" && (
           <>
             <p className="mt-6 text-sm" style={{ color: "rgba(244,245,243,0.8)" }}>
-              You&apos;re all set — thank you! Head back and optimize as many resumes as you need.
+              {plan === "monthly"
+                ? "You're all set — thank you! Your unlimited access is active for the next 30 days. Optimize as many resumes as you need."
+                : "You're all set — thank you! Your single optimization pass is active for the next 24 hours."}
             </p>
             <Link href="/optimize" className="btn-accent mt-6 inline-block px-8 py-3">Start optimizing →</Link>
           </>

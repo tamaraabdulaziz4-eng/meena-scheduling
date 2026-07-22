@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
           <div style={{ display: "flex", fontSize: 70, color: "#555" }}>/100</div>
         </div>
         <div style={{ display: "flex", marginTop: 14, padding: "10px 26px", borderRadius: 12, background: `${accent}22`, border: `2px solid ${accent}`, color: accent, fontSize: 28, fontWeight: 700, letterSpacing: 3 }}>{label}</div>
-        <div style={{ display: "flex", marginTop: 40, fontSize: 26, color: "#8a8a8a" }}>Check your resume free at resume-ai-kappa-flax.vercel.app</div>
+        <div style={{ display: "flex", marginTop: 40, fontSize: 26, color: "#8a8a8a" }}>Check your resume free at cv.rabit.sa</div>
       </div>
     ),
     { width: 1200, height: 630 }

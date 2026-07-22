@@ -7,6 +7,14 @@ export const maxDuration = 30;
 
 const BASE = process.env.PAYLINK_BASE_URL || "https://restapi.paylink.sa";
 
+// The expected price per plan — must match app/api/pay/route.ts. Verification
+// checks the amount Paylink actually collected against this so an underpaid or
+// tampered invoice can't unlock a full entitlement.
+const PLAN_PRICE: Record<string, number> = {
+  single: Number(process.env.PRICE_SINGLE || 9),
+  monthly: Number(process.env.PRICE_MONTHLY || 19),
+};
+
 async function authenticate(): Promise<string> {
   const apiId = process.env.PAYLINK_API_ID;
   const secretKey = process.env.PAYLINK_SECRET_KEY;
@@ -41,16 +49,24 @@ export async function GET(req: NextRequest) {
     const orderNumber = String(inv.orderNumber || inv.gatewayOrderRequest?.orderNumber || "");
     const plan = orderNumber.split("-")[1] === "monthly" ? "monthly" : "single";
 
+    // Guard against underpaid / tampered invoices: the amount Paylink actually
+    // collected must cover the plan's price before we grant any entitlement.
+    const paidAmount = Number(inv.amount) || 0;
+    const expected = PLAN_PRICE[plan] ?? Infinity;
+    const amountOk = paidAmount + 0.01 >= expected;
+    const entitled = paid && amountOk;
+
     const res2 = NextResponse.json({
       paid,
       status: inv.orderStatus || "Unknown",
       amount: inv.amount,
       orderNumber,
       plan,
+      amountOk,
     });
 
-    // On confirmed payment, grant a signed access pass as an httpOnly cookie.
-    if (paid) {
+    // On confirmed AND fully-paid payment, grant a signed access pass.
+    if (entitled) {
       const now = Date.now();
       const windowSec = plan === "monthly" ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
       res2.cookies.set(ACCESS_COOKIE, grantPass(plan, now), {

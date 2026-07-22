@@ -34,6 +34,31 @@ export default function OptimizePage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // Draft autosave: rehydrate on mount so a refresh / accidental navigation
+  // never wipes what the user typed.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ra_optimize_draft");
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (typeof d.resume === "string") setResume(d.resume);
+        if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
+      }
+    } catch {
+      /* ignore corrupt/unavailable storage */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (resume || jobDescription) {
+        localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription }));
+      }
+    } catch {
+      /* storage full or blocked — non-fatal */
+    }
+  }, [resume, jobDescription]);
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -94,7 +119,10 @@ export default function OptimizePage() {
     setThinking("");
     setLoading(true);
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // NOTE: no client-side retry here. The server already retries the model
+    // internally, and each POST to /api/optimize consumes the free scan — a
+    // client retry would burn the free scan and slam the user into the paywall
+    // with no result. One request, one attempt.
     try {
       const res = await fetch("/api/optimize", {
         method: "POST",
@@ -140,14 +168,11 @@ export default function OptimizePage() {
       if (!got) throw new Error("The analysis didn't complete. Please try again.");
       setResult(got);
       setTab("resume");
-      setLoading(false);
-      return;
     } catch (err) {
-      if (attempt === 0) { setThinking(""); continue; }
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
     }
-    }
-    setLoading(false);
   }
 
   const score = result?.matchScore ?? 0;

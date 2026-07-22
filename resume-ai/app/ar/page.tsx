@@ -3,7 +3,7 @@ import Link from "next/link";
 import ScanDemo from "../components/ScanDemo";
 import CheckoutButton from "../components/CheckoutButton";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
   title: "ResumeAI — حسّن سيرتك الذاتية وتجاوز أنظمة التوظيف الآلية",

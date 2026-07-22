@@ -125,7 +125,7 @@ async function streamNvidia(prompt: string, onDelta: (t: string) => void): Promi
       model,
       temperature: 0.5,
       top_p: 0.9,
-      max_tokens: 2600,
+      max_tokens: 3600,
       stream: true,
       messages: [
         { role: "system", content: "You are an expert CV writer. Follow the OUTPUT FORMAT exactly: ANALYSIS bullets, then RESULT and one valid JSON object. Never include unescaped quotes inside JSON string values." },
@@ -202,43 +202,50 @@ export async function POST(req: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         const send = (o: object) => controller.enqueue(encoder.encode(JSON.stringify(o) + "\n"));
-        try {
-          let inThinking = true;
-          let pending = "";
-          let lastPing = Date.now();
-          const raw = await streamNvidia(prompt, (delta) => {
-            if (!inThinking) {
-              if (Date.now() - lastPing > 3000) {
-                send({ t: "ping" });
-                lastPing = Date.now();
+        // Retry once on a transient model/JSON failure — only the first attempt
+        // streams thinking to the user (the retry is silent).
+        let done = false;
+        const t0 = Date.now();
+        for (let attempt = 0; attempt < 2 && !done; attempt++) {
+          if (attempt > 0 && Date.now() - t0 > 12000) break;
+          try {
+            let inThinking = attempt === 0;
+            let pending = "";
+            let lastPing = Date.now();
+            const raw = await streamNvidia(prompt, (delta) => {
+              if (!inThinking) {
+                if (Date.now() - lastPing > 3000) {
+                  send({ t: "ping" });
+                  lastPing = Date.now();
+                }
+                return;
               }
-              return;
-            }
-            pending += delta;
-            const cut = pending.search(/RESULT|\{/);
-            if (cut !== -1) {
-              const visible = pending.slice(0, cut);
-              if (visible) send({ t: "think", d: visible });
-              inThinking = false;
-            } else {
-              send({ t: "think", d: pending });
-              pending = "";
-            }
-          });
+              pending += delta;
+              const cut = pending.search(/RESULT|\{/);
+              if (cut !== -1) {
+                const visible = pending.slice(0, cut);
+                if (visible) send({ t: "think", d: visible });
+                inThinking = false;
+              } else {
+                send({ t: "think", d: pending });
+                pending = "";
+              }
+            });
 
-          if (!raw.trim()) throw new Error("Empty response");
-          const parsed = parseModelJson(raw);
-          // Plain text only — strip any markdown bold the model added.
-          const cv = (typeof parsed.cv === "string" ? parsed.cv : String(parsed.cv ?? "")).replace(/\*\*/g, "");
-          const tips = Array.isArray(parsed.tips) ? parsed.tips.map(String) : [];
-          if (!cv.trim()) throw new Error("No CV in response");
-          send({ t: "result", d: { cv, tips } });
-        } catch (err) {
-          console.error("Build CV error:", err);
-          send({ t: "error", d: "Failed to build the CV. Please try again." });
-        } finally {
-          controller.close();
+            if (!raw.trim()) throw new Error("Empty response");
+            const parsed = parseModelJson(raw);
+            // Plain text only — strip any markdown bold the model added.
+            const cv = (typeof parsed.cv === "string" ? parsed.cv : String(parsed.cv ?? "")).replace(/\*\*/g, "");
+            const tips = Array.isArray(parsed.tips) ? parsed.tips.map(String) : [];
+            if (!cv.trim()) throw new Error("No CV in response");
+            send({ t: "result", d: { cv, tips } });
+            done = true;
+          } catch (err) {
+            console.error(`Build CV error (attempt ${attempt + 1}):`, err);
+          }
         }
+        if (!done) send({ t: "error", d: "Failed to build the CV. Please try again." });
+        controller.close();
       },
     });
 

@@ -95,7 +95,11 @@ function parseSections(rawInput: string) {
     });
   const resume = (raw.match(/\nRESUME:\s*\n?([\s\S]*)$/i)?.[1] ?? "").trim().replace(/\*\*/g, "");
 
-  if (!score && !resume) throw new Error("Could not parse model output");
+  // The rewritten resume IS the core deliverable. If the model ran out of tokens
+  // before writing the RESUME: section (truncated response), treat it as a failure
+  // so the retry actually fires — otherwise the user gets a score with a blank resume.
+  if (!resume) throw new Error("Model output missing the RESUME section (likely truncated)");
+  if (!score) throw new Error("Could not parse model output");
   return {
     matchScore: Math.min(100, Math.max(0, score)),
     matchSummary: grab("SUMMARY"),
@@ -236,7 +240,7 @@ async function streamNvidia(
       model,
       temperature: 0.2,
       top_p: 0.9,
-      max_tokens: 2600,
+      max_tokens: 3600,
       stream: true,
       messages: [
         { role: "system", content: "You are an expert ATS resume analyst. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets, then the SCORE/SUMMARY/MISSING/PRESENT/GAPS/IMPROVEMENTS/RESUME sections as plain text. Never output JSON or markdown." },

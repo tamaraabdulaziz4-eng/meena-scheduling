@@ -106,31 +106,43 @@ export async function POST(req: NextRequest) {
     if (!key) throw new Error("NVIDIA_API_KEY is not set");
     const model = process.env.AI_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
 
-    const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        temperature: 0.5,
-        top_p: 0.9,
-        max_tokens: 2200,
-        messages: [
-          { role: "system", content: "You respond with a single valid JSON object and nothing else. Never include unescaped quotes inside JSON string values." },
-          { role: "user", content: promptFn(String(inputA).slice(0, 8000), String(inputB).slice(0, 4000)) },
-        ],
-      }),
-    });
-    if (!res.ok) throw new Error(`NVIDIA API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const data = await res.json();
-    const raw = data?.choices?.[0]?.message?.content ?? "";
-    if (!raw.trim()) throw new Error("Empty response");
-
-    let parsed;
-    try {
-      parsed = JSON.parse(extractJson(raw));
-    } catch {
-      parsed = JSON.parse(repairJson(extractJson(raw)));
+    // The free model intermittently returns an error or malformed JSON. Retry
+    // once (non-streaming, small output) so a transient failure isn't user-visible.
+    let parsed: Record<string, unknown> | null = null;
+    let lastErr: unknown = null;
+    const t0 = Date.now();
+    for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+      if (attempt > 0 && Date.now() - t0 > 30000) break;
+      try {
+        const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            temperature: 0.5,
+            top_p: 0.9,
+            max_tokens: 2200,
+            messages: [
+              { role: "system", content: "You respond with a single valid JSON object and nothing else. Never include unescaped quotes inside JSON string values." },
+              { role: "user", content: promptFn(String(inputA).slice(0, 8000), String(inputB).slice(0, 4000)) },
+            ],
+          }),
+        });
+        if (!res.ok) throw new Error(`NVIDIA API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        const data = await res.json();
+        const raw = data?.choices?.[0]?.message?.content ?? "";
+        if (!raw.trim()) throw new Error("Empty response");
+        try {
+          parsed = JSON.parse(extractJson(raw));
+        } catch {
+          parsed = JSON.parse(repairJson(extractJson(raw)));
+        }
+      } catch (e) {
+        lastErr = e;
+        console.error(`Tools error (attempt ${attempt + 1}):`, e);
+      }
     }
+    if (!parsed) throw lastErr ?? new Error("Failed to generate");
     return NextResponse.json(parsed);
   } catch (err) {
     console.error("Tools error:", err);

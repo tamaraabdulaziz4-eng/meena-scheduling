@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { JOBS, CATEGORIES } from "../lib/jobs";
 
-const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
   title: "Resume Examples & ATS Keywords by Job Title (2026) — Free",

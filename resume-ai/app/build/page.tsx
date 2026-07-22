@@ -36,6 +36,46 @@ export default function BuildPage() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
 
+  // Draft autosave: the wizard collects 10+ minutes of typing across 4 steps,
+  // all in memory. Persist it so a refresh / accidental back-swipe / tab crash
+  // never wipes everything. Rehydrate on mount.
+  const DRAFT_KEY = "ra_build_draft";
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (typeof d.name === "string") setName(d.name);
+        if (typeof d.contact === "string") setContact(d.contact);
+        if (typeof d.targetRole === "string") setTargetRole(d.targetRole);
+        if (Array.isArray(d.exps) && d.exps.length) setExps(d.exps);
+        if (typeof d.education === "string") setEducation(d.education);
+        if (typeof d.skills === "string") setSkills(d.skills);
+        if (typeof d.extras === "string") setExtras(d.extras);
+        if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
+        if (typeof d.step === "number") setStep(d.step);
+      }
+    } catch {
+      /* ignore corrupt/unavailable storage */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      const hasContent = name || contact || targetRole || education || skills || extras || jobDescription || exps.some((e) => e.role || e.company || e.duties);
+      if (hasContent) {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, contact, targetRole, exps, education, skills, extras, jobDescription, step }));
+      }
+    } catch {
+      /* storage full or blocked — non-fatal */
+    }
+  }, [name, contact, targetRole, exps, education, skills, extras, jobDescription, step]);
+
+  function clearDraft() {
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* noop */ }
+  }
+
   function setExp(i: number, field: keyof Exp, v: string) {
     setExps((prev) => prev.map((e, j) => (j === i ? { ...e, [field]: v } : e)));
   }
@@ -96,6 +136,7 @@ export default function BuildPage() {
       if (!got) throw new Error("The build didn't complete. Please try again.");
       setCv(got.cv);
       setTips(got.tips);
+      clearDraft();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -234,7 +275,7 @@ export default function BuildPage() {
                     Next →
                   </button>
                 ) : (
-                  <button onClick={generate} className="btn-accent px-8 py-2.5 text-sm">✨ Build my CV</button>
+                  <button onClick={generate} disabled={loading} className="btn-accent px-8 py-2.5 text-sm disabled:opacity-40">✨ Build my CV</button>
                 )}
               </div>
             </div>
@@ -291,7 +332,7 @@ export default function BuildPage() {
               <Link href="/optimize" className="btn-accent mt-5 inline-block px-8 py-3">Scan it now — free →</Link>
             </div>
 
-            <button onClick={() => { setCv(""); setTips([]); setStep(0); }} className="mx-auto mt-6 block text-sm" style={{ color: "var(--faint)" }}>
+            <button onClick={() => { setCv(""); setTips([]); setStep(0); setName(""); setContact(""); setTargetRole(""); setExps([{ role: "", company: "", dates: "", duties: "" }]); setEducation(""); setSkills(""); setExtras(""); setJobDescription(""); clearDraft(); }} className="mx-auto mt-6 block text-sm" style={{ color: "var(--faint)" }}>
               Start over
             </button>
           </div>
