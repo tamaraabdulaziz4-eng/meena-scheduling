@@ -51,32 +51,61 @@ ANALYSIS METHOD (do this carefully before writing the JSON):
 3. For "missingKeywords": list industry-standard keywords for the inferred role that the resume lacks.
 4. For "presentKeywords": strong keywords already in the resume.`}
 
-Return a JSON object with exactly this structure:
-{
-  "matchScore": <number 0-100 from the rubric>,
-  "matchSummary": "<2-3 honest sentences: score drivers, biggest gap, is this application worth pursuing>",
-  "missingKeywords": ["<every important hard skill/tool/cert from the job description absent from the resume>"],
-  "presentKeywords": ["<job-description keywords genuinely present>"],
-  "skillsGap": ["<skills the candidate truly lacks — should learn or honestly address>"],
-  "improvements": [
-    {"area": "<section>", "issue": "<specific problem>", "fix": "<specific actionable fix>"}
-  ],
-  "optimizedResume": "<the COMPLETE rewritten resume as plain text>"
-}
-
-Rules for optimizedResume:
+Rules for the rewritten resume:
 - NEVER invent employers, roles, dates, degrees, or achievements — only rephrase what exists
 - Structure: Name/contact, PROFESSIONAL SUMMARY (3 lines, contains the job title), SKILLS (grouped, front-loading required skills the candidate genuinely has), EXPERIENCE (reverse-chronological), EDUCATION
 - Bullets: strong action verbs, job keywords where truthful; where a metric should exist but wasn't given, write [add number]
 - Where a required skill is missing, surface adjacent/transferable experience — never fake it
 - Plain text, standard headings, ATS-parseable
 
-OUTPUT FORMAT — two parts, in this order:
-1. A section starting with the exact line "ANALYSIS" — your reasoning as short, punchy bullet lines (one finding per line, e.g. "• Job requires React — NOT in resume", "• 4+ yrs required — resume shows 4 ✓"). Shown to the user live, so keep each line concrete. EXACTLY 8-12 lines, no more.
-2. Then the exact line "RESULT" followed by the JSON object.
-
-Keep the optimizedResume under 350 words — tight and high-impact. No other text after the JSON.`;
+OUTPUT FORMAT — plain text with EXACTLY these section markers, in this order (NO JSON, no markdown):
+ANALYSIS
+<8-12 short bullet lines of your reasoning, one finding per line, e.g. "• Job requires React — NOT in resume". Shown live to the user.>
+SCORE: <number 0-100 from the rubric>
+SUMMARY: <2-3 honest sentences on one line: score drivers, biggest gap, is it worth pursuing>
+MISSING: <comma-separated keywords absent from the resume>
+PRESENT: <comma-separated keywords genuinely present>
+GAPS: <comma-separated skills the candidate truly lacks>
+IMPROVEMENTS:
+<4-6 lines, each exactly: area | specific problem | specific actionable fix>
+RESUME:
+<the COMPLETE rewritten resume as plain text, under 350 words. Nothing after it.>`;
 };
+
+/** Parse the delimited plain-text model output into the result shape. */
+function parseSections(rawInput: string) {
+  // The model sometimes bolds the markers (**SCORE:**) — strip markdown first.
+  const raw = rawInput.replace(/\*\*/g, "").replace(/^#+\s*/gm, "");
+  const grab = (name: string) => {
+    const m = raw.match(new RegExp(`^${name}:?\\s*:?\\s*(.*)$`, "mi"));
+    return m ? m[1].trim() : "";
+  };
+  const list = (s: string) =>
+    s.split(/[,،]/).map((x) => x.trim().replace(/^[-•*]\s*/, "")).filter((x) => x && x.length < 80);
+
+  const score = parseInt(grab("SCORE").replace(/[^0-9]/g, "")) || 0;
+  const improvementsBlock = raw.match(/IMPROVEMENTS:\s*\n([\s\S]*?)\nRESUME:/i)?.[1] ?? "";
+  const improvements = improvementsBlock
+    .split("\n")
+    .map((l) => l.trim().replace(/^[-•*]\s*/, ""))
+    .filter((l) => l.includes("|"))
+    .map((l) => {
+      const [area = "", issue = "", fix = ""] = l.split("|").map((p) => p.trim());
+      return { area, issue, fix };
+    });
+  const resume = (raw.match(/\nRESUME:\s*\n?([\s\S]*)$/i)?.[1] ?? "").trim().replace(/\*\*/g, "");
+
+  if (!score && !resume) throw new Error("Could not parse model output");
+  return {
+    matchScore: Math.min(100, Math.max(0, score)),
+    matchSummary: grab("SUMMARY"),
+    missingKeywords: list(grab("MISSING")),
+    presentKeywords: list(grab("PRESENT")),
+    skillsGap: list(grab("GAPS")),
+    improvements,
+    optimizedResume: resume,
+  };
+}
 
 /** Flatten a resume that came back as a nested object into readable plain text. */
 function objectToResumeText(obj: unknown, depth = 0): string {
@@ -142,16 +171,30 @@ function extractJson(text: string): string {
 }
 
 
-/** Escape raw newlines/tabs that models sometimes emit inside JSON strings. */
+/** Repair model JSON: escape raw control chars AND unescaped quotes inside strings.
+ * A quote inside a string is treated as CLOSING only if the next non-space char
+ * is a JSON structural char (, } ] :) — otherwise it's escaped as content. */
 function repairJson(s: string): string {
   let out = "";
   let inStr = false;
   let esc = false;
-  for (const ch of s) {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
     if (inStr) {
       if (esc) { out += ch; esc = false; continue; }
       if (ch === "\\") { out += ch; esc = true; continue; }
-      if (ch === '"') { inStr = false; out += ch; continue; }
+      if (ch === '"') {
+        let j = i + 1;
+        while (j < s.length && (s[j] === " " || s[j] === "\n" || s[j] === "\r" || s[j] === "\t")) j++;
+        const next = s[j] ?? "";
+        if (next === "," || next === "}" || next === "]" || next === ":") {
+          inStr = false;
+          out += ch;
+        } else {
+          out += '\\"'; // interior quote — escape it
+        }
+        continue;
+      }
       if (ch === "\n") { out += "\\n"; continue; }
       if (ch === "\r") continue;
       if (ch === "\t") { out += "\\t"; continue; }
@@ -191,12 +234,12 @@ async function streamNvidia(
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      temperature: 0.4,
+      temperature: 0.2,
       top_p: 0.9,
       max_tokens: 2600,
       stream: true,
       messages: [
-        { role: "system", content: "You are an expert ATS resume analyst. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets first, then RESULT and one valid JSON object. Never include unescaped quotes inside JSON string values." },
+        { role: "system", content: "You are an expert ATS resume analyst. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets, then the SCORE/SUMMARY/MISSING/PRESENT/GAPS/IMPROVEMENTS/RESUME sections as plain text. Never output JSON or markdown." },
         { role: "user", content: PROMPT(resume, jobDescription) },
       ],
     }),
@@ -307,7 +350,11 @@ export async function POST(req: NextRequest) {
         // The model occasionally emits malformed JSON — retry once; only the
         // first attempt streams thinking to the user (the retry is silent).
         let done = false;
+        const t0 = Date.now();
         for (let attempt = 0; attempt < 2 && !done; attempt++) {
+          // A full generation takes ~40s; don't start a retry we can't finish
+          // inside the platform's 60s cap.
+          if (attempt > 0 && Date.now() - t0 > 12000) break;
           try {
             let inThinking = attempt === 0;
             let pending = "";
@@ -322,7 +369,7 @@ export async function POST(req: NextRequest) {
               }
               pending += delta;
               // Stop forwarding once the model transitions to the JSON part.
-              const cut = pending.search(/RESULT|\{/);
+              const cut = pending.search(/SCORE:/);
               if (cut !== -1) {
                 const visible = pending.slice(0, cut);
                 if (visible) send({ t: "think", d: visible });
@@ -337,14 +384,14 @@ export async function POST(req: NextRequest) {
               : streamNvidia(resume, jd, keepAlive));
 
             if (!raw.trim()) throw new Error("Empty response from AI provider");
-            const result = normalizeResult(parseModelJson(raw));
+            const result = parseSections(raw);
             send({ t: "result", d: result });
             done = true;
           } catch (err) {
             console.error(`Optimize stream error (attempt ${attempt + 1}):`, err);
-            if (attempt === 1) send({ t: "error", d: "Failed to optimize resume. Please try again." });
           }
         }
+        if (!done) send({ t: "error", d: "Failed to optimize resume. Please try again." });
         controller.close();
       },
     });

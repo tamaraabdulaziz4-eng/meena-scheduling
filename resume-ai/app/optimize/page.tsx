@@ -94,6 +94,7 @@ export default function OptimizePage() {
     setThinking("");
     setLoading(true);
 
+    for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch("/api/optimize", {
         method: "POST",
@@ -107,6 +108,7 @@ export default function OptimizePage() {
         const data = await res.json();
         if (res.status === 402 || data.paywall) {
           setPaywall(true);
+          setLoading(false);
           return;
         }
         throw new Error(data.error || "Failed");
@@ -138,11 +140,14 @@ export default function OptimizePage() {
       if (!got) throw new Error("The analysis didn't complete. Please try again.");
       setResult(got);
       setTab("resume");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
-    } finally {
       setLoading(false);
+      return;
+    } catch (err) {
+      if (attempt === 0) { setThinking(""); continue; }
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     }
+    }
+    setLoading(false);
   }
 
   const score = result?.matchScore ?? 0;

@@ -71,6 +71,7 @@ export default function ArOptimizePage() {
     setPaywall(false);
     setThinking("");
     setLoading(true);
+    for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch("/api/optimize", {
         method: "POST",
@@ -82,6 +83,7 @@ export default function ArOptimizePage() {
         const data = await res.json();
         if (res.status === 402 || data.paywall) {
           setPaywall(true);
+          setLoading(false);
           return;
         }
         throw new Error(data.error || "حدث خطأ، حاول مرة أخرى.");
@@ -110,11 +112,14 @@ export default function ArOptimizePage() {
       }
       if (!got) throw new Error("لم يكتمل التحليل — حاول مرة أخرى.");
       setResult(got);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "حدث خطأ، حاول مرة أخرى.");
-    } finally {
       setLoading(false);
+      return;
+    } catch (err) {
+      if (attempt === 0) { setThinking(""); continue; }
+      setError(err instanceof Error ? err.message : "حدث خطأ، حاول مرة أخرى.");
     }
+    }
+    setLoading(false);
   }
 
   const score = result?.matchScore ?? 0;

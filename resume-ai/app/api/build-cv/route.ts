@@ -68,16 +68,30 @@ function extractJson(text: string): string {
   return start !== -1 && end > start ? cleaned.slice(start, end + 1) : cleaned;
 }
 
-/** Escape raw newlines/tabs that models sometimes emit inside JSON strings. */
+/** Repair model JSON: escape raw control chars AND unescaped quotes inside strings.
+ * A quote inside a string is treated as CLOSING only if the next non-space char
+ * is a JSON structural char (, } ] :) — otherwise it's escaped as content. */
 function repairJson(s: string): string {
   let out = "";
   let inStr = false;
   let esc = false;
-  for (const ch of s) {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
     if (inStr) {
       if (esc) { out += ch; esc = false; continue; }
       if (ch === "\\") { out += ch; esc = true; continue; }
-      if (ch === '"') { inStr = false; out += ch; continue; }
+      if (ch === '"') {
+        let j = i + 1;
+        while (j < s.length && (s[j] === " " || s[j] === "\n" || s[j] === "\r" || s[j] === "\t")) j++;
+        const next = s[j] ?? "";
+        if (next === "," || next === "}" || next === "]" || next === ":") {
+          inStr = false;
+          out += ch;
+        } else {
+          out += '\\"'; // interior quote — escape it
+        }
+        continue;
+      }
       if (ch === "\n") { out += "\\n"; continue; }
       if (ch === "\r") continue;
       if (ch === "\t") { out += "\\t"; continue; }
