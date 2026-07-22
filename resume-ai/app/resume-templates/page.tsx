@@ -1,0 +1,61 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { TEMPLATES } from "../lib/templates";
+import TemplatePreview from "../components/TemplatePreview";
+
+const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://resume-ai-kappa-flax.vercel.app";
+
+export const metadata: Metadata = {
+  title: "Free Resume Templates (2026) — ATS-Friendly, Fill & Download",
+  description: "8 free, ATS-friendly resume templates: ATS, modern, minimal, professional, executive, creative, simple, and two-column. Fill one in and download in minutes.",
+  keywords: "free resume templates, ATS resume template, modern resume template, professional resume template, cv templates free",
+  alternates: { canonical: `${BASE}/resume-templates` },
+};
+
+export default function Hub() {
+  return (
+    <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
+      <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+          </Link>
+          <Link href="/build" className="btn-accent px-4 py-2 text-sm">Build my resume</Link>
+        </div>
+      </nav>
+
+      <section className="relative overflow-hidden px-6 py-16 text-center">
+        <div className="hero-ambient"><div className="grid-lines" /></div>
+        <div className="relative z-10 mx-auto max-w-3xl">
+          <div className="chip mb-4">● Free · ATS-friendly</div>
+          <h1 className="text-4xl font-extrabold tracking-tight md:text-5xl">Free resume templates</h1>
+          <p className="mx-auto mt-4 max-w-2xl text-lg" style={{ color: "var(--muted)" }}>
+            Pick a style, fill it in with our AI builder, and download a print-ready resume — free. Every template is tuned to pass applicant tracking systems.
+          </p>
+        </div>
+      </section>
+
+      <div className="mx-auto max-w-6xl px-6 pb-16">
+        <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+          {TEMPLATES.map((t) => (
+            <Link key={t.slug} href={`/resume-templates/${t.slug}`} className="group">
+              <div className="transition-transform group-hover:-translate-y-1">
+                <TemplatePreview t={t} />
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <div className="font-bold">{t.name}</div>
+                <div className="font-mono text-xs" style={{ color: t.atsScore >= 90 ? "var(--accent)" : "#fbbf24" }}>ATS {t.atsScore}</div>
+              </div>
+              <div className="text-xs" style={{ color: "var(--faint)" }}>{t.keyword}</div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
+        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · Built to beat the ATS</p>
+      </footer>
+    </main>
+  );
+}
