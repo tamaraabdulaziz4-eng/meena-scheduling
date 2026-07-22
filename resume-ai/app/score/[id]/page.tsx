@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return {
     title,
     description: "See your resume's ATS match score instantly and free — then get the exact keywords you're missing.",
-    openGraph: { title, description: "Get your free ATS resume score in 60 seconds.", images: [{ url: img, width: 1200, height: 630 }], type: "website" },
+    openGraph: { title, description: "Get your free ATS resume score in seconds.", images: [{ url: img, width: 1200, height: 630 }], type: "website" },
     twitter: { card: "summary_large_image", title, images: [img] },
   };
 }
@@ -48,7 +48,7 @@ export default async function ScorePage({ params }: { params: Promise<{ id: stri
         <ShareButtons url={shareUrl} text={shareText} />
 
         <Link href="/optimize" className="btn-accent mt-6 block w-full py-3">Check my own resume free →</Link>
-        <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>Free · No sign-up · 60 seconds</p>
+        <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>Free · No sign-up · seconds</p>
       </div>
     </main>
   );

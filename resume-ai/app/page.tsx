@@ -4,6 +4,7 @@ import CheckoutButton from "./components/CheckoutButton";
 import Reveal from "./components/Reveal";
 import Counter from "./components/Counter";
 import NavAccountLink from "./components/NavAccountLink";
+import MobileMenu from "./components/MobileMenu";
 import LiveTicker from "./components/LiveTicker";
 import SubscribeBox from "./components/SubscribeBox";
 import AtsMarquee from "./components/AtsMarquee";
@@ -24,7 +25,8 @@ export default function Home() {
             <Link href="/build" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>CV Builder</Link>
             <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>Pricing</a>
             <NavAccountLink />
-            <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
+            <Link href="/optimize" className="hidden btn-accent px-4 py-2 text-sm sm:inline-block">Scan my resume</Link>
+            <MobileMenu />
           </div>
         </div>
       </nav>

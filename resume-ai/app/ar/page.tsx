@@ -5,6 +5,7 @@ import CheckoutButton from "../components/CheckoutButton";
 import LiveTicker from "../components/LiveTicker";
 import SubscribeBox from "../components/SubscribeBox";
 import AtsMarquee from "../components/AtsMarquee";
+import MobileMenu from "../components/MobileMenu";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
@@ -29,7 +30,8 @@ export default function ArabicHome() {
             <Link href="/" className="text-sm" style={{ color: "var(--muted)" }}>English</Link>
             <Link href="/ar/build" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>إنشاء سيرة</Link>
             <a href="#pricing" className="hidden text-sm sm:block" style={{ color: "var(--muted)" }}>الأسعار</a>
-            <Link href="/ar/optimize" className="btn-accent px-4 py-2 text-sm">افحص سيرتك</Link>
+            <Link href="/ar/optimize" className="hidden btn-accent px-4 py-2 text-sm sm:inline-block">افحص سيرتك</Link>
+            <MobileMenu ar />
           </div>
         </div>
       </nav>
