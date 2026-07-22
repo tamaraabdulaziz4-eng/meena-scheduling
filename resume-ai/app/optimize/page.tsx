@@ -273,6 +273,11 @@ export default function OptimizePage() {
                 {verdict}
               </div>
               <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>
+              <a href={`/score/${score}`} target="_blank" rel="noopener noreferrer"
+                className="mt-5 inline-block rounded-lg px-5 py-2 text-sm font-semibold"
+                style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                📣 Share my score
+              </a>
             </div>
 
             {/* Tabs */}
