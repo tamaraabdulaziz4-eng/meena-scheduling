@@ -32,7 +32,6 @@ const structuredData = {
     { "@type": "Offer", price: "35", priceCurrency: "SAR", name: "Single optimization" },
     { "@type": "Offer", price: "75", priceCurrency: "SAR", name: "Unlimited monthly" },
   ],
-  aggregateRating: { "@type": "AggregateRating", ratingValue: "4.8", reviewCount: "1200" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
