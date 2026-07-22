@@ -348,6 +348,8 @@ export default function Home() {
           <nav className="mb-8 flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm">
             <Link href="/resume-examples" style={{ color: "var(--muted)" }}>Resume Examples</Link>
             <Link href="/resume-templates" style={{ color: "var(--muted)" }}>Resume Templates</Link>
+            <Link href="/cover-letter-examples" style={{ color: "var(--muted)" }}>Cover Letter Examples</Link>
+            <Link href="/resume-skills" style={{ color: "var(--muted)" }}>Resume Skills</Link>
             <Link href="/ats-resume-checker" style={{ color: "var(--muted)" }}>ATS Resume Checker</Link>
             <Link href="/free-resume-checker" style={{ color: "var(--muted)" }}>Free Resume Checker</Link>
             <Link href="/build" style={{ color: "var(--muted)" }}>CV Builder</Link>

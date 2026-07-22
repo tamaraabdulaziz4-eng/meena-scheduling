@@ -9,13 +9,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "", "/optimize", "/build", "/linkedin", "/interview",
     "/ats-resume-checker", "/jobscan-alternative", "/free-resume-checker",
     "/resume-examples", "/resume-templates",
+    "/cover-letter-examples", "/resume-skills",
     "/ar", "/ar/build", "/ar/optimize",
     "/privacy", "/terms",
   ];
   const examplePages = JOB_SLUGS.map((slug) => `/resume-examples/${slug}`);
+  const coverPages = JOB_SLUGS.map((slug) => `/cover-letter-examples/${slug}`);
+  const skillPages = JOB_SLUGS.map((slug) => `/resume-skills/${slug}`);
   const templatePages = TEMPLATE_SLUGS.map((slug) => `/resume-templates/${slug}`);
 
-  return [...routes, ...examplePages, ...templatePages].map((path) => ({
+  return [...routes, ...examplePages, ...coverPages, ...skillPages, ...templatePages].map((path) => ({
     url: `${BASE}${path}`,
     changeFrequency: "weekly",
     priority: path === "" ? 1 : path.startsWith("/resume-examples/") ? 0.7 : 0.8,

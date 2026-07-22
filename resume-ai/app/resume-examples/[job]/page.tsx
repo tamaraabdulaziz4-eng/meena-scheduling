@@ -146,6 +146,14 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           </div>
         </Section>
 
+        {/* Cross-links to this job's cover-letter + skills pages */}
+        <Section title="For this role">
+          <div className="flex flex-wrap gap-3">
+            <Link href={`/cover-letter-examples/${j.slug}`} className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>{j.title} cover letter example →</Link>
+            <Link href={`/resume-skills/${j.slug}`} className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>{j.title} skills &amp; ATS keywords →</Link>
+          </div>
+        </Section>
+
         {/* Internal linking — siblings + others */}
         <Section title={`More ${j.category} resume examples`}>
           <div className="flex flex-wrap gap-2">
