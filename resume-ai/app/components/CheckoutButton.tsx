@@ -54,6 +54,10 @@ export default function CheckoutButton({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!name.trim() || !email.trim() || !mobile.trim()) {
+      setError(ar ? "\u0641\u0636\u0644\u0627\u064b \u0639\u0628\u0651\u0650 \u0643\u0644 \u0627\u0644\u062d\u0642\u0648\u0644 \u0644\u0644\u0645\u062a\u0627\u0628\u0639\u0629." : "Please fill in all fields to continue.");
+      return;
+    }
     setError("");
     setLoading(true);
     try {

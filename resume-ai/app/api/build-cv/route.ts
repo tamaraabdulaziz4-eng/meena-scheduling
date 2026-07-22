@@ -55,63 +55,13 @@ CV FORMULA (research-backed — follow exactly):
 - Concise enough to fit one page; cut filler, keep impact
 - You may only rephrase, translate, and organize the candidate's OWN facts — polish, never fabricate
 
-OUTPUT FORMAT — two parts in this order:
-1. A section starting with the exact line "ANALYSIS" — 6-10 short bullet lines about the choices you're making (e.g. "• Leading with retail management experience — matches target role", "• Converting 'helped customers' into quantified service bullets"). Shown live to the user.
-2. Then the exact line "RESULT" followed by a JSON object: {"cv": "<the complete CV as plain text>", "tips": ["<3-5 short personalized tips to strengthen this CV further>"]}
-
-No other text after the JSON.`;
-
-function extractJson(text: string): string {
-  const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  return start !== -1 && end > start ? cleaned.slice(start, end + 1) : cleaned;
-}
-
-/** Repair model JSON: escape raw control chars AND unescaped quotes inside strings.
- * A quote inside a string is treated as CLOSING only if the next non-space char
- * is a JSON structural char (, } ] :) — otherwise it's escaped as content. */
-function repairJson(s: string): string {
-  let out = "";
-  let inStr = false;
-  let esc = false;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (inStr) {
-      if (esc) { out += ch; esc = false; continue; }
-      if (ch === "\\") { out += ch; esc = true; continue; }
-      if (ch === '"') {
-        let j = i + 1;
-        while (j < s.length && (s[j] === " " || s[j] === "\n" || s[j] === "\r" || s[j] === "\t")) j++;
-        const next = s[j] ?? "";
-        if (next === "," || next === "}" || next === "]" || next === ":") {
-          inStr = false;
-          out += ch;
-        } else {
-          out += '\\"'; // interior quote — escape it
-        }
-        continue;
-      }
-      if (ch === "\n") { out += "\\n"; continue; }
-      if (ch === "\r") continue;
-      if (ch === "\t") { out += "\\t"; continue; }
-      out += ch;
-    } else {
-      if (ch === '"') inStr = true;
-      out += ch;
-    }
-  }
-  return out;
-}
-
-function parseModelJson(raw: string): Record<string, unknown> {
-  const extracted = extractJson(raw);
-  try {
-    return JSON.parse(extracted);
-  } catch {
-    return JSON.parse(repairJson(extracted));
-  }
-}
+OUTPUT FORMAT — plain text with EXACTLY these markers, in this order (NO JSON, no markdown):
+ANALYSIS
+<6-10 short bullet lines about the choices you're making, one per line. Shown live to the user.>
+FINAL_CV:
+<the complete CV as plain text>
+TIPS:
+<3-5 lines, each starting with "- ", personalized tips to strengthen this CV further. Nothing after the last tip.>`;
 
 async function streamNvidia(prompt: string, onDelta: (t: string) => void): Promise<string> {
   const key = process.env.NVIDIA_API_KEY;
@@ -128,7 +78,7 @@ async function streamNvidia(prompt: string, onDelta: (t: string) => void): Promi
       max_tokens: 3600,
       stream: true,
       messages: [
-        { role: "system", content: "You are an expert CV writer. Follow the OUTPUT FORMAT exactly: ANALYSIS bullets, then RESULT and one valid JSON object. Never include unescaped quotes inside JSON string values." },
+        { role: "system", content: "You are an expert CV writer. Follow the OUTPUT FORMAT exactly: ANALYSIS bullets, then FINAL_CV: with the plain-text CV, then TIPS: lines. Never output JSON or markdown bold." },
         { role: "user", content: prompt },
       ],
     }),
@@ -221,7 +171,7 @@ export async function POST(req: NextRequest) {
                 return;
               }
               pending += delta;
-              const cut = pending.search(/RESULT|\{/);
+              const cut = pending.search(/FINAL_CV:/);
               if (cut !== -1) {
                 const visible = pending.slice(0, cut);
                 if (visible) send({ t: "think", d: visible });
@@ -233,10 +183,12 @@ export async function POST(req: NextRequest) {
             });
 
             if (!raw.trim()) throw new Error("Empty response");
-            const parsed = parseModelJson(raw);
-            // Plain text only — strip any markdown bold the model added.
-            const cv = (typeof parsed.cv === "string" ? parsed.cv : String(parsed.cv ?? "")).replace(/\*\*/g, "");
-            const tips = Array.isArray(parsed.tips) ? parsed.tips.map(String) : [];
+            // Delimited plain-text sections — no JSON parsing left to fail.
+            const clean = raw.replace(/\*\*/g, "");
+            const cvMatch = clean.match(/FINAL_CV:\s*\n?([\s\S]*?)(?:\nTIPS:|$)/i);
+            const cv = (cvMatch?.[1] ?? "").trim();
+            const tipsBlock = clean.match(/TIPS:\s*\n?([\s\S]*)$/i)?.[1] ?? "";
+            const tips = tipsBlock.split("\n").map((l) => l.trim().replace(/^[-•*]\s*/, "")).filter((l) => l.length > 3).slice(0, 5);
             if (!cv.trim()) throw new Error("No CV in response");
             send({ t: "result", d: { cv, tips } });
             done = true;

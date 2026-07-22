@@ -182,7 +182,7 @@ export default function ArOptimizePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // «تقييم عام» يتجاهل الإعلان فعلاً — الوضع يَعِد بذلك فنلتزم به.
-        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "" }),
+        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "", uiLang: "ar" }),
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {

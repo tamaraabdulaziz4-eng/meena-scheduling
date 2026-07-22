@@ -19,11 +19,11 @@ export const maxDuration = 300;
 
 const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase();
 
-const PROMPT = (resume: string, jobDescription: string) => {
+const PROMPT = (resume: string, jobDescription: string, uiLang?: string) => {
   const hasJd = jobDescription.trim().length >= 30;
   return `You are a senior ATS (applicant tracking system) analyst and executive resume writer. ${hasJd ? "Perform a rigorous, honest analysis of this resume against this job description." : "The user provided ONLY a resume (no target job). Perform a rigorous GENERAL improvement: infer their likely target role from the resume itself and make the resume as strong as possible for that role."}
 
-LANGUAGE HANDLING: The resume or job description may be in Arabic, English, or mixed. Understand both. The optimizedResume must ALWAYS be professional ENGLISH (translate Arabic input — global ATS systems require English). If the user's resume was mostly Arabic, write matchSummary, improvements, and your ANALYSIS bullets in Arabic; otherwise in English. Keywords stay in English (that's what ATS systems match on).
+LANGUAGE HANDLING: The resume or job description may be in Arabic, English, or mixed. Understand both. The optimizedResume must ALWAYS be 100% professional ENGLISH — translate EVERYTHING including Arabic job titles and role names (never leave an Arabic word inside an English sentence). ${uiLang === "ar" ? "The user is on the ARABIC interface: write matchSummary, improvements (issue/fix), and ANALYSIS bullets in ARABIC." : "If the user's resume was mostly Arabic, write matchSummary, improvements, and ANALYSIS bullets in Arabic; otherwise in English."} Keywords stay in English (that's what ATS systems match on).
 
 RESUME:
 ${resume}
@@ -229,7 +229,8 @@ function parseModelJson(raw: string): Record<string, unknown> {
 async function streamNvidia(
   resume: string,
   jobDescription: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  uiLang?: string
 ): Promise<string> {
   const key = process.env.NVIDIA_API_KEY;
   if (!key) throw new Error("NVIDIA_API_KEY is not set");
@@ -246,7 +247,7 @@ async function streamNvidia(
       stream: true,
       messages: [
         { role: "system", content: "You are an expert ATS resume analyst. ABSOLUTE RULE: never invent any number, employer, date, degree, certification, or achievement not present in the user's input — write [add your real number] where a metric is missing. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets, then the SCORE/SUMMARY/MISSING/PRESENT/GAPS/IMPROVEMENTS/RESUME sections as plain text. Never output JSON or markdown." },
-        { role: "user", content: PROMPT(resume, jobDescription) },
+        { role: "user", content: PROMPT(resume, jobDescription, uiLang) },
       ],
     }),
   });
@@ -314,7 +315,7 @@ async function callAnthropic(resume: string, jobDescription: string): Promise<st
 
 export async function POST(req: NextRequest) {
   try {
-    const { resume, jobDescription } = await req.json();
+    const { resume, jobDescription, uiLang } = await req.json();
 
     if (!resume) {
       return NextResponse.json({ error: "Resume is required." }, { status: 400 });
@@ -387,7 +388,7 @@ export async function POST(req: NextRequest) {
             };
             const raw = await (PROVIDER === "anthropic"
               ? callAnthropic(resume, jd)
-              : streamNvidia(resume, jd, keepAlive));
+              : streamNvidia(resume, jd, keepAlive, uiLang === "ar" ? "ar" : undefined));
 
             if (!raw.trim()) throw new Error("Empty response from AI provider");
             const result = parseSections(raw);
