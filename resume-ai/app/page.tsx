@@ -343,6 +343,37 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── FAQ (with FAQPage JSON-LD for rich results) ── */}
+      <section className="px-6 py-24" style={{ borderTop: "1px solid var(--line)" }}>
+        <div className="mx-auto max-w-3xl">
+          <h2 className="mb-10 text-center text-3xl font-bold tracking-tight">Questions, answered</h2>
+          <div className="space-y-4">
+            {[
+              { q: "Is it really free?", a: "Yes — your ATS score and full analysis (missing keywords, skills gap, weak lines) are free every time, no account and no card. Only the complete rewritten resume, cover letters, and PDF export are the paid unlock (SAR 35 once or SAR 75/month)." },
+              { q: "Does the AI invent achievements to boost my score?", a: "Never. The engine is technically constrained from adding any number, employer, skill, or credential you didn't provide. Where a metric would help but you didn't give one, it writes [add your real number] for you to fill in." },
+              { q: "Do you store my resume?", a: "No. Your resume is processed instantly to generate the result and is never stored on our servers. Drafts stay in your browser only. See our privacy policy." },
+              { q: "Can I write in Arabic?", a: "Yes — write casually in Arabic and the AI produces a professional English CV (what Gulf employers and ATS systems require), while the analysis can stay in Arabic." },
+              { q: "How is this different from Jobscan or Rezi?", a: "Same ATS scoring and keyword analysis, plus a full honest rewrite — starting at a one-time SAR 35 (~$9) instead of a $30–50/month subscription, and with a no-fabrication guarantee." },
+            ].map((f) => (
+              <div key={f.q} className="card p-6">
+                <h3 className="font-bold">{f.q}</h3>
+                <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{f.a}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+          "@context": "https://schema.org", "@type": "FAQPage",
+          mainEntity: [
+            { q: "Is it really free?", a: "Your ATS score and full analysis are free every time, no card. Only the rewritten resume, cover letters, and PDF export are paid (SAR 35 once or SAR 75/month)." },
+            { q: "Does the AI invent achievements?", a: "Never — it's constrained from adding any number, employer, skill, or credential you didn't provide; missing metrics become [add your real number]." },
+            { q: "Do you store my resume?", a: "No — it's processed instantly and never stored on our servers; drafts stay in your browser only." },
+            { q: "Can I write in Arabic?", a: "Yes — write in Arabic and get a professional English CV, with the analysis in Arabic." },
+            { q: "How is this different from Jobscan or Rezi?", a: "Same ATS scoring plus a full honest rewrite, from a one-time SAR 35 instead of a monthly subscription, with a no-fabrication guarantee." },
+          ].map((f) => ({ "@type": "Question", name: f.q, acceptedAnswer: { "@type": "Answer", text: f.a } })),
+        }) }} />
+      </section>
+
       <SubscribeBox />
 
       {/* ── Footer ── */}

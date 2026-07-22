@@ -409,7 +409,12 @@ export default function OptimizePage() {
           <div>
             {/* Score banner */}
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
-              <div className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>ATS Match Score</div>
+              <div className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>
+                {result.locked && mode === "general" ? "Overall resume score" : "ATS Match Score"}
+              </div>
+              <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>
+                {mode === "target" ? "Scored against the job you pasted" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
+              </div>
               <div className="my-2 flex items-baseline justify-center gap-1">
                 <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{score}</span>
                 <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
@@ -565,6 +570,22 @@ export default function OptimizePage() {
             )}
 
             {tab === "analysis" && (
+              <div>
+              <div className="mb-4 flex justify-end">
+                <button
+                  onClick={() => {
+                    const txt = `ATS MATCH SCORE: ${result.matchScore}/100\n${result.matchSummary}\n\n` +
+                      `MISSING KEYWORDS:\n${result.missingKeywords.join(", ")}\n\n` +
+                      `PRESENT KEYWORDS:\n${result.presentKeywords.join(", ")}\n\n` +
+                      `SKILLS TO HIGHLIGHT:\n${result.skillsGap.join(", ")}\n\n` +
+                      `IMPROVEMENTS:\n${result.improvements.map((i) => `• ${i.area}: ${i.issue} → ${i.fix}`).join("\n")}`;
+                    navigator.clipboard.writeText(txt); setCopied(true); setTimeout(() => setCopied(false), 1800);
+                  }}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold"
+                  style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  {copied ? "✓ Copied" : "Copy analysis"}
+                </button>
+              </div>
               <div className="grid gap-6 md:grid-cols-2">
                 <div className="card p-6" style={{ borderColor: "rgba(248,113,113,0.2)" }}>
                   <h3 className="mb-4 font-bold">Missing keywords ({result.missingKeywords.length})</h3>
@@ -605,6 +626,7 @@ export default function OptimizePage() {
                     ))}
                   </ul>
                 </div>
+              </div>
               </div>
             )}
 

@@ -4,8 +4,10 @@
   --bg: #08090a;
   --surface: #101316;
   --fg: #f4f5f3;
-  --muted: rgba(244, 245, 243, 0.55);
-  --faint: rgba(244, 245, 243, 0.35);
+  /* Bumped for WCAG AA contrast on the dark bg (flagged in audit):
+     muted ~0.68 and faint ~0.5 clear 4.5:1 / 3:1 for text vs #08090a. */
+  --muted: rgba(244, 245, 243, 0.68);
+  --faint: rgba(244, 245, 243, 0.5);
   --line: rgba(255, 255, 255, 0.08);
   --accent: #4ade80;
   --accent-deep: #22c55e;

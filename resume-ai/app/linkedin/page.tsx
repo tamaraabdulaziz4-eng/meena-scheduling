@@ -32,7 +32,8 @@ export default function LinkedInPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
-      setResult(data);
+      if (!data.headline && !data.about) throw new Error("Couldn't optimize this time — please try again.");
+      setResult({ headline: data.headline || "", about: data.about || "", skills: Array.isArray(data.skills) ? data.skills : [], tips: Array.isArray(data.tips) ? data.tips : [] });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
