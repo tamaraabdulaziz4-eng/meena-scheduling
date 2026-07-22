@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import ScanDemo from "../components/ScanDemo";
 import CheckoutButton from "../components/CheckoutButton";
+import LiveTicker from "../components/LiveTicker";
+import AtsMarquee from "../components/AtsMarquee";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
@@ -65,12 +67,18 @@ export default function ArabicHome() {
               <span>✓ النتيجة في ٦٠ ثانية</span>
               <span>✓ من ٣٥ ريال بدون اشتراك</span>
             </div>
+            <div className="mt-6">
+              <LiveTicker ar />
+            </div>
           </div>
           <div className="lg:pr-8" dir="ltr">
             <ScanDemo />
           </div>
         </div>
       </section>
+
+      {/* ATS marquee */}
+      <AtsMarquee label="مصمّمة لتجاوز كل أنظمة التوظيف الرئيسية" />
 
       {/* How it works */}
       <section className="mx-auto max-w-5xl px-6 py-24">

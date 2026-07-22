@@ -4,6 +4,8 @@ import CheckoutButton from "./components/CheckoutButton";
 import Reveal from "./components/Reveal";
 import Counter from "./components/Counter";
 import NavAccountLink from "./components/NavAccountLink";
+import LiveTicker from "./components/LiveTicker";
+import AtsMarquee from "./components/AtsMarquee";
 
 export default function Home() {
   return (
@@ -59,7 +61,10 @@ export default function Home() {
             <div className="mt-7 flex items-center gap-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ No sign-up</span>
               <span>✓ 60-second result</span>
-              <span>✓ From $9, no subscription</span>
+              <span>✓ From SAR 35, no subscription</span>
+            </div>
+            <div className="mt-6">
+              <LiveTicker />
             </div>
           </div>
 
@@ -86,6 +91,9 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      {/* ── ATS systems marquee ── */}
+      <AtsMarquee label="Engineered to pass every major applicant tracking system" />
 
       {/* ── How it works ── */}
       <section className="mx-auto max-w-5xl px-6 py-24">

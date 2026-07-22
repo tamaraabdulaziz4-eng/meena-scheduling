@@ -131,6 +131,29 @@ body {
   .orb-c { width: 240px; height: 240px; }
 }
 
+/* ── Infinite logo marquee (ATS systems we beat) ── */
+.marquee {
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  gap: 3.5rem;
+  padding-inline: 1.75rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .marquee-track { animation: marqueeScroll 32s linear infinite; }
+  .marquee:hover .marquee-track { animation-play-state: paused; }
+}
+@keyframes marqueeScroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+[dir="rtl"] .marquee-track { direction: ltr; }
+
 /* Cinematic film-grain overlay — makes the flat dark background read as premium.
    A single fixed layer of SVG turbulence noise at very low opacity. */
 .grain-overlay {
