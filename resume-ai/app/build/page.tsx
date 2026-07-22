@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
 import PublishLink from "../components/PublishLink";
+import { saveResume } from "../lib/localdata";
 
 interface Exp {
   role: string;
@@ -151,7 +152,10 @@ export default function BuildPage() {
       setCv(got.cv);
       setTips(got.tips);
       // Keep the draft (enables "edit answers & regenerate"); persist the result.
-      try { localStorage.setItem("ra_build_result", JSON.stringify({ cv: got.cv, tips: got.tips })); } catch { /* noop */ }
+      try {
+        localStorage.setItem("ra_build_result", JSON.stringify({ cv: got.cv, tips: got.tips }));
+        saveResume({ title: `${name || "My CV"} — ${targetRole || "Built"}`, source: "built", text: got.cv });
+      } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {

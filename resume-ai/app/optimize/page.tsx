@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
 import AuthNav from "../components/AuthNav";
+import { addScan, saveResume } from "../lib/localdata";
 
 interface OptimizeResult {
   matchScore: number;
@@ -232,6 +233,19 @@ export default function OptimizePage() {
       if (!got) throw new Error("The analysis didn't complete. Please try again.");
       setResult(got);
       setTab("resume");
+      // Record in device-local history (account page lists these).
+      try {
+        addScan({
+          score: got.matchScore,
+          mode,
+          jobTitle: mode === "target" ? (jobDescription.split("\n")[0].slice(0, 80) || "Targeted scan") : "General review",
+          lang: "en",
+          result: got,
+        });
+        if (!got.locked && got.optimizedResume) {
+          saveResume({ title: `Optimized — ${new Date().toLocaleDateString()}`, source: "optimized", text: got.optimizedResume });
+        }
+      } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {

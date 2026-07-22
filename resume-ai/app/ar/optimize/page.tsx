@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
 import AuthNav from "../../components/AuthNav";
+import { addScan, saveResume } from "../../lib/localdata";
 
 interface OptimizeResult {
   matchScore: number;
@@ -212,6 +213,18 @@ export default function ArOptimizePage() {
       }
       if (!got) throw new Error("لم يكتمل التحليل — حاول مرة أخرى.");
       setResult(got);
+      try {
+        addScan({
+          score: got.matchScore,
+          mode,
+          jobTitle: mode === "target" ? (jobDescription.split("\n")[0].slice(0, 80) || "فحص مخصص") : "تقييم عام",
+          lang: "ar",
+          result: got,
+        });
+        if (!got.locked && got.optimizedResume) {
+          saveResume({ title: `محسّنة — ${new Date().toLocaleDateString("ar-SA")}`, source: "optimized", text: got.optimizedResume });
+        }
+      } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ، حاول مرة أخرى.");
     } finally {

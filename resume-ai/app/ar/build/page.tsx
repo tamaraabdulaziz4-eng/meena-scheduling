@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
 import PublishLink from "../../components/PublishLink";
+import { saveResume } from "../../lib/localdata";
 
 interface Exp {
   role: string;
@@ -134,7 +135,10 @@ export default function ArBuildPage() {
       if (!got) throw new Error("لم يكتمل الإنشاء — حاول مرة أخرى.");
       setCv(got.cv);
       setTips(got.tips);
-      try { localStorage.setItem("ra_ar_build_result", JSON.stringify({ cv: got.cv, tips: got.tips })); } catch { /* noop */ }
+      try {
+        localStorage.setItem("ra_ar_build_result", JSON.stringify({ cv: got.cv, tips: got.tips }));
+        saveResume({ title: `${name || "سيرتي"} — ${targetRole || "مبنية"}`, source: "built", text: got.cv });
+      } catch { /* noop */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ.");
     } finally {
