@@ -47,7 +47,7 @@ export default function ScoreOrb({
         <AiOrb
           size={size * 0.62}
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-          style={{ ["--c1" as string]: color, ["--c2" as string]: color, ["--atmo-o" as string]: "0.6" }}
+          style={{ ["--light" as string]: color, ["--bloom-o" as string]: "0.65" }}
         />
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="relative">
           <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} />

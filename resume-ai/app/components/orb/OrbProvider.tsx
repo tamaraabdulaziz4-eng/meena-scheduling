@@ -11,7 +11,7 @@
  * score → golden → success → library → gate → lost — one living entity.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring } from "framer-motion";
 import AiOrb, { type OrbState } from "../AiOrb";
 
 export interface OrbScene {
@@ -52,6 +52,14 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
   }, []);
   const ctx = useMemo(() => ({ setScene }), [setScene]);
 
+  // The orb PHYSICALLY grows/shrinks between scenes (hero 380px ↔ mini 44px)
+  // — a spring on the size itself, not an instant jump. Signature move.
+  const sizeMv = useMotionValue(scene.size);
+  const sizeSpring = useSpring(sizeMv, { stiffness: 110, damping: 17 });
+  const [displaySize, setDisplaySize] = useState(scene.size);
+  useEffect(() => { sizeMv.set(scene.size); }, [scene.size, sizeMv]);
+  useMotionValueEvent(sizeSpring, "change", (v) => setDisplaySize(Math.round(v)));
+
   const ring = 2 * Math.PI * 44;
 
   return (
@@ -65,10 +73,10 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
           animate={{ top: scene.top, x: "-50%", opacity: 1 }}
           transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 18 }}
         >
-          <div className={`relative flex items-center justify-center ${scene.radio ? "radio-pulse" : ""}`} style={{ width: scene.size, height: scene.size }}>
+          <div className={`relative flex items-center justify-center ${scene.radio ? "radio-pulse" : ""}`} style={{ width: displaySize, height: displaySize }}>
             {scene.rings && !reduce && (<><span className="pulse-ring r1" /><span className="pulse-ring r2" /><span className="pulse-ring r3" /><span className="pulse-ring r4" /></>)}
             {scene.progress > 0 && (
-              <svg className="absolute" width={scene.size + 16} height={scene.size + 16} style={{ transform: "rotate(-90deg)" }}>
+              <svg className="absolute" width={displaySize + 16} height={displaySize + 16} style={{ transform: "rotate(-90deg)" }}>
                 <defs>
                   <linearGradient id="orbProgressGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stopColor="#8b5cf6" />
@@ -76,12 +84,12 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
                     <stop offset="100%" stopColor="#f59e0b" />
                   </linearGradient>
                 </defs>
-                <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
-                <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="url(#orbProgressGrad)" strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - scene.progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
+                <circle cx={(displaySize + 16) / 2} cy={(displaySize + 16) / 2} r="44" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+                <circle cx={(displaySize + 16) / 2} cy={(displaySize + 16) / 2} r="44" fill="none" stroke="url(#orbProgressGrad)" strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - scene.progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
               </svg>
             )}
-            <AiOrb size={scene.size} state={scene.mood} />
-            {scene.badge && <span className="absolute" style={{ fontSize: scene.size * 0.3 }}>{scene.badge}</span>}
+            <AiOrb size={displaySize} state={scene.mood} />
+            {scene.badge && <span className="absolute" style={{ fontSize: displaySize * 0.3 }}>{scene.badge}</span>}
           </div>
         </motion.div>
       )}

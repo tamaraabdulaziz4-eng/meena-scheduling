@@ -512,7 +512,13 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   const lastAi = msgs.length && msgs[msgs.length - 1].who === "ai" ? msgs[msgs.length - 1].text : "";
   const inputActive = stage === "greeting" || stage === "conversation";
   const showGoal = goalMode;
-  const orbSize = stage === "greeting" ? (typeof window !== "undefined" && window.innerWidth < 640 ? 150 : 200) : stage === "thinking" ? 190 : stage === "weaving" ? 44 : 72;
+  // ECLIPSE hero: the orb DOMINATES the greeting (root-cause fix — a presence
+  // can't be a 200px marble lost in a black void). Desktop ~380px, mobile 62vw.
+  const orbSize = stage === "greeting"
+    ? (typeof window !== "undefined" && window.innerWidth < 640 ? Math.round(Math.min(window.innerWidth * 0.62, 300)) : 380)
+    : stage === "thinking" ? 230 : stage === "weaving" ? 44 : 72;
+  const orbTop = stage === "greeting" ? "11vh" : stage === "thinking" ? "30vh" : stage === "weaving" ? "84px" : "78px";
+  const greetTextTop = `calc(11vh + ${orbSize + 72}px)`;
 
   // Delegate to رابط, the one global orb: it flies to each stage and carries
   // the progress ring / pulse rings. Hidden at the reveal (retires to the
@@ -520,15 +526,15 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   useOrbScene(
     stage === "reveal"
       ? { visible: false }
-      : { visible: true, top: stage === "greeting" ? "15vh" : stage === "thinking" ? "32vh" : stage === "weaving" ? "84px" : "78px", size: orbSize, mood: stage === "thinking" ? "thinking" : micOn ? "listening" : "idle", progress: stage === "conversation" ? progress : 0, rings: stage === "thinking", badge: null, radio: false, z: 30 },
+      : { visible: true, top: orbTop, size: orbSize, mood: stage === "thinking" ? "thinking" : micOn ? "listening" : "idle", progress: stage === "conversation" ? progress : 0, rings: stage === "thinking", badge: null, radio: false, z: 30 },
     [stage, orbSize, micOn, progress]
   );
 
   /* ══════════════════ render ══════════════════ */
   return (
     <div dir={rtl ? "rtl" : "ltr"} className="relative min-h-screen overflow-hidden" style={{ background: stage === "reveal" ? "var(--glass-bg)" : "var(--cosmos-bg)", color: stage === "reveal" ? "var(--glass-text)" : "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
-      {/* faint aurora behind the orb (greeting only, 30%) */}
-      {stage === "greeting" && <div className="aurora-bg" aria-hidden style={{ opacity: 0.3 }} />}
+      {/* the world's light — a silver bloom behind the orb + vignette edges */}
+      {stage !== "reveal" && <div className="stage-bloom" aria-hidden />}
 
       {/* SEO headline — visually hidden but crawlable */}
       <h1 className="sr-only">{t.seo_h1}. {t.seo_sub}</h1>
@@ -536,12 +542,13 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       {/* nav */}
       <nav className="relative z-40 mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>R</div>
+          {/* the brand IS the orb — no colored box */}
+          <AiOrb size={24} />
           <span className="text-[15px] font-bold tracking-tight" style={{ color: stage === "reveal" ? "var(--glass-text)" : "#f4f5f3" }}>ResumeAI</span>
         </div>
         <div className="flex items-center gap-1">
           <Link href={t.optimize_href} className="hidden min-h-11 items-center px-3 text-sm font-semibold sm:flex" style={{ color: stage === "reveal" ? "var(--glass-muted)" : "rgba(244,245,243,0.6)" }}>{t.escape}</Link>
-          <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: ACCENT }}>{rtl ? "English" : "عربي"}</Link>
+          <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: "rgba(232,236,245,0.75)" }}>{rtl ? "English" : "عربي"}</Link>
         </div>
       </nav>
 
@@ -549,9 +556,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       <AnimatePresence>
         {stage === "greeting" && !welcomeBack && (
           <motion.div key="greet" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center px-6 text-center" style={{ top: "44vh" }}>
-            <p className="font-extrabold" style={{ fontSize: "clamp(2rem, 7vw, 3.6rem)", lineHeight: 1.15 }}>{typedGreet}<span className="animate-pulse" style={{ color: ACCENT }}>▌</span></p>
-            <p className="mt-4 max-w-md text-base" style={{ color: "var(--cosmos-muted)", lineHeight: 1.8 }}>{t.greet_sub}</p>
+            className="pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center px-6 text-center" style={{ top: greetTextTop }}>
+            <p className="font-extrabold" style={{ fontSize: "clamp(1.9rem, 6vw, 3.4rem)", lineHeight: 1.18, letterSpacing: "-0.015em" }}>{typedGreet}<span className="animate-pulse" style={{ color: ACCENT }}>▌</span></p>
+            <p className="mt-4 max-w-md text-base" style={{ color: "var(--cosmos-muted)", lineHeight: 1.9 }}>{t.greet_sub}</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -573,7 +580,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           <div ref={chatRef} className="space-y-3 overflow-y-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
             {msgs.slice(0, -1).map((m, i) => (
               <div key={i} className={`flex ${m.who === "user" ? (rtl ? "justify-start" : "justify-end") : rtl ? "justify-end" : "justify-start"}`}>
-                <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px]" dir="auto" style={m.who === "user" ? { background: "rgba(34,197,94,0.16)", lineHeight: 1.8 } : { background: "rgba(255,255,255,0.06)", lineHeight: 1.8 }}>{m.text}</div>
+                <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px]" dir="auto" style={m.who === "user" ? { background: "rgba(139,92,246,0.18)", lineHeight: 1.8 } : { background: "rgba(255,255,255,0.06)", lineHeight: 1.8 }}>{m.text}</div>
               </div>
             ))}
           </div>
@@ -646,7 +653,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             {micSupported && !pasteMode && (
               <button onClick={toggleMic} title={t.mic_title} aria-label={t.mic_title} className="grid h-11 w-11 place-items-center rounded-xl text-lg" style={micOn ? { background: ACCENT, color: "#ffffff" } : { border: "1px solid rgba(255,255,255,0.2)" }}>🎙</button>
             )}
-            <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold disabled:opacity-30" style={{ background: ACCENT, color: "#ffffff" }}>↑</button>
+            <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold disabled:opacity-30" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)", color: "#ffffff" }}>↑</button>
           </div>
           {stage === "greeting" && (
             <div className="mt-2 flex justify-center gap-4 text-xs">

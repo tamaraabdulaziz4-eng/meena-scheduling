@@ -1,18 +1,31 @@
 "use client";
 
 /**
- * رابط — THE LIVING AURORA SPHERE (v3).
- * One entity, five organs: atmosphere (halo) · sphere body · twin aurora
- * currents · hot core · eclipse rim. Moods re-tune the same body via CSS
- * custom properties — it never becomes a different object, it *feels*
- * different. Pure CSS (see .ai-orb in globals.css) — no WebGL, no deps.
- *
- * Drop it next to anything the AI touches so the whole site reads as one
- * living assistant wired into every line.
+ * رابط — ECLIPSE (v4). A monochrome light phenomenon, not a colored marble:
+ * a black moon core · a rotating silver corona crescent · a field of
+ * particles · two tilted metallic halo rings · a soft bloom spilling into
+ * the room. Default identity = silver/white on black (harmony through
+ * restraint). Moods tint the LIGHT only at charged moments — thinking
+ * burns violet, payment turns gold, success flashes green. Same body,
+ * different light. Pure CSS + one inline SVG — no WebGL, no deps.
  */
 import type { CSSProperties } from "react";
 
 export type OrbState = "idle" | "listening" | "thinking" | "talking" | "golden" | "locked" | "done" | "lost";
+
+/* Deterministic particle field — golden-angle scatter in a disc band around
+   the core (between the halo rings). Generated once, scaled by the orb box. */
+const DOTS = Array.from({ length: 120 }, (_, i) => {
+  const angle = i * 2.39996; // golden angle
+  const band = 0.62 + 0.36 * ((i * 0.7301) % 1); // radius 0.62–0.98 of half-box
+  const r = band * 100;
+  return {
+    x: 100 + Math.cos(angle) * r,
+    y: 100 + Math.sin(angle) * r * 0.92, // slight vertical squash → depth
+    d: 0.45 + ((i * 0.37) % 1) * 0.55,
+    o: 0.10 + ((i * 0.517) % 1) * 0.45,
+  };
+});
 
 export default function AiOrb({
   size = 40,
@@ -31,16 +44,21 @@ export default function AiOrb({
   return (
     <span
       aria-hidden
-      className={`ai-orb ${mode !== "idle" ? mode : ""} ${className}`}
+      className={`ai-orb ${mode !== "idle" ? mode : ""} ${size < 100 ? "mini" : ""} ${className}`}
       style={{ ["--orb-size" as string]: `${size}px`, ...style }}
     >
-      <span className="orb-atmo" />
+      <span className="orb-bloom" />
+      <svg className="orb-field" viewBox="0 0 200 200" aria-hidden>
+        {DOTS.map((p, i) => (
+          <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={p.d.toFixed(2)} fill="currentColor" opacity={p.o.toFixed(2)} />
+        ))}
+      </svg>
+      <span className="orb-halo r1" />
+      <span className="orb-halo r2" />
       <span className="orb-sphere">
-        <span className="orb-aur a" />
-        <span className="orb-aur b" />
         <span className="orb-core" />
-        <span className="orb-rim" />
-        <span className="orb-sheen" />
+        <span className="orb-corona" />
+        <span className="orb-floorlight" />
       </span>
     </span>
   );
