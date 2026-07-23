@@ -37,6 +37,11 @@ export default function InterviewLivePage() {
   const streamRef = useRef<MediaStream | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recogRef = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  function getAudio() {
+    if (!audioRef.current) { audioRef.current = new Audio(); audioRef.current.preload = "auto"; }
+    return audioRef.current;
+  }
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,19 +60,23 @@ export default function InterviewLivePage() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     try { recogRef.current?.stop(); } catch { /* noop */ }
+    try { audioRef.current?.pause(); window.speechSynthesis?.cancel(); } catch { /* noop */ }
   }
 
   // Mobile browsers require a user gesture to unlock speech + the Arabic voice
   // must be selected explicitly (lang="ar-SA" alone is often silent). Call once
   // synchronously inside a click (start / replay) to unlock, then speaks work.
   function unlockTts() {
+    // Unlock BOTH the HTML5 <audio> element (for the natural Azure voice) and
+    // speechSynthesis (fallback) — mobile blocks both without a user gesture.
+    try {
+      const a = getAudio();
+      a.muted = true;
+      a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; });
+    } catch { /* noop */ }
     try {
       const synth = window.speechSynthesis;
-      if (!synth) return;
-      synth.getVoices(); // kick voice loading
-      const u = new SpeechSynthesisUtterance(" ");
-      u.volume = 0;
-      synth.speak(u);
+      if (synth) { synth.getVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); }
     } catch { /* noop */ }
   }
 
@@ -83,7 +92,26 @@ export default function InterviewLivePage() {
     );
   }
 
-  function speak(text: string) {
+  // Play the natural Azure voice; fall back to the browser voice on any failure.
+  async function speak(text: string) {
+    try {
+      const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      if (!res.ok) throw new Error("tts");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = getAudio();
+      try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
+      a.src = url;
+      a.onplay = () => setAiSpeaking(true);
+      a.onended = () => { setAiSpeaking(false); URL.revokeObjectURL(url); };
+      a.onerror = () => { setAiSpeaking(false); browserSpeak(text); };
+      await a.play();
+    } catch {
+      browserSpeak(text);
+    }
+  }
+
+  function browserSpeak(text: string) {
     const synth = window.speechSynthesis;
     if (!synth) { setVoiceOff(true); return; }
     try {
@@ -151,6 +179,7 @@ export default function InterviewLivePage() {
     setTranscript("");
     setPhase("recording");
     window.speechSynthesis?.cancel();
+    try { audioRef.current?.pause(); } catch { /* noop */ }
     setAiSpeaking(false);
     if (!micSupported) return; // typed fallback only
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
