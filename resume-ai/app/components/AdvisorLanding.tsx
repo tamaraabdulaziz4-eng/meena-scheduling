@@ -316,7 +316,11 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     const newLines = Array.isArray(data.resume_lines) ? data.resume_lines.map(String).filter(Boolean) : [];
     if (newLines.length) merged.wovenLines.push(...newLines);
     setProfile(merged);
-    if (typeof data.progress === "number") setProgress(Math.max(progress, Math.min(100, data.progress)));
+    if (typeof data.progress === "number") {
+      // Models sometimes return a 0–1 fraction instead of 0–100 — normalize.
+      const pv = data.progress > 0 && data.progress <= 1 ? data.progress * 100 : data.progress;
+      setProgress((prev) => Math.max(prev, Math.min(100, Math.round(pv))));
+    }
     setChips(Array.isArray(data.chips) ? data.chips.slice(0, 4) : []);
     const say = String(data.say || "").trim();
     const nextMsgs = say ? [...msgs, { who: "ai" as const, text: say }] : msgs;
