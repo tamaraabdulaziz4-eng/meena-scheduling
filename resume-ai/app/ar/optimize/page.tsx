@@ -553,6 +553,17 @@ export default function ArOptimizePage() {
           </div>
         )}
       </div>
+
+      {/* زر متابعة ثابت على الجوال — أغلب الزوار من الجوال، فالزر لازم يظل بمتناول اليد */}
+      {!result && !loading && resume.trim().length >= 50 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t p-3 sm:hidden"
+          style={{ background: "rgba(8,9,10,0.95)", borderColor: "var(--line)", backdropFilter: "blur(8px)" }}>
+          <button type="button" onClick={() => { runScan(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+            className="btn-accent w-full py-3.5 text-base font-bold">
+            ⚡ متابعة — حلّل سيرتي
+          </button>
+        </div>
+      )}
     </main>
   );
 }

@@ -30,6 +30,20 @@ function wmTxt(text: string): string {
   return `${line}\n\n${text}\n\n${line}`;
 }
 
+// Quick, local read of what we pulled out of an uploaded file so the user can
+// confirm the extraction BEFORE analysis (bad OCR shouldn't be blamed on the AI).
+function analyzeExtraction(text: string): { name: string; expCount: number; skillsCount: number; lang: "ar" | "en"; looksScanned: boolean } {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const name = lines[0]?.slice(0, 40) || "—";
+  const arChars = (text.match(/[؀-ۿ]/g) || []).length;
+  const lang = arChars > text.replace(/\s/g, "").length * 0.3 ? "ar" : "en";
+  const expCount = (text.match(/\b(19|20)\d{2}\b|present|current|الآن|حالي/gi) || []).length;
+  const skillsCount = text.split(/[,،\n•\-]/).filter((s) => s.trim().length > 1 && s.trim().length < 30).length;
+  // Very little text out of a real file usually means a scanned image / bad parse.
+  const looksScanned = text.replace(/\s/g, "").length < 120;
+  return { name, expCount: Math.min(expCount, 20), skillsCount: Math.min(skillsCount, 40), lang, looksScanned };
+}
+
 // Use the candidate's name (first real line of the resume) as the saved title
 // instead of a generic "Optimized — date". Falls back to a dated label.
 function guessResumeTitle(resume: string): string {
@@ -62,6 +76,7 @@ export default function OptimizePage() {
   const [copied, setCopied] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState("");
+  const [extraction, setExtraction] = useState<ReturnType<typeof analyzeExtraction> | null>(null);
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
@@ -168,6 +183,7 @@ export default function OptimizePage() {
       if (!res.ok) throw new Error(data.error || "Failed to read file");
       setResume(data.text);
       setUploadedName(file.name);
+      setExtraction(analyzeExtraction(data.text));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to read file.");
     } finally {
@@ -425,6 +441,23 @@ export default function OptimizePage() {
               <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>
                 {resume.length}/8000{resume.length >= 8000 ? " — limit reached" : resume.length > 7500 ? " — approaching limit" : ""}
               </p>
+              {/* Extraction review — confirm what we pulled from the file so bad
+                  OCR / multi-column parsing isn't mistaken for a bad AI result. */}
+              {extraction && uploadedName && (
+                <div className="mt-3 rounded-xl p-4" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  <div className="mb-2 text-sm font-bold" style={{ color: "var(--accent)" }}>✓ Here's what we read — check it before scanning</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4" style={{ color: "var(--muted)" }}>
+                    <div><span style={{ color: "var(--faint)" }}>Name</span><br /><strong>{extraction.name}</strong></div>
+                    <div><span style={{ color: "var(--faint)" }}>Dated entries</span><br /><strong>{extraction.expCount}</strong></div>
+                    <div><span style={{ color: "var(--faint)" }}>Skill items</span><br /><strong>{extraction.skillsCount}</strong></div>
+                    <div><span style={{ color: "var(--faint)" }}>Language</span><br /><strong>{extraction.lang === "ar" ? "Arabic" : "English"}</strong></div>
+                  </div>
+                  {extraction.looksScanned && (
+                    <div className="mt-2 text-xs font-semibold" style={{ color: "#fbbf24" }}>⚠️ This looks like a scanned image — very little text was read. Some info may be missing; paste the text manually for best results.</div>
+                  )}
+                  <div className="mt-2 text-[11px]" style={{ color: "var(--faint)" }}>Not right? Edit the text above or re-upload before you scan.</div>
+                </div>
+              )}
               <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--faint)" }}>
                 🔒 Your resume is processed instantly and <strong>never stored on our servers</strong> — drafts stay on your device only. Nothing is used for AI training. By scanning you agree to the{" "}
                 <Link href="/privacy" className="underline" style={{ color: "var(--muted)" }}>privacy policy</Link> &amp;{" "}
@@ -776,6 +809,18 @@ export default function OptimizePage() {
           </div>
         )}
       </div>
+
+      {/* Mobile sticky CTA — keeps "analyze" reachable once there's enough text,
+          instead of buried far below the keyboard on a long textarea. */}
+      {!result && !loading && resume.trim().length >= 50 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t p-3 sm:hidden"
+          style={{ background: "rgba(8,9,10,0.95)", borderColor: "var(--line)", backdropFilter: "blur(8px)" }}>
+          <button type="button" onClick={() => { runScan(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+            className="btn-accent w-full py-3.5 text-base font-bold">
+            ⚡ Continue — analyze my resume
+          </button>
+        </div>
+      )}
     </main>
   );
 }
