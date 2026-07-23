@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { allow, clientIp } from "@/app/lib/ratelimit";
+import { verifyPass, ACCESS_COOKIE } from "@/app/lib/access";
+import { readSession, SESSION_COOKIE } from "@/app/lib/session";
+import { hasActiveEntitlement } from "@/app/lib/entitlements";
 
 export const maxDuration = 60;
+
+/** The live interview is a PAID feature — a signed-in account with an active
+ *  entitlement, or a valid paid device pass on this browser. */
+async function isPaid(req: NextRequest): Promise<boolean> {
+  const email = readSession(req.cookies.get(SESSION_COOKIE)?.value, Date.now());
+  if (email && (await hasActiveEntitlement(email, Date.now()))) return true;
+  return !!verifyPass(req.cookies.get(ACCESS_COOKIE)?.value, Date.now());
+}
 
 /**
  * Live AI mock-interview engine.
@@ -88,6 +99,17 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const mode = String(body.mode || "");
     const uiLang = body.uiLang === "ar" ? "ar" : "en";
+
+    // Paid feature — block free users so the client shows the AI-spoken paywall.
+    if (!(await isPaid(req))) {
+      return NextResponse.json({
+        paywall: true,
+        spoken: uiLang === "ar"
+          ? "أهلاً بك! المقابلة التفاعلية المباشرة ميزة في الحزمة الكاملة، وباقتك الحالية لا تدعمها. افتح الحزمة الكاملة الآن ونبدأ مقابلتك فوراً."
+          : "Welcome! The live interactive interview is part of the Complete Pack, and your current plan doesn't include it. Unlock the Complete Pack and we'll start right away.",
+        error: uiLang === "ar" ? "المقابلة التفاعلية ميزة مدفوعة." : "The live interview is a paid feature.",
+      }, { status: 402 });
+    }
 
     if (mode === "questions") {
       const resume = String(body.resume || "").slice(0, 6000);

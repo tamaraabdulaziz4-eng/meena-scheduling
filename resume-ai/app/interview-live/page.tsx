@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import InterviewerAvatar from "../components/InterviewerAvatar";
+import CheckoutButton from "../components/CheckoutButton";
 
 /**
  * AI video mock-interview: the candidate sits on camera, the AI asks real
@@ -12,7 +13,7 @@ import InterviewerAvatar from "../components/InterviewerAvatar";
  */
 
 interface Feedback { score: number; strengths: string; improve: string; model: string; }
-type Phase = "setup" | "asking" | "recording" | "grading" | "review" | "done";
+type Phase = "setup" | "paywall" | "asking" | "recording" | "grading" | "review" | "done";
 
 const inputStyle = { background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" };
 
@@ -29,6 +30,7 @@ export default function InterviewLivePage() {
   const [busy, setBusy] = useState(false);
   const [micSupported, setMicSupported] = useState(true);
   const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [paywallMsg, setPaywallMsg] = useState("");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -67,17 +69,26 @@ export default function InterviewLivePage() {
     if (resume.trim().length < 30) { setError("أضِف نبذة أطول عن خبرتك أولاً."); return; }
     setBusy(true);
     try {
-      // Camera + mic
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
-      // Questions
+      // Check access + generate questions BEFORE asking for the camera — a free
+      // user should hit the AI-spoken paywall, not a camera prompt.
       const res = await fetch("/api/interview-live", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "questions", resume, role, uiLang: "ar" }),
       });
       const d = await res.json();
+      // Paid feature: the interviewer SPEAKS the paywall line, then offers checkout.
+      if (res.status === 402 || d.paywall) {
+        setPaywallMsg(d.spoken || "المقابلة التفاعلية ميزة في الحزمة الكاملة — افتحها لنبدأ.");
+        setPhase("paywall");
+        setTimeout(() => speak(d.spoken || "المقابلة التفاعلية ميزة في الحزمة الكاملة. افتح الحزمة الكاملة لنبدأ."), 400);
+        setBusy(false);
+        return;
+      }
       if (!res.ok || !Array.isArray(d.questions) || !d.questions.length) throw new Error(d.error || "تعذّر توليد الأسئلة");
+      // Paid → now request the camera and begin.
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
       setQuestions(d.questions);
       setIdx(0);
       askQuestion(d.questions[0]);
@@ -200,6 +211,27 @@ export default function InterviewLivePage() {
               {!micSupported && <p className="text-center text-xs" style={{ color: "var(--faint)" }}>التفريغ الصوتي غير مدعوم في متصفحك — تقدر تكتب إجابتك يدوياً.</p>}
             </div>
           </>
+        )}
+
+        {phase === "paywall" && (
+          <div className="text-center">
+            <div className="mx-auto mb-4 h-44 w-44"><InterviewerAvatar speaking={aiSpeaking} label="المُقابِل" /></div>
+            <div className="card mx-auto max-w-lg p-7" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+              <div className="chip mb-3">🔒 ميزة الحزمة الكاملة</div>
+              <p className="text-lg font-bold leading-relaxed">{paywallMsg}</p>
+              <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                المقابلة التفاعلية بالفيديو: مُقابِل ذكي يسألك، تجاوب على الكاميرا، وتقييم فوري لكل إجابة — ضمن الحزمة الكاملة (السيرة + خطاب التعريف + لينكدإن + المقابلة).
+              </p>
+              <div className="mx-auto mt-5 max-w-xs space-y-3">
+                <CheckoutButton ar plan="complete" label="افتح الحزمة الكاملة — ٩٩ ريالاً" variant="accent" />
+                <CheckoutButton ar plan="single" label="أو تحسين سيرة واحدة — ٣٥ ريالاً" variant="ghost" />
+              </div>
+              <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
+                <a href="/terms" className="underline underline-offset-2">ضمان استرجاع خلال ٧ أيام</a>
+              </p>
+              <button onClick={() => speak(paywallMsg)} className="mt-3 block w-full text-xs" style={{ color: "var(--faint)" }}>🔊 أعد سماع المُقابِل</button>
+            </div>
+          </div>
         )}
 
         {phase !== "setup" && phase !== "done" && (
