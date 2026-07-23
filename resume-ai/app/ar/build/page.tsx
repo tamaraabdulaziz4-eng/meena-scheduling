@@ -6,6 +6,8 @@ import DocxExport from "../../components/DocxExport";
 import ResumeTemplate from "../../components/ResumeTemplate";
 import PublishLink from "../../components/PublishLink";
 import { saveResume } from "../../lib/localdata";
+import AiSuggest from "../../components/AiSuggest";
+import AiOrb from "../../components/AiOrb";
 
 interface Exp {
   role: string;
@@ -240,6 +242,7 @@ export default function ArBuildPage() {
                       <textarea value={e.duties} onChange={(ev) => setExp(i, "duties", ev.target.value)} rows={3}
                         placeholder="مثال: كنت أخدم العملاء وأرد على الشكاوى، دربت موظفين جدد، المبيعات ارتفعت وأنا موجود..."
                         className="w-full resize-none rounded-lg px-3 py-2 text-sm focus:outline-none" style={inputStyle} />
+                      <AiSuggest kind="duties" lang="ar" targetRole={targetRole} role={e.role} company={e.company} value={e.duties} onWrite={(txt) => setExp(i, "duties", txt)} />
                       {exps.length > 1 && (
                         <button onClick={() => setExps((p) => p.filter((_, j) => j !== i))} className="text-xs" style={{ color: "#f87171" }}>حذف</button>
                       )}
@@ -260,16 +263,19 @@ export default function ArBuildPage() {
                     <label className="mb-2 block text-xs font-semibold" style={{ color: "var(--faint)" }}>التعليم</label>
                     <textarea value={education} onChange={(e) => setEducation(e.target.value)} rows={2}
                       placeholder="مثال: بكالوريوس علوم حاسب، جامعة الملك سعود، ٢٠٢٢" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <AiSuggest kind="education" lang="ar" targetRole={targetRole} value={education} onWrite={setEducation} />
                   </div>
                   <div>
                     <label className="mb-2 block text-xs font-semibold" style={{ color: "var(--faint)" }}>مهاراتك (اكتبها بأي ترتيب)</label>
                     <textarea value={skills} onChange={(e) => setSkills(e.target.value)} rows={2}
                       placeholder="مثال: إكسل، خدمة عملاء، بايثون، عمل جماعي، عربي وإنجليزي" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <AiSuggest kind="skills" lang="ar" targetRole={targetRole} value={skills} onWrite={setSkills} />
                   </div>
                   <div>
                     <label className="mb-2 block text-xs font-semibold" style={{ color: "var(--faint)" }}>شهادات، لغات، مشاريع (اختياري)</label>
                     <textarea value={extras} onChange={(e) => setExtras(e.target.value)} rows={2}
                       placeholder="مثال: شهادة PMP، آيلتس ٧، سويت متجر إلكتروني صغير" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <AiSuggest kind="extras" lang="ar" targetRole={targetRole} value={extras} onWrite={setExtras} />
                   </div>
                 </>
               )}
@@ -304,7 +310,7 @@ export default function ArBuildPage() {
         {loading && (
           <div className="card overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
             <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+              <AiOrb size={22} thinking />
               <span className="font-mono text-xs tracking-wider" style={{ color: "var(--accent)" }}>الذكاء الاصطناعي يكتب سيرتك — مباشرة</span>
             </div>
             <div ref={thinkRef} className="max-h-72 min-h-24 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>

@@ -6,6 +6,8 @@ import DocxExport from "../components/DocxExport";
 import ResumeTemplate from "../components/ResumeTemplate";
 import PublishLink from "../components/PublishLink";
 import { saveResume } from "../lib/localdata";
+import AiSuggest from "../components/AiSuggest";
+import AiOrb from "../components/AiOrb";
 
 interface Exp {
   role: string;
@@ -268,6 +270,7 @@ export default function BuildPage() {
                       <textarea value={e.duties} onChange={(ev) => setExp(i, "duties", ev.target.value)} rows={3}
                         placeholder="What did you do? e.g. 'I handled customer complaints, trained 3 new staff, sales went up while I was there...'"
                         className="w-full resize-none rounded-lg px-3 py-2 text-sm focus:outline-none" style={inputStyle} />
+                      <AiSuggest kind="duties" lang="en" targetRole={targetRole} role={e.role} company={e.company} value={e.duties} onWrite={(txt) => setExp(i, "duties", txt)} />
                       {exps.length > 1 && (
                         <button onClick={() => setExps((p) => p.filter((_, j) => j !== i))} className="text-xs" style={{ color: "#f87171" }}>Remove</button>
                       )}
@@ -288,16 +291,19 @@ export default function BuildPage() {
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Education</label>
                     <textarea value={education} onChange={(e) => setEducation(e.target.value)} rows={2}
                       placeholder="e.g. BSc Computer Science, King Saud University, 2022" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <AiSuggest kind="education" lang="en" targetRole={targetRole} value={education} onWrite={setEducation} />
                   </div>
                   <div>
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Skills (just list them, any order)</label>
                     <textarea value={skills} onChange={(e) => setSkills(e.target.value)} rows={2}
                       placeholder="e.g. Excel, customer service, Python, teamwork, Arabic & English" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <AiSuggest kind="skills" lang="en" targetRole={targetRole} value={skills} onWrite={setSkills} />
                   </div>
                   <div>
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Certifications, languages, projects (optional)</label>
                     <textarea value={extras} onChange={(e) => setExtras(e.target.value)} rows={2}
                       placeholder="e.g. PMP certificate, IELTS 7.0, built a small online store" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <AiSuggest kind="extras" lang="en" targetRole={targetRole} value={extras} onWrite={setExtras} />
                   </div>
                   <div>
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Personal details for a Gulf CV (optional)</label>
@@ -338,7 +344,7 @@ export default function BuildPage() {
         {loading && (
           <div className="card overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
             <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+              <AiOrb size={22} thinking />
               <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>AI writing your CV — live</span>
             </div>
             <div ref={thinkRef} className="max-h-72 min-h-24 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>

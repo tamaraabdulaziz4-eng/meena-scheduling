@@ -24,9 +24,18 @@ EXPERIENCE
 Marketing Specialist — Retail Co, Riyadh (2021–Present)
 - Led social strategy across 4 channels, +40% engagement
 - Managed SAR 200K annual campaign budget
+- Coordinated 6 seasonal campaigns with sales and design teams
+
+Marketing Coordinator — Media Agency, Riyadh (2020–2021)
+- Produced weekly content calendars for 5 client accounts
+- Tracked campaign KPIs and reported results to account leads
 
 EDUCATION
-BSc Marketing — King Saud University, 2020`;
+BSc Marketing — King Saud University, 2020
+
+CERTIFICATIONS
+- Google Digital Marketing Certificate, 2022
+- Meta Blueprint Certification, 2023`;
 
 const SAMPLE_AR = `سارة العتيبي
 الرياض، السعودية · sara@email.com · +966 5X XXX XXXX
@@ -48,9 +57,18 @@ const SAMPLE_AR = `سارة العتيبي
 أخصائية تسويق — شركة تجزئة، الرياض (٢٠٢١–الآن)
 - قدت استراتيجية التواصل عبر ٤ قنوات، +٤٠٪ تفاعل
 - أدرت ميزانية حملات سنوية ٢٠٠ ألف ريال
+- نسّقت ٦ حملات موسمية مع فرق المبيعات والتصميم
+
+منسقة تسويق — وكالة إعلامية، الرياض (٢٠٢٠–٢٠٢١)
+- أعددت خطط محتوى أسبوعية لخمسة حسابات عملاء
+- تابعت مؤشرات الأداء ورفعت التقارير لقادة الحسابات
 
 التعليم
-بكالوريوس تسويق — جامعة الملك سعود، ٢٠٢٠`;
+بكالوريوس تسويق — جامعة الملك سعود، ٢٠٢٠
+
+الشهادات
+- شهادة جوجل للتسويق الرقمي، ٢٠٢٢
+- شهادة ميتا بلوبرنت، ٢٠٢٣`;
 
 const SAMPLE_BI = `Sara Al-Otaibi · سارة العتيبي
 Riyadh, Saudi Arabia · sara@email.com · +966 5X XXX XXXX
@@ -127,9 +145,26 @@ export default function TemplatesGallery({ ar = false }: { ar?: boolean }) {
               <span className="rounded-full px-2 py-0.5 font-mono text-[10px] font-bold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>ATS</span>
             </div>
             <div className="mb-4 overflow-hidden rounded-lg" style={{ height: 794 * SCALE * 0.62, border: "1px solid var(--line)" }}>
-              <div style={{ width: 794, transform: `scale(${SCALE})`, transformOrigin: dir === "rtl" ? "top right" : "top left" }}>
-                <ResumeTemplate text={sample} accent={t.accent} variant={t.variant} dir={dir} preview />
-              </div>
+              {mode === "bi" ? (
+                /* "Both" = the page split lengthwise: English on the left,
+                   Arabic facing it on the right — two full CVs side by side. */
+                <div dir="ltr" style={{ width: 794, transform: `scale(${SCALE})`, transformOrigin: "top left", display: "flex", background: "#fff" }}>
+                  <div style={{ width: 397, overflow: "hidden" }}>
+                    <div style={{ width: 794, transform: "scale(0.5)", transformOrigin: "top left" }}>
+                      <ResumeTemplate text={SAMPLE_EN} accent={t.accent} variant={t.variant} dir="ltr" preview />
+                    </div>
+                  </div>
+                  <div style={{ width: 397, overflow: "hidden", borderLeft: "1px dashed #d1d5db" }}>
+                    <div style={{ width: 794, transform: "scale(0.5)", transformOrigin: "top left" }}>
+                      <ResumeTemplate text={SAMPLE_AR} accent={t.accent} variant={t.variant} dir="rtl" preview />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ width: 794, transform: `scale(${SCALE})`, transformOrigin: dir === "rtl" ? "top right" : "top left" }}>
+                  <ResumeTemplate text={sample} accent={t.accent} variant={t.variant} dir={dir} preview />
+                </div>
+              )}
             </div>
             <Link href={`/build?template=${t.slug}&lang=${mode}`} className="btn-accent block w-full py-2.5 text-center text-sm font-semibold">
               {ar ? "استخدم هذا القالب ←" : "Use this template →"}

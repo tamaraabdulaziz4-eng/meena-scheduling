@@ -326,3 +326,53 @@ body {
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+
+/* ── AI presence orb (orbs.jakubantalik.com style) ─────────────────────── */
+.ai-orb {
+  --orb-size: 40px;
+  position: relative;
+  display: inline-block;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  border-radius: 50%;
+  overflow: hidden;
+  background: #0b1220;
+  box-shadow:
+    0 0 calc(var(--orb-size) * 0.55) rgba(96, 165, 250, 0.45),
+    0 0 calc(var(--orb-size) * 0.2) rgba(34, 197, 94, 0.35),
+    inset 0 0 calc(var(--orb-size) * 0.22) rgba(255, 255, 255, 0.14);
+  animation: orb-breathe 4.5s ease-in-out infinite;
+  flex: none;
+}
+.ai-orb-blob {
+  position: absolute;
+  width: 78%;
+  height: 78%;
+  border-radius: 50%;
+  filter: blur(calc(var(--orb-size) * 0.14));
+  mix-blend-mode: screen;
+  animation: orb-float 7s ease-in-out infinite;
+}
+.ai-orb-blob.b1 { background: #22d3ee; top: -12%; left: -8%; }
+.ai-orb-blob.b2 { background: #8b5cf6; bottom: -16%; right: -10%; animation-delay: -2.3s; }
+.ai-orb-blob.b3 { background: #22c55e; top: 28%; right: -22%; animation-delay: -4.6s; }
+.ai-orb-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.08) 34%, transparent 55%);
+}
+.ai-orb.thinking { animation-duration: 1.4s; }
+.ai-orb.thinking .ai-orb-blob { animation-duration: 1.8s; }
+@keyframes orb-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(20%, 14%) scale(1.18); }
+  66% { transform: translate(-14%, 20%) scale(0.88); }
+}
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-orb, .ai-orb-blob { animation: none; }
+}

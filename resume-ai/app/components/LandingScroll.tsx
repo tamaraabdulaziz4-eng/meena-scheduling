@@ -23,6 +23,7 @@ import {
 } from "framer-motion";
 import { track } from "@vercel/analytics";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
+import AiOrb from "./AiOrb";
 
 type Lang = "ar" | "en";
 
@@ -410,7 +411,10 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
       <Scene id="s1-mirror" className="relative px-5 py-24" style={{ background: "linear-gradient(180deg, #0B1220 0%, #171233 100%)" }}>
         <div ref={mirrorRef} className="mx-auto max-w-2xl scroll-mt-24">
           <Rise>
-            <h2 className="text-2xl font-extrabold sm:text-4xl">{t.mirror_h2}</h2>
+            <div className="flex items-center gap-4">
+              <AiOrb size={52} thinking={phase === "scanning"} />
+              <h2 className="text-2xl font-extrabold sm:text-4xl">{t.mirror_h2}</h2>
+            </div>
             <p className="mt-3 text-base" style={{ color: "rgba(244,245,243,0.6)", lineHeight: 1.8 }}>{t.mirror_sub}</p>
           </Rise>
           <Rise delay={0.1}>
@@ -426,7 +430,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
               />
               {phase === "scanning" ? (
                 <div className="mt-4 flex min-h-11 items-center gap-3 px-2" aria-live="polite">
-                  <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full" style={{ background: GREEN, boxShadow: `0 0 10px ${GREEN}` }} />
+                  <AiOrb size={34} thinking />
                   <span className="font-mono text-sm" style={{ color: GREEN }}>{t.scanning[scanMsg]}</span>
                 </div>
               ) : phase === "failed" ? (

@@ -1,4 +1,5 @@
 "use client";
+import AiOrb from "../../components/AiOrb";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
@@ -315,7 +316,7 @@ export default function ArOptimizePage() {
             {loading ? (
               <div className="card mx-auto max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
                 <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
-                  <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+                  <AiOrb size={22} thinking />
                   <span className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--accent)" }}>جارٍ التحليل — مباشر</span>
                 </div>
                 <div className="px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>
