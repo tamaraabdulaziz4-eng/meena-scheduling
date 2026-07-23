@@ -72,8 +72,15 @@ export default function InterviewLivePage() {
   }
 
   function pickArabicVoice(): SpeechSynthesisVoice | null {
-    const vs = window.speechSynthesis?.getVoices?.() || [];
-    return vs.find((v) => /^ar/i.test(v.lang)) || vs.find((v) => /arab|majed|maged/i.test(v.name)) || null;
+    const vs = (window.speechSynthesis?.getVoices?.() || []).filter((v) => /^ar/i.test(v.lang) || /arab|majed|maged/i.test(v.name));
+    if (!vs.length) return null;
+    // Prefer the highest-quality one available: enhanced/neural named, then a
+    // network (non-local) voice, then anything Arabic — device TTS quality varies.
+    return (
+      vs.find((v) => /enhanced|neural|premium|natural|wavenet|siri/i.test(v.name)) ||
+      vs.find((v) => !v.localService) ||
+      vs[0]
+    );
   }
 
   function speak(text: string) {
