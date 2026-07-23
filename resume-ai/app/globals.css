@@ -186,22 +186,26 @@ body {
   100% { transform: translateY(190px); opacity: 0; }
 }
 
-/* ── AI interviewer avatar ── */
-.ia-orb {
-  width: 132px; height: 132px; border-radius: 50%;
+/* ── AI interviewer avatar (illustrated talking face) ── */
+.ia-face {
+  width: 150px; height: 150px; border-radius: 50%; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(circle at 35% 30%, #6ee7a0, #22c55e 55%, #15803d 100%);
-  box-shadow: 0 18px 50px -12px rgba(74, 222, 128, 0.55), inset 0 -8px 20px rgba(0,0,0,0.15);
+  box-shadow: 0 18px 50px -12px rgba(15, 118, 110, 0.55);
   z-index: 2;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .ia-idle { animation: iaFloat 4s ease-in-out infinite; }
-  .ia-speaking { animation: iaPulse 0.9s ease-in-out infinite; }
+  .ia-idle { animation: iaFloat 4.5s ease-in-out infinite; }
+  .ia-speaking { animation: iaNod 1.6s ease-in-out infinite; }
+  .ia-eye { animation: iaBlink 4.2s infinite; transform-box: fill-box; transform-origin: center; }
+  .ia-mouth-talk { animation: iaTalk 0.26s ease-in-out infinite; }
 }
-@keyframes iaFloat { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-8px) scale(1.02); } }
-@keyframes iaPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+.ia-mouth-idle { transform: scaleY(0.6); }
+@keyframes iaFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes iaNod { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-3px) rotate(-1.5deg); } }
+@keyframes iaBlink { 0%,92%,100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+@keyframes iaTalk { 0%,100% { transform: scaleY(0.45); } 50% { transform: scaleY(1.15); } }
 .ia-ring {
-  position: absolute; width: 132px; height: 132px; border-radius: 50%;
+  position: absolute; width: 150px; height: 150px; border-radius: 50%;
   border: 2px solid rgba(74, 222, 128, 0.5); z-index: 1;
 }
 @media (prefers-reduced-motion: no-preference) {
