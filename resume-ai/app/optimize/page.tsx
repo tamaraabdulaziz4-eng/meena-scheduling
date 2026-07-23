@@ -331,7 +331,7 @@ export default function OptimizePage() {
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <div className="flex items-center gap-5">
-            <Link href="/ar/optimize" className="text-sm font-semibold" style={{ color: "var(--accent)" }}
+            <Link href="/ar/optimize" className="rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}
               onClick={() => {
                 // Carry the draft across the language switch — separate storage
                 // keys otherwise make it look like the user's text vanished.

@@ -274,7 +274,7 @@ export default function ArOptimizePage() {
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <div className="flex items-center gap-5">
-            <Link href="/optimize" className="text-sm" style={{ color: "var(--muted)" }}
+            <Link href="/optimize" className="rounded-lg px-3 py-2 text-sm" style={{ color: "var(--muted)", border: "1px solid var(--line)" }}
               onClick={() => { try { localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); localStorage.setItem("ra_lang", "en"); } catch { /* noop */ } }}>
               English
             </Link>

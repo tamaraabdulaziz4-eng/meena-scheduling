@@ -23,34 +23,47 @@ export default function InterviewPage() {
     setError("");
     setResult(null);
     setLoading(true);
-    // Abort a stalled call so the UI can't spin forever (the "still broken"
-    // the tests kept catching was the request hanging with no timeout).
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60000);
-    try {
-      const res = await fetch("/api/tools", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: ctrl.signal,
-        body: JSON.stringify({ mode: "interview", inputA: resume, inputB: jd }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
-      if (!Array.isArray(data.questions) || data.questions.length === 0) {
-        throw new Error("Couldn't prepare questions this time — please try again.");
+
+    // One attempt against /api/tools. Returns questions, or throws.
+    async function attempt(): Promise<{ questions: InterviewResult["questions"]; redFlags: string[] }> {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 55000);
+      try {
+        const res = await fetch("/api/tools", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: ctrl.signal,
+          body: JSON.stringify({ mode: "interview", inputA: resume, inputB: jd }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Server ${res.status}`);
+        if (!Array.isArray(data.questions) || data.questions.length === 0) throw new Error("empty");
+        return { questions: data.questions, redFlags: Array.isArray(data.redFlags) ? data.redFlags : [] };
+      } finally {
+        clearTimeout(timer);
       }
-      setResult({ questions: data.questions, redFlags: Array.isArray(data.redFlags) ? data.redFlags : [] });
-      setOpen(0);
-    } catch (err) {
-      const raw = err instanceof Error ? err.message : "";
-      const isNetwork = /failed to fetch|load failed|networkerror|aborted/i.test(raw) || raw === "";
-      setError(isNetwork
-        ? "Connection hiccup — your text is still here. Tap Retry to prepare your questions again."
-        : raw || "Something went wrong.");
-    } finally {
-      clearTimeout(timer);
-      setLoading(false);
     }
+
+    // The free model fails intermittently; auto-retry once transparently so a
+    // single flaky call never dead-ends the user on a blank form.
+    let ok: { questions: InterviewResult["questions"]; redFlags: string[] } | null = null;
+    let lastErr = "";
+    for (let i = 0; i < 2 && !ok; i++) {
+      try { ok = await attempt(); }
+      catch (err) { lastErr = err instanceof Error ? err.message : ""; }
+    }
+
+    if (ok) {
+      setResult(ok);
+      setOpen(0);
+    } else {
+      // Guarantee a visible state — never end on a silent blank form.
+      const isNetwork = /failed to fetch|load failed|networkerror|aborted/i.test(lastErr) || lastErr === "empty" || lastErr === "";
+      setError(isNetwork
+        ? "The AI was busy for a moment — your text is still here. Tap Retry to prepare your questions."
+        : lastErr || "Something went wrong. Tap Retry.");
+    }
+    setLoading(false);
   }
 
   return (
