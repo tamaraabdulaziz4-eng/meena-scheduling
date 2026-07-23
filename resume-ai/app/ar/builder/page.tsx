@@ -237,10 +237,14 @@ export default function ArChatBuilderPage() {
       if (!got) throw new Error("فشل التوليد");
       setCv(got.cv);
       setTips(got.tips);
+      const title = `${data.name || "سيرتي"} — ${data.targetRole || "تفاعلي"}`;
       try {
         localStorage.removeItem("ra_ar_chat");
-        saveResume({ title: `${data.name || "سيرتي"} — ${data.targetRole || "تفاعلي"}`, source: "built", text: got.cv });
+        saveResume({ title, source: "built", text: got.cv });
       } catch { /* تجاهل */ }
+      // حفظ سحابي للمستخدم المسجّل (بدون انتظار؛ يفشل بصمت إن لم يكن مسجّلاً).
+      fetch("/api/resumes", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, text: got.cv, source: "built", savedAt: Date.now() }) }).catch(() => {});
     } catch (e) {
       // Surface the server's specific message (e.g. a 429 rate-limit) so the user
       // isn't misled by a generic retry prompt that will just fail again.

@@ -157,10 +157,14 @@ export default function BuildPage() {
       setCv(got.cv);
       setTips(got.tips);
       // Keep the draft (enables "edit answers & regenerate"); persist the result.
+      const title = `${name || "My CV"} — ${targetRole || "Built"}`;
       try {
         localStorage.setItem("ra_build_result", JSON.stringify({ cv: got.cv, tips: got.tips }));
-        saveResume({ title: `${name || "My CV"} — ${targetRole || "Built"}`, source: "built", text: got.cv });
+        saveResume({ title, source: "built", text: got.cv });
       } catch { /* noop */ }
+      // Cloud-save for signed-in users (fire-and-forget; silent 401 if not signed in).
+      fetch("/api/resumes", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, text: got.cv, source: "built", savedAt: Date.now() }) }).catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {

@@ -49,6 +49,7 @@ function AccountInner() {
   const [linkError, setLinkError] = useState<Record<string, string>>({});
   const [scans, setScans] = useState<ScanEntry[]>([]);
   const [resumes, setResumes] = useState<SavedResume[]>([]);
+  const [cloudCvs, setCloudCvs] = useState<{ id: string; title: string; text: string; source: string; savedAt: number }[]>([]);
   const [jobs, setJobs] = useState<JobEntry[]>([]);
   const [showJobForm, setShowJobForm] = useState(false);
   const [jc, setJc] = useState(""); // company
@@ -64,7 +65,17 @@ function AccountInner() {
     setScans(getScans());
     setResumes(getResumes());
     setJobs(getJobs());
+    // Cloud-saved CVs (signed-in only) — survive a cleared browser.
+    fetch("/api/resumes").then((r) => r.json()).then((d) => { if (d?.ok && d.signedIn && Array.isArray(d.cvs)) setCloudCvs(d.cvs); }).catch(() => {});
   }, []);
+
+  async function deleteCloudCv(id: string) {
+    try {
+      const r = await fetch(`/api/resumes?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (d?.ok && Array.isArray(d.cvs)) setCloudCvs(d.cvs);
+    } catch { /* noop */ }
+  }
 
   async function signOut() {
     setSigningOut(true);
@@ -298,6 +309,28 @@ function AccountInner() {
             </ul>
           )}
         </div>
+
+        {/* ── Cloud-saved CVs (survive a cleared browser) ── */}
+        {(me?.signedIn && cloudCvs.length > 0) && (
+          <div className={`${sectionCard} mt-6`}>
+            <h2 className={sectionTitle}>☁️ Saved to your account ({cloudCvs.length})</h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--faint)" }}>These are stored on your account — they won&apos;t be lost if you clear this browser or switch device.</p>
+            <ul className="space-y-2">
+              {cloudCvs.map((c) => (
+                <li key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)" }}>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold">{c.title}</div>
+                    <div className="font-mono text-[11px]" style={{ color: "var(--faint)" }}>
+                      {c.source === "built" ? "CV Builder" : "Optimizer"} · {new Date(c.savedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <button onClick={() => downloadText("resume.txt", c.text)} className="btn-ghost px-3 py-1.5 text-xs font-semibold" style={{ color: "var(--fg)" }}>↓ .txt</button>
+                  <button onClick={() => deleteCloudCv(c.id)} className="text-xs" style={{ color: "var(--faint)" }}>✕</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* ── Public links ── */}
         <div className={`${sectionCard} mt-6`}>
