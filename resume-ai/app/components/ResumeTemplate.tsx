@@ -179,9 +179,9 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
       {!preview && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <button onClick={downloadPdf} disabled={busy} className="btn-accent px-5 py-2.5 text-sm font-bold disabled:opacity-50">
-            {busy ? "…" : "↓ تنزيل القالب المصمّم (PDF)"}
+            {busy ? "…" : isRtl ? "↓ تنزيل القالب المصمّم (PDF)" : "↓ Download designed (PDF)"}
           </button>
-          <span className="text-xs" style={{ color: "var(--faint)" }}>نسخة مصمّمة للعرض — للـ ATS استخدم PDF/Word النصي</span>
+          <span className="text-xs" style={{ color: "var(--faint)" }}>{isRtl ? "نسخة مصمّمة للعرض — للـ ATS استخدم PDF/Word النصي" : "Designed for viewing — for ATS use the plain PDF/Word"}</span>
         </div>
       )}
 
