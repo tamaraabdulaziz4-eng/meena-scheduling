@@ -3,8 +3,8 @@
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import AiOrb from "../components/AiOrb";
 import AuroraBlobs from "../components/orb/AuroraBlobs";
+import { useOrbScene } from "../components/orb/OrbProvider";
 
 function LoginInner() {
   const params = useSearchParams();
@@ -24,6 +24,13 @@ function LoginInner() {
     } catch { /* noop */ }
   }, [params]);
   const [error, setError] = useState(params.get("error") === "expired" ? "That link expired — request a new one." : "");
+
+  // رابط drives this scene: the Gate. Thinking while sending, a radio-pulse
+  // broadcast the moment the magic link is sent.
+  useOrbScene(
+    { visible: true, top: state === "sent" ? "20vh" : "22vh", size: 72, mood: state === "sending" ? "thinking" : state === "sent" ? "done" : "idle", radio: state === "sent" },
+    [state]
+  );
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,10 +63,6 @@ function LoginInner() {
 
         {state === "sent" ? (
           <div className="text-center">
-            {/* radio pulse — the link was broadcast */}
-            <div className="radio-pulse mx-auto mb-6 h-16 w-16">
-              <AiOrb size={64} state="done" />
-            </div>
             <h1 className="text-2xl font-bold">Check your inbox</h1>
             <p className="mt-2 text-sm" style={{ color: "var(--cosmos-muted)" }}>
               We sent a sign-in link to <strong>{email}</strong>. Click it to continue — it expires in 15 minutes.
@@ -72,12 +75,7 @@ function LoginInner() {
           </div>
         ) : (
           <>
-            <div className="mb-5 flex items-center gap-3">
-              <AiOrb size={40} state={state === "sending" ? "thinking" : "idle"} />
-              <div>
-                <h1 className="text-2xl font-bold">Your resume awaits</h1>
-              </div>
-            </div>
+            <h1 className="text-2xl font-bold">Your resume awaits</h1>
             <p className="mt-1 text-sm" style={{ color: "var(--cosmos-muted)" }}>Enter your email and we&apos;ll send you a magic link — no password.</p>
             <form onSubmit={submit} className="mt-5 space-y-3">
               <input

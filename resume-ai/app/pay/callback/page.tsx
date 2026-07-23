@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import AiOrb from "../../components/AiOrb";
 import GoldField from "../../components/orb/GoldField";
 import AuroraBurst from "../../components/orb/AuroraBurst";
+import { useOrbScene } from "../../components/orb/OrbProvider";
 
 function CallbackInner() {
   const params = useSearchParams();
@@ -212,23 +212,24 @@ function CallbackInner() {
   const paid = state === "paid";
   const orbState = paid ? "done" : state === "failed" ? "locked" : "golden";
 
+  // رابط becomes the Vault: golden while confirming (with a 🔒), opens to a
+  // green ✓ (🔓) on success, dims (locked) on failure.
+  useOrbScene(
+    { visible: true, top: "20vh", size: 84, mood: orbState, badge: paid ? "🔓" : "🔒" },
+    [orbState, paid]
+  );
+
   return (
     <main dir={ar ? "rtl" : "ltr"} lang={ar ? "ar" : "en"}
       className="relative flex min-h-screen items-center justify-center overflow-hidden px-6"
       style={{ background: paid ? "var(--glass-bg)" : "var(--cosmos-bg)", color: paid ? "var(--glass-text)" : "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
       {!paid && <GoldField />}
 
-      <div className={`relative w-full max-w-md rounded-3xl p-10 text-center ${paid ? "glass-surface" : ""}`}
+      <div className={`relative mt-24 w-full max-w-md rounded-3xl p-10 text-center ${paid ? "glass-surface" : ""}`}
         style={paid ? undefined : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(245,184,64,0.25)", backdropFilter: "blur(10px)" }}>
 
-        {/* the orb — golden vault → green owned; lock icon layered while checking */}
-        <div className="relative mx-auto mb-6 flex h-24 w-24 items-center justify-center">
-          {burst && <AuroraBurst />}
-          <AiOrb size={84} state={orbState} />
-          <span className="absolute font-mono text-2xl" style={{ color: paid ? "#166534" : "#3a2708", textShadow: "0 1px 6px rgba(255,255,255,0.4)" }}>
-            {paid ? "🔓" : state === "failed" ? "🔒" : "🔒"}
-          </span>
-        </div>
+        {/* aurora burst emitted from رابط the moment the lock opens */}
+        {burst && <div className="pointer-events-none absolute inset-x-0" style={{ top: "-96px" }}><AuroraBurst /></div>}
 
         <h1 className="text-2xl font-extrabold">
           {state === "checking" ? t.checking : paid ? t.paidTitle : state === "pending" ? t.pendingTitle : review ? t.reviewTitle : t.failedTitle}

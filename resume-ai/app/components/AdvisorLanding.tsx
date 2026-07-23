@@ -24,6 +24,7 @@ import Link from "next/link";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { track } from "@vercel/analytics";
 import AiOrb from "./AiOrb";
+import { useOrbScene } from "./orb/OrbProvider";
 import ScoreOrb from "./orb/ScoreOrb";
 import PdfExport from "./PdfExport";
 import DocxExport from "./DocxExport";
@@ -511,7 +512,16 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   const inputActive = stage === "greeting" || stage === "conversation";
   const showGoal = goalMode;
   const orbSize = stage === "greeting" ? (typeof window !== "undefined" && window.innerWidth < 640 ? 150 : 200) : stage === "thinking" ? 190 : stage === "weaving" ? 44 : 72;
-  const ring = 2 * Math.PI * 44;
+
+  // Delegate to رابط, the one global orb: it flies to each stage and carries
+  // the progress ring / pulse rings. Hidden at the reveal (retires to the
+  // inline green ✓ in the reveal header).
+  useOrbScene(
+    stage === "reveal"
+      ? { visible: false }
+      : { visible: true, top: stage === "greeting" ? "15vh" : stage === "thinking" ? "32vh" : stage === "weaving" ? "84px" : "78px", size: orbSize, mood: stage === "thinking" ? "thinking" : micOn ? "listening" : "idle", progress: stage === "conversation" ? progress : 0, rings: stage === "thinking", badge: null, radio: false, z: 30 },
+    [stage, orbSize, micOn, progress]
+  );
 
   /* ══════════════════ render ══════════════════ */
   return (
@@ -533,32 +543,6 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: GREEN }}>{rtl ? "English" : "عربي"}</Link>
         </div>
       </nav>
-
-      {/* ══ THE ORB (flies between stages) ══ */}
-      {stage !== "reveal" && (
-        <motion.div
-          className="stage-orb"
-          initial={false}
-          animate={{
-            top: stage === "greeting" ? "15vh" : stage === "thinking" ? "32vh" : stage === "weaving" ? "84px" : "78px",
-            x: "-50%",
-            scale: 1,
-          }}
-          transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 18 }}
-        >
-          <div className="relative flex items-center justify-center" style={{ width: orbSize, height: orbSize }}>
-            {stage === "thinking" && !reduce && (<><span className="pulse-ring r1" /><span className="pulse-ring r2" /><span className="pulse-ring r3" /><span className="pulse-ring r4" /></>)}
-            {/* progress ring around the orb (conversation) */}
-            {stage === "conversation" && progress > 0 && (
-              <svg className="absolute" width={orbSize + 16} height={orbSize + 16} style={{ transform: "rotate(-90deg)" }}>
-                <circle cx={(orbSize + 16) / 2} cy={(orbSize + 16) / 2} r="44" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
-                <circle cx={(orbSize + 16) / 2} cy={(orbSize + 16) / 2} r="44" fill="none" stroke={GREEN} strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
-              </svg>
-            )}
-            <AiOrb size={orbSize} state={stage === "thinking" ? "thinking" : micOn ? "listening" : "idle"} />
-          </div>
-        </motion.div>
-      )}
 
       {/* ══ STATE 1: GREETING ══ */}
       <AnimatePresence>

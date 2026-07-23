@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import AiOrb from "../components/AiOrb";
 import ScoreOrb from "../components/orb/ScoreOrb";
+import { useOrbScene } from "../components/orb/OrbProvider";
 import {
   getScans, removeScan, type ScanEntry,
   getResumes, removeResume, type SavedResume,
@@ -192,6 +193,9 @@ function AccountInner() {
     setShowJobForm(false);
   }
 
+  // رابط keeps a quiet presence over the Library — golden once you own a pack.
+  useOrbScene({ visible: true, top: "84px", size: 30, mood: owned ? "golden" : "idle", z: 45 }, [owned]);
+
   const until = me?.until && me.until > Date.now() ? new Date(me.until) : null;
 
   const sectionCard = "card p-6";
@@ -217,7 +221,6 @@ function AccountInner() {
           </div>
         )}
         <div className="mb-4 flex items-center gap-2.5">
-          <AiOrb size={26} state={owned ? "golden" : "idle"} />
           <div className="chip">{t.myAccount}</div>
           {owned && <span className="gold-stamp">{lang === "ar" ? "مملوكة ✓" : "Owned ✓"}</span>}
         </div>

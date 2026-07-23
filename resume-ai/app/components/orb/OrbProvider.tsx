@@ -1,0 +1,83 @@
+"use client";
+/**
+ * رابط — THE ONE ORB. It lives here, in a provider mounted once in the root
+ * layout, so it NEVER unmounts across navigation. Every route only describes a
+ * *scene* (mood + position + adornments) via `useOrbScene`; the same physical
+ * orb then flies to that scene with a spring. The visitor never sees it reload
+ * or disappear — رابط carries them between worlds.
+ *
+ * Law 1 (continuity): one mounted orb, always. Law 2 (emission): content is
+ * born around it. Law 3 (moods): greeting → interview → thinking → weaving →
+ * score → golden → success → library → gate → lost — one living entity.
+ */
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import AiOrb, { type OrbState } from "../AiOrb";
+
+export interface OrbScene {
+  visible: boolean;
+  mood: OrbState;
+  top: string;        // vh or px from the top; horizontally always centered
+  size: number;
+  progress: number;   // 0–100 ring around the orb (0 = none)
+  rings: boolean;     // full-screen aurora pulse rings (thinking)
+  badge: string | null; // a glyph layered on the orb (e.g. 🔒 / 🔓)
+  radio: boolean;     // radio-pulse broadcast (magic link sent)
+  z: number;
+}
+const DEFAULT: OrbScene = { visible: false, mood: "idle", top: "40vh", size: 120, progress: 0, rings: false, badge: null, radio: false, z: 30 };
+
+interface Ctx { setScene: (s: Partial<OrbScene> | null) => void }
+const OrbCtx = createContext<Ctx>({ setScene: () => {} });
+
+/** Describe the orb scene for the current route. Pass null / omit to hide it. */
+export function useOrbScene(scene: Partial<OrbScene> | null, deps: unknown[] = []) {
+  const { setScene } = useContext(OrbCtx);
+  useEffect(() => {
+    setScene(scene);
+    return () => setScene({ visible: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+export default function OrbProvider({ children }: { children: React.ReactNode }) {
+  const [scene, setSceneState] = useState<OrbScene>(DEFAULT);
+  const reduce = useReducedMotion();
+  // Coalesce the unmount-hide of an outgoing page with the mount-set of the
+  // incoming one, so a route change never blinks the orb off then on.
+  const raf = useRef<number | null>(null);
+  const setScene = useMemo<Ctx["setScene"]>(() => (s) => {
+    if (raf.current) cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(() => setSceneState((prev) => (s ? { ...prev, ...s } : { ...DEFAULT, visible: false })));
+  }, []);
+  const ctx = useMemo(() => ({ setScene }), [setScene]);
+
+  const ring = 2 * Math.PI * 44;
+
+  return (
+    <OrbCtx.Provider value={ctx}>
+      {children}
+      {scene.visible && (
+        <motion.div
+          className="pointer-events-none fixed left-1/2"
+          style={{ zIndex: scene.z }}
+          initial={false}
+          animate={{ top: scene.top, x: "-50%", opacity: 1 }}
+          transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 18 }}
+        >
+          <div className={`relative flex items-center justify-center ${scene.radio ? "radio-pulse" : ""}`} style={{ width: scene.size, height: scene.size }}>
+            {scene.rings && !reduce && (<><span className="pulse-ring r1" /><span className="pulse-ring r2" /><span className="pulse-ring r3" /><span className="pulse-ring r4" /></>)}
+            {scene.progress > 0 && (
+              <svg className="absolute" width={scene.size + 16} height={scene.size + 16} style={{ transform: "rotate(-90deg)" }}>
+                <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+                <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="#22C55E" strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - scene.progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
+              </svg>
+            )}
+            <AiOrb size={scene.size} state={scene.mood} />
+            {scene.badge && <span className="absolute" style={{ fontSize: scene.size * 0.3 }}>{scene.badge}</span>}
+          </div>
+        </motion.div>
+      )}
+    </OrbCtx.Provider>
+  );
+}
