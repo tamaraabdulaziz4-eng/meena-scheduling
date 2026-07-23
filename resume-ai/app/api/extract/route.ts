@@ -23,23 +23,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "File too large (max 5 MB)." }, { status: 400 });
     }
 
-    let text = "";
-
-    if (name.endsWith(".pdf")) {
-      const { extractText, getDocumentProxy } = await import("unpdf");
-      const pdf = await getDocumentProxy(new Uint8Array(buf));
-      const { text: t } = await extractText(pdf, { mergePages: true });
-      text = Array.isArray(t) ? t.join("\n") : t;
-    } else if (name.endsWith(".docx")) {
-      const mammoth = (await import("mammoth")).default;
-      const { value } = await mammoth.extractRawText({ buffer: buf });
-      text = value;
-    } else if (name.endsWith(".txt") || name.endsWith(".md")) {
-      text = buf.toString("utf-8");
-    } else {
+    if (!name.endsWith(".pdf") && !name.endsWith(".docx") && !name.endsWith(".txt") && !name.endsWith(".md")) {
       return NextResponse.json(
         { error: "Unsupported file type. Upload a PDF, DOCX, or TXT." },
         { status: 400 }
+      );
+    }
+
+    let text = "";
+    try {
+      if (name.endsWith(".pdf")) {
+        const { extractText, getDocumentProxy } = await import("unpdf");
+        const pdf = await getDocumentProxy(new Uint8Array(buf));
+        const { text: t } = await extractText(pdf, { mergePages: true });
+        text = Array.isArray(t) ? t.join("\n") : t;
+      } else if (name.endsWith(".docx")) {
+        const mammoth = (await import("mammoth")).default;
+        const { value } = await mammoth.extractRawText({ buffer: buf });
+        text = value;
+      } else {
+        text = buf.toString("utf-8");
+      }
+    } catch (parseErr) {
+      // A corrupt or password-protected file that passes the extension check
+      // but fails to parse is a client-input problem, not a server fault — 422,
+      // not 500, so the UI can show a "paste the text instead" hint.
+      console.error("Extract parse error:", parseErr);
+      return NextResponse.json(
+        { error: "Couldn't read that file — it may be corrupted or password-protected. Try pasting the text instead." },
+        { status: 422 }
       );
     }
 

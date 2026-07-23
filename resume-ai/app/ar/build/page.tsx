@@ -114,6 +114,7 @@ export default function ArBuildPage() {
           name, contact, targetRole,
           experiences: exps.filter((e) => e.role.trim() || e.company.trim()),
           education, skills, extras, jobDescription,
+          outLang: "ar",
         }),
       });
       const ctype = res.headers.get("content-type") || "";

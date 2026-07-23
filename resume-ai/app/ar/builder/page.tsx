@@ -205,7 +205,7 @@ export default function ArChatBuilderPage() {
       const res = await fetch("/api/build-cv", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...snap, experiences: exps, jobDescription: "" }),
+        body: JSON.stringify({ ...snap, experiences: exps, jobDescription: "", outLang: "ar" }),
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {

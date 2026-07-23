@@ -17,6 +17,20 @@ interface Experience {
   duties: string;
 }
 
+type OutLang = "en" | "ar" | "both";
+
+const langRule = (outLang: OutLang) =>
+  outLang === "ar"
+    ? `- Write the ENTIRE CV in professional Modern Standard Arabic (فصحى). Translate and professionally rephrase any English input into polished Arabic CV language. Keep proper nouns sensible — you may keep well-known company/technology names in their common form.
+- Write the "tips" array and the ANALYSIS section in Arabic.`
+    : outLang === "both"
+      ? `- Write the CV TWICE: first the complete English version, then a line containing exactly === النسخة العربية === on its own, then the complete Arabic (فصحى) version of the same CV. Both versions must contain the same facts.
+- Write the "tips" array and the ANALYSIS section in Arabic.`
+      : `- The CV itself must be written in professional ENGLISH (global ATS systems and Gulf employers require English CVs) — translate and professionally rephrase any Arabic input.
+- Keep proper nouns sensible: transliterate Arabic names/companies to their common English forms.
+- If the candidate wrote mostly in Arabic, write the "tips" array in Arabic; otherwise in English.
+- In your ANALYSIS section, use the candidate's language (Arabic if they wrote Arabic).`;
+
 const PROMPT = (d: {
   name: string;
   contact: string;
@@ -27,14 +41,12 @@ const PROMPT = (d: {
   extras: string;
   personalDetails: string;
   jobDescription: string;
+  outLang: OutLang;
 }) => `You are an executive CV writer. Write a COMPLETE, professional CV for this person from their plain-language answers. They may have written casually — your job is to transform their words into polished, high-impact CV language.
 
 IMPORTANT — LANGUAGE HANDLING:
 - The candidate may answer in Arabic, English, or a mix. Understand it all.
-- The CV itself must ALWAYS be written in professional ENGLISH (global ATS systems and Gulf employers require English CVs) — translate and professionally rephrase any Arabic input.
-- Keep proper nouns sensible: transliterate Arabic names/companies to their common English forms.
-- If the candidate wrote mostly in Arabic, write the "tips" array in Arabic; otherwise in English.
-- In your ANALYSIS section, use the candidate's language (Arabic if they wrote Arabic).
+${langRule(d.outLang)}
 
 CANDIDATE ANSWERS:
 - Name: ${d.name}
@@ -72,27 +84,44 @@ async function streamNvidia(prompt: string, onDelta: (t: string) => void): Promi
   if (!key) throw new Error("NVIDIA_API_KEY is not set");
   const model = process.env.AI_MODEL || "meta/llama-4-maverick-17b-128e-instruct";
 
-  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      temperature: 0.5,
-      top_p: 0.9,
-      max_tokens: 3600,
-      stream: true,
-      messages: [
-        { role: "system", content: "You are an expert CV writer. Follow the OUTPUT FORMAT exactly: ANALYSIS bullets, then FINAL_CV: with the plain-text CV, then TIPS: lines. Never output JSON or markdown bold." },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
-  if (!res.ok || !res.body) throw new Error(`NVIDIA API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  // Per-attempt timeout so a stalled upstream connection can't hang the whole
+  // request for minutes (build-cv previously had no abort — a hung stream held
+  // the socket open until the platform's 300s cap). 55s is generous for a full
+  // CV but well under any client patience threshold.
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 55000);
+  let res: Response;
+  try {
+    res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model,
+        temperature: 0.5,
+        top_p: 0.9,
+        max_tokens: 3600,
+        stream: true,
+        messages: [
+          { role: "system", content: "You are an expert CV writer. Follow the OUTPUT FORMAT exactly: ANALYSIS bullets, then FINAL_CV: with the plain-text CV, then TIPS: lines. Never output JSON or markdown bold." },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+  } catch (e) {
+    clearTimeout(timeout);
+    throw e;
+  }
+  if (!res.ok || !res.body) {
+    clearTimeout(timeout);
+    throw new Error(`NVIDIA API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";
   let buf = "";
+  try {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -115,6 +144,9 @@ async function streamNvidia(prompt: string, onDelta: (t: string) => void): Promi
       }
     }
   }
+  } finally {
+    clearTimeout(timeout);
+  }
   return full;
 }
 
@@ -130,6 +162,7 @@ export async function POST(req: NextRequest) {
     try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 }); }
     if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
     const { name, contact, targetRole, experiences, education, skills, extras, personalDetails, jobDescription } = body;
+    const outLang: OutLang = body.outLang === "ar" || body.outLang === "both" ? body.outLang : "en";
 
     if (!name?.trim() || !targetRole?.trim()) {
       return NextResponse.json({ error: "Name and target role are required." }, { status: 400 });
@@ -159,6 +192,7 @@ export async function POST(req: NextRequest) {
       extras: String(extras || "").slice(0, 500),
       personalDetails: String(personalDetails || "").slice(0, 300),
       jobDescription: String(jobDescription || "").slice(0, 3000),
+      outLang,
     });
 
     const encoder = new TextEncoder();

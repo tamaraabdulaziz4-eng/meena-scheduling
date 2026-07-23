@@ -30,7 +30,7 @@ export default async function PublicResumePage({ params }: { params: Promise<{ s
       <div className="mx-auto max-w-3xl px-6 py-12">
         {/* The resume, rendered clean */}
         <div className="card p-8">
-          <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{r.text}</div>
+          <div dir="auto" className="whitespace-pre-wrap font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{r.text}</div>
         </div>
 
         {/* Subtle attribution — the free backlink / brand impression on every share */}
