@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { grantPass, grantEntPass, ACCESS_COOKIE, ENT_COOKIE } from "@/app/lib/access";
-import { readSession, createSession, SESSION_COOKIE } from "@/app/lib/session";
+import { readSession, createSession, SESSION_COOKIE, createMagicToken } from "@/app/lib/session";
 import { grantEntitlement, getOrderEmail } from "@/app/lib/entitlements";
 import { signTx, PAY_BIND_COOKIE } from "@/app/lib/paybind";
+import { sendEmail, emailShell } from "@/app/lib/email";
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const maxDuration = 30;
 
@@ -130,6 +133,25 @@ export async function GET(req: NextRequest) {
           await grantEntitlement(orderEmail, until);
         } catch (e) {
           console.error("grantEntitlement (order) failed:", e);
+        }
+        // Receipt + recovery: email the buyer a sign-in link so they can open
+        // their paid access from ANY device (not just the browser that paid).
+        try {
+          const planName = plan === "complete" ? "Complete Pack (90 days)" : plan === "monthly" ? "Monthly" : "One-time (24 hours)";
+          const untilStr = new Date(until).toISOString().slice(0, 10);
+          const signin = `${APP_URL}/api/auth/verify?token=${encodeURIComponent(createMagicToken(orderEmail, now))}`;
+          await sendEmail({
+            to: orderEmail,
+            subject: "Your ResumeAI receipt & access link",
+            html: emailShell(`
+              <h2 style="margin:0 0 8px">Payment received — thank you! ✅</h2>
+              <p>Your <strong>${planName}</strong> access is active until <strong>${untilStr}</strong>.</p>
+              <p>Open your paid access from any device with this link (valid 15 min; you stay signed in after):</p>
+              <p><a href="${signin}" style="display:inline-block;background:#22c55e;color:#05130a;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none">Open my account →</a></p>
+              <p style="color:#666;font-size:13px">Plan: ${planName}<br/>Access until: ${untilStr}<br/>7-day money-back guarantee applies.</p>`),
+          });
+        } catch (e) {
+          console.error("receipt email failed:", e);
         }
       }
 

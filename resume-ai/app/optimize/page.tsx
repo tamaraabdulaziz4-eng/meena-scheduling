@@ -77,6 +77,22 @@ export default function OptimizePage() {
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState("");
   const [extraction, setExtraction] = useState<ReturnType<typeof analyzeExtraction> | null>(null);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailState, setEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [emailMsg, setEmailMsg] = useState("");
+
+  async function emailResults() {
+    if (!result) return;
+    setEmailState("sending"); setEmailMsg("");
+    try {
+      const res = await fetch("/api/email-results", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: emailTo, resume: result.optimizedResume, score: result.afterScore ?? result.matchScore }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setEmailState("sent");
+    } catch (e) {
+      setEmailState("error"); setEmailMsg(e instanceof Error ? e.message : "Failed to send.");
+    }
+  }
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
@@ -629,6 +645,22 @@ export default function OptimizePage() {
                     </div>
                   )}
                 </div>
+                {/* Email my results — delivery + opt-in capture. */}
+                {!result.locked && (
+                  emailState === "sent" ? (
+                    <div className="mb-4 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.35)", color: "var(--accent)" }}>✓ Sent — check your inbox.</div>
+                  ) : (
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      <input type="email" value={emailTo} onChange={(e) => setEmailTo(e.target.value)} dir="ltr" placeholder="you@email.com"
+                        className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }} />
+                      <button type="button" onClick={emailResults} disabled={emailState === "sending" || !emailTo.trim()}
+                        className="btn-ghost shrink-0 px-4 py-2 text-sm font-semibold disabled:opacity-50" style={{ color: "var(--accent)" }}>
+                        {emailState === "sending" ? "Sending…" : "✉ Email my results"}
+                      </button>
+                      {emailState === "error" && <p className="w-full text-xs" style={{ color: "#f87171" }}>{emailMsg}</p>}
+                    </div>
+                  )
+                )}
                 {/* Text (ATS-safe) vs a designed template — the market "buys
                     with the eye", so show the optimized resume both ways. */}
                 {!result.locked && (
