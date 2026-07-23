@@ -126,7 +126,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "بطّئ شوي 🙂 — حاول بعد دقيقة." }, { status: 429 });
     }
 
-    const body = await req.json();
+    let body;
+    try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 }); }
+    if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
     const { name, contact, targetRole, experiences, education, skills, extras, personalDetails, jobDescription } = body;
 
     if (!name?.trim() || !targetRole?.trim()) {

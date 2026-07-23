@@ -252,8 +252,11 @@ async function streamNvidia(
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      temperature: 0.2,
-      top_p: 0.9,
+      // Greedy decoding: the same resume must yield the same score every run,
+      // otherwise a re-scan shows a different number and looks unreliable.
+      temperature: 0,
+      top_p: 1,
+      seed: 7,
       max_tokens: 3600,
       stream: true,
       messages: [
@@ -326,7 +329,17 @@ async function callAnthropic(resume: string, jobDescription: string): Promise<st
 
 export async function POST(req: NextRequest) {
   try {
-    const { resume, jobDescription, uiLang } = await req.json();
+    // Malformed body is a CLIENT error (400), not a server crash (500).
+    let payload: unknown;
+    try { payload = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 }); }
+    if (!payload || typeof payload !== "object") {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+    const b = payload as Record<string, unknown>;
+    // Coerce to strings so a nested/array value can't throw on .trim()/.length.
+    const resume = typeof b.resume === "string" ? b.resume : "";
+    const jobDescription = typeof b.jobDescription === "string" ? b.jobDescription : "";
+    const uiLang = typeof b.uiLang === "string" ? b.uiLang : undefined;
 
     if (!resume) {
       return NextResponse.json({ error: "Resume is required." }, { status: 400 });

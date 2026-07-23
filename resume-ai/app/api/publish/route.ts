@@ -23,7 +23,10 @@ export async function POST(req: NextRequest) {
     if (!publicResumeConfigured()) {
       return NextResponse.json({ error: "Public links aren't available right now." }, { status: 503 });
     }
-    const { name, role, text } = await req.json();
+    let parsed;
+    try { parsed = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 }); }
+    if (!parsed || typeof parsed !== "object") return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    const { name, role, text } = parsed;
     const body = String(text ?? "");
     if (!body || body.trim().length < 50) {
       return NextResponse.json({ error: "Nothing to publish yet." }, { status: 400 });

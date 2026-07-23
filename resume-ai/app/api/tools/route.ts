@@ -121,10 +121,15 @@ export async function POST(req: NextRequest) {
     // malformed JSON OR valid-but-empty content (no questions). BOTH must retry.
     for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
       if (attempt > 0 && Date.now() - t0 > 45000) break;
+      // Abort a stalled upstream call so it can't hang the whole request for
+      // 120s+ under load — cap each attempt at 35s, then retry or fail cleanly.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 35000);
       try {
         const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          signal: ctrl.signal,
           body: JSON.stringify({
             model,
             temperature: 0.5,
@@ -160,6 +165,8 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         lastErr = e;
         console.error(`Tools error (attempt ${attempt + 1}):`, e);
+      } finally {
+        clearTimeout(timer);
       }
     }
     if (!parsed) throw lastErr ?? new Error("Failed to generate");
