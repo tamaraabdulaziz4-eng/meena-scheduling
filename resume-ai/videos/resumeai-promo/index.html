@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ar">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Cairo"; font-weight: 700; src: url("assets/fonts/Cairo-700.ttf") format("truetype"); }
+      @font-face { font-family: "Cairo"; font-weight: 900; src: url("assets/fonts/Cairo-900.ttf") format("truetype"); }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #08090a; }
+      body { font-family: "Cairo", "Inter", sans-serif; color: #f4f5f3; }
+      .scene { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+      .ar { font-weight: 900; direction: rtl; }
+      .en { font-weight: 700; color: rgba(244,245,243,0.55); letter-spacing: 0.02em; }
+      .accent { color: #4ade80; }
+      .chip { display: inline-block; padding: 10px 26px; border-radius: 999px; background: rgba(74,222,128,0.1);
+              border: 1px solid rgba(74,222,128,0.35); color: #4ade80; font-weight: 700; font-size: 30px; }
+      .orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.55; }
+      .grain { position: absolute; inset: 0; opacity: 0.5;
+               background: radial-gradient(ellipse 60% 50% at 50% 40%, rgba(74,222,128,0.10), transparent 70%); }
+      .card { background: #101316; border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="43" data-width="1920" data-height="1080" style="position:relative; width:1920px; height:1080px; background:#08090a; overflow:hidden;">
+
+      <div id="bg" class="clip" data-start="0" data-duration="43" data-track-index="0" style="position:absolute; inset:0;">
+        <div class="orb" style="width:640px;height:640px;top:-10%;left:5%;background:radial-gradient(circle at 35% 35%, rgba(74,222,128,0.5), transparent 60%);"></div>
+        <div class="orb" style="width:560px;height:560px;bottom:-12%;right:6%;background:radial-gradient(circle at 60% 40%, rgba(99,102,241,0.4), transparent 60%);"></div>
+        <div class="grain"></div>
+      </div>
+
+      <div id="s1" class="clip scene" data-start="0" data-duration="5.2" data-track-index="1">
+        <div id="s1logo" style="display:flex;align-items:center;gap:24px;">
+          <div style="width:96px;height:96px;border-radius:22px;background:#4ade80;color:#05130a;font-weight:900;font-size:60px;display:flex;align-items:center;justify-content:center;">R</div>
+          <div style="font-size:88px;font-weight:900;">ResumeAI</div>
+        </div>
+        <div id="s1tag" class="ar" style="font-size:44px;margin-top:26px;">سيرتك <span class="accent">تعبُر</span> أنظمة التوظيف</div>
+        <div id="s1en" class="en" style="font-size:30px;margin-top:10px;">Honest AI resume optimization · cv.rabit.sa</div>
+      </div>
+
+      <div id="s2" class="clip scene" data-start="5" data-duration="5.2" data-track-index="2">
+        <div id="s2big" class="ar" style="font-size:150px;font-weight:900;">٧٥٪</div>
+        <div id="s2ar" class="ar" style="font-size:52px;margin-top:8px;">من السير يرفضها النظام قبل أن يراها بشر</div>
+        <div id="s2en" class="en" style="font-size:30px;margin-top:14px;">75% of resumes are rejected before a human sees them</div>
+      </div>
+
+      <div id="s3" class="clip scene" data-start="10" data-duration="6.2" data-track-index="3">
+        <div class="chip" style="margin-bottom:36px;">فحص مجاني · Free ATS scan</div>
+        <div style="position:relative;width:340px;height:340px;">
+          <svg width="340" height="340" viewBox="0 0 340 340">
+            <circle cx="170" cy="170" r="150" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="22"/>
+            <circle id="s3ring" cx="170" cy="170" r="150" fill="none" stroke="#4ade80" stroke-width="22" stroke-linecap="round"
+                    transform="rotate(-90 170 170)" stroke-dasharray="942" stroke-dashoffset="942"/>
+          </svg>
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <div id="s3num" style="font-size:120px;font-weight:900;color:#4ade80;">0</div>
+            <div class="en" style="font-size:26px;">/ 100</div>
+          </div>
+        </div>
+        <div id="s3cap" class="ar" style="font-size:40px;margin-top:30px;">درجة الملاءمة + الكلمات الناقصة — <span class="accent">فورية</span></div>
+      </div>
+
+      <div id="s4" class="clip scene" data-start="16" data-duration="6.2" data-track-index="4">
+        <div id="s4icon" style="font-size:96px;">🛡️</div>
+        <div id="s4ar" class="ar" style="font-size:80px;font-weight:900;margin-top:10px;">صفر <span class="accent">اختلاق</span></div>
+        <div id="s4sub" class="ar" style="font-size:44px;margin-top:12px;">نحسّن صياغة حقائقك فقط — لا نضيف ما لا تملكه</div>
+        <div id="s4en" class="en" style="font-size:30px;margin-top:12px;">Zero fabrication — we only sharpen your real facts</div>
+      </div>
+
+      <div id="s5" class="clip scene" data-start="22" data-duration="5.2" data-track-index="5">
+        <div class="ar" style="font-size:40px;color:rgba(244,245,243,0.6);">قبل ← بعد</div>
+        <div style="display:flex;align-items:center;gap:60px;margin-top:24px;">
+          <div id="s5b" style="font-size:150px;font-weight:900;color:#f87171;">32</div>
+          <div id="s5arrow" style="font-size:90px;color:#4ade80;">→</div>
+          <div id="s5a" style="font-size:150px;font-weight:900;color:#4ade80;">82</div>
+        </div>
+        <div id="s5cap" class="en" style="font-size:30px;margin-top:20px;">A real, honest lift — verified when you re-scan</div>
+      </div>
+
+      <div id="s6" class="clip scene" data-start="27" data-duration="5.2" data-track-index="6">
+        <div id="s6ar" class="ar" style="font-size:56px;font-weight:900;">١٠ قوالب أنيقة</div>
+        <div id="s6en" class="en" style="font-size:30px;margin-top:6px;margin-bottom:36px;">10 designed templates · Arabic RTL + English</div>
+        <div id="s6row" style="display:flex;gap:26px;">
+          <div class="card s6c" style="width:190px;height:250px;border-top:10px solid #0f766e;"></div>
+          <div class="card s6c" style="width:190px;height:250px;border-top:10px solid #b45309;"></div>
+          <div class="card s6c" style="width:190px;height:250px;border-top:10px solid #1d4ed8;"></div>
+          <div class="card s6c" style="width:190px;height:250px;border-top:10px solid #6d28d9;"></div>
+          <div class="card s6c" style="width:190px;height:250px;border-top:10px solid #b91c1c;"></div>
+        </div>
+      </div>
+
+      <div id="s7" class="clip scene" data-start="32" data-duration="6.2" data-track-index="7">
+        <div class="chip" style="margin-bottom:30px;">جديد · New</div>
+        <div id="s7face" style="width:200px;height:200px;border-radius:50%;background:linear-gradient(135deg,#0f766e,#134e4a);display:flex;align-items:center;justify-content:center;font-size:96px;box-shadow:0 20px 60px -12px rgba(15,118,110,0.6);">🎤</div>
+        <div id="s7ar" class="ar" style="font-size:60px;font-weight:900;margin-top:26px;">مقابلة فيديو بالذكاء الاصطناعي</div>
+        <div id="s7en" class="en" style="font-size:30px;margin-top:10px;">A real-voice AI interviewer asks &amp; scores you — live</div>
+      </div>
+
+      <div id="s8" class="clip scene" data-start="38" data-duration="5" data-track-index="8">
+        <div id="s8ar" class="ar" style="font-size:56px;font-weight:900;">جرّبها مجاناً الآن</div>
+        <div id="s8url" style="font-size:132px;font-weight:900;margin-top:16px;" class="accent">cv.rabit.sa</div>
+        <div id="s8en" class="en" style="font-size:32px;margin-top:16px;">Free scan · No sign-up · One-time, no subscription</div>
+      </div>
+
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const ez = "power3.out";
+
+      tl.to("#bg .orb", { xPercent: 8, yPercent: 6, duration: 43, ease: "sine.inOut" }, 0);
+
+      function scene(sel, t, dur) {
+        tl.fromTo(sel, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.6, ease: ez }, t);
+        tl.to(sel, { autoAlpha: 0, duration: 0.5, ease: "power2.in" }, t + dur - 0.5);
+      }
+      gsap.set(["#s1","#s2","#s3","#s4","#s5","#s6","#s7","#s8"], { autoAlpha: 0 });
+
+      scene("#s1", 0, 5.2);
+      tl.from("#s1logo", { scale: 0.85, y: 20, duration: 0.8, ease: "back.out(1.6)" }, 0.2);
+      tl.from("#s1tag", { y: 24, opacity: 0, duration: 0.7, ease: ez }, 0.9);
+      tl.from("#s1en", { y: 16, opacity: 0, duration: 0.6, ease: ez }, 1.3);
+
+      scene("#s2", 5, 5.2);
+      tl.from("#s2big", { scale: 0.6, opacity: 0, duration: 0.9, ease: "back.out(1.7)" }, 5.2);
+      tl.from("#s2ar", { y: 20, opacity: 0, duration: 0.6, ease: ez }, 5.9);
+      tl.from("#s2en", { y: 16, opacity: 0, duration: 0.6, ease: ez }, 6.2);
+
+      scene("#s3", 10, 6.2);
+      tl.to("#s3ring", { strokeDashoffset: 942 - (942 * 0.82), duration: 1.8, ease: "power2.out" }, 10.6);
+      const s3o = { v: 0 };
+      tl.to(s3o, { v: 82, duration: 1.8, ease: "power2.out",
+        onUpdate: () => { const n = document.getElementById("s3num"); if (n) n.textContent = Math.round(s3o.v); } }, 10.6);
+      tl.from("#s3cap", { y: 18, opacity: 0, duration: 0.6, ease: ez }, 12.4);
+
+      scene("#s4", 16, 6.2);
+      tl.from("#s4icon", { scale: 0.5, opacity: 0, duration: 0.7, ease: "back.out(1.7)" }, 16.2);
+      tl.from("#s4ar", { y: 24, opacity: 0, duration: 0.7, ease: ez }, 16.7);
+      tl.from("#s4sub", { y: 18, opacity: 0, duration: 0.6, ease: ez }, 17.1);
+      tl.from("#s4en", { y: 16, opacity: 0, duration: 0.6, ease: ez }, 17.5);
+
+      scene("#s5", 22, 5.2);
+      tl.from("#s5b", { scale: 0.7, opacity: 0, duration: 0.6, ease: "back.out(1.6)" }, 22.4);
+      tl.from("#s5arrow", { opacity: 0, x: -20, duration: 0.5, ease: ez }, 22.9);
+      tl.from("#s5a", { scale: 0.7, opacity: 0, duration: 0.7, ease: "back.out(1.8)" }, 23.2);
+      tl.from("#s5cap", { y: 16, opacity: 0, duration: 0.6, ease: ez }, 23.9);
+
+      scene("#s6", 27, 5.2);
+      tl.from("#s6ar", { y: 20, opacity: 0, duration: 0.6, ease: ez }, 27.2);
+      tl.from("#s6en", { y: 16, opacity: 0, duration: 0.5, ease: ez }, 27.5);
+      tl.from(".s6c", { y: 40, opacity: 0, duration: 0.6, stagger: 0.1, ease: "back.out(1.5)" }, 27.7);
+
+      scene("#s7", 32, 6.2);
+      tl.from("#s7face", { scale: 0.6, opacity: 0, duration: 0.8, ease: "back.out(1.7)" }, 32.3);
+      tl.to("#s7face", { y: -12, duration: 1.4, yoyo: true, repeat: 2, ease: "sine.inOut" }, 33.1);
+      tl.from("#s7ar", { y: 22, opacity: 0, duration: 0.7, ease: ez }, 33.0);
+      tl.from("#s7en", { y: 16, opacity: 0, duration: 0.6, ease: ez }, 33.4);
+
+      scene("#s8", 38, 5);
+      tl.from("#s8ar", { y: 20, opacity: 0, duration: 0.6, ease: ez }, 38.2);
+      tl.from("#s8url", { scale: 0.8, opacity: 0, duration: 0.9, ease: "back.out(1.7)" }, 38.6);
+      tl.from("#s8en", { y: 16, opacity: 0, duration: 0.6, ease: ez }, 39.4);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
