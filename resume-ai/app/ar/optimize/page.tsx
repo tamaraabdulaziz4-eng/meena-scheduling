@@ -275,7 +275,7 @@ export default function ArOptimizePage() {
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/optimize" className="text-sm" style={{ color: "var(--muted)" }}
-              onClick={() => { try { localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); } catch { /* noop */ } }}>
+              onClick={() => { try { localStorage.setItem("ra_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); localStorage.setItem("ra_lang", "en"); } catch { /* noop */ } }}>
               English
             </Link>
             <AuthNav ar />

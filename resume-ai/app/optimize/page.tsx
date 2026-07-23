@@ -315,7 +315,7 @@ export default function OptimizePage() {
               onClick={() => {
                 // Carry the draft across the language switch — separate storage
                 // keys otherwise make it look like the user's text vanished.
-                try { localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); } catch { /* noop */ }
+                try { localStorage.setItem("ra_ar_optimize_draft", JSON.stringify({ resume, jobDescription, mode })); localStorage.setItem("ra_lang", "ar"); } catch { /* noop */ }
               }}>
               عربي
             </Link>
