@@ -24,8 +24,16 @@ interface OptimizeResult {
 // Prepend/append a watermark to the plain-text (.txt) free download.
 const WM = "cv.rabit.sa";
 function wmTxt(text: string): string {
-  const line = `— أُنشئت مجاناً عبر ${WM} · أزل هذه العلامة بالاشتراك —`;
+  const line = `— Created free with ${WM} —`;
   return `${line}\n\n${text}\n\n${line}`;
+}
+
+// Use the candidate's name (first real line of the resume) as the saved title
+// instead of a generic "Optimized — date". Falls back to a dated label.
+function guessResumeTitle(resume: string): string {
+  const first = resume.split("\n").map((l) => l.trim()).find((l) => l.length > 1) || "";
+  const looksLikeName = first && first.length <= 40 && !/[@:|]|http|\d{3}/.test(first);
+  return looksLikeName ? first : `Optimized — ${new Date().toLocaleDateString()}`;
 }
 
 // Try-before-you-share: a realistic sample so visitors can see a full result
@@ -203,10 +211,15 @@ export default function OptimizePage() {
     // internally, and each POST to /api/optimize consumes the free scan — a
     // client retry would burn the free scan and slam the user into the paywall
     // with no result. One request, one attempt.
+    // Abort a stalled request so a network hang surfaces a friendly retry
+    // instead of spinning forever (the "Failed to fetch" the CX test caught).
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
     try {
       const res = await fetch("/api/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
         // General review deliberately ignores the JD field — the mode label
         // promises that, so honor it.
         body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "" }),
@@ -255,12 +268,19 @@ export default function OptimizePage() {
           result: got,
         });
         if (!got.locked && got.optimizedResume) {
-          saveResume({ title: `Optimized — ${new Date().toLocaleDateString()}`, source: "optimized", text: got.optimizedResume });
+          saveResume({ title: guessResumeTitle(got.optimizedResume), source: "optimized", text: got.optimizedResume });
         }
       } catch { /* noop */ }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      // Network drop / abort / timeout throws a raw "Failed to fetch" — turn it
+      // into plain language. The user's text is still in state, so Retry works.
+      const raw = err instanceof Error ? err.message : "";
+      const isNetwork = /failed to fetch|load failed|networkerror|aborted|the analysis didn't complete/i.test(raw) || raw === "";
+      setError(isNetwork
+        ? "Connection hiccup — your resume is still here. Tap Retry to run the scan again."
+        : raw || "Something went wrong. Please try again.");
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }
@@ -404,7 +424,14 @@ export default function OptimizePage() {
             <div className="text-center md:col-span-2">
               {error && (
                 <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
-                  {error}
+                  <div>{error}</div>
+                  {resume.trim() && !loading && (
+                    <button type="button" onClick={() => runScan()}
+                      className="mt-2 inline-block rounded-lg px-4 py-1.5 text-xs font-semibold"
+                      style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>
+                      ↻ Retry scan
+                    </button>
+                  )}
                 </div>
               )}
               <button
@@ -529,9 +556,11 @@ export default function OptimizePage() {
                     <div>
                       <h3 className="font-bold">Matching cover letter</h3>
                       <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-                        {jobDescription.trim().length < 30
-                          ? "Click ‘← New scan’, add the job posting, then re-scan to generate a matching cover letter"
-                          : "Generate a tailored cover letter from the same job post."}
+                        {result.watermark
+                          ? "Part of the Complete Pack — unlock to generate a tailored cover letter from this job."
+                          : jobDescription.trim().length < 30
+                            ? "Click ‘← New scan’, add the job posting, then re-scan to generate a matching cover letter."
+                            : "Generate a tailored cover letter from the same job post."}
                       </p>
                     </div>
                     {result.watermark ? (

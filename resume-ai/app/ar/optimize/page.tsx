@@ -25,7 +25,7 @@ const inputStyle = { background: "var(--surface)", border: "1px solid var(--line
 
 // علامة مائية لتنزيل النص المجاني (.txt).
 function wmTxt(text: string): string {
-  const line = "— أُنشئت مجاناً عبر cv.rabit.sa · أزل هذه العلامة بالاشتراك —";
+  const line = "— أُنشئت مجاناً عبر cv.rabit.sa —";
   return `${line}\n\n${text}\n\n${line}`;
 }
 
@@ -395,7 +395,7 @@ export default function ArOptimizePage() {
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <h2 className="text-xl font-bold">سيرتك المحسّنة (بالإنجليزية)</h2>
+                <h2 className="text-xl font-bold">سيرتك المحسّنة</h2>
                 <button onClick={() => { setResult(null); setCoverLetter(""); setCoverError(""); }}
                   className="btn-ghost px-3 py-1.5 text-xs font-semibold" style={{ color: "var(--fg)" }}>
                   فحص جديد ←
@@ -411,8 +411,8 @@ export default function ArOptimizePage() {
                     className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
                     ↓ نص
                   </button>
-                  <PdfExport text={result.optimizedResume} label="↓ تنزيل PDF" watermark={result.watermark} />
-                  <DocxExport text={result.optimizedResume} label="↓ تنزيل Word" filename="resume-ar.docx" watermark={result.watermark} />
+                  <PdfExport text={result.optimizedResume} label="↓ تنزيل PDF" watermark={result.watermark} lang="ar" />
+                  <DocxExport text={result.optimizedResume} label="↓ تنزيل Word" filename="resume-ar.docx" watermark={result.watermark} lang="ar" />
                 </div>
               )}
             </div>

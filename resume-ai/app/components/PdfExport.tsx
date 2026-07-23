@@ -8,7 +8,7 @@ import { useState } from "react";
  * nothing on mobile Safari. Layout: A4, name header, underlined section
  * headings, bullets, automatic wrapping + page breaks.
  */
-export default function PdfExport({ text, label = "↓ Download PDF", watermark = false }: { text: string; label?: string; watermark?: boolean }) {
+export default function PdfExport({ text, label = "↓ Download PDF", watermark = false, lang = "en" }: { text: string; label?: string; watermark?: boolean; lang?: "en" | "ar" }) {
   const [busy, setBusy] = useState(false);
 
   async function exportPdf() {
@@ -142,7 +142,9 @@ export default function PdfExport({ text, label = "↓ Download PDF", watermark 
           doc.setFont("helvetica", "normal");
           doc.setFontSize(8);
           doc.setTextColor(150);
-          doc.text("أُنشئت مجاناً عبر cv.rabit.sa — أزل هذه العلامة بالاشتراك", 105, 290, { align: "center" });
+          // helvetica can't render Arabic glyphs — keep the footer Latin so it
+          // never shows as boxes; the mark is the domain either way.
+          doc.text(lang === "ar" ? "cv.rabit.sa — نسخة مجانية" : "Created free with cv.rabit.sa", 105, 290, { align: "center" });
           doc.setTextColor(232);
           doc.setFontSize(46);
           try {

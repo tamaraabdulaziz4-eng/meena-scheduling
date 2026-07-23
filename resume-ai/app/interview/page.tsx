@@ -23,10 +23,15 @@ export default function InterviewPage() {
     setError("");
     setResult(null);
     setLoading(true);
+    // Abort a stalled call so the UI can't spin forever (the "still broken"
+    // the tests kept catching was the request hanging with no timeout).
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
     try {
       const res = await fetch("/api/tools", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
         body: JSON.stringify({ mode: "interview", inputA: resume, inputB: jd }),
       });
       const data = await res.json();
@@ -37,8 +42,13 @@ export default function InterviewPage() {
       setResult({ questions: data.questions, redFlags: Array.isArray(data.redFlags) ? data.redFlags : [] });
       setOpen(0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      const raw = err instanceof Error ? err.message : "";
+      const isNetwork = /failed to fetch|load failed|networkerror|aborted/i.test(raw) || raw === "";
+      setError(isNetwork
+        ? "Connection hiccup — your text is still here. Tap Retry to prepare your questions again."
+        : raw || "Something went wrong.");
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }
@@ -76,7 +86,17 @@ export default function InterviewPage() {
               <textarea value={jd} onChange={(e) => setJd(e.target.value)} rows={6} required
                 placeholder="Paste the job posting..." className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
             </div>
-            {error && <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>{error}</div>}
+            {error && (
+              <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
+                <div>{error}</div>
+                {resume.trim() && jd.trim() && !loading && (
+                  <button type="submit" className="mt-2 inline-block rounded-lg px-3 py-1 text-xs font-semibold"
+                    style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>
+                    ↻ Retry
+                  </button>
+                )}
+              </div>
+            )}
             <button type="submit" disabled={loading} className="btn-accent w-full py-3 disabled:opacity-50">
               {loading ? (
                 <span className="flex items-center justify-center gap-3">

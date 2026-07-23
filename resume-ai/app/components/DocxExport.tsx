@@ -8,7 +8,7 @@ import { useState } from "react";
  * correctly (RTL-aware), so this doubles as the Arabic-safe download path.
  * Client-side via the `docx` library (dynamic import → no SSR weight).
  */
-export default function DocxExport({ text, label = "↓ Word (.docx)", filename = "resume.docx", watermark = false }: { text: string; label?: string; filename?: string; watermark?: boolean }) {
+export default function DocxExport({ text, label = "↓ Word (.docx)", filename = "resume.docx", watermark = false, lang = "en" }: { text: string; label?: string; filename?: string; watermark?: boolean; lang?: "en" | "ar" }) {
   const [busy, setBusy] = useState(false);
 
   async function exportDocx() {
@@ -55,7 +55,7 @@ export default function DocxExport({ text, label = "↓ Word (.docx)", filename 
             default: new Footer({
               children: [new Paragraph({
                 alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: "أُنشئت مجاناً عبر cv.rabit.sa — أزل هذه العلامة بالاشتراك · Created free with cv.rabit.sa", size: 14, color: "9AA0A6" })],
+                children: [new TextRun({ text: lang === "ar" ? "أُنشئت مجاناً عبر cv.rabit.sa" : "Created free with cv.rabit.sa", size: 14, color: "9AA0A6" })],
               })],
             }),
           }
