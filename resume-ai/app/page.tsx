@@ -9,7 +9,6 @@ import MobileMenu from "./components/MobileMenu";
 import LiveTicker from "./components/LiveTicker";
 import SubscribeBox from "./components/SubscribeBox";
 import AtsMarquee from "./components/AtsMarquee";
-import LandingExperience from "./components/LandingExperience";
 import { PLANS } from "./lib/plans";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
@@ -43,8 +42,244 @@ export default function Home() {
         </div>
       </nav>
 
-      {/* ── Cinematic landing experience ── */}
-      <LandingExperience />
+      {/* ── Hero ── */}
+      <section className="relative overflow-hidden px-6 pb-24 pt-16 md:pt-24">
+        <div className="hero-ambient">
+          <div className="orb orb-a" />
+          <div className="orb orb-b" />
+          <div className="orb orb-c" />
+          <div className="grid-lines" />
+        </div>
+        <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-2">
+          <div>
+            <div className="chip mb-6">● The no-fabrication resume engine</div>
+            <h1 className="text-5xl font-extrabold leading-[1.05] tracking-tight md:text-6xl">
+              Your experience is{" "}
+              <span style={{ color: "#f87171" }}>stronger</span> than your resume shows.
+              <br />
+              We <span className="accent-underline text-accent">fix that</span> in 10 seconds.
+            </h1>
+            <p className="mt-6 max-w-lg text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
+              Paste your resume — and optionally the job post. Our AI makes it clearer,
+              stronger, and aligned with the job&apos;s actual requirements. And it{" "}
+              <strong style={{ color: "var(--fg)" }}>never invents</strong> a number, skill,
+              or achievement you didn&apos;t give it.
+            </p>
+            <div className="mt-9 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+              <Link href="/optimize" className="btn-accent px-8 py-4 text-lg">
+                Optimize my resume free →
+              </Link>
+              <a href="#compare" className="text-sm underline-offset-4 hover:underline" style={{ color: "var(--muted)" }}>
+                Compare pricing ↓
+              </a>
+            </div>
+            <div className="mt-7 flex items-center gap-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
+              <span>✓ No sign-up</span>
+              <span>✓ 10-second result</span>
+              <span>✓ From SAR 35, no subscription</span>
+            </div>
+            <div className="mt-6">
+              <LiveTicker />
+            </div>
+          </div>
+
+          {/* Signature interactive scan */}
+          <div className="lg:pl-8">
+            <ScanDemo />
+          </div>
+        </div>
+      </section>
+
+      {/* ── Trust bar ── */}
+      <section style={{ borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto grid max-w-5xl grid-cols-2 gap-6 px-6 py-10 text-center md:grid-cols-4">
+          {[
+            { node: <Counter value={10} suffix="s" />, label: "average time to your rewritten resume" },
+            { node: <>0</>, label: "invented facts — fabrication is blocked in the engine itself" },
+            { node: <Counter value={35} prefix="SAR " />, label: "one-time option — no subscription required" },
+            { node: <>100%</>, label: "of resumes processed without being stored on our servers" },
+          ].map((s) => (
+            <div key={s.label}>
+              <div className="font-mono text-3xl font-bold text-accent tabular-nums">{s.node}</div>
+              <div className="mt-2 text-xs leading-snug" style={{ color: "var(--faint)" }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── ATS systems marquee ── */}
+      <AtsMarquee label="Output formatted for compatibility with major hiring systems" />
+
+      {/* ── How it works ── */}
+      <section className="mx-auto max-w-5xl px-6 py-24">
+        <div className="mb-14 text-center">
+          <div className="chip mb-4">How it works</div>
+          <h2 className="text-4xl font-bold tracking-tight">Three steps. One honest match score.</h2>
+        </div>
+        <div className="grid gap-5 md:grid-cols-3">
+          {[
+            { n: "01", t: "Paste your resume", d: "Raw text, no formatting fuss. We read the whole thing the way an ATS does." },
+            { n: "02", t: "Drop in the job post", d: "The AI extracts every keyword, skill, and title the employer's system is scanning for." },
+            { n: "03", t: "Get the rewrite + score", d: "A tailored resume, a match score out of 100, and the exact keywords you were missing." },
+          ].map((s) => (
+            <div key={s.n} className="card card-hover p-7">
+              <div className="font-mono text-sm font-bold text-accent">{s.n}</div>
+              <h3 className="mt-4 text-lg font-bold">{s.t}</h3>
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Comparison (built from real market research) ── */}
+      <section id="compare" className="px-6 py-24" style={{ background: "rgba(74,222,128,0.025)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-4 text-center">
+            <div className="chip mb-4">The honest comparison</div>
+            <h2 className="text-4xl font-bold tracking-tight">Same job. A fraction of the price.</h2>
+            <p className="mx-auto mt-4 max-w-xl text-sm" style={{ color: "var(--muted)" }}>
+              Most tools are subscription-first. We lead with a one-time option at the lowest
+              one-time price we&apos;ve found — pay once, fix the resume, and leave.
+            </p>
+          </div>
+
+          <div className="mt-10 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--line)" }}>
+                  <th className="py-4 pr-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Tool</th>
+                  <th className="py-4 px-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Cheapest paid plan</th>
+                  <th className="py-4 px-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Job-specific match</th>
+                  <th className="py-4 px-4 font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Pay once?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style={{ background: "rgba(74,222,128,0.06)", borderBottom: "1px solid rgba(74,222,128,0.2)" }}>
+                  <td className="py-4 pr-4 font-bold text-accent">ResumeAI <span className="font-mono text-[10px]">(us)</span></td>
+                  <td className="py-4 px-4 font-mono font-bold">SAR 35 once / SAR 99 complete</td>
+                  <td className="py-4 px-4 text-accent">✓ Yes</td>
+                  <td className="py-4 px-4 text-accent">✓ Yes — SAR 35 (~$9)</td>
+                </tr>
+                {[
+                  { name: "Jobscan", price: "$49.95 / mo", match: true, once: "✕ Subscription" },
+                  { name: "Enhancv", price: "$19.99 / mo", match: false, once: "✕ Subscription" },
+                  { name: "Rezi", price: "$29 / mo", match: true, once: "✓ $149 lifetime" },
+                  { name: "Resume Worded", price: "~$49 / mo", match: false, once: "✕ Subscription" },
+                  { name: "ResumeUp.AI", price: "$8.25 / mo", match: true, once: "✕ Subscription" },
+                ].map((c) => (
+                  <tr key={c.name} style={{ borderBottom: "1px solid var(--line)" }}>
+                    <td className="py-4 pr-4 font-semibold" style={{ color: "var(--fg)" }}>{c.name}</td>
+                    <td className="py-4 px-4 font-mono" style={{ color: "var(--muted)" }}>{c.price}</td>
+                    <td className="py-4 px-4" style={{ color: c.match ? "var(--muted)" : "#f87171" }}>{c.match ? "✓ Yes" : "✕ No"}</td>
+                    <td className="py-4 px-4" style={{ color: c.once.startsWith("✓") ? "var(--muted)" : "#f87171" }}>{c.once}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>
+            Prices verified July 2026 from each provider&apos;s public pricing page.
+          </p>
+        </div>
+      </section>
+
+      {/* ── Features (bento grid) ── */}
+      <section className="mx-auto max-w-5xl px-6 py-24">
+        <Reveal>
+          <div className="mb-14 text-center">
+            <div className="chip mb-4">What you get</div>
+            <h2 className="text-4xl font-bold tracking-tight">Everything the $50/mo tools do.</h2>
+          </div>
+        </Reveal>
+        <div className="grid gap-4 md:grid-cols-6">
+          {/* Large: AI rewrite with mini before/after */}
+          <Reveal className="md:col-span-4">
+            <div className="card card-hover h-full p-7">
+              <div className="mb-3 font-mono text-xs uppercase tracking-widest text-accent">Core engine</div>
+              <h3 className="text-xl font-bold">Full AI rewrite — without inventing a thing</h3>
+              <p className="mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                Your whole resume rewritten with strong verbs and the job&apos;s language. Where a
+                number would help but you didn&apos;t give one, we mark the spot — we never make one up.
+              </p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg p-4 font-mono text-xs leading-relaxed" style={{ background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", color: "rgba(244,245,243,0.6)" }}>
+                  <span style={{ color: "#f87171" }}>BEFORE</span><br />
+                  &ldquo;Wrote code for web applications. Fixed bugs.&rdquo;
+                </div>
+                <div className="rounded-lg p-4 font-mono text-xs leading-relaxed" style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.25)", color: "rgba(244,245,243,0.85)" }}>
+                  <span className="text-accent">AFTER</span><br />
+                  &ldquo;Developed and shipped web application features in React, resolving critical bugs and cutting load time by <span style={{ color: "#fbbf24" }}>[add your real %]</span>.&rdquo;
+                </div>
+              </div>
+            </div>
+          </Reveal>
+
+          {/* Tall: match score */}
+          <Reveal delay={80} className="md:col-span-2">
+            <div className="card card-hover flex h-full flex-col justify-between p-7">
+              <div>
+                <h3 className="font-bold">Match score</h3>
+                <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>See your match strength before you hit submit.</p>
+              </div>
+              <div className="mt-5 text-center">
+                <span className="font-mono text-6xl font-bold text-accent tabular-nums">92</span>
+                <span className="font-mono text-xl" style={{ color: "var(--faint)" }}>%</span>
+              </div>
+            </div>
+          </Reveal>
+
+          {/* Three small */}
+          {[
+            { t: "Keyword gap", d: "The exact missing terms, added naturally where they belong." },
+            { t: "Skills gap report", d: "Which skills to highlight — or honestly, to go learn." },
+            { t: "Cover letter", d: "A matching letter generated from the same job post." },
+          ].map((f, i) => (
+            <Reveal key={f.t} delay={i * 80} className="md:col-span-2">
+              <div className="card card-hover h-full p-6">
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg font-mono text-sm font-bold"
+                  style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.2)" }}>✓</div>
+                <h3 className="font-bold">{f.t}</h3>
+                <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>{f.d}</p>
+              </div>
+            </Reveal>
+          ))}
+
+          {/* Wide: social proof woven into the grid */}
+          <Reveal className="md:col-span-6">
+            <div className="card p-7" style={{ borderColor: "rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.04)" }}>
+              <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+                <p className="max-w-2xl text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
+                  <span className="font-mono text-accent">🛡 Our pledge:</span>&nbsp;&nbsp;we will never add a number, skill,
+                  or credential you didn&apos;t state. Missing a metric? You&apos;ll see{" "}
+                  <span className="font-mono" style={{ color: "#fbbf24" }}>[add your real number]</span> — you fill in the truth.
+                  <Link href="/privacy" className="ml-2 text-xs underline" style={{ color: "var(--faint)" }}>Read the full pledge</Link>
+                </p>
+                <Link href="/optimize" className="btn-accent shrink-0 px-6 py-2.5 text-sm">Try it free →</Link>
+              </div>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Why you can trust the rewrite ── */}
+      <section className="px-6 py-24" style={{ background: "rgba(255,255,255,0.015)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-12 text-center text-4xl font-bold tracking-tight">Why you can trust the rewrite.</h2>
+          <div className="grid gap-5 md:grid-cols-3">
+            {[
+              { t: "No invented achievements", d: "The AI never adds a number, employer, or skill you didn't provide. Where a metric would help but you didn't give one, it writes [add your real number] for you to fill in." },
+              { t: "Your resume is never stored", d: "Your resume is processed instantly to generate the result and is never stored on our servers. Drafts stay in your browser only." },
+              { t: "7-day money-back guarantee", d: "If you paid and the service failed to deliver, you get a full refund within 7 days — processed via Paylink. No lock-in, no subscription." },
+            ].map((c) => (
+              <div key={c.t} className="card p-7">
+                <div className="text-lg text-accent">✓</div>
+                <h3 className="mt-3 text-sm font-bold">{c.t}</h3>
+                <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.8)" }}>{c.d}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ── Pricing ── */}
       <section id="pricing" className="mx-auto max-w-4xl px-6 py-24">
