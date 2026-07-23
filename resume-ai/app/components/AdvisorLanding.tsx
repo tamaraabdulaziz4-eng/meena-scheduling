@@ -46,13 +46,14 @@ interface Profile {
 }
 const EMPTY: Profile = { role: "", name: "", contact: "", education: "", skills: "", extras: [], wovenLines: [], jobAd: "" };
 
-const GREEN = "#22C55E";
+// THE AURORA identity accent (was green). Success semantics use their own band colors.
+const ACCENT = "#8B5CF6";
 
 const T = {
   ar: {
     seo_h1: "سيرتك الذاتية بمقابلة — الذكاء الاصطناعي يبنيها معك سطراً بسطر",
     seo_sub: "كلم المستشار دقيقتين ويطلع لك سيرة تخترق أنظمة التوظيف — مجاناً وبدون تسجيل.",
-    greet: "هلا 👋 وش تشتغل؟",
+    greet: "هلا، وش تشتغل؟",
     greet_sub: "دقيقتين وتطلع بسيرة تخترق الروبوتات — بدون تسجيل",
     think: ["يفكّر…", "يصيغ…", "يرتّب أفكارك…"],
     input_ph: "اكتب جوابك…",
@@ -64,7 +65,7 @@ const T = {
     retry: "أعد المحاولة",
     weaving_title: "أكتب سيرتك…",
     build_fail: "تأخرت عليك — نعيدها؟",
-    welcome_back: "أهلاً بعودتك 👋 نكمل من وين وقفنا؟",
+    welcome_back: "أهلاً بعودتك. نكمل من وين وقفنا؟",
     continue_btn: "كمّل",
     restart_btn: "من جديد",
     reveal_title: "سيرتك جاهزة 🎉",
@@ -94,7 +95,7 @@ const T = {
   en: {
     seo_h1: "Your resume, by interview — AI builds it with you line by line",
     seo_sub: "Talk to the Advisor for two minutes and walk away with an ATS-beating resume — free, no signup.",
-    greet: "Hi 👋 what do you do?",
+    greet: "Hi — what do you do?",
     greet_sub: "Two minutes to a robot-proof resume — no signup",
     think: ["Thinking…", "Writing…", "Organizing your thoughts…"],
     input_ph: "Type your answer…",
@@ -106,7 +107,7 @@ const T = {
     retry: "Try again",
     weaving_title: "Writing your resume…",
     build_fail: "That took too long — try again?",
-    welcome_back: "Welcome back 👋 Continue where we left off?",
+    welcome_back: "Welcome back. Continue where we left off?",
     continue_btn: "Continue",
     restart_btn: "Start over",
     reveal_title: "Your resume is ready 🎉",
@@ -501,8 +502,8 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     editing?.path === path ? (
       <span className="block">
         <textarea value={editing.value} onChange={(e) => setEditing({ path, value: e.target.value })} rows={2} autoFocus
-          className="w-full rounded-lg p-2" style={{ background: "rgba(11,18,32,0.85)", color: "#f4f5f3", border: `1px solid ${GREEN}`, fontSize: 16 }} />
-        <button onClick={applyEdit} className="mt-1 min-h-9 rounded-lg px-4 text-xs font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.edit_save}</button>
+          className="w-full rounded-lg p-2" style={{ background: "rgba(11,18,32,0.85)", color: "#f4f5f3", border: `1px solid ${ACCENT}`, fontSize: 16 }} />
+        <button onClick={applyEdit} className="mt-1 min-h-9 rounded-lg px-4 text-xs font-bold" style={{ background: ACCENT, color: "#ffffff" }}>{t.edit_save}</button>
       </span>
     ) : (
       <button onClick={() => setEditing({ path, value })} className={`block w-full rounded px-1 text-start transition-colors hover:bg-white/10 ${cls}`} style={{ minHeight: 26 }}>{value}</button>
@@ -535,12 +536,12 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       {/* nav */}
       <nav className="relative z-40 mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>R</div>
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>R</div>
           <span className="text-[15px] font-bold tracking-tight" style={{ color: stage === "reveal" ? "var(--glass-text)" : "#f4f5f3" }}>ResumeAI</span>
         </div>
         <div className="flex items-center gap-1">
           <Link href={t.optimize_href} className="hidden min-h-11 items-center px-3 text-sm font-semibold sm:flex" style={{ color: stage === "reveal" ? "var(--glass-muted)" : "rgba(244,245,243,0.6)" }}>{t.escape}</Link>
-          <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: GREEN }}>{rtl ? "English" : "عربي"}</Link>
+          <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: ACCENT }}>{rtl ? "English" : "عربي"}</Link>
         </div>
       </nav>
 
@@ -549,7 +550,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         {stage === "greeting" && !welcomeBack && (
           <motion.div key="greet" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center px-6 text-center" style={{ top: "44vh" }}>
-            <p className="font-extrabold" style={{ fontSize: "clamp(2rem, 7vw, 3.6rem)", lineHeight: 1.15 }}>{typedGreet}<span className="animate-pulse" style={{ color: GREEN }}>▌</span></p>
+            <p className="font-extrabold" style={{ fontSize: "clamp(2rem, 7vw, 3.6rem)", lineHeight: 1.15 }}>{typedGreet}<span className="animate-pulse" style={{ color: ACCENT }}>▌</span></p>
             <p className="mt-4 max-w-md text-base" style={{ color: "var(--cosmos-muted)", lineHeight: 1.8 }}>{t.greet_sub}</p>
           </motion.div>
         )}
@@ -560,7 +561,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         <div className="absolute inset-x-0 z-30 flex flex-col items-center px-6 text-center" style={{ top: "40vh" }}>
           <p className="text-2xl font-bold">{t.welcome_back}</p>
           <div className="mt-5 flex gap-2">
-            <button onClick={restoreDraft} className="min-h-11 rounded-xl px-6 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.continue_btn}</button>
+            <button onClick={restoreDraft} className="min-h-11 rounded-xl px-6 text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>{t.continue_btn}</button>
             <button onClick={hardRestart} className="min-h-11 rounded-xl px-6 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(244,245,243,0.7)" }}>{t.restart_btn}</button>
           </div>
         </div>
@@ -583,7 +584,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           {/* goal chips (update mode) */}
           {showGoal && (
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <button onClick={() => chooseGoal("add")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.goal_add}</button>
+              <button onClick={() => chooseGoal("add")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>{t.goal_add}</button>
               <button onClick={() => chooseGoal("tailor")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_tailor}</button>
               <button onClick={() => chooseGoal("improve")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_improve}</button>
             </div>
@@ -614,7 +615,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             className="absolute inset-x-0 z-30 mx-auto px-5" style={{ top: "150px", bottom: "20px", maxWidth: 640 }}>
             <div className="glass-panel h-full overflow-y-auto p-5" style={{ background: "rgba(10,14,26,0.9)" }}>
               <div className="mb-3 flex items-center justify-between">
-                <span className="font-mono text-[11px] font-bold uppercase tracking-wider" style={{ color: GREEN }}>{t.weaving_title}</span>
+                <span className="font-mono text-[11px] font-bold uppercase tracking-wider" style={{ color: ACCENT }}>{t.weaving_title}</span>
                 {showCvMobile && <button onClick={() => setShowCvMobile(false)} className="text-xs" style={{ color: "var(--cosmos-muted)" }}>✕</button>}
               </div>
               {cvPanelBody()}
@@ -625,7 +626,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
 
       {/* mobile CV toggle */}
       {stage === "conversation" && profile.wovenLines.length > 0 && !showCvMobile && (
-        <button onClick={() => setShowCvMobile(true)} className="fixed z-40 rounded-full px-4 py-2 text-xs font-bold lg:hidden" style={{ bottom: 92, insetInlineEnd: 16, background: GREEN, color: "#05130a", boxShadow: "0 6px 20px rgba(34,197,94,0.4)" }}>{t.cv_toggle}</button>
+        <button onClick={() => setShowCvMobile(true)} className="fixed z-40 rounded-full px-4 py-2 text-xs font-bold lg:hidden" style={{ bottom: 92, insetInlineEnd: 16, background: ACCENT, color: "#ffffff", boxShadow: "0 6px 20px rgba(139,92,246,0.45)" }}>{t.cv_toggle}</button>
       )}
 
       {/* ══ THE DOCK (floating glass input) ══ */}
@@ -643,9 +644,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               </label>
             )}
             {micSupported && !pasteMode && (
-              <button onClick={toggleMic} title={t.mic_title} aria-label={t.mic_title} className="grid h-11 w-11 place-items-center rounded-xl text-lg" style={micOn ? { background: GREEN, color: "#05130a" } : { border: "1px solid rgba(255,255,255,0.2)" }}>🎙</button>
+              <button onClick={toggleMic} title={t.mic_title} aria-label={t.mic_title} className="grid h-11 w-11 place-items-center rounded-xl text-lg" style={micOn ? { background: ACCENT, color: "#ffffff" } : { border: "1px solid rgba(255,255,255,0.2)" }}>🎙</button>
             )}
-            <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold disabled:opacity-30" style={{ background: GREEN, color: "#05130a" }}>↑</button>
+            <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold disabled:opacity-30" style={{ background: ACCENT, color: "#ffffff" }}>↑</button>
           </div>
           {stage === "greeting" && (
             <div className="mt-2 flex justify-center gap-4 text-xs">
@@ -718,14 +719,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       <div className="space-y-3 text-sm" style={{ lineHeight: 1.8 }}>
         {profile.name && <div className="text-lg font-extrabold">{profile.name}</div>}
         {profile.contact && <div dir="ltr" className="text-xs" style={{ color: "rgba(244,245,243,0.6)", textAlign: rtl ? "right" : "left", unicodeBidi: "plaintext" }}>{profile.contact}</div>}
-        {profile.role && <div className="text-xs font-bold" style={{ color: GREEN }}>{profile.role}</div>}
+        {profile.role && <div className="text-xs font-bold" style={{ color: ACCENT }}>{profile.role}</div>}
         {profile.wovenLines.length > 0 && (
           <div>
             <div className="mb-1 font-mono text-[11px] font-bold uppercase tracking-wider" style={{ color: "rgba(244,245,243,0.5)" }}>{t.sections.exp}</div>
             <ul className="space-y-1">
               {profile.wovenLines.map((l, i) => (
                 <li key={i} className="cv-line-in flex gap-1.5 text-[13px]" style={{ color: "rgba(244,245,243,0.8)" }}>
-                  <span style={{ color: GREEN }}>•</span><span className="flex-1">{editLine(`line:${i}`, l.replace(/^[-•*]\s*/, ""))}</span>
+                  <span style={{ color: ACCENT }}>•</span><span className="flex-1">{editLine(`line:${i}`, l.replace(/^[-•*]\s*/, ""))}</span>
                 </li>
               ))}
             </ul>

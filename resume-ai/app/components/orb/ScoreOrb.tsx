@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import AiOrb from "../AiOrb";
 
 /**
  * <ScoreOrb> — the counter and the Orb become one thing. A living orb sits at
@@ -42,17 +43,12 @@ export default function ScoreOrb({
   return (
     <div className="flex flex-col items-center">
       <div className="relative" style={{ width: size, height: size }}>
-        {/* glowing orb core behind the arc */}
-        <span
-          aria-hidden
-          className="ai-orb"
-          style={{ ["--orb-size" as string]: `${size * 0.62}px`, position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", boxShadow: `0 0 ${size * 0.4}px ${color}66` }}
-        >
-          <span className="ai-orb-blob b1" />
-          <span className="ai-orb-blob b2" />
-          <span className="ai-orb-blob b3" />
-          <span className="ai-orb-sheen" />
-        </span>
+        {/* glowing orb core behind the arc — tinted with the band color */}
+        <AiOrb
+          size={size * 0.62}
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ ["--c1" as string]: color, ["--c2" as string]: color, ["--atmo-o" as string]: "0.6" }}
+        />
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="relative">
           <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} />
           <circle

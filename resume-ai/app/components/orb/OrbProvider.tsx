@@ -69,8 +69,15 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
             {scene.rings && !reduce && (<><span className="pulse-ring r1" /><span className="pulse-ring r2" /><span className="pulse-ring r3" /><span className="pulse-ring r4" /></>)}
             {scene.progress > 0 && (
               <svg className="absolute" width={scene.size + 16} height={scene.size + 16} style={{ transform: "rotate(-90deg)" }}>
+                <defs>
+                  <linearGradient id="orbProgressGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#8b5cf6" />
+                    <stop offset="55%" stopColor="#ec4899" />
+                    <stop offset="100%" stopColor="#f59e0b" />
+                  </linearGradient>
+                </defs>
                 <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
-                <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="#22C55E" strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - scene.progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
+                <circle cx={(scene.size + 16) / 2} cy={(scene.size + 16) / 2} r="44" fill="none" stroke="url(#orbProgressGrad)" strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - scene.progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
               </svg>
             )}
             <AiOrb size={scene.size} state={scene.mood} />
