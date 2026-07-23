@@ -98,6 +98,8 @@ export default function OptimizePage() {
   const [coverCopied, setCoverCopied] = useState(false);
   const [thinking, setThinking] = useState("");
   const [mode, setMode] = useState<"general" | "target">("general");
+  const [step, setStep] = useState(1); // guided wizard: 1 resume · 2 job · 3 language+go
+  const [outLang, setOutLang] = useState<"en" | "ar" | "both">("en");
   const [resumeView, setResumeView] = useState<"text" | "designed">("text");
   const [jobUrl, setJobUrl] = useState("");
   const [fetchingJob, setFetchingJob] = useState(false);
@@ -281,7 +283,7 @@ export default function OptimizePage() {
         signal: ctrl.signal,
         // General review deliberately ignores the JD field — the mode label
         // promises that, so honor it.
-        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "" }),
+        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "", outLang }),
       });
 
       // Non-streaming replies (validation errors, paywall) are plain JSON.
@@ -377,174 +379,126 @@ export default function OptimizePage() {
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-12">
-        {loading && (
-          <div className="card mx-auto mb-8 max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
-            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
-              <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>AI analyzing your resume — live</span>
-            </div>
-            <div ref={thinkRef} className="max-h-64 min-h-20 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed"
-              style={{ color: "rgba(244,245,243,0.75)" }}>
-              {thinking.replace(/^ANALYSIS\s*/i, "") || "Reading your resume…"}
-              <span className="animate-pulse text-accent">▌</span>
-            </div>
-          </div>
-        )}
-        {/* (dead "free scan used" card removed — the scan+analysis is always
-            free by design; only the rewrite is gated via result.locked) */}
-        {!result && (
-          <div className="mb-10 text-center">
-            <div className="chip mb-4">● Free scan</div>
-            <h1 className="text-4xl font-extrabold tracking-tight">Run your resume through the scanner</h1>
-            <p className="mt-3" style={{ color: "var(--muted)" }}>Upload or paste your resume. Add a job posting to tailor to it — or leave it empty and we&apos;ll improve the resume overall.</p>
-            {/* What you'll get — be precise about free vs paid so the result
-                never feels like a bait-and-switch. */}
-            <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2 font-mono text-xs" style={{ color: "var(--faint)" }}>
-              <span>✓ Match score + why</span>
-              <span>✓ Missing keywords</span>
-              <span>✓ Skills gap</span>
-              <span>✓ Weak lines flagged</span>
-              <span>✓ Preview of improvements</span>
-              <span style={{ color: "var(--accent)" }}>🔓 Full rewrite after unlock</span>
-            </div>
-            {!resume && !loading && (
-              <button
-                onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }}
-                className="btn-ghost mt-5 px-5 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>
-                👀 Try it with a sample resume — no data needed
-              </button>
+        {/* Loading is handled inside the wizard (step view) below. */}
+        {!result ? (
+          <div className="mx-auto max-w-2xl">
+            {/* Progress — one clear step at a time (research: "one screen = one decision"). */}
+            {!loading && (
+              <div className="mb-8">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="font-mono text-xs" style={{ color: "var(--faint)" }}>Step {step} of 3</div>
+                  {step > 1 && <button onClick={() => setStep(step - 1)} className="text-xs font-semibold" style={{ color: "var(--muted)" }}>← Back</button>}
+                </div>
+                <div className="flex gap-2">
+                  {[1, 2, 3].map((s) => (
+                    <div key={s} className="h-1.5 flex-1 rounded-full" style={{ background: s <= step ? "var(--accent)" : "var(--line)" }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {loading ? (
+              /* Analyzing — live steps instead of an empty spinner. */
+              <div className="card mx-auto max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
+                <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+                  <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>Analyzing — live</span>
+                </div>
+                <div className="px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>
+                  {thinking.replace(/^ANALYSIS\s*/i, "") || "Reading your resume…"}<span className="animate-pulse text-accent">▌</span>
+                </div>
+              </div>
+            ) : step === 1 ? (
+              /* ── Step 1: your resume ── */
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">Add your resume</h1>
+                <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>Upload a file or paste the text. We&apos;ll never change a word without your approval.</p>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <label className="cursor-pointer rounded-lg px-4 py-2 text-sm font-semibold"
+                    style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    {uploading ? "Reading…" : uploadedName ? `✓ ${uploadedName.slice(0, 22)}` : "↑ Upload PDF / Word"}
+                    <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
+                  </label>
+                  {!resume && (
+                    <button onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }}
+                      className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>👀 Try a sample</button>
+                  )}
+                </div>
+                <textarea value={resume} onChange={(e) => setResume(e.target.value)}
+                  placeholder="Paste your resume here — work experience, education, skills, contact info…"
+                  rows={12} maxLength={8000}
+                  className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
+                  style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "11rem" }} />
+                <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>{resume.length}/8000</p>
+                {extraction && uploadedName && (
+                  <div className="mt-3 rounded-xl p-4" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    <div className="mb-2 text-sm font-bold" style={{ color: "var(--accent)" }}>✓ Here&apos;s what we read — check it</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4" style={{ color: "var(--muted)" }}>
+                      <div><span style={{ color: "var(--faint)" }}>Name</span><br /><strong>{extraction.name}</strong></div>
+                      <div><span style={{ color: "var(--faint)" }}>Dated entries</span><br /><strong>{extraction.expCount}</strong></div>
+                      <div><span style={{ color: "var(--faint)" }}>Skill items</span><br /><strong>{extraction.skillsCount}</strong></div>
+                      <div><span style={{ color: "var(--faint)" }}>Language</span><br /><strong>{extraction.lang === "ar" ? "Arabic" : "English"}</strong></div>
+                    </div>
+                    {extraction.looksScanned && <div className="mt-2 text-xs font-semibold" style={{ color: "#fbbf24" }}>⚠️ Looks like a scanned image — some info may be missing. Paste the text for best results.</div>}
+                  </div>
+                )}
+                <button disabled={resume.trim().length < 50} onClick={() => setStep(2)}
+                  className="btn-accent mt-5 w-full py-3.5 text-base disabled:cursor-not-allowed disabled:opacity-40">Continue →</button>
+                <p className="mt-3 text-center text-[11px]" style={{ color: "var(--faint)" }}>🔒 Processed instantly · never stored on our servers</p>
+              </div>
+            ) : step === 2 ? (
+              /* ── Step 2: target job ── */
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">Target a job (optional)</h1>
+                <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>Add the posting and we tailor to it. Or skip for a general improvement.</p>
+                <div className="mb-3 flex gap-2">
+                  <input value={jobUrl} onChange={(e) => setJobUrl(e.target.value)} dir="ltr"
+                    placeholder="Paste a job link (LinkedIn, Bayt…) to import"
+                    className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }} />
+                  <button type="button" onClick={importJobFromUrl} disabled={fetchingJob || !jobUrl.trim()}
+                    className="btn-ghost shrink-0 px-4 py-2 text-sm font-semibold disabled:opacity-50" style={{ color: "var(--accent)" }}>{fetchingJob ? "Fetching…" : "Import"}</button>
+                </div>
+                {jobUrlMsg && <p className="mb-2 text-xs" style={{ color: jobUrlMsg.startsWith("✓") ? "var(--accent)" : "#fbbf24" }}>{jobUrlMsg}</p>}
+                <textarea value={jobDescription}
+                  onChange={(e) => { const v = e.target.value; setJobDescription(v); if (v.trim().length >= 30) setMode("target"); else setMode("general"); }}
+                  placeholder="…or paste the job description here."
+                  rows={10} maxLength={4000}
+                  className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
+                  style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "9rem" }} />
+                <div className="mt-5 flex gap-2">
+                  <button onClick={() => { setMode("general"); setStep(3); }} className="btn-ghost flex-1 py-3 text-sm font-semibold" style={{ color: "var(--fg)" }}>Skip</button>
+                  <button onClick={() => setStep(3)} className="btn-accent flex-[2] py-3 text-base">Continue →</button>
+                </div>
+              </div>
+            ) : (
+              /* ── Step 3: language + analyze ── */
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">Resume language</h1>
+                <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>What language should the improved resume be in?</p>
+                <div className="mb-6 grid grid-cols-3 gap-2">
+                  {([{ id: "en", label: "English" }, { id: "ar", label: "العربية" }, { id: "both", label: "Both" }] as const).map((o) => (
+                    <button key={o.id} onClick={() => setOutLang(o.id)}
+                      className="rounded-xl py-3 text-sm font-semibold transition-all"
+                      style={outLang === o.id ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
+                  ))}
+                </div>
+                <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)", color: "var(--muted)" }}>
+                  <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "🎯 Tailored to your job posting" : "📄 General improvement"}</div>
+                  Free: match score, missing keywords, skills gap, preview. <span style={{ color: "var(--accent)" }}>Full rewrite unlocks after.</span>
+                </div>
+                {error && (
+                  <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
+                    <div>{error}</div>
+                    {resume.trim() && <button type="button" onClick={() => runScan()} className="mt-2 inline-block rounded-lg px-4 py-1.5 text-xs font-semibold" style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>↻ Retry</button>}
+                  </div>
+                )}
+                <button onClick={() => runScan()} disabled={resume.trim().length < 50}
+                  className="btn-accent w-full py-4 text-lg disabled:opacity-40">⚡ Analyze my resume — free</button>
+                <p className="mt-3 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>~10 seconds ⚡</p>
+              </div>
             )}
           </div>
-        )}
-
-        {!result && (
-          <div className="mb-6 flex justify-center gap-2">
-            {([
-              { id: "general" as const, label: "General review" },
-              { id: "target" as const, label: "Target a specific job" },
-            ]).map((m) => (
-              <button key={m.id} type="button" onClick={() => setMode(m.id)}
-                className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
-                style={mode === m.id
-                  ? { background: "var(--accent)", color: "#05130a" }
-                  : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {!result ? (
-          <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <label className="font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Your current resume</label>
-                <label className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
-                  style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                  {uploading ? "Reading…" : uploadedName ? `✓ ${uploadedName.slice(0, 22)}` : "↑ Upload PDF / Word"}
-                  <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
-                </label>
-              </div>
-              <textarea
-                value={resume}
-                onChange={(e) => setResume(e.target.value)}
-                placeholder="Paste your resume — or upload a PDF/Word file above.&#10;&#10;Work experience, education, skills, contact info..."
-                rows={14}
-                maxLength={8000}
-                required
-                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
-                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "12rem" }}
-              />
-              <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>
-                {resume.length}/8000{resume.length >= 8000 ? " — limit reached" : resume.length > 7500 ? " — approaching limit" : ""}
-              </p>
-              {/* Extraction review — confirm what we pulled from the file so bad
-                  OCR / multi-column parsing isn't mistaken for a bad AI result. */}
-              {extraction && uploadedName && (
-                <div className="mt-3 rounded-xl p-4" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                  <div className="mb-2 text-sm font-bold" style={{ color: "var(--accent)" }}>✓ Here's what we read — check it before scanning</div>
-                  <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4" style={{ color: "var(--muted)" }}>
-                    <div><span style={{ color: "var(--faint)" }}>Name</span><br /><strong>{extraction.name}</strong></div>
-                    <div><span style={{ color: "var(--faint)" }}>Dated entries</span><br /><strong>{extraction.expCount}</strong></div>
-                    <div><span style={{ color: "var(--faint)" }}>Skill items</span><br /><strong>{extraction.skillsCount}</strong></div>
-                    <div><span style={{ color: "var(--faint)" }}>Language</span><br /><strong>{extraction.lang === "ar" ? "Arabic" : "English"}</strong></div>
-                  </div>
-                  {extraction.looksScanned && (
-                    <div className="mt-2 text-xs font-semibold" style={{ color: "#fbbf24" }}>⚠️ This looks like a scanned image — very little text was read. Some info may be missing; paste the text manually for best results.</div>
-                  )}
-                  <div className="mt-2 text-[11px]" style={{ color: "var(--faint)" }}>Not right? Edit the text above or re-upload before you scan.</div>
-                </div>
-              )}
-              <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--faint)" }}>
-                🔒 Your resume is processed instantly and <strong>never stored on our servers</strong> — drafts stay on your device only. Nothing is used for AI training. By scanning you agree to the{" "}
-                <Link href="/privacy" className="underline" style={{ color: "var(--muted)" }}>privacy policy</Link> &amp;{" "}
-                <Link href="/terms" className="underline" style={{ color: "var(--muted)" }}>terms</Link>.
-              </p>
-            </div>
-
-            <div>
-              <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-                Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>{mode === "target" ? "(tailoring to this posting)" : "(optional — paste one to tailor)"}</span>
-              </label>
-              {/* Paste a job link — easier than copying a long posting on mobile. */}
-              <div className="mb-3 flex gap-2">
-                <input value={jobUrl} onChange={(e) => setJobUrl(e.target.value)} dir="ltr"
-                  placeholder="Or paste a job link (LinkedIn, Bayt…) to import"
-                  className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }} />
-                <button type="button" onClick={importJobFromUrl} disabled={fetchingJob || !jobUrl.trim()}
-                  className="btn-ghost shrink-0 px-4 py-2 text-sm font-semibold disabled:opacity-50" style={{ color: "var(--accent)" }}>
-                  {fetchingJob ? "Fetching…" : "Import"}
-                </button>
-              </div>
-              {jobUrlMsg && <p className="mb-2 text-xs" style={{ color: jobUrlMsg.startsWith("✓") ? "var(--accent)" : "#fbbf24" }}>{jobUrlMsg}</p>}
-              <textarea
-                value={jobDescription}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setJobDescription(v);
-                  // Don't make the user responsible for the mode toggle: pasting
-                  // a posting auto-switches to "Target a job" so it's never ignored.
-                  if (v.trim().length >= 30 && mode !== "target") setMode("target");
-                  if (v.trim().length === 0 && mode === "target") setMode("general");
-                }}
-                placeholder="Paste a job posting to tailor the resume to it (auto-switches to Target mode), or leave empty for a general improvement."
-                rows={14}
-                maxLength={4000}
-                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
-                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "12rem" }}
-              />
-              <p className="mt-2 font-mono text-xs" style={{ color: jobDescription.length > 3700 ? "#fbbf24" : "var(--faint)" }}>
-                {jobDescription.length}/4000{jobDescription.length >= 4000 ? " — limit reached" : ""}
-              </p>
-            </div>
-
-            <div className="text-center md:col-span-2">
-              {error && (
-                <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
-                  <div>{error}</div>
-                  {resume.trim() && !loading && (
-                    <button type="button" onClick={() => runScan()}
-                      className="mt-2 inline-block rounded-lg px-4 py-1.5 text-xs font-semibold"
-                      style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>
-                      ↻ Retry scan
-                    </button>
-                  )}
-                </div>
-              )}
-              <button
-                type="submit"
-                disabled={loading || !resume.trim()}
-                className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
-                {loading ? (
-                  <span className="flex items-center justify-center gap-3">
-                    <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-black/30 border-t-black" />
-                    Scanning &amp; optimizing...
-                  </span>
-                ) : "⚡ Analyze my resume — free"}
-              </button>
-              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~10 seconds ⚡</p>
-            </div>
-          </form>
         ) : (
           <div>
             {/* Score banner */}
@@ -856,17 +810,6 @@ export default function OptimizePage() {
         )}
       </div>
 
-      {/* Mobile sticky CTA — keeps "analyze" reachable once there's enough text,
-          instead of buried far below the keyboard on a long textarea. */}
-      {!result && !loading && resume.trim().length >= 50 && (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t p-3 sm:hidden"
-          style={{ background: "rgba(8,9,10,0.95)", borderColor: "var(--line)", backdropFilter: "blur(8px)" }}>
-          <button type="button" onClick={() => { runScan(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-            className="btn-accent w-full py-3.5 text-base font-bold">
-            ⚡ Continue — analyze my resume
-          </button>
-        </div>
-      )}
     </main>
   );
 }
