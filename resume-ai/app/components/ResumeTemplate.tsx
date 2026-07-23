@@ -26,12 +26,29 @@ const HEADINGS = [
   "PERSONAL DETAILS", "PERSONAL INFORMATION", "ACHIEVEMENTS", "AWARDS", "REFERENCES",
 ];
 
+// Arabic section headings (Modern Standard Arabic) so RTL and bilingual resumes
+// parse into the same sections as English ones.
+const HEADINGS_AR = [
+  "الملخص المهني", "الملخص", "نبذة", "الهدف الوظيفي",
+  "المهارات", "المهارات الأساسية", "المهارات التقنية",
+  "الخبرة", "الخبرة العملية", "الخبرات", "التاريخ الوظيفي",
+  "التعليم", "المؤهلات", "الشهادات", "اللغات", "المشاريع",
+  "البيانات الشخصية", "المعلومات الشخصية", "الإنجازات", "الجوائز", "المراجع",
+];
+
 function isHeading(line: string): boolean {
-  const t = line.trim().replace(/:$/, "");
-  if (t.length > 40) return false;
-  if (HEADINGS.includes(t.toUpperCase())) return true;
-  // A short ALL-CAPS line with no bullet is treated as a heading.
-  return /^[A-Z][A-Z &/]{2,38}$/.test(t) && !t.includes("@");
+  // Bilingual headings look like "EXPERIENCE · الخبرة" — test each side.
+  const parts = line.split(/[·|/–—-]/).map((p) => p.trim()).filter(Boolean);
+  const candidates = parts.length > 1 ? [line.trim(), ...parts] : [line.trim()];
+  for (const c of candidates) {
+    const t = c.replace(/:$/, "").trim();
+    if (t.length > 42) continue;
+    if (HEADINGS.includes(t.toUpperCase())) return true;
+    if (HEADINGS_AR.includes(t)) return true;
+    // A short ALL-CAPS Latin line with no bullet/email is a heading.
+    if (/^[A-Z][A-Z &/]{2,38}$/.test(t) && !t.includes("@")) return true;
+  }
+  return false;
 }
 
 function parse(text: string): Parsed {
@@ -64,9 +81,11 @@ function parse(text: string): Parsed {
 
 const SIDEBAR = new Set(["SKILLS", "CORE SKILLS", "TECHNICAL SKILLS", "PERSONAL DETAILS", "PERSONAL INFORMATION", "LANGUAGES", "CERTIFICATIONS", "CERTIFICATES", "REFERENCES"]);
 
-export type TemplateVariant = "classic" | "modern" | "minimal" | "elegant";
+// "column" is the research-backed ATS-optimal single-column layout; the others
+// are two-column designs for human/LinkedIn use.
+export type TemplateVariant = "classic" | "modern" | "minimal" | "elegant" | "column";
 
-export default function ResumeTemplate({ text, name = "resume", accent = "#0f766e", variant = "classic", preview = false }: { text: string; name?: string; accent?: string; variant?: TemplateVariant; preview?: boolean }) {
+export default function ResumeTemplate({ text, name = "resume", accent = "#0f766e", variant = "classic", preview = false, dir = "ltr" }: { text: string; name?: string; accent?: string; variant?: TemplateVariant; preview?: boolean; dir?: "ltr" | "rtl" }) {
   const parsed = useMemo(() => parse(text), [text]);
   const ref = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
@@ -76,12 +95,14 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
 
   // Per-variant styling — same parsed content, different visual treatment so the
   // gallery can offer genuinely distinct named templates (not just recolors).
+  const singleColumn = variant === "column";
   const sidebarRight = variant === "modern";
-  const headerCentered = variant === "elegant";
-  const flatHeader = variant === "minimal"; // white header, accent text
+  const headerCentered = variant === "elegant" || singleColumn;
+  const flatHeader = variant === "minimal" || singleColumn; // white header, accent text
   const showSidebarBg = variant !== "minimal";
   const headerBg = flatHeader ? "#ffffff" : accent;
   const headerFg = flatHeader ? "#111827" : "#ffffff";
+  const isRtl = dir === "rtl";
 
   async function downloadPdf() {
     if (!ref.current) return;
@@ -140,6 +161,19 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
     </div>
   );
 
+  // Research-backed ATS-optimal layout: one column, all sections stacked in
+  // reverse-chronological order, a single accent rule under each heading.
+  const singleColBody = (
+    <div style={{ padding: "20px 40px 32px" }}>
+      {parsed.sections.map((s) => (
+        <div key={s.heading} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: accent, letterSpacing: 0.8, textTransform: "uppercase", borderBottom: `1.5px solid ${accent}`, paddingBottom: 3, marginBottom: 7 }}>{s.heading}</div>
+          <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 12.8, listStyleType: SIDEBAR.has(s.heading) ? "none" : undefined }}>{renderLines(s.lines)}</ul>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div>
       {!preview && (
@@ -151,18 +185,21 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
         </div>
       )}
 
-      {/* Live preview (also the capture source) */}
+      {/* Live preview (also the capture source). dir drives RTL for Arabic;
+          the contact line stays LTR so phone/email/dates read correctly. */}
       <div className={preview ? "" : "overflow-x-auto rounded-xl"} style={preview ? undefined : { border: "1px solid var(--line)" }}>
-        <div ref={ref} dir="ltr" style={{ width: 794, minHeight: 1123, background: "#ffffff", color: "#374151", fontFamily: "Arial, Helvetica, sans-serif", fontSize: 13 }}>
+        <div ref={ref} dir={dir} lang={isRtl ? "ar" : undefined} style={{ width: 794, minHeight: 1123, background: "#ffffff", color: "#374151", fontFamily: isRtl ? "'Segoe UI', Tahoma, Arial, sans-serif" : "Arial, Helvetica, sans-serif", fontSize: 13, textAlign: isRtl ? "right" : "left" }}>
           {/* Header */}
           <div style={{ background: headerBg, color: headerFg, padding: "28px 36px", textAlign: headerCentered ? "center" : "start", borderBottom: flatHeader ? `3px solid ${accent}` : undefined }}>
             <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 0.3, color: flatHeader ? accent : headerFg }}>{parsed.name}</div>
-            {parsed.contact && <div style={{ marginTop: 8, fontSize: 12.5, opacity: 0.95 }}>{parsed.contact}</div>}
+            {parsed.contact && <div dir="ltr" style={{ marginTop: 8, fontSize: 12.5, opacity: 0.95, textAlign: isRtl ? "right" : "left", unicodeBidi: "plaintext" }}>{parsed.contact}</div>}
           </div>
-          {/* Body: two columns (sidebar side depends on variant) */}
-          <div style={{ display: "flex", alignItems: "stretch" }}>
-            {sidebar.length === 0 ? mainCol : sidebarRight ? [mainCol, sidebarCol] : [sidebarCol, mainCol]}
-          </div>
+          {/* Body: single-column (ATS) or two-column (sidebar side depends on variant + direction) */}
+          {singleColumn ? singleColBody : (
+            <div style={{ display: "flex", alignItems: "stretch" }}>
+              {sidebar.length === 0 ? mainCol : sidebarRight ? [mainCol, sidebarCol] : [sidebarCol, mainCol]}
+            </div>
+          )}
         </div>
       </div>
     </div>

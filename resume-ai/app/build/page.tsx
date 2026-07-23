@@ -35,7 +35,26 @@ export default function BuildPage() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<"text" | "designed">("text");
+  // Template chosen from the /templates gallery (?template=slug&lang=en|ar|bi).
+  const [tpl, setTpl] = useState<{ variant: "classic" | "modern" | "minimal" | "elegant" | "column"; accent: string; dir: "ltr" | "rtl" }>({ variant: "classic", accent: "#0f766e", dir: "ltr" });
   const thinkRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Map the gallery's template slug to its visual variant + accent.
+    const MAP: Record<string, { variant: "classic" | "modern" | "minimal" | "elegant" | "column"; accent: string }> = {
+      "ats-pro": { variant: "column", accent: "#0f766e" }, onyx: { variant: "classic", accent: "#0f766e" },
+      riyadh: { variant: "classic", accent: "#b45309" }, azure: { variant: "modern", accent: "#1d4ed8" },
+      executive: { variant: "elegant", accent: "#111827" }, minimal: { variant: "minimal", accent: "#0f766e" },
+      emerald: { variant: "classic", accent: "#047857" }, crimson: { variant: "modern", accent: "#b91c1c" },
+      slate: { variant: "minimal", accent: "#334155" }, royal: { variant: "elegant", accent: "#6d28d9" },
+    };
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const m = MAP[q.get("template") || ""];
+      const dir = q.get("lang") === "ar" ? "rtl" : "ltr";
+      if (m) { setTpl({ ...m, dir }); setView("designed"); }
+    } catch { /* noop */ }
+  }, []);
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
@@ -355,7 +374,7 @@ export default function BuildPage() {
               ))}
             </div>
             {view === "designed" ? (
-              <ResumeTemplate text={cv} name={name || "resume"} />
+              <ResumeTemplate text={cv} name={name || "resume"} variant={tpl.variant} accent={tpl.accent} dir={tpl.dir} />
             ) : (
               <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
             )}
