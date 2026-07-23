@@ -17,7 +17,7 @@ interface OptimizeResult {
   missingKeywords: string[];
   presentKeywords: string[];
   skillsGap: string[];
-  improvements: { area: string; issue: string; fix: string }[];
+  improvements: { area: string; issue: string; fix: string; source?: string }[];
   optimizedResume: string;
   locked?: boolean;
   watermark?: boolean;

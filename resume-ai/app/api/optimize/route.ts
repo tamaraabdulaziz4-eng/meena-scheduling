@@ -77,7 +77,12 @@ MISSING: <comma-separated keywords absent from the resume>
 PRESENT: <comma-separated keywords genuinely present>
 GAPS: <comma-separated skills the candidate truly lacks>
 IMPROVEMENTS:
-<4-6 lines, each exactly: area | specific problem | specific actionable fix>
+<4-6 lines, each EXACTLY: area | specific problem | specific actionable fix | source>
+  where "source" is ONE of these tags describing the fix's honesty class:
+  - rephrase  (only reworded the candidate's existing content, same meaning)
+  - from-your-data  (surfaced a real fact/number already in the resume)
+  - needs-confirmation  (the fix implies more responsibility/skill than the source clearly states — the candidate must confirm it's true)
+  - missing-requirement  (the job needs this but the candidate's resume does not show it — cannot be added, only flagged)
 RESUME:
 <the COMPLETE rewritten resume as plain text, under 350 words. Nothing after it.>`;
 };
@@ -103,8 +108,10 @@ function parseSections(rawInput: string) {
     .map((l) => l.trim().replace(/^[-•*]\s*/, ""))
     .filter((l) => l.includes("|"))
     .map((l) => {
-      const [area = "", issue = "", fix = ""] = l.split("|").map((p) => p.trim());
-      return { area, issue, fix };
+      const [area = "", issue = "", fix = "", source = ""] = l.split("|").map((p) => p.trim());
+      const s = source.toLowerCase().replace(/\s+/g, "-");
+      const src = ["rephrase", "from-your-data", "needs-confirmation", "missing-requirement"].includes(s) ? s : "rephrase";
+      return { area, issue, fix, source: src };
     });
   const resume = (raw.match(/\nRESUME:\s*\n?([\s\S]*)$/i)?.[1] ?? "").trim().replace(/\*\*/g, "");
 
@@ -174,6 +181,7 @@ function normalizeResult(r: Record<string, unknown>) {
         area: String(it.area ?? ""),
         issue: String(it.issue ?? ""),
         fix: String(it.fix ?? ""),
+        source: String(it.source ?? "rephrase"),
       };
     }),
     optimizedResume:

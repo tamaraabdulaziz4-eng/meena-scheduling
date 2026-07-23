@@ -17,7 +17,7 @@ interface OptimizeResult {
   missingKeywords: string[];
   presentKeywords: string[];
   skillsGap: string[];
-  improvements: { area: string; issue: string; fix: string }[];
+  improvements: { area: string; issue: string; fix: string; source?: string }[];
   optimizedResume: string;
   locked?: boolean;
   watermark?: boolean; // free result: full text, but downloads are watermarked
@@ -776,13 +776,27 @@ export default function OptimizePage() {
                 <div className="card p-6" style={{ borderColor: "rgba(74,222,128,0.15)" }}>
                   <h3 className="mb-4 font-bold">Improvements made</h3>
                   <ul className="space-y-4">
-                    {result.improvements.map((imp) => (
-                      <li key={imp.area}>
-                        <div className="mb-1 font-mono text-xs font-bold text-accent">{imp.area}</div>
-                        <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>{imp.issue}</div>
-                        <div className="text-xs" style={{ color: "#86efac" }}>✓ {imp.fix}</div>
-                      </li>
-                    ))}
+                    {result.improvements.map((imp) => {
+                      // The trust differentiator: every edit is labelled with its
+                      // honesty class so nothing feels invented behind your back.
+                      const B: Record<string, { t: string; c: string; bg: string }> = {
+                        "rephrase": { t: "Rephrased only", c: "#93c5fd", bg: "rgba(147,197,253,0.12)" },
+                        "from-your-data": { t: "From your data", c: "#86efac", bg: "rgba(134,239,172,0.12)" },
+                        "needs-confirmation": { t: "⚠ Confirm this is true", c: "#fbbf24", bg: "rgba(251,191,36,0.12)" },
+                        "missing-requirement": { t: "Missing — you must add", c: "#f87171", bg: "rgba(248,113,113,0.12)" },
+                      };
+                      const b = B[imp.source || "rephrase"] || B.rephrase;
+                      return (
+                        <li key={imp.area}>
+                          <div className="mb-1 flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-accent">{imp.area}</span>
+                            <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: b.c, background: b.bg, border: `1px solid ${b.c}40` }}>{b.t}</span>
+                          </div>
+                          <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>{imp.issue}</div>
+                          <div className="text-xs" style={{ color: "#86efac" }}>✓ {imp.fix}</div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               </div>
