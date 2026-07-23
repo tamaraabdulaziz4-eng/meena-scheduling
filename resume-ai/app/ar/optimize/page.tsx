@@ -7,6 +7,7 @@ import BeforeAfter from "../../components/BeforeAfter";
 import CheckoutButton from "../../components/CheckoutButton";
 import AuthNav from "../../components/AuthNav";
 import { addScan, saveResume } from "../../lib/localdata";
+import { useBackToForm, useCountUp } from "../../lib/resultUx";
 
 interface OptimizeResult {
   matchScore: number;
@@ -252,6 +253,10 @@ export default function ArOptimizePage() {
 
   const score = result?.matchScore ?? 0;
   const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
+  // زر الرجوع في صفحة النتيجة يرجع لنموذج الفحص بدل الخروج من الموقع، مع عدّاد
+  // تصاعدي على النتيجة (لحظة 32→72 لازم تنبض مو تظهر فجأة).
+  useBackToForm(!!result, () => setResult(null));
+  const displayScore = useCountUp(result ? score : 0);
   // كلمة «تطابق» ما لها معنى إلا مقابل وظيفة. في التقييم العام (بدون إعلان) ما فيه
   // شي نطابقه — نستخدم صياغة محايدة عن جودة السيرة بدلاً منها.
   const verdict = mode === "target"
@@ -377,7 +382,7 @@ export default function ArOptimizePage() {
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
               <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>{mode === "target" ? "نسبة التطابق ATS" : "تقييم جودة السيرة"}</div>
               <div className="my-2 flex items-baseline justify-center gap-1" dir="ltr">
-                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{score}</span>
+                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{displayScore}</span>
                 <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold" style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>{verdict}</div>

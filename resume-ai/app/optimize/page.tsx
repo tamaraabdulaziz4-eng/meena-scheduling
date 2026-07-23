@@ -7,6 +7,7 @@ import BeforeAfter from "../components/BeforeAfter";
 import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
+import { useBackToForm, useCountUp } from "../lib/resultUx";
 
 interface OptimizeResult {
   matchScore: number;
@@ -70,6 +71,10 @@ export default function OptimizePage() {
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [thinking]);
+
+  // Back returns to the form (not off-site); score counts up on reveal.
+  useBackToForm(!!result, () => setResult(null));
+  const displayScore = useCountUp(result ? (result.matchScore ?? 0) : 0);
 
   // Leaving mid-generation kills the request — warn before an accidental exit.
   useEffect(() => {
@@ -459,7 +464,7 @@ export default function OptimizePage() {
                 {mode === "target" ? "Scored against the job you pasted" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
               </div>
               <div className="my-2 flex items-baseline justify-center gap-1">
-                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{score}</span>
+                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{displayScore}</span>
                 <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold tracking-wider"
