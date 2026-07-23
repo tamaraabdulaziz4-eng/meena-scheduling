@@ -25,7 +25,9 @@ async function geminiTts(text: string, female: boolean): Promise<Response | null
   // Warm, natural male/female prebuilt voices; a short style instruction makes
   // it speak like a real interviewer rather than a narrator.
   const voice = female ? "Kore" : "Charon";
-  const prompt = `تحدّث بصوت طبيعي ودود وواثق كأنك مُقابِل بشري حقيقي في مقابلة عمل، بلهجة عربية فصحى واضحة:\n${text}`;
+  // Language-neutral style cue — Gemini auto-detects and matches the text's
+  // language (Arabic فصحى or English), so the same voice handles both.
+  const prompt = `Speak in a warm, confident, natural human voice, like a real job interviewer talking to a candidate:\n${text}`;
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -155,7 +157,10 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const text = String(body.text || "").slice(0, 800).trim();
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
-  const female = String(body.voice || "").toLowerCase().includes("zariyah") || String(body.voice || "").toLowerCase().includes("female");
+  // Default voice is Kore (female) for both Arabic and English; pass a male
+  // hint (hamed/charon/male) to switch.
+  const v = String(body.voice || "").toLowerCase();
+  const female = !(v.includes("hamed") || v.includes("charon") || v.includes("male"));
 
   // Quality order — first configured provider that returns audio wins.
   for (const provider of [geminiTts, elevenTts, azureTts]) {
