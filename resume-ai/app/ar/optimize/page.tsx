@@ -63,6 +63,7 @@ export default function ArOptimizePage() {
   const [resumeView, setResumeView] = useState<"text" | "designed">("text");
   const [tplSlug, setTplSlug] = useState("ats-pro");
   const [outLang, setOutLang] = useState<"en" | "ar" | "both">("ar");
+  const [step, setStep] = useState(1); // معالج نظيف: ١ السيرة · ٢ الوظيفة · ٣ اللغة والبدء
   const thinkRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -288,130 +289,91 @@ export default function ArOptimizePage() {
       </nav>
 
       <div className="mx-auto max-w-6xl px-6 py-12">
-        {loading && (
-          <div className="card mx-auto mb-8 max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
-            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
-              <span className="font-mono text-xs tracking-wider" style={{ color: "var(--accent)" }}>الذكاء الاصطناعي يحلل سيرتك — مباشرة</span>
-            </div>
-            <div ref={thinkRef} className="max-h-64 min-h-20 overflow-y-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>
-              {thinking.replace(/^ANALYSIS\s*/i, "") || "جارٍ قراءة سيرتك…"}
-              <span className="animate-pulse text-accent">▌</span>
-            </div>
-          </div>
-        )}
+        {/* التحميل يُعرض داخل المعالج بالأسفل */}
 
-        {!result && !loading && (
-          <div className="mb-10 text-center">
-            <div className="chip mb-4">● فحص مجاني</div>
-            <h1 className="text-4xl font-extrabold tracking-tight">افحص سيرتك ضد نظام التوظيف</h1>
-            <p className="mt-3" style={{ color: "var(--muted)" }}>ارفع أو الصق سيرتك (عربي أو إنجليزي) — نحلّلها ونعطيك النسخة المحسّنة بنفس لغتها. إعلان الوظيفة اختياري.</p>
-            {/* وش بتحصل — توقعات واضحة قبل طلب البيانات */}
-            <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2 font-mono text-xs" style={{ color: "var(--faint)" }}>
-              <span>✓ نسبة التطابق وسببها</span>
-              <span>✓ الكلمات الناقصة</span>
-              <span>✓ فجوة المهارات</span>
-              <span>✓ الجمل الضعيفة</span>
-              <span>✓ معاينة التحسينات</span>
-              <span style={{ color: "var(--accent)" }}>🔓 السيرة الكاملة بعد الفتح</span>
-            </div>
-            {!resume && !loading && (
-              <button
-                onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }}
-                className="btn-ghost mt-5 px-5 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>
-                👀 جرّب بسيرة نموذجية — بدون ما ترفع بياناتك
-              </button>
+        {!result ? (
+          <div className="mx-auto max-w-2xl">
+            {/* شريط تقدّم — قرار واحد كل شاشة */}
+            {!loading && (
+              <div className="mb-8">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="font-mono text-xs" style={{ color: "var(--faint)" }}>الخطوة {step} من ٣</div>
+                  {step > 1 && <button onClick={() => setStep(step - 1)} className="text-xs font-semibold" style={{ color: "var(--muted)" }}>→ رجوع</button>}
+                </div>
+                <div className="flex gap-2">
+                  {[1, 2, 3].map((s) => (
+                    <div key={s} className="h-1.5 flex-1 rounded-full" style={{ background: s <= step ? "var(--accent)" : "var(--line)" }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {loading ? (
+              <div className="card mx-auto max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
+                <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+                  <span className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--accent)" }}>جارٍ التحليل — مباشر</span>
+                </div>
+                <div className="px-5 py-4 font-mono text-xs leading-relaxed" style={{ color: "rgba(244,245,243,0.75)" }}>
+                  {thinking.replace(/^ANALYSIS\s*/i, "") || "نقرأ سيرتك…"}<span className="animate-pulse text-accent">▌</span>
+                </div>
+              </div>
+            ) : step === 1 ? (
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">أضف سيرتك</h1>
+                <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>ارفع ملفاً أو الصق النص. لن نغيّر أي كلمة بدون موافقتك.</p>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <label className="cursor-pointer rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    {uploading ? "جارٍ القراءة…" : uploadedName ? `✓ ${uploadedName.slice(0, 18)}` : "↑ رفع PDF / Word"}
+                    <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
+                  </label>
+                  {!resume && <button onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }} className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>👀 جرّب نموذج</button>}
+                </div>
+                <textarea value={resume} onChange={(e) => setResume(e.target.value)} rows={12} maxLength={8000}
+                  placeholder="الصق سيرتك هنا بأي لغة — الخبرات، التعليم، المهارات، معلومات التواصل…"
+                  className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "11rem" }} />
+                <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>{resume.length}/8000</p>
+                <button disabled={resume.trim().length < 50} onClick={() => setStep(2)} className="btn-accent mt-5 w-full py-3.5 text-base disabled:cursor-not-allowed disabled:opacity-40">متابعة ←</button>
+                <p className="mt-3 text-center text-[11px]" style={{ color: "var(--faint)" }}>🔒 تُعالَج فوراً · لا تُخزَّن على خوادمنا</p>
+              </div>
+            ) : step === 2 ? (
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">الوظيفة (اختياري)</h1>
+                <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>أضف الإعلان لنفصّل السيرة عليه، أو تخطّاه لتحسين شامل.</p>
+                <textarea value={jobDescription} onChange={(e) => { const v = e.target.value; setJobDescription(v); if (v.trim().length >= 30) setMode("target"); else setMode("general"); }}
+                  rows={10} maxLength={4000}
+                  placeholder="الصق إعلان الوظيفة هنا."
+                  className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "9rem" }} />
+                <div className="mt-5 flex gap-2">
+                  <button onClick={() => { setMode("general"); setStep(3); }} className="btn-ghost flex-1 py-3 text-sm font-semibold" style={{ color: "var(--fg)" }}>تخطّي</button>
+                  <button onClick={() => setStep(3)} className="btn-accent flex-[2] py-3 text-base">متابعة ←</button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">لغة السيرة</h1>
+                <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>بأي لغة تريد السيرة المحسّنة؟</p>
+                <div className="mb-6 grid grid-cols-3 gap-2">
+                  {([{ id: "ar", label: "العربية" }, { id: "en", label: "الإنجليزية" }, { id: "both", label: "الاثنتان" }] as const).map((o) => (
+                    <button key={o.id} onClick={() => setOutLang(o.id)} className="rounded-xl py-3 text-sm font-semibold transition-all"
+                      style={outLang === o.id ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
+                  ))}
+                </div>
+                <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)", color: "var(--muted)" }}>
+                  <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "🎯 مخصّصة لإعلان الوظيفة" : "📄 تحسين شامل"}</div>
+                  مجاناً: درجة الملاءمة، الكلمات الناقصة، فجوة المهارات، معاينة. <span style={{ color: "var(--accent)" }}>السيرة الكاملة بعد الفتح.</span>
+                </div>
+                {error && (
+                  <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
+                    <div>{error}</div>
+                    {resume.trim() && <button type="button" onClick={() => runScan()} className="mt-2 inline-block rounded-lg px-4 py-1.5 text-xs font-semibold" style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>↻ إعادة</button>}
+                  </div>
+                )}
+                <button onClick={() => runScan()} disabled={resume.trim().length < 50} className="btn-accent w-full py-4 text-lg disabled:opacity-40">⚡ حلّل سيرتي مجاناً</button>
+                <p className="mt-3 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>~١٠ ثوانٍ ⚡</p>
+              </div>
             )}
           </div>
-        )}
-
-        {!result && !loading && (
-          <>
-          <div className="mb-6 flex justify-center gap-2">
-            {([
-              { id: "general" as const, label: "تقييم عام" },
-              { id: "target" as const, label: "تخصيص لوظيفة محددة" },
-            ]).map((m) => (
-              <button key={m.id} type="button" onClick={() => setMode(m.id)}
-                className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
-                style={mode === m.id
-                  ? { background: "var(--accent)", color: "#05130a" }
-                  : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-          {/* Output-language choice — the rewritten resume was always English
-              before; the user can now pick Arabic, English, or both. */}
-          <div className="mb-6 text-center">
-            <div className="mb-2 font-mono text-xs" style={{ color: "var(--faint)" }}>لغة السيرة المحسّنة</div>
-            <div className="flex justify-center gap-2">
-              {([
-                { id: "ar" as const, label: "العربية" },
-                { id: "en" as const, label: "الإنجليزية" },
-                { id: "both" as const, label: "الاثنتان" },
-              ]).map((o) => (
-                <button key={o.id} type="button" onClick={() => setOutLang(o.id)}
-                  className="rounded-lg px-4 py-2 text-xs font-semibold transition-all"
-                  style={outLang === o.id
-                    ? { background: "var(--accent)", color: "#05130a" }
-                    : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          </>
-        )}
-        {!result ? (
-          <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <label className="font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>سيرتك الحالية (عربي أو إنجليزي)</label>
-                <label className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold"
-                  style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
-                  {uploading ? "جارٍ القراءة…" : uploadedName ? `✓ ${uploadedName.slice(0, 18)}` : "↑ رفع PDF / Word"}
-                  <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
-                </label>
-              </div>
-              <textarea value={resume} onChange={(e) => setResume(e.target.value)} rows={14} maxLength={8000} required
-                placeholder="الصق سيرتك هنا بأي لغة — أو ارفع ملف PDF/Word من الزر أعلاه..."
-                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />
-              <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>
-                {resume.length}/8000{resume.length >= 8000 ? " — وصلت الحد الأقصى" : ""}
-              </p>
-              <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--faint)" }}>
-                🔒 سيرتك تُعالَج فوراً <strong>ولا تُخزَّن على خوادمنا</strong> — المسودة تبقى على جهازك فقط، ولا نستخدم بياناتك لتدريب النماذج. بالفحص أنت توافق على{" "}
-                <Link href="/privacy" className="underline" style={{ color: "var(--muted)" }}>سياسة الخصوصية</Link> و
-                <Link href="/terms" className="underline" style={{ color: "var(--muted)" }}>الشروط</Link>.
-              </p>
-            </div>
-            <div>
-              <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>
-                إعلان الوظيفة {mode === "target" ? "(نُفصّل السيرة على هذا الإعلان)" : "(اختياري — الصق إعلاناً للتخصيص)"}
-              </label>
-              <textarea value={jobDescription} onChange={(e) => {
-                  const v = e.target.value;
-                  setJobDescription(v);
-                  // لا نحمّل المستخدم مسؤولية تبديل الوضع: لصق الإعلان يحوّل تلقائياً للتخصيص.
-                  if (v.trim().length >= 30 && mode !== "target") setMode("target");
-                  if (v.trim().length === 0 && mode === "target") setMode("general");
-                }} rows={14} maxLength={4000}
-                placeholder="الصق إعلان وظيفة لتفصيل السيرة عليه (يحوّل تلقائياً لوضع التخصيص)، أو اتركه فارغاً لتحسين شامل."
-                className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />
-              <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: jobDescription.length > 3700 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>
-                {jobDescription.length}/4000
-              </p>
-            </div>
-            <div className="text-center md:col-span-2">
-              {error && <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>{error}</div>}
-              <button type="submit" disabled={loading || !resume.trim()}
-                className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
-                {loading ? "جارٍ التحليل…" : "⚡ حلّل سيرتي مجاناً"}
-              </button>
-              <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~١٠ ثوانٍ فقط ⚡</p>
-            </div>
-          </form>
         ) : (
           <div>
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
@@ -570,16 +532,6 @@ export default function ArOptimizePage() {
         )}
       </div>
 
-      {/* زر متابعة ثابت على الجوال — أغلب الزوار من الجوال، فالزر لازم يظل بمتناول اليد */}
-      {!result && !loading && resume.trim().length >= 50 && (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t p-3 sm:hidden"
-          style={{ background: "rgba(8,9,10,0.95)", borderColor: "var(--line)", backdropFilter: "blur(8px)" }}>
-          <button type="button" onClick={() => { runScan(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-            className="btn-accent w-full py-3.5 text-base font-bold">
-            ⚡ متابعة — حلّل سيرتي
-          </button>
-        </div>
-      )}
     </main>
   );
 }
