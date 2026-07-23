@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
 import DocxExport from "../../components/DocxExport";
+import ResumeTemplate from "../../components/ResumeTemplate";
 import PublishLink from "../../components/PublishLink";
 import { saveResume } from "../../lib/localdata";
 
@@ -32,6 +33,8 @@ export default function ArBuildPage() {
   const [tips, setTips] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<"text" | "designed">("text");
+  const [tpl, setTpl] = useState<{ variant: "classic" | "modern" | "minimal" | "elegant" | "column"; accent: string; dir: "ltr" | "rtl" }>({ variant: "classic", accent: "#0f766e", dir: "rtl" });
   const thinkRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -325,7 +328,20 @@ export default function ArBuildPage() {
                 <DocxExport text={cv} label="↓ تنزيل Word" filename="resume-ar.docx" />
               </div>
             </div>
-            <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
+            <div className="mb-3 flex gap-2">
+              {(["text", "designed"] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold"
+                  style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  {v === "text" ? "نص (ATS)" : "📄 قالب مصمّم"}
+                </button>
+              ))}
+            </div>
+            {view === "designed" ? (
+              <ResumeTemplate text={cv} name={name || "resume"} variant={tpl.variant} accent={tpl.accent} dir={tpl.dir} />
+            ) : (
+              <div dir="auto" className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
+            )}
             <PublishLink ar text={cv} name={name} role={targetRole} />
 
             {tips.length > 0 && (
