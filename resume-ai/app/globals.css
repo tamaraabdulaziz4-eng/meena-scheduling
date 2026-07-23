@@ -481,3 +481,146 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .advisor-prompt, .cv-line-in { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ORB DESIGN SYSTEM — site-wide "two worlds + one soul" tokens
+   🌌 COSMOS (dark) = where the thing is made · 🤍 GLASS (light) = where it's owned
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* COSMOS */
+  --cosmos-bg: #05070d;
+  --cosmos-bg-2: #0a0e1a;
+  --cosmos-text: #f2f5fa;
+  --cosmos-muted: #8a93a8;
+  --aurora-1: #8b5cf6;
+  --aurora-2: #ec4899;
+  --aurora-3: #f59e0b;
+  --gold: #f5b840;
+  --gold-2: #d98a1f;
+  /* GLASS */
+  --glass-bg: #eef1f7;
+  --glass-surface: rgba(255, 255, 255, 0.66);
+  --glass-border: rgba(255, 255, 255, 0.8);
+  --glass-text: #0b1220;
+  --glass-muted: #5a6274;
+  /* motion */
+  --spring: cubic-bezier(0.22, 1.2, 0.36, 1);
+  --smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  /* shapes */
+  --r-card: 24px;
+}
+
+/* Orb extra states (golden = payment, locked = offline/gray, done = green settle, lost = 404 drift) */
+.ai-orb.golden {
+  animation-duration: 6s;
+  box-shadow:
+    0 0 calc(var(--orb-size) * 0.7) rgba(245, 184, 64, 0.6),
+    0 0 calc(var(--orb-size) * 0.28) rgba(217, 138, 31, 0.5),
+    inset 0 0 calc(var(--orb-size) * 0.22) rgba(255, 245, 220, 0.25);
+}
+.ai-orb.golden .ai-orb-blob.b1 { background: #fde68a; }
+.ai-orb.golden .ai-orb-blob.b2 { background: #f5b840; }
+.ai-orb.golden .ai-orb-blob.b3 { background: #d98a1f; }
+.ai-orb.locked {
+  animation: none;
+  filter: saturate(0.25) brightness(0.7);
+  box-shadow: 0 0 calc(var(--orb-size) * 0.3) rgba(148, 163, 184, 0.25);
+}
+.ai-orb.done {
+  box-shadow:
+    0 0 calc(var(--orb-size) * 0.65) rgba(34, 197, 94, 0.55),
+    inset 0 0 calc(var(--orb-size) * 0.22) rgba(255, 255, 255, 0.16);
+}
+.ai-orb.done .ai-orb-blob.b1 { background: #86efac; }
+.ai-orb.done .ai-orb-blob.b2 { background: #22c55e; }
+.ai-orb.done .ai-orb-blob.b3 { background: #16a34a; }
+.ai-orb.lost { animation: orb-drift 14s ease-in-out infinite; }
+@keyframes orb-drift {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(10px, -8px) rotate(4deg); }
+  50% { transform: translate(-6px, 10px) rotate(-3deg); }
+  75% { transform: translate(-10px, -6px) rotate(2deg); }
+}
+
+/* Glass surface — the "owning" world */
+.glass-surface {
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-radius: var(--r-card);
+  box-shadow: 0 8px 40px rgba(11, 18, 32, 0.12);
+}
+
+/* Golden particle field (payment vault) */
+.gold-field { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.gold-spark {
+  position: absolute;
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 6px var(--gold);
+  animation: gold-rise 7s linear infinite;
+  opacity: 0;
+}
+@keyframes gold-rise {
+  0% { transform: translateY(20px) scale(0.6); opacity: 0; }
+  20% { opacity: 0.9; }
+  80% { opacity: 0.7; }
+  100% { transform: translateY(-120px) scale(1); opacity: 0; }
+}
+
+/* Aurora success burst (payment success — the lock opens) */
+.aurora-burst {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.aurora-burst span {
+  position: absolute;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  animation: burst-out 2.2s var(--smooth) forwards;
+}
+@keyframes burst-out {
+  0% { transform: translate(0, 0) scale(0); opacity: 1; }
+  70% { opacity: 0.9; }
+  100% { transform: translate(var(--bx), var(--by)) scale(1.4); opacity: 0; }
+}
+
+/* Radio pulse (login magic link sent) */
+.radio-pulse { position: relative; }
+.radio-pulse::before, .radio-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  animation: radio-wave 2.4s ease-out infinite;
+}
+.radio-pulse::after { animation-delay: 1.2s; }
+@keyframes radio-wave {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Permanent gold "owned" stamp */
+.gold-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #3a2708;
+  background: linear-gradient(135deg, #fde68a, #f5b840);
+  box-shadow: 0 0 10px rgba(245, 184, 64, 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gold-spark, .aurora-burst span, .radio-pulse::before, .radio-pulse::after, .ai-orb.lost { animation: none; }
+}

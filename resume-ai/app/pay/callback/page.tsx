@@ -3,6 +3,9 @@
 import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import AiOrb from "../../components/AiOrb";
+import GoldField from "../../components/orb/GoldField";
+import AuroraBurst from "../../components/orb/AuroraBurst";
 
 function CallbackInner() {
   const params = useSearchParams();
@@ -29,6 +32,13 @@ function CallbackInner() {
         singleMsg: "\u0643\u0644 \u0634\u064a\u0621 \u062c\u0627\u0647\u0632 \u2014 \u0634\u0643\u0631\u0627\u064b \u0644\u0643! \u0628\u0627\u0642\u062a\u0643 \u0645\u0641\u0639\u0651\u0644\u0629 \u0644\u0645\u062f\u0629 \u0662\u0664 \u0633\u0627\u0639\u0629.",
         start: "\u0627\u0628\u062f\u0623 \u0627\u0644\u062a\u062d\u0633\u064a\u0646 \u2190",
         back: "\u0627\u0644\u0631\u062c\u0648\u0639 \u0644\u0644\u0623\u0633\u0639\u0627\u0631",
+        vaultTitle: "\u0627\u0644\u062e\u0632\u0646\u0629",
+        yoursForever: "\u0633\u064a\u0631\u062a\u0643 \u0645\u0644\u0643\u0643 \u0627\u0644\u0622\u0646 \u2014 \u0644\u0644\u0623\u0628\u062f.",
+        receipt: "\u0627\u0644\u0625\u064a\u0635\u0627\u0644",
+        orderNo: "\u0631\u0642\u0645 \u0627\u0644\u0639\u0645\u0644\u064a\u0629",
+        downloadReceipt: "\u062d\u0645\u0651\u0644 \u0627\u0644\u0625\u064a\u0635\u0627\u0644",
+        neverLost: "\u062f\u0641\u0639\u062a\u0643 \u0645\u0627 \u062a\u0645\u0651\u062a \u2014 \u062c\u0631\u0651\u0628 \u0645\u0631\u0629 \u0623\u062e\u0631\u0649\u060c \u0648\u0633\u064a\u0631\u062a\u0643 \u0645\u062d\u0641\u0648\u0638\u0629 \u0639\u0646\u062f\u0643 \u0645\u0627 \u062a\u0631\u0648\u062d.",
+        ownedStamp: "\u0645\u0645\u0644\u0648\u0643\u0629 \u2713",
       }
     : {
         checking: "Confirming your payment…",
@@ -51,10 +61,19 @@ function CallbackInner() {
         singleMsg: "You're all set — thank you! Your single optimization pass is active for the next 24 hours.",
         start: "Start optimizing →",
         back: "Back to pricing",
+        vaultTitle: "The Vault",
+        yoursForever: "Your resume is yours now — forever.",
+        receipt: "Receipt",
+        orderNo: "Order no.",
+        downloadReceipt: "Download receipt",
+        neverLost: "Payment didn't go through — try again. Your work is safe with you, nothing is lost.",
+        ownedStamp: "Owned ✓",
       };
   const [state, setState] = useState<"checking" | "paid" | "failed" | "pending">("checking");
   const [detail, setDetail] = useState("");
   const [plan, setPlan] = useState<"single" | "complete" | "monthly" | "">("");
+  const [orderNo, setOrderNo] = useState("");
+  const [burst, setBurst] = useState(false);
   // A charged-but-mismatched buyer is a support case, not a failure — soften the
   // title. showSupport surfaces a real support channel wherever we ask them to reach out.
   const [review, setReview] = useState(false);
@@ -129,7 +148,12 @@ function CallbackInner() {
           const paidPlan = d.plan === "complete" ? "complete" : d.plan === "monthly" ? "monthly" : "single";
           setState("paid");
           setPlan(paidPlan);
+          setOrderNo(String(d.orderNumber || tx));
           setDetail(t.confirmed(d.orderNumber || tx));
+          // Mark this device as an owner — every later visit shows the gold stamp.
+          try { localStorage.setItem("ra_owned", "1"); } catch { /* noop */ }
+          setBurst(true);
+          setTimeout(() => setBurst(false), 2400);
           // Measure this sale against ad spend (each no-op until its env vars are set).
           reportPurchase(paidPlan, d.orderNumber || tx);
           reportMetaPurchase(paidPlan, d.orderNumber || tx);
@@ -168,57 +192,87 @@ function CallbackInner() {
     checkStatus();
   }, [checkStatus]);
 
-  const accent = state === "paid" ? "#4ade80" : state === "failed" ? "#f87171" : "#fbbf24";
+  function downloadReceipt() {
+    const lines = [
+      "cv.rabit.sa", "───────────────", t.paidTitle,
+      `${t.orderNo}: ${orderNo}`,
+      `${ar ? "الباقة" : "Plan"}: ${plan || "single"}`,
+      `SAR ${PLAN_VALUE[plan || "single"] ?? 35}`,
+      "───────────────", t.yoursForever,
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `receipt-${orderNo || "cv-rabit"}.txt`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // COSMOS (making/paying) until success, then GLASS (owning). Failure stays a
+  // calm cosmos — never a scary red world — and never implies work was lost.
+  const paid = state === "paid";
+  const orbState = paid ? "done" : state === "failed" ? "locked" : "golden";
 
   return (
-    <main dir={ar ? "rtl" : "ltr"} lang={ar ? "ar" : "en"} className="flex min-h-screen items-center justify-center px-6" style={{ background: "var(--bg)", color: "var(--fg)" }}>
-      <div className="card w-full max-w-md p-10 text-center" style={{ borderColor: `${accent}55` }}>
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full font-mono text-3xl"
-          style={{ background: `${accent}1a`, color: accent, border: `1px solid ${accent}40` }}>
-          {state === "checking" || state === "pending" ? "…" : state === "paid" ? "✓" : "✕"}
+    <main dir={ar ? "rtl" : "ltr"} lang={ar ? "ar" : "en"}
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-6"
+      style={{ background: paid ? "var(--glass-bg)" : "var(--cosmos-bg)", color: paid ? "var(--glass-text)" : "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
+      {!paid && <GoldField />}
+
+      <div className={`relative w-full max-w-md rounded-3xl p-10 text-center ${paid ? "glass-surface" : ""}`}
+        style={paid ? undefined : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(245,184,64,0.25)", backdropFilter: "blur(10px)" }}>
+
+        {/* the orb — golden vault → green owned; lock icon layered while checking */}
+        <div className="relative mx-auto mb-6 flex h-24 w-24 items-center justify-center">
+          {burst && <AuroraBurst />}
+          <AiOrb size={84} state={orbState} />
+          <span className="absolute font-mono text-2xl" style={{ color: paid ? "#166534" : "#3a2708", textShadow: "0 1px 6px rgba(255,255,255,0.4)" }}>
+            {paid ? "🔓" : state === "failed" ? "🔒" : "🔒"}
+          </span>
         </div>
-        <h1 className="text-2xl font-bold">
-          {state === "checking"
-            ? t.checking
-            : state === "paid"
-            ? t.paidTitle
-            : state === "pending"
-            ? t.pendingTitle
-            : review
-            ? t.reviewTitle
-            : t.failedTitle}
+
+        <h1 className="text-2xl font-extrabold">
+          {state === "checking" ? t.checking : paid ? t.paidTitle : state === "pending" ? t.pendingTitle : review ? t.reviewTitle : t.failedTitle}
         </h1>
-        <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}>{detail || t.wait}</p>
+        <p className="mt-3 text-sm" style={{ color: paid ? "var(--glass-muted)" : "var(--cosmos-muted)" }}>
+          {state === "failed" && !review ? t.neverLost : detail || t.wait}
+        </p>
         {showSupport && (
           <p className="mt-3 text-sm">
-            <a href="mailto:alanziabdulaziz4@gmail.com?subject=Payment%20issue" className="font-semibold underline" style={{ color: "var(--accent)" }}>
+            <a href="mailto:alanziabdulaziz4@gmail.com?subject=Payment%20issue" className="font-semibold underline" style={{ color: paid ? "#16a34a" : "var(--accent)" }}>
               {t.contactSupport}
             </a>
           </p>
         )}
 
-        {state === "paid" && (
+        {paid && (
           <>
-            <p className="mt-6 text-sm" style={{ color: "rgba(244,245,243,0.8)" }}>
+            <div className="mt-5 flex items-center justify-center">
+              <span className="gold-stamp">{t.ownedStamp}</span>
+            </div>
+            <p className="mt-4 text-lg font-bold">{t.yoursForever}</p>
+            <p className="mt-2 text-sm" style={{ color: "var(--glass-muted)" }}>
               {plan === "complete" ? t.completeMsg : plan === "monthly" ? t.monthlyMsg : t.singleMsg}
             </p>
-            <Link href={ar ? "/ar/optimize" : "/optimize"} className="btn-accent mt-6 inline-block px-8 py-3">{t.start}</Link>
+
+            {/* receipt */}
+            <div className="mt-6 rounded-2xl p-4 text-start" style={{ background: "rgba(11,18,32,0.05)", border: "1px solid rgba(11,18,32,0.1)" }}>
+              <div className="mb-2 font-mono text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--glass-muted)" }}>{t.receipt}</div>
+              <div className="flex items-center justify-between text-sm"><span style={{ color: "var(--glass-muted)" }}>{t.orderNo}</span><span dir="ltr" className="font-mono font-semibold">{orderNo}</span></div>
+              <div className="flex items-center justify-between text-sm"><span style={{ color: "var(--glass-muted)" }}>SAR</span><span className="font-mono font-semibold">{PLAN_VALUE[plan || "single"] ?? 35}</span></div>
+              <button onClick={downloadReceipt} className="mt-3 w-full rounded-lg py-2 text-xs font-bold" style={{ background: "rgba(11,18,32,0.06)", color: "var(--glass-text)" }}>↓ {t.downloadReceipt}</button>
+            </div>
+
+            <Link href={ar ? "/ar/optimize" : "/optimize"} className="mt-6 inline-block rounded-xl px-8 py-3 font-bold" style={{ background: "#22C55E", color: "#05130a" }}>{t.start}</Link>
           </>
         )}
         {state === "pending" && (
           <div className="mt-6 flex flex-col items-center gap-3">
-            <button onClick={checkStatus} className="btn-accent inline-block px-8 py-3">
-              {t.refresh}
-            </button>
-            <Link href={ar ? "/ar#pricing" : "/#pricing"} className="btn-ghost inline-block px-8 py-3" style={{ color: "var(--fg)" }}>
-              {t.back}
-            </Link>
+            <button onClick={checkStatus} className="rounded-xl px-8 py-3 font-bold" style={{ background: "var(--gold)", color: "#3a2708" }}>{t.refresh}</button>
+            <Link href={ar ? "/ar#pricing" : "/#pricing"} className="text-sm font-semibold" style={{ color: "var(--cosmos-muted)" }}>{t.back}</Link>
           </div>
         )}
         {state === "failed" && (
-          <Link href={ar ? "/ar#pricing" : "/#pricing"} className="btn-ghost mt-6 inline-block px-8 py-3" style={{ color: "var(--fg)" }}>
-            {t.back}
-          </Link>
+          <Link href={ar ? "/ar#pricing" : "/#pricing"} className="mt-6 inline-block rounded-xl px-8 py-3 font-semibold" style={{ border: "1px solid rgba(245,184,64,0.4)", color: "var(--cosmos-text)" }}>{t.back}</Link>
         )}
       </div>
     </main>

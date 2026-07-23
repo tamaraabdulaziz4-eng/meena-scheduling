@@ -7,7 +7,7 @@ import BeforeAfter from "../components/BeforeAfter";
 import AiOrb from "../components/AiOrb";
 import ResumeTemplate from "../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
-import ScoreRing from "../components/ScoreRing";
+import ScoreOrb from "../components/orb/ScoreOrb";
 import ResultCoaching from "../components/ResultCoaching";
 import GapFiller from "../components/GapFiller";
 import CheckoutButton from "../components/CheckoutButton";
@@ -529,7 +529,7 @@ export default function OptimizePage() {
                 {mode === "target" ? "How closely your resume matches this posting — not a guarantee any ATS will pass it" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
               </div>
               <div className="my-3 flex justify-center">
-                <ScoreRing value={displayScore} color={scoreColor} />
+                <ScoreOrb value={displayScore} color={scoreColor} animate={false} size={150} />
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold tracking-wider"
                 style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>

@@ -7,7 +7,7 @@ import DocxExport from "../../components/DocxExport";
 import BeforeAfter from "../../components/BeforeAfter";
 import ResumeTemplate from "../../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../../lib/templateCatalog";
-import ScoreRing from "../../components/ScoreRing";
+import ScoreOrb from "../../components/orb/ScoreOrb";
 import ResultCoaching from "../../components/ResultCoaching";
 import GapFiller from "../../components/GapFiller";
 import CheckoutButton from "../../components/CheckoutButton";
@@ -385,7 +385,7 @@ export default function ArOptimizePage() {
               <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>{mode === "target" ? "درجة الملاءمة مع الوظيفة" : "تقييم جودة السيرة"}</div>
               {mode === "target" && <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>مدى قرب سيرتك من الإعلان — ليست ضماناً لاجتياز أي نظام توظيف</div>}
               <div className="my-3 flex justify-center">
-                <ScoreRing value={displayScore} color={scoreColor} />
+                <ScoreOrb value={displayScore} color={scoreColor} animate={false} size={150} />
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold" style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>{verdict}</div>
               <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>

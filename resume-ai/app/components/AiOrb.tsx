@@ -9,7 +9,9 @@
  * Drop it next to anything the AI touches so the whole site reads as one
  * living assistant wired into every line.
  */
-export default function AiOrb({ size = 40, thinking = false, state, className = "" }: { size?: number; thinking?: boolean; state?: "idle" | "listening" | "thinking" | "talking"; className?: string }) {
+export type OrbState = "idle" | "listening" | "thinking" | "talking" | "golden" | "locked" | "done" | "lost";
+
+export default function AiOrb({ size = 40, thinking = false, state, className = "" }: { size?: number; thinking?: boolean; state?: OrbState; className?: string }) {
   const mode = state ?? (thinking ? "thinking" : "idle");
   return (
     <span

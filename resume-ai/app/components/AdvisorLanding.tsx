@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { track } from "@vercel/analytics";
 import AiOrb from "./AiOrb";
-import ScoreRing from "./ScoreRing";
+import ScoreOrb from "./orb/ScoreOrb";
 import PdfExport from "./PdfExport";
 import DocxExport from "./DocxExport";
 import PublishLink from "./PublishLink";
@@ -1214,7 +1214,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               <div className="glass-panel p-5 text-center">
                 <h2 className="mb-3 text-sm font-bold">{t.reveal_score}</h2>
                 {scorePhase === "done" && score ? (
-                  <div className="mx-auto w-36"><ScoreRing value={score.value} color={score.value < 60 ? "#E5484D" : GREEN} /></div>
+                  <div className="mx-auto"><ScoreOrb value={score.value} size={150} /></div>
                 ) : scorePhase === "working" ? (
                   <div className="flex items-center justify-center gap-3 py-6"><AiOrb size={34} thinking /><span className="font-mono text-xs" style={{ color: "rgba(244,245,243,0.6)" }}>…</span></div>
                 ) : (
