@@ -299,14 +299,15 @@ export default function ArOptimizePage() {
           <div className="mb-10 text-center">
             <div className="chip mb-4">● فحص مجاني</div>
             <h1 className="text-4xl font-extrabold tracking-tight">افحص سيرتك ضد نظام التوظيف</h1>
-            <p className="mt-3" style={{ color: "var(--muted)" }}>ارفع أو الصق سيرتك القديمة (عربي أو إنجليزي) — نحسّنها ونعطيك سيرة إنجليزية جديدة. إعلان الوظيفة اختياري.</p>
+            <p className="mt-3" style={{ color: "var(--muted)" }}>ارفع أو الصق سيرتك (عربي أو إنجليزي) — نحلّلها ونعطيك النسخة المحسّنة بنفس لغتها. إعلان الوظيفة اختياري.</p>
             {/* وش بتحصل — توقعات واضحة قبل طلب البيانات */}
             <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ نسبة التطابق وسببها</span>
               <span>✓ الكلمات الناقصة</span>
               <span>✓ فجوة المهارات</span>
               <span>✓ الجمل الضعيفة</span>
-              <span>✓ النسخة المحسّنة</span>
+              <span>✓ معاينة التحسينات</span>
+              <span style={{ color: "var(--accent)" }}>🔓 السيرة الكاملة بعد الفتح</span>
             </div>
             {!resume && !loading && (
               <button
@@ -359,10 +360,16 @@ export default function ArOptimizePage() {
             </div>
             <div>
               <label className="mb-3 block font-mono text-xs tracking-wider" style={{ color: "var(--faint)" }}>
-                إعلان الوظيفة {mode === "target" ? "(إلزامي للتخصيص)" : "(لا يُستخدم في التقييم العام — بدّل الوضع للتخصيص)"}
+                إعلان الوظيفة {mode === "target" ? "(نُفصّل السيرة على هذا الإعلان)" : "(اختياري — الصق إعلاناً للتخصيص)"}
               </label>
-              <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={14} maxLength={4000}
-                placeholder="اختياري — الصق إعلان وظيفة لتفصيل السيرة عليه، أو اتركه فارغاً لتحسين شامل للسيرة."
+              <textarea value={jobDescription} onChange={(e) => {
+                  const v = e.target.value;
+                  setJobDescription(v);
+                  // لا نحمّل المستخدم مسؤولية تبديل الوضع: لصق الإعلان يحوّل تلقائياً للتخصيص.
+                  if (v.trim().length >= 30 && mode !== "target") setMode("target");
+                  if (v.trim().length === 0 && mode === "target") setMode("general");
+                }} rows={14} maxLength={4000}
+                placeholder="الصق إعلان وظيفة لتفصيل السيرة عليه (يحوّل تلقائياً لوضع التخصيص)، أو اتركه فارغاً لتحسين شامل."
                 className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none" style={{ ...inputStyle, minHeight: "12rem" }} />
               <p className="mt-2 font-mono text-xs" dir="ltr" style={{ color: jobDescription.length > 3700 ? "#fbbf24" : "var(--faint)", textAlign: "right" }}>
                 {jobDescription.length}/4000
@@ -372,7 +379,7 @@ export default function ArOptimizePage() {
               {error && <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>{error}</div>}
               <button type="submit" disabled={loading || !resume.trim()}
                 className="btn-accent px-12 py-4 text-lg disabled:cursor-not-allowed disabled:opacity-40">
-                {loading ? "جارٍ الفحص والتحسين…" : "⚡ افحص وحسّن"}
+                {loading ? "جارٍ التحليل…" : "⚡ حلّل سيرتي مجاناً"}
               </button>
               <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~١٠ ثوانٍ فقط ⚡</p>
             </div>

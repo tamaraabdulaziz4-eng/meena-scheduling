@@ -9,6 +9,7 @@ import MobileMenu from "./components/MobileMenu";
 import LiveTicker from "./components/LiveTicker";
 import SubscribeBox from "./components/SubscribeBox";
 import AtsMarquee from "./components/AtsMarquee";
+import { PLANS } from "./lib/plans";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
@@ -290,19 +291,20 @@ export default function Home() {
           <div className="card p-8">
             <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>One-time</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">SAR 35</span>
-              <span className="text-sm" style={{ color: "var(--muted)" }}>once (~$9)</span>
+              <span className="text-5xl font-extrabold">SAR {PLANS.single.priceSar}</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>once ({PLANS.single.priceUsd})</span>
             </div>
-            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Perfect for one big application.</p>
+            <p className="mt-2 text-sm font-semibold" style={{ color: "var(--accent)" }}>{PLANS.single.accessLabel}</p>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>{PLANS.single.tagline}</p>
             <ul className="mt-6 space-y-3 text-sm">
-              {["1 full resume optimization · 24-hour access", "ATS match score", "Keyword gap analysis", "Bullet point rewrite", "Skills gap report"].map((f) => (
+              {PLANS.single.features.map((f) => (
                 <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.8)" }}>
                   <span className="text-accent">✓</span> {f}
                 </li>
               ))}
             </ul>
             <div className="mt-8">
-              <CheckoutButton plan="single" label="Get one optimization" variant="ghost" />
+              <CheckoutButton plan="single" label="Get 24-hour access" variant="ghost" />
             </div>
           </div>
 
@@ -311,12 +313,16 @@ export default function Home() {
               style={{ background: "var(--accent)", color: "#05130a" }}>BEST VALUE</div>
             <div className="font-mono text-xs uppercase tracking-widest" style={{ color: "var(--faint)" }}>Complete Pack · one-time</div>
             <div className="mt-4 flex items-baseline gap-1">
-              <span className="text-5xl font-extrabold">SAR 99</span>
-              <span className="text-sm" style={{ color: "var(--muted)" }}>once (~$26)</span>
+              <span className="text-5xl font-extrabold">SAR {PLANS.complete.priceSar}</span>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>once ({PLANS.complete.priceUsd})</span>
             </div>
-            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>Everything you need for your job search — no subscription.</p>
+            <p className="mt-2 text-sm font-semibold" style={{ color: "var(--accent)" }}>{PLANS.complete.accessLabel}</p>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>{PLANS.complete.tagline}</p>
             <ul className="mt-6 space-y-3 text-sm">
-              {["Everything in one-time", "Cover letter generator", "LinkedIn optimizer", "Interview prep", "Full access for 90 days"].map((f) => (
+              <li className="flex items-center gap-3 font-semibold" style={{ color: "rgba(244,245,243,0.9)" }}>
+                <span className="text-accent">✓</span> Same full access — for 90 days
+              </li>
+              {PLANS.complete.features.map((f) => (
                 <li key={f} className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.9)" }}>
                   <span className="text-accent">✓</span> {f}
                 </li>

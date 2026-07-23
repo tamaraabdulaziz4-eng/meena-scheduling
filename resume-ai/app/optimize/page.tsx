@@ -343,13 +343,15 @@ export default function OptimizePage() {
             <div className="chip mb-4">● Free scan</div>
             <h1 className="text-4xl font-extrabold tracking-tight">Run your resume through the scanner</h1>
             <p className="mt-3" style={{ color: "var(--muted)" }}>Upload or paste your resume. Add a job posting to tailor to it — or leave it empty and we&apos;ll improve the resume overall.</p>
-            {/* What you'll get — set expectations before asking for data */}
+            {/* What you'll get — be precise about free vs paid so the result
+                never feels like a bait-and-switch. */}
             <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2 font-mono text-xs" style={{ color: "var(--faint)" }}>
               <span>✓ Match score + why</span>
               <span>✓ Missing keywords</span>
               <span>✓ Skills gap</span>
               <span>✓ Weak lines flagged</span>
-              <span>✓ Rewritten version</span>
+              <span>✓ Preview of improvements</span>
+              <span style={{ color: "var(--accent)" }}>🔓 Full rewrite after unlock</span>
             </div>
             {!resume && !loading && (
               <button
@@ -410,12 +412,19 @@ export default function OptimizePage() {
 
             <div>
               <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>
-                Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>{mode === "target" ? "(required for tailoring)" : "(not used in general review — switch mode to tailor)"}</span>
+                Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>{mode === "target" ? "(tailoring to this posting)" : "(optional — paste one to tailor)"}</span>
               </label>
               <textarea
                 value={jobDescription}
-                onChange={(e) => setJobDescription(e.target.value)}
-                placeholder="Optional — paste a job posting to tailor the resume to it, or leave empty for a general improvement."
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setJobDescription(v);
+                  // Don't make the user responsible for the mode toggle: pasting
+                  // a posting auto-switches to "Target a job" so it's never ignored.
+                  if (v.trim().length >= 30 && mode !== "target") setMode("target");
+                  if (v.trim().length === 0 && mode === "target") setMode("general");
+                }}
+                placeholder="Paste a job posting to tailor the resume to it (auto-switches to Target mode), or leave empty for a general improvement."
                 rows={14}
                 maxLength={4000}
                 className="w-full resize-y rounded-xl px-4 py-3 text-sm focus:outline-none"
@@ -448,7 +457,7 @@ export default function OptimizePage() {
                     <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-black/30 border-t-black" />
                     Scanning &amp; optimizing...
                   </span>
-                ) : "⚡ Scan & optimize"}
+                ) : "⚡ Analyze my resume — free"}
               </button>
               <p className="mt-3 font-mono text-xs" style={{ color: "var(--faint)" }}>~10 seconds ⚡</p>
             </div>
