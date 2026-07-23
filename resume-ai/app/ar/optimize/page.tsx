@@ -5,6 +5,8 @@ import PdfExport from "../../components/PdfExport";
 import DocxExport from "../../components/DocxExport";
 import BeforeAfter from "../../components/BeforeAfter";
 import ResumeTemplate from "../../components/ResumeTemplate";
+import { TEMPLATE_CATALOG } from "../../lib/templateCatalog";
+import ScoreRing from "../../components/ScoreRing";
 import CheckoutButton from "../../components/CheckoutButton";
 import AuthNav from "../../components/AuthNav";
 import { addScan, saveResume } from "../../lib/localdata";
@@ -59,6 +61,7 @@ export default function ArOptimizePage() {
   const [coverCopied, setCoverCopied] = useState(false);
   const [mode, setMode] = useState<"general" | "target">("general");
   const [resumeView, setResumeView] = useState<"text" | "designed">("text");
+  const [tplSlug, setTplSlug] = useState("ats-pro");
   const [outLang, setOutLang] = useState<"en" | "ar" | "both">("ar");
   const thinkRef = useRef<HTMLDivElement>(null);
 
@@ -414,9 +417,8 @@ export default function ArOptimizePage() {
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
               <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>{mode === "target" ? "درجة الملاءمة مع الوظيفة" : "تقييم جودة السيرة"}</div>
               {mode === "target" && <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>مدى قرب سيرتك من الإعلان — ليست ضماناً لاجتياز أي نظام توظيف</div>}
-              <div className="my-2 flex items-baseline justify-center gap-1" dir="ltr">
-                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{displayScore}</span>
-                <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
+              <div className="my-3 flex justify-center">
+                <ScoreRing value={displayScore} color={scoreColor} />
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold" style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>{verdict}</div>
               <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>
@@ -467,7 +469,21 @@ export default function ArOptimizePage() {
               </div>
             )}
             {!result.locked && resumeView === "designed" ? (
-              <ResumeTemplate text={result.optimizedResume} name="resume" dir={outLang === "ar" ? "rtl" : "ltr"} />
+              <div>
+                <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                  {TEMPLATE_CATALOG.map((tp) => (
+                    <button key={tp.slug} onClick={() => setTplSlug(tp.slug)}
+                      className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                      style={tplSlug === tp.slug ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                      {tp.nameAr}{tp.best ? " ★" : ""}
+                    </button>
+                  ))}
+                </div>
+                {(() => {
+                  const tp = TEMPLATE_CATALOG.find((x) => x.slug === tplSlug) || TEMPLATE_CATALOG[0];
+                  return <ResumeTemplate text={result.optimizedResume} name="resume" variant={tp.variant} accent={tp.accent} dir={outLang === "ar" ? "rtl" : "ltr"} fitWidth />;
+                })()}
+              </div>
             ) : (
               <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
                 {result.optimizedResume}

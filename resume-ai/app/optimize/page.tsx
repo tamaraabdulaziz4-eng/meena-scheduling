@@ -6,6 +6,7 @@ import DocxExport from "../components/DocxExport";
 import BeforeAfter from "../components/BeforeAfter";
 import ResumeTemplate from "../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
+import ScoreRing from "../components/ScoreRing";
 import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
@@ -485,6 +486,17 @@ export default function OptimizePage() {
                       style={outLang === o.id ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
                   ))}
                 </div>
+                {/* Template pick (optional) — choose the look upfront; changeable on the result too. */}
+                <div className="mb-1 font-mono text-xs" style={{ color: "var(--faint)" }}>Template (optional)</div>
+                <div className="mb-6 flex gap-2 overflow-x-auto pb-1">
+                  {TEMPLATE_CATALOG.map((tp) => (
+                    <button key={tp.slug} onClick={() => setTplSlug(tp.slug)}
+                      className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                      style={tplSlug === tp.slug ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                      {tp.name}{tp.best ? " ★" : ""}
+                    </button>
+                  ))}
+                </div>
                 <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)", color: "var(--muted)" }}>
                   <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "🎯 Tailored to your job posting" : "📄 General improvement"}</div>
                   Free: match score, missing keywords, skills gap, preview. <span style={{ color: "var(--accent)" }}>Full rewrite unlocks after.</span>
@@ -511,9 +523,8 @@ export default function OptimizePage() {
               <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>
                 {mode === "target" ? "How closely your resume matches this posting — not a guarantee any ATS will pass it" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
               </div>
-              <div className="my-2 flex items-baseline justify-center gap-1">
-                <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{displayScore}</span>
-                <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
+              <div className="my-3 flex justify-center">
+                <ScoreRing value={displayScore} color={scoreColor} />
               </div>
               <div className="mb-4 inline-block rounded-lg px-3 py-1 font-mono text-xs font-bold tracking-wider"
                 style={{ background: `${scoreColor}1a`, color: scoreColor, border: `1px solid ${scoreColor}40` }}>
