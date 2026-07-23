@@ -117,8 +117,10 @@ export async function POST(req: NextRequest) {
     let parsed: Record<string, unknown> | null = null;
     let lastErr: unknown = null;
     const t0 = Date.now();
-    for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
-      if (attempt > 0 && Date.now() - t0 > 30000) break;
+    // Up to 3 attempts — the free model fails ~1/3 of the time with either
+    // malformed JSON OR valid-but-empty content (no questions). BOTH must retry.
+    for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
+      if (attempt > 0 && Date.now() - t0 > 45000) break;
       try {
         const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
           method: "POST",
@@ -127,7 +129,7 @@ export async function POST(req: NextRequest) {
             model,
             temperature: 0.5,
             top_p: 0.9,
-            max_tokens: 2200,
+            max_tokens: 3200, // interview returns 8 Q&A — 2200 truncated it, yielding invalid/empty JSON
             messages: [
               { role: "system", content: "You respond with a single valid JSON object and nothing else. Never include unescaped quotes inside JSON string values." },
               { role: "user", content: promptFn(String(inputA).slice(0, 8000), String(inputB).slice(0, 4000)) },
@@ -138,11 +140,23 @@ export async function POST(req: NextRequest) {
         const data = await res.json();
         const raw = data?.choices?.[0]?.message?.content ?? "";
         if (!raw.trim()) throw new Error("Empty response");
+        let candidate: Record<string, unknown>;
         try {
-          parsed = JSON.parse(extractJson(raw));
+          candidate = JSON.parse(extractJson(raw));
         } catch {
-          parsed = JSON.parse(repairJson(extractJson(raw)));
+          candidate = JSON.parse(repairJson(extractJson(raw)));
         }
+        // Content-level validation — a syntactically-valid but empty/garbled
+        // response must ALSO retry, not fall through to a 500.
+        if (mode === "interview") {
+          const qs = Array.isArray(candidate.questions) ? candidate.questions : Array.isArray(candidate) ? (candidate as unknown[]) : [];
+          if (!qs.some((x) => { const it = (x ?? {}) as Record<string, unknown>; return it.q || it.question; })) {
+            throw new Error("No usable questions in response");
+          }
+        } else if (mode === "linkedin") {
+          if (!candidate.headline && !candidate.about) throw new Error("No usable LinkedIn content");
+        }
+        parsed = candidate;
       } catch (e) {
         lastErr = e;
         console.error(`Tools error (attempt ${attempt + 1}):`, e);
