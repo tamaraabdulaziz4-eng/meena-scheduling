@@ -68,7 +68,27 @@ export default function OptimizePage() {
   const [thinking, setThinking] = useState("");
   const [mode, setMode] = useState<"general" | "target">("general");
   const [resumeView, setResumeView] = useState<"text" | "designed">("text");
+  const [jobUrl, setJobUrl] = useState("");
+  const [fetchingJob, setFetchingJob] = useState(false);
+  const [jobUrlMsg, setJobUrlMsg] = useState("");
   const thinkRef = useRef<HTMLDivElement>(null);
+
+  async function importJobFromUrl() {
+    if (!jobUrl.trim()) return;
+    setFetchingJob(true); setJobUrlMsg("");
+    try {
+      const res = await fetch("/api/fetch-job", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: jobUrl.trim() }) });
+      const data = await res.json();
+      if (!res.ok || !data.text) throw new Error(data.error || "Couldn't read that link.");
+      setJobDescription(data.text);
+      setMode("target");
+      setJobUrlMsg("✓ Imported — review the text below, then scan.");
+    } catch (e) {
+      setJobUrlMsg(e instanceof Error ? e.message : "Couldn't fetch that link.");
+    } finally {
+      setFetchingJob(false);
+    }
+  }
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
@@ -416,6 +436,18 @@ export default function OptimizePage() {
               <label className="mb-3 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>
                 Job description <span style={{ textTransform: "none", letterSpacing: 0 }}>{mode === "target" ? "(tailoring to this posting)" : "(optional — paste one to tailor)"}</span>
               </label>
+              {/* Paste a job link — easier than copying a long posting on mobile. */}
+              <div className="mb-3 flex gap-2">
+                <input value={jobUrl} onChange={(e) => setJobUrl(e.target.value)} dir="ltr"
+                  placeholder="Or paste a job link (LinkedIn, Bayt…) to import"
+                  className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" }} />
+                <button type="button" onClick={importJobFromUrl} disabled={fetchingJob || !jobUrl.trim()}
+                  className="btn-ghost shrink-0 px-4 py-2 text-sm font-semibold disabled:opacity-50" style={{ color: "var(--accent)" }}>
+                  {fetchingJob ? "Fetching…" : "Import"}
+                </button>
+              </div>
+              {jobUrlMsg && <p className="mb-2 text-xs" style={{ color: jobUrlMsg.startsWith("✓") ? "var(--accent)" : "#fbbf24" }}>{jobUrlMsg}</p>}
               <textarea
                 value={jobDescription}
                 onChange={(e) => {
@@ -483,6 +515,29 @@ export default function OptimizePage() {
                 {verdict}
               </div>
               <p className="mx-auto max-w-xl text-sm" style={{ color: "var(--muted)" }}>{result.matchSummary}</p>
+              {/* Sub-metric breakdown — makes the single number legible, like
+                  the competitor's keyword/skill/readability split. */}
+              {(() => {
+                const present = result.presentKeywords?.length ?? 0;
+                const missing = result.missingKeywords?.length ?? 0;
+                const kwCov = present + missing > 0 ? Math.round((present / (present + missing)) * 100) : null;
+                const metrics = [
+                  { label: "Keyword coverage", val: kwCov === null ? "—" : `${kwCov}%`, hint: `${present} present · ${missing} missing` },
+                  { label: "Skills gaps", val: String(result.skillsGap?.length ?? 0), hint: "to address" },
+                  { label: "Fixes found", val: String(result.improvements?.length ?? 0), hint: "actionable" },
+                ];
+                return (
+                  <div className="mx-auto mt-5 grid max-w-lg grid-cols-3 gap-2">
+                    {metrics.map((m) => (
+                      <div key={m.label} className="card px-2 py-3">
+                        <div className="font-mono text-2xl font-bold tabular-nums" style={{ color: "var(--fg)" }}>{m.val}</div>
+                        <div className="mt-0.5 text-[11px] font-semibold" style={{ color: "var(--muted)" }}>{m.label}</div>
+                        <div className="font-mono text-[10px]" style={{ color: "var(--faint)" }}>{m.hint}</div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <a href={`/score/${score}`} target="_blank" rel="noopener noreferrer"
                 className="mt-5 inline-block rounded-lg px-5 py-2 text-sm font-semibold"
                 style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>

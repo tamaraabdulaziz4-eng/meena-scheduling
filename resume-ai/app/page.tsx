@@ -336,6 +336,19 @@ export default function Home() {
         <p className="mt-8 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>
           Secure checkout · Instant access · Still cheaper than one week of Jobscan · 7-day money-back guarantee
         </p>
+        {/* Honest trust badges — verifiable facts only, no invented numbers. */}
+        <div className="mx-auto mt-8 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { icon: "🔒", label: "Secure Paylink checkout" },
+            { icon: "🛡️", label: "Not stored on our servers" },
+            { icon: "↩️", label: "7-day money-back" },
+            { icon: "🚫", label: "No subscription, ever" },
+          ].map((b) => (
+            <div key={b.label} className="card flex items-center gap-2 px-3 py-3 text-xs font-semibold" style={{ color: "var(--muted)" }}>
+              <span style={{ fontSize: 16 }}>{b.icon}</span> {b.label}
+            </div>
+          ))}
+        </div>
       </section>
 
       {/* ── Final CTA ── */}
