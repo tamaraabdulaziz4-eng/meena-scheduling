@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 /**
  * Two-phase checkout:
@@ -47,6 +47,32 @@ export default function CheckoutButton({
   const [error, setError] = useState("");
   const txRef = useRef<string>("");
   const urlRef = useRef<string>("");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payRef = useRef<any>(null);
+
+  // Bind the Paylink SDK to the card fields ONLY AFTER they've rendered (phase
+  // "card"). Initializing earlier bound to elements that weren't in the DOM yet,
+  // so the fields never appeared.
+  useEffect(() => {
+    if (phase !== "card") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await loadSdk();
+        if (cancelled) return;
+        const payment = new window.PaylinkPayments({ mode: PAY_MODE, defaultLang: ar ? "ar" : "en", backgroundColor: "#101316" });
+        await payment.initPayment(`#cn-${uid}`, `#nm-${uid}`, `#yy-${uid}`, `#mm-${uid}`, `#cv-${uid}`);
+        if (cancelled) return;
+        payRef.current = payment;
+      } catch {
+        // SDK/init failed — surface it and let the buyer use the hosted link
+        // that's already shown below, instead of yanking them away.
+        if (!cancelled) setError(ar ? "تعذّر تحميل نموذج البطاقة — استخدم \"طرق أخرى\" بالأسفل." : "Couldn't load the card form — use \"Other ways\" below.");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   const t = ar
     ? { planLine: plan === "single" ? "مرة واحدة · ٣٥ ريالاً" : "الحزمة الكاملة · ٩٩ ريالاً · دفعة واحدة",
@@ -79,11 +105,7 @@ export default function CheckoutButton({
       if (!res.ok || !data.url || !data.transactionNo) throw new Error(data.error || t.failed);
       txRef.current = String(data.transactionNo);
       urlRef.current = String(data.url);
-      // Prepare the inline card form.
-      await loadSdk();
-      const payment = new window.PaylinkPayments({ mode: PAY_MODE, defaultLang: ar ? "ar" : "en", backgroundColor: "#101316" });
-      await payment.initPayment(`#cn-${uid}`, `#nm-${uid}`, `#yy-${uid}`, `#mm-${uid}`, `#cv-${uid}`);
-      (window as unknown as Record<string, unknown>)[`__pl_${uid}`] = payment;
+      // Switch to the card phase — the effect binds the SDK once the fields mount.
       setPhase("card"); setLoading(false);
     } catch (err) {
       // If the SDK fails to load, fall back to the hosted page so checkout never dead-ends.
@@ -95,9 +117,9 @@ export default function CheckoutButton({
   async function payCard() {
     setError(""); setPaying(true);
     try {
-      const payment = (window as unknown as Record<string, unknown>)[`__pl_${uid}`] as { submitInvoice: (tx: string) => Promise<unknown> };
+      if (!payRef.current) throw new Error("not ready");
       // On success the SDK opens the bank 3DS page, which returns to our callBackUrl.
-      await payment.submitInvoice(txRef.current);
+      await payRef.current.submitInvoice(txRef.current);
     } catch {
       setError(t.cardErr); setPaying(false);
     }
