@@ -84,7 +84,7 @@ IMPROVEMENTS:
   - needs-confirmation  (the fix implies more responsibility/skill than the source clearly states — the candidate must confirm it's true)
   - missing-requirement  (the job needs this but the candidate's resume does not show it — cannot be added, only flagged)
 RESUME:
-<the COMPLETE rewritten resume as plain text, under 350 words. Nothing after it.>`;
+<the COMPLETE rewritten resume as plain text. CRITICAL: preserve EVERY section, EVERY job/role, EVERY bullet point, EVERY skill, certification, and education entry from the original — do NOT drop, merge, or summarize away any content. You may reword and reorder for impact, but the output must contain ALL the candidate's information (nothing shorter than the input in coverage). Keep every employer, date, and detail. Nothing after it.>`;
 };
 
 /** Parse the delimited plain-text model output into the result shape. */
@@ -273,7 +273,8 @@ async function streamNvidia(
       temperature: 0,
       top_p: 1,
       seed: 7,
-      max_tokens: 3600,
+      // Headroom so a long, detailed CV's full rewrite is never cut off mid-output.
+      max_tokens: 6000,
       stream: true,
       messages: [
         { role: "system", content: "You are an expert ATS resume analyst. ABSOLUTE RULE: never invent any number, employer, date, degree, certification, or achievement not present in the user's input — write [add your real number] where a metric is missing. Follow the user's OUTPUT FORMAT exactly: ANALYSIS bullets, then the SCORE/SUMMARY/MISSING/PRESENT/GAPS/IMPROVEMENTS/RESUME sections as plain text. Never output JSON or markdown." },
