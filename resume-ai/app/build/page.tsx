@@ -24,6 +24,7 @@ export default function BuildPage() {
   const [education, setEducation] = useState("");
   const [skills, setSkills] = useState("");
   const [extras, setExtras] = useState("");
+  const [personalDetails, setPersonalDetails] = useState("");
   const [jobDescription, setJobDescription] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -62,6 +63,7 @@ export default function BuildPage() {
         if (typeof d.education === "string") setEducation(d.education);
         if (typeof d.skills === "string") setSkills(d.skills);
         if (typeof d.extras === "string") setExtras(d.extras);
+        if (typeof d.personalDetails === "string") setPersonalDetails(d.personalDetails);
         if (typeof d.jobDescription === "string") setJobDescription(d.jobDescription);
         if (typeof d.step === "number") setStep(d.step);
       }
@@ -81,7 +83,7 @@ export default function BuildPage() {
     try {
       const hasContent = name || contact || targetRole || education || skills || extras || jobDescription || exps.some((e) => e.role || e.company || e.duties);
       if (hasContent) {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, contact, targetRole, exps, education, skills, extras, jobDescription, step }));
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, contact, targetRole, exps, education, skills, extras, personalDetails, jobDescription, step }));
       }
     } catch {
       /* storage full or blocked — non-fatal */
@@ -117,7 +119,7 @@ export default function BuildPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name, contact, targetRole,
+          name, contact, targetRole, personalDetails,
           experiences: exps.filter((e) => e.role.trim() || e.company.trim()),
           education, skills, extras, jobDescription,
         }),
@@ -271,6 +273,12 @@ export default function BuildPage() {
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Certifications, languages, projects (optional)</label>
                     <textarea value={extras} onChange={(e) => setExtras(e.target.value)} rows={2}
                       placeholder="e.g. PMP certificate, IELTS 7.0, built a small online store" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Personal details for a Gulf CV (optional)</label>
+                    <textarea value={personalDetails} onChange={(e) => setPersonalDetails(e.target.value)} rows={2}
+                      placeholder="e.g. Nationality: Saudi · Date of birth: 1995 · Marital status: Single · Iqama: Transferable" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                    <p className="mt-1.5 text-xs" style={{ color: "var(--faint)" }}>Common in GCC job applications. Left blank, it&apos;s simply omitted.</p>
                   </div>
                 </>
               )}

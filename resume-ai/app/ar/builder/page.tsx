@@ -21,13 +21,14 @@ interface Msg {
 interface Exp { role: string; company: string; dates: string; duties: string }
 
 type StepId =
-  | "name" | "contact" | "targetRole"
+  | "name" | "contact" | "personal" | "targetRole"
   | "company" | "jobTitle" | "dates" | "duties" | "moreJobs"
   | "education" | "skills" | "extras" | "generate";
 
 const QUESTIONS: Record<string, { q: string; refine?: string; multiline?: boolean }> = {
   name: { q: "أهلاً! أنا مساعدك لبناء سيرة إنجليزية احترافية. بنمشي خطوة خطوة وكل إجابة أحسّنها لك وتعتمدها قبل ما ننتقل.\n\nأول شي — وش اسمك الكامل؟", refine: "name" },
   contact: { q: "تمام! عطني وسائل التواصل: رقم جوالك، إيميلك، ومدينتك.", refine: "contact" },
+  personal: { q: "بعض جهات التوظيف الخليجية تحب معلومات إضافية في السيرة (اختياري):\nالجنسية · تاريخ الميلاد · الحالة الاجتماعية · حالة الإقامة/الإقامة النظامية.\n\nاكتبها إذا تبي تضيفها، أو اكتب «تخطي»." },
   targetRole: { q: "وش الوظيفة اللي تستهدفها؟ (اكتبها بالعربي عادي وأنا أطلع لك مسماها المعتمد بالإنجليزي)", refine: "role" },
   company: { q: "الحين خبرتك العملية 💼\nوين تشتغل حالياً أو آخر جهة اشتغلت فيها؟ اكتب اسمها حتى لو ما تعرف اسمها بالإنجليزي — أنا أجيبه لك.", refine: "company" },
   jobTitle: { q: "وش كان مسماك الوظيفي هناك؟", refine: "role" },
@@ -52,7 +53,7 @@ export default function ArChatBuilderPage() {
   const [copied, setCopied] = useState(false);
 
   // البيانات المتراكمة
-  const [data, setData] = useState({ name: "", contact: "", targetRole: "", education: "", skills: "", extras: "" });
+  const [data, setData] = useState({ name: "", contact: "", personalDetails: "", targetRole: "", education: "", skills: "", extras: "" });
   const [exps, setExps] = useState<Exp[]>([]);
   const [curExp, setCurExp] = useState<Exp>({ role: "", company: "", dates: "", duties: "" });
 
@@ -98,7 +99,13 @@ export default function ArChatBuilderPage() {
   function commit(value: string) {
     switch (step) {
       case "name": setData((d) => ({ ...d, name: value })); ask("contact"); break;
-      case "contact": setData((d) => ({ ...d, contact: value })); ask("targetRole"); break;
+      case "contact": setData((d) => ({ ...d, contact: value })); ask("personal"); break;
+      case "personal": {
+        const skip = /^(تخطي|تخطى|لا|no|skip|لا يوجد|مافي|ما عندي)/i.test(value.trim());
+        setData((d) => ({ ...d, personalDetails: skip ? "" : value }));
+        ask("targetRole");
+        break;
+      }
       case "targetRole": setData((d) => ({ ...d, targetRole: value })); ask("company"); break;
       case "company": setCurExp((e) => ({ ...e, company: value })); ask("jobTitle"); break;
       case "jobTitle": setCurExp((e) => ({ ...e, role: value })); ask("dates"); break;

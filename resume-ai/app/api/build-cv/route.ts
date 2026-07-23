@@ -25,6 +25,7 @@ const PROMPT = (d: {
   education: string;
   skills: string;
   extras: string;
+  personalDetails: string;
   jobDescription: string;
 }) => `You are an executive CV writer. Write a COMPLETE, professional CV for this person from their plain-language answers. They may have written casually — your job is to transform their words into polished, high-impact CV language.
 
@@ -44,6 +45,7 @@ ${d.experiences.map((e, i) => `  ${i + 1}. ${e.role} at ${e.company} (${e.dates}
 - Education: ${d.education}
 - Skills: ${d.skills}
 - Extra (certifications/languages/projects): ${d.extras || "none given"}
+- Personal details for a Gulf-style CV (optional): ${d.personalDetails || "none given"}
 ${d.jobDescription ? `- TARGET JOB POSTING (tailor the CV to this):\n${d.jobDescription}` : ""}
 
 CV FORMULA (research-backed — follow exactly):
@@ -52,6 +54,7 @@ CV FORMULA (research-backed — follow exactly):
 - SKILLS: grouped by category, front-loading what matters for the target role
 - EXPERIENCE: each role 3-5 bullets; every bullet starts with a strong action verb. NO-FABRICATION CONTRACT (absolute): NEVER write any number, metric, team size, percentage, employer, date, degree, certification, or achievement the candidate did not state. Where the candidate gave a number, use it. Where a metric would help but wasn't given, write exactly: [add your real number: e.g. team size, % improvement, customers served].
 - EDUCATION after experience (unless they have no experience — then education first)
+- PERSONAL DETAILS: include a short "PERSONAL DETAILS" section (e.g. Nationality, Date of Birth, Marital Status, Residency/Iqama status) ONLY if the candidate provided them — this is common and expected in Gulf/GCC CVs. Never invent or guess any of these fields; include only what was given.
 - Include certifications/languages/projects sections only if they gave content for them
 - Concise enough to fit one page; cut filler, keep impact
 - You may only rephrase, translate, and organize the candidate's OWN facts — polish, never fabricate
@@ -124,7 +127,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { name, contact, targetRole, experiences, education, skills, extras, jobDescription } = body;
+    const { name, contact, targetRole, experiences, education, skills, extras, personalDetails, jobDescription } = body;
 
     if (!name?.trim() || !targetRole?.trim()) {
       return NextResponse.json({ error: "Name and target role are required." }, { status: 400 });
@@ -152,6 +155,7 @@ export async function POST(req: NextRequest) {
       education: String(education || "").slice(0, 500),
       skills: String(skills || "").slice(0, 500),
       extras: String(extras || "").slice(0, 500),
+      personalDetails: String(personalDetails || "").slice(0, 300),
       jobDescription: String(jobDescription || "").slice(0, 3000),
     });
 
