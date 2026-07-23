@@ -66,12 +66,13 @@ const STRINGS = {
 
 function AccountInner() {
   const router = useRouter();
-  // Arabic if the browser prefers Arabic or a language pref was stored.
+  // Follow the SITE language the user chose (via the عربي/English toggle), NOT
+  // the browser locale — otherwise a Saudi user browsing the English flow got a
+  // fully mirrored RTL account screen. Default English; RTL only on explicit ar.
   const [lang] = useState<"en" | "ar">(() => {
     try {
       const stored = localStorage.getItem("ra_lang");
-      if (stored === "ar" || stored === "en") return stored;
-      if (typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("ar")) return "ar";
+      if (stored === "ar") return "ar";
     } catch { /* noop */ }
     return "en";
   });
