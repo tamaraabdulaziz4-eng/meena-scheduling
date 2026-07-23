@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../../components/PdfExport";
 import DocxExport from "../../components/DocxExport";
+import ResumeTemplate from "../../components/ResumeTemplate";
 import PublishLink from "../../components/PublishLink";
 import { saveResume } from "../../lib/localdata";
 
@@ -51,6 +52,7 @@ export default function ArChatBuilderPage() {
   const [tips, setTips] = useState<string[]>([]);
   const [genError, setGenError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<"text" | "designed">("text");
 
   // البيانات المتراكمة
   const [data, setData] = useState({ name: "", contact: "", personalDetails: "", targetRole: "", education: "", skills: "", extras: "" });
@@ -335,7 +337,20 @@ export default function ArChatBuilderPage() {
         ) : (
           <div>
             <h2 className="mb-4 text-2xl font-bold">سيرتك جاهزة 🎉</h2>
-            <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{cv}</div>
+            <div className="mb-3 flex gap-2">
+              {(["text", "designed"] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold"
+                  style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  {v === "text" ? "نص (ATS)" : "📄 قالب مصمّم"}
+                </button>
+              ))}
+            </div>
+            {view === "designed" ? (
+              <ResumeTemplate text={cv} name={data.name || "resume"} />
+            ) : (
+              <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{cv}</div>
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
               <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>{copied ? "✓ نُسخت" : "نسخ"}</button>
               <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>

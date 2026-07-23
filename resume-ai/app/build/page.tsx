@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdfExport from "../components/PdfExport";
 import DocxExport from "../components/DocxExport";
+import ResumeTemplate from "../components/ResumeTemplate";
 import PublishLink from "../components/PublishLink";
 import { saveResume } from "../lib/localdata";
 
@@ -33,6 +34,7 @@ export default function BuildPage() {
   const [tips, setTips] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<"text" | "designed">("text");
   const thinkRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -339,7 +341,20 @@ export default function BuildPage() {
                 <DocxExport text={cv} />
               </div>
             </div>
-            <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
+            <div className="mb-3 flex gap-2">
+              {(["text", "designed"] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold"
+                  style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  {v === "text" ? "Text (ATS)" : "📄 Designed template"}
+                </button>
+              ))}
+            </div>
+            {view === "designed" ? (
+              <ResumeTemplate text={cv} name={name || "resume"} />
+            ) : (
+              <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
+            )}
             <PublishLink text={cv} name={name} role={targetRole} />
 
             {tips.length > 0 && (
