@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import AiOrb from "./AiOrb";
+import GoldField from "./orb/GoldField";
 
 /**
  * Two-phase checkout:
@@ -136,11 +138,15 @@ export default function CheckoutButton({
       {open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
           onClick={() => !loading && !paying && reset()}>
-          <div dir={ar ? "rtl" : "ltr"} className={`card w-full max-w-sm p-7 ${ar ? "text-right" : "text-left"}`} style={{ borderColor: "rgba(74,222,128,0.4)" }} onClick={(e) => e.stopPropagation()}>
-            <div className="mb-1 font-mono text-xs tracking-widest" style={{ color: "var(--faint)", textTransform: ar ? "none" : "uppercase" }}>{t.planLine}</div>
+          <div dir={ar ? "rtl" : "ltr"} className={`relative w-full max-w-sm overflow-hidden rounded-3xl p-7 ${ar ? "text-right" : "text-left"}`} style={{ background: "rgba(10,14,26,0.96)", border: "1px solid rgba(245,184,64,0.35)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }} onClick={(e) => e.stopPropagation()}>
+            <GoldField />
+            <div className="relative mb-3 flex items-center gap-2.5">
+              <AiOrb size={30} state="golden" />
+              <div className="font-mono text-xs tracking-widest" style={{ color: "var(--gold)", textTransform: ar ? "none" : "uppercase" }}>{t.planLine}</div>
+            </div>
 
             {phase === "details" ? (
-              <>
+              <div className="relative">
                 <h3 className="text-xl font-bold">{t.title}</h3>
                 <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>{t.sub}</p>
                 <form onSubmit={createInvoice} className="mt-5 space-y-3">
@@ -152,9 +158,9 @@ export default function CheckoutButton({
                   <button type="button" onClick={reset} disabled={loading} className="w-full py-1 text-center text-xs" style={{ color: "var(--faint)" }}>{t.cancel}</button>
                   <p className="pt-1 text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>{t.secure}</p>
                 </form>
-              </>
+              </div>
             ) : (
-              <>
+              <div className="relative">
                 <h3 className="text-xl font-bold">{t.cardTitle}</h3>
                 {/* Inline card form — Paylink SDK binds to these (readonly) fields. */}
                 <div className="mt-5 space-y-3">
@@ -170,7 +176,7 @@ export default function CheckoutButton({
                   <a href={urlRef.current || "#"} className="block w-full py-2 text-center text-xs font-semibold" style={{ color: "var(--accent)" }}>{t.other}</a>
                   <p className="text-center font-mono text-[11px]" style={{ color: "var(--faint)" }}>{t.secure}</p>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>

@@ -3,6 +3,8 @@
 import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import AiOrb from "../components/AiOrb";
+import ScoreOrb from "../components/orb/ScoreOrb";
 import {
   getScans, removeScan, type ScanEntry,
   getResumes, removeResume, type SavedResume,
@@ -87,6 +89,7 @@ function AccountInner() {
   }, []);
 
   const [me, setMe] = useState<Me | null>(null);
+  const [owned, setOwned] = useState(false);
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
   const [links, setLinks] = useState<{ slug: string; url: string; token: string }[]>([]);
@@ -109,6 +112,7 @@ function AccountInner() {
     setScans(getScans());
     setResumes(getResumes());
     setJobs(getJobs());
+    try { setOwned(localStorage.getItem("ra_owned") === "1"); } catch { /* noop */ }
     // Cloud-saved CVs (signed-in only) — survive a cleared browser.
     fetch("/api/resumes").then((r) => r.json()).then((d) => { if (d?.ok && d.signedIn && Array.isArray(d.cvs)) setCloudCvs(d.cvs); }).catch(() => {});
   }, []);
@@ -212,7 +216,11 @@ function AccountInner() {
             {t.welcome}
           </div>
         )}
-        <div className="chip mb-4">{t.myAccount}</div>
+        <div className="mb-4 flex items-center gap-2.5">
+          <AiOrb size={26} state={owned ? "golden" : "idle"} />
+          <div className="chip">{t.myAccount}</div>
+          {owned && <span className="gold-stamp">{lang === "ar" ? "مملوكة ✓" : "Owned ✓"}</span>}
+        </div>
         <h1 className="mb-8 text-3xl font-extrabold">{t.dashboard}</h1>
 
         {/* ── Plan card ── */}
@@ -315,9 +323,7 @@ function AccountInner() {
             <ul className="space-y-2">
               {scans.map((s) => (
                 <li key={s.id} className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)" }}>
-                  <span className="font-mono text-lg font-bold tabular-nums" style={{ color: s.score >= 75 ? "var(--accent)" : s.score >= 55 ? "#fbbf24" : "#f87171", minWidth: "2.6rem" }}>
-                    {s.score}%
-                  </span>
+                  <div className="shrink-0"><ScoreOrb value={s.score} size={46} animate={false} /></div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{s.jobTitle}</div>
                     <div className="font-mono text-[11px]" style={{ color: "var(--faint)" }}>{new Date(s.ts).toLocaleString()}</div>
@@ -334,7 +340,11 @@ function AccountInner() {
         <div className={`${sectionCard} mt-6`}>
           <h2 className={sectionTitle}>📄 {t.savedResumes} ({resumes.length})</h2>
           {resumes.length === 0 ? (
-            <p className="text-xs" style={{ color: "var(--faint)" }}>{t.savedHint}</p>
+            <div className="flex flex-col items-center gap-3 py-4 text-center">
+              <AiOrb size={40} />
+              <p className="text-xs" style={{ color: "var(--faint)" }}>{lang === "ar" ? "ما عندك سيرة بعد — خلّينا نسوي واحدة ☕" : "No resume yet — let's make one ☕"}</p>
+              <Link href={lang === "ar" ? "/ar" : "/"} className="btn-accent px-5 py-2 text-xs font-semibold">{lang === "ar" ? "ابدأ ←" : "Start →"}</Link>
+            </div>
           ) : (
             <ul className="space-y-2">
               {resumes.map((r) => (
