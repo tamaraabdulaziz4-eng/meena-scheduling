@@ -31,6 +31,7 @@ export default function InterviewLivePage() {
   const [micSupported, setMicSupported] = useState(true);
   const [aiSpeaking, setAiSpeaking] = useState(false);
   const [paywallMsg, setPaywallMsg] = useState("");
+  const [voiceOff, setVoiceOff] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -41,6 +42,11 @@ export default function InterviewLivePage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) setMicSupported(false);
+    // Preload TTS voices (getVoices is async on first access on many browsers).
+    try {
+      window.speechSynthesis?.getVoices();
+      window.speechSynthesis?.addEventListener?.("voiceschanged", () => { window.speechSynthesis.getVoices(); });
+    } catch { /* noop */ }
     return () => { stopCamera(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -51,21 +57,47 @@ export default function InterviewLivePage() {
     try { recogRef.current?.stop(); } catch { /* noop */ }
   }
 
-  function speak(text: string) {
+  // Mobile browsers require a user gesture to unlock speech + the Arabic voice
+  // must be selected explicitly (lang="ar-SA" alone is often silent). Call once
+  // synchronously inside a click (start / replay) to unlock, then speaks work.
+  function unlockTts() {
     try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      synth.getVoices(); // kick voice loading
+      const u = new SpeechSynthesisUtterance(" ");
+      u.volume = 0;
+      synth.speak(u);
+    } catch { /* noop */ }
+  }
+
+  function pickArabicVoice(): SpeechSynthesisVoice | null {
+    const vs = window.speechSynthesis?.getVoices?.() || [];
+    return vs.find((v) => /^ar/i.test(v.lang)) || vs.find((v) => /arab|majed|maged/i.test(v.name)) || null;
+  }
+
+  function speak(text: string) {
+    const synth = window.speechSynthesis;
+    if (!synth) { setVoiceOff(true); return; }
+    try {
+      synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = "ar-SA";
+      const v = pickArabicVoice();
+      if (v) u.voice = v;
+      u.lang = v?.lang || "ar-SA";
       u.rate = 0.95;
       u.onstart = () => setAiSpeaking(true);
       u.onend = () => setAiSpeaking(false);
-      u.onerror = () => setAiSpeaking(false);
-      window.speechSynthesis?.cancel();
-      window.speechSynthesis?.speak(u);
+      u.onerror = () => { setAiSpeaking(false); };
+      // If the device has NO Arabic voice at all, flag it so we show a hint.
+      if (!v && !(synth.getVoices() || []).some((x) => /^ar/i.test(x.lang))) setVoiceOff(true);
+      synth.speak(u);
     } catch { setAiSpeaking(false); }
   }
 
   async function start() {
     setError("");
+    unlockTts(); // synchronous, inside the click gesture — unlocks mobile TTS
     if (resume.trim().length < 30) { setError("أضِف نبذة أطول عن خبرتك أولاً."); return; }
     setBusy(true);
     try {
@@ -270,7 +302,8 @@ export default function InterviewLivePage() {
             <div className="card p-5" style={{ borderColor: aiSpeaking ? "rgba(74,222,128,0.4)" : "var(--line)" }}>
               <div className="mb-1 font-mono text-xs" style={{ color: "var(--accent)" }}>🎤 المُقابِل يسأل</div>
               <div className="text-lg font-bold leading-relaxed">{questions[idx]}</div>
-              <button onClick={() => speak(questions[idx])} className="mt-2 text-xs" style={{ color: "var(--faint)" }}>🔊 أعد سماع السؤال</button>
+              <button onClick={() => speak(questions[idx])} className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>🔊 استمع للسؤال بصوت المُقابِل</button>
+              {voiceOff && <p className="mt-2 text-xs" style={{ color: "#fbbf24" }}>جهازك ما فيه صوت عربي مثبّت — تقدر تقرأ السؤال، أو ثبّت صوتاً عربياً من إعدادات الجهاز (النطق/Text-to-Speech).</p>}
             </div>
 
             {error && <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>{error}</div>}
