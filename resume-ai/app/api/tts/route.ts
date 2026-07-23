@@ -33,7 +33,9 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
   const voice = VOICES[String(body.voice || "hamed")] || VOICES.hamed;
 
-  const ssml = `<speak version="1.0" xml:lang="ar-SA"><voice name="${voice}"><prosody rate="-4%">${escapeXml(text)}</prosody></voice></speak>`;
+  // `chat` style + gentle prosody make the neural voice sound conversational
+  // rather than a news reader; unsupported styles are ignored by Azure.
+  const ssml = `<speak version="1.0" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="ar-SA"><voice name="${voice}"><mstts:express-as style="chat"><prosody rate="-2%" pitch="-2%">${escapeXml(text)}</prosody></mstts:express-as></voice></speak>`;
 
   try {
     const res = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
@@ -41,7 +43,7 @@ export async function POST(req: NextRequest) {
       headers: {
         "Ocp-Apim-Subscription-Key": key,
         "Content-Type": "application/ssml+xml",
-        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+        "X-Microsoft-OutputFormat": "audio-48khz-192kbitrate-mono-mp3",
         "User-Agent": "resumeai",
       },
       body: ssml,
