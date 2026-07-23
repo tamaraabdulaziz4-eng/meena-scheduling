@@ -7,6 +7,7 @@ import BeforeAfter from "../../components/BeforeAfter";
 import ResumeTemplate from "../../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../../lib/templateCatalog";
 import ScoreRing from "../../components/ScoreRing";
+import ResultCoaching from "../../components/ResultCoaching";
 import CheckoutButton from "../../components/CheckoutButton";
 import AuthNav from "../../components/AuthNav";
 import { addScan, saveResume } from "../../lib/localdata";
@@ -394,6 +395,16 @@ export default function ArOptimizePage() {
             {typeof result.afterScore === "number" && (
               <BeforeAfter before={score} after={result.afterScore} ar />
             )}
+
+            <ResultCoaching
+              before={score}
+              after={result.afterScore ?? score}
+              improvements={result.improvements || []}
+              missingKeywords={result.missingKeywords || []}
+              skillsGap={result.skillsGap || []}
+              hasPlaceholders={/\[(add|أضف)[^\]]*\]/i.test(result.optimizedResume || "")}
+              ar
+            />
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">

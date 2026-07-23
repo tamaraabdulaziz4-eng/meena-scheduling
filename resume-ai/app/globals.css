@@ -186,6 +186,27 @@ body {
   100% { transform: translateY(190px); opacity: 0; }
 }
 
+/* ── "Resume improved" reveal — a satisfying success moment on the result ── */
+.reveal-pop { animation: revealPop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes revealPop {
+  0% { transform: scale(0.9) translateY(8px); opacity: 0; }
+  60% { transform: scale(1.02); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.reveal-rise { animation: revealRise 0.5s ease both; }
+@keyframes revealRise { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+/* Sparkle shimmer sweeping across the success banner */
+.improved-banner { position: relative; overflow: hidden; }
+.improved-banner::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,0.18), transparent 70%);
+  transform: translateX(-100%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .improved-banner::after { animation: improvedShine 1.6s ease-out 0.3s; }
+}
+@keyframes improvedShine { to { transform: translateX(100%); } }
+
 /* ── AI interviewer avatar (illustrated talking face) ── */
 .ia-face {
   width: 150px; height: 150px; border-radius: 50%; overflow: hidden;
