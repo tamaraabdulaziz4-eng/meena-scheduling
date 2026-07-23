@@ -71,7 +71,7 @@ OUTPUT FORMAT — plain text with EXACTLY these section markers, in this order (
 ANALYSIS
 <8-12 short bullet lines of your reasoning, one finding per line, e.g. "• Job requires React — NOT in resume". Shown live to the user.>
 SCORE: <number 0-100 from the rubric — the CURRENT resume as submitted>
-AFTER: <number 0-100 — the projected score the REWRITTEN resume below would honestly achieve on the SAME rubric. A rewrite can only reorganize, reword, and surface the candidate's OWN facts more clearly — it CANNOT add skills, tools, or experience the candidate lacks. So the gain is real but bounded: never claim a perfect 100, and if the candidate is genuinely missing most hard skills the after-score must stay modest. Must be >= SCORE.>
+AFTER: <number 0-100 — the REALISTIC score the REWRITTEN resume below would get if it were scored fresh from scratch on the SAME rubric (i.e. what a re-scan of the rewrite actually returns — NOT an aspirational target). A rewrite only reorganizes, rewords, and surfaces the candidate's OWN facts more clearly — it CANNOT add skills/tools/experience they lack, so the honest gain is SMALL and bounded: typically SCORE + 4 to 12 points, NEVER more than +15. If the candidate is missing core hard skills the job needs, the after-score must stay modest (the rewrite can't invent them). This number is a PROMISE the user will verify by re-scanning — it must match, so be conservative, not optimistic. Must be >= SCORE.>
 SUMMARY: <2-3 honest sentences on one line: score drivers, biggest gap, is it worth pursuing>
 MISSING: <comma-separated keywords absent from the resume>
 PRESENT: <comma-separated keywords genuinely present>
@@ -121,11 +121,12 @@ function parseSections(rawInput: string) {
   if (!resume) throw new Error("Model output missing the RESUME section (likely truncated)");
   if (!score) throw new Error("Could not parse model output");
   const clampedScore = Math.min(100, Math.max(0, score));
-  // If the model omitted/garbled AFTER, fall back to a conservative bounded lift
-  // rather than fabricating a big jump: close ~40% of the gap to 100, capped at 95.
+  // The AFTER score is a PROMISE the user verifies by re-scanning, so keep it
+  // realistic. Cap the model's projection at +15 over the current score, and if
+  // the model omitted it, use a conservative +4..+12 lift (matches a real re-scan).
   const afterScore = Number.isFinite(afterRaw)
-    ? Math.min(100, Math.max(clampedScore, afterRaw))
-    : Math.min(95, clampedScore + Math.round((100 - clampedScore) * 0.4));
+    ? Math.min(100, Math.min(clampedScore + 15, Math.max(clampedScore, afterRaw)))
+    : Math.min(100, clampedScore + Math.min(12, Math.max(4, Math.round((100 - clampedScore) * 0.2))));
   return {
     matchScore: clampedScore,
     afterScore,
