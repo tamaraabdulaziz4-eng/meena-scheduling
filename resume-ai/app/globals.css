@@ -431,3 +431,53 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .aurora-bg::before, .aurora-bg::after { animation: none; }
 }
+
+/* ── Siri-style aurora wave (the Advisor's presence, per the dribbble ref) ── */
+.advisor-wave {
+  position: fixed;
+  inset-inline: 0;
+  bottom: -4vh;
+  height: 36vh;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.advisor-wave svg { width: 110%; height: 100%; margin-inline-start: -5%; }
+.advisor-wave .wave-group {
+  transform-origin: 50% 50%;
+  animation: wave-sway 9s ease-in-out infinite;
+}
+.advisor-wave .wave-group.w2 { animation-delay: -4.5s; animation-duration: 12s; }
+/* Two color sets crossfaded by state — gradients can't animate, opacity can. */
+.advisor-wave .set-warm, .advisor-wave .set-green { transition: opacity 0.9s ease; }
+.advisor-wave .set-green { opacity: 0; }
+.advisor-wave[data-state="listening"] .set-warm { opacity: 0; }
+.advisor-wave[data-state="listening"] .set-green { opacity: 1; }
+.advisor-wave[data-state="thinking"] .wave-group { animation-duration: 3.5s; }
+@keyframes wave-sway {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  33% { transform: translateY(-14px) scaleY(1.12); }
+  66% { transform: translateY(10px) scaleY(0.9); }
+}
+/* The current question, Siri-large */
+.advisor-prompt {
+  font-weight: 300;
+  font-size: clamp(1.35rem, 4.5vw, 2rem);
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+  color: rgba(244, 245, 243, 0.95);
+}
+@media (prefers-reduced-motion: reduce) {
+  .advisor-wave .wave-group { animation: none; }
+}
+
+/* Advisor entrances: each question and each new CV line springs in */
+.advisor-prompt { animation: prompt-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cv-line-in { animation: prompt-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes prompt-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .advisor-prompt, .cv-line-in { animation: none; }
+}

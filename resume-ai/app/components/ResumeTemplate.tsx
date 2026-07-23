@@ -61,6 +61,21 @@ function parse(text: string): Parsed {
   let contact = "";
   while (i < nonEmpty.length && !nonEmpty[i].trim()) i++;
   if (i < nonEmpty.length && !isHeading(nonEmpty[i])) { contact = nonEmpty[i].trim(); i++; }
+  // Models sometimes bury the contact line (email/phone) further down the
+  // header block or inside the summary — pull the first line that looks like
+  // contact info out of the top of the document so it renders under the name,
+  // not mid-section.
+  const looksContact = (s: string) => /@|(\+?\d[\d\s()-]{6,})/.test(s) && s.length < 160;
+  if (!looksContact(contact)) {
+    for (let k = i; k < Math.min(i + 10, nonEmpty.length); k++) {
+      const cand = nonEmpty[k].trim();
+      if (cand && !isHeading(cand) && looksContact(cand)) {
+        contact = contact ? contact : cand;
+        nonEmpty.splice(k, 1);
+        break;
+      }
+    }
+  }
 
   const sections: Section[] = [];
   let cur: Section | null = null;

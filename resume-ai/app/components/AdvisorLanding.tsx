@@ -106,6 +106,9 @@ const T = {
     reveal_title: "سيرتك جاهزة 🎉",
     reveal_score: "نتيجتها أمام أنظمة التوظيف",
     tpl_pick: "غيّر القالب:",
+    lang_pick: "لغة السيرة:",
+    lang_opts: { en: "English", ar: "العربية", both: "الاثنين معاً" },
+    lang_err: "ما ضبطت — جرب ثانية.",
     unlock: "فك العلامة المائية — 35 ريال مرة وحدة",
     edit_save: "حفظ",
     progress_q: "سؤال {n} من {t}",
@@ -171,6 +174,9 @@ const T = {
     reveal_title: "Your resume is ready 🎉",
     reveal_score: "Its score against ATS robots",
     tpl_pick: "Switch template:",
+    lang_pick: "CV language:",
+    lang_opts: { en: "English", ar: "العربية", both: "Both" },
+    lang_err: "Didn't work — try again.",
     unlock: "Remove the watermark — SAR 35, one time",
     edit_save: "Save",
     progress_q: "Question {n} of {t}",
@@ -226,6 +232,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   const [score, setScore] = useState<{ value: number; watermark: boolean } | null>(null);
   const [scorePhase, setScorePhase] = useState<"idle" | "working" | "failed" | "done">("idle");
   const [tpl, setTpl] = useState(TEMPLATE_CATALOG[0]);
+  const [outChoice, setOutChoice] = useState<"en" | "ar" | "both">(lang);
+  const [langBusy, setLangBusy] = useState(false);
+  const [langErr, setLangErr] = useState(false);
   const [editing, setEditing] = useState<{ path: string; value: string } | null>(null);
   const [micOn, setMicOn] = useState(false);
   const [micSupported, setMicSupported] = useState(false);
@@ -237,6 +246,16 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   /* ── boot: reduced motion, mic support, saved draft, greeting ── */
   useEffect(() => {
     reducedRef.current = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // Arabic-first for the Saudi market: an Arabic-language browser landing on
+    // the English page goes to /ar — unless they explicitly chose English.
+    if (lang === "en") {
+      try {
+        if ((navigator.language || "").toLowerCase().startsWith("ar") && localStorage.getItem("ra_lang_choice") !== "en") {
+          window.location.replace("/ar");
+          return;
+        }
+      } catch { /* ignore */ }
+    }
     // Feature-detect voice input — the mic button simply doesn't exist elsewhere.
     const w = window as unknown as Record<string, unknown>;
     setMicSupported(Boolean(w.webkitSpeechRecognition || w.SpeechRecognition));
@@ -401,11 +420,16 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         setOrbState("thinking");
         setMsgs(m);
         let lines: string[] = [];
-        try {
-          const res = await fetchT("/api/interview", { action: "rephrase", text, targetRole: d.targetRole, lang }, 35000);
-          const j = await res.json();
-          if (res.ok && Array.isArray(j.lines) && j.lines.length) lines = j.lines.map((l: string) => l.replace(/^[-•*]\s*/, ""));
-        } catch { /* fall back below */ }
+        // One automatic client retry on top of the server's own — the live
+        // rephrase is the product's magic moment, don't let a hiccup break it.
+        for (let attempt = 0; attempt < 2 && !lines.length; attempt++) {
+          if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
+          try {
+            const res = await fetchT("/api/interview", { action: "rephrase", text, targetRole: d.targetRole, lang }, 35000);
+            const j = await res.json();
+            if (res.ok && Array.isArray(j.lines) && j.lines.length) lines = j.lines.map((l: string) => l.replace(/^[-•*]\s*/, ""));
+          } catch { /* retry / fall back below */ }
+        }
         setBusy(false);
         setOrbState("idle");
         const job = d.jobs[d.jobs.length - 1];
@@ -587,7 +611,8 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       const resumeText = additions.length
         ? `${cvBase}\n\nADDITIONAL EXPERIENCE CONFIRMED BY THE CANDIDATE (integrate these real facts):\n${additions.join("\n")}`
         : cvBase;
-      const res = await fetchT("/api/optimize", { resume: resumeText.slice(0, 11000), jobDescription: d.jobAd, outLang: lang === "ar" ? "ar" : "en" }, 90000);
+      const jd = d.jobAd.trim().length >= 30 ? d.jobAd : "";
+      const res = await fetchT("/api/optimize", { resume: resumeText.slice(0, 8000), jobDescription: jd, outLang: lang === "ar" ? "ar" : "en" }, 90000);
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
         const j = await res.json();
@@ -698,7 +723,10 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   async function runScore(cvText: string, d: AdvisorData) {
     setScorePhase("working");
     try {
-      const res = await fetchT("/api/optimize", { resume: cvText, jobDescription: d.jobAd, outLang: lang === "ar" ? "ar" : "en" }, 90000);
+      // Respect the optimizer's contract: resume ≤8000 chars, JD either
+      // empty or a real posting (≥30 chars) — anything else earns a 400.
+      const jd = d.jobAd.trim().length >= 30 ? d.jobAd : "";
+      const res = await fetchT("/api/optimize", { resume: cvText.slice(0, 8000), jobDescription: jd, outLang: lang === "ar" ? "ar" : "en" }, 90000);
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) throw new Error("failed");
       const reader = res.body!.getReader();
@@ -726,6 +754,63 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     } catch {
       setScorePhase("failed");
     }
+  }
+
+  /* ── finale: switch the CV's output language (English | Arabic | Both) ── */
+  async function switchLang(choice: "en" | "ar" | "both", force = false) {
+    if (langBusy || (choice === outChoice && !force)) return;
+    setOutChoice(choice);
+    setLangBusy(true);
+    setLangErr(false);
+    setOrbState("thinking");
+    try {
+      let newCv = "";
+      if (mode === "update") {
+        const jd = data.jobAd.trim().length >= 30 ? data.jobAd : "";
+        const res = await fetchT("/api/optimize", { resume: (cvBase || cv).slice(0, 8000), jobDescription: jd, outLang: choice }, 90000);
+        newCv = await readNdjson(res, "optimizedResume");
+      } else {
+        const experiences = data.jobs.map((j) => ({ role: j.header.slice(0, 100), company: "", dates: "", duties: j.bullets.join("\n").slice(0, 800) }));
+        const res = await fetchT("/api/build-cv", {
+          name: data.name, contact: data.contact, targetRole: data.targetRole,
+          experiences, education: data.education, skills: data.skills,
+          extras: data.extras.join("; "), jobDescription: data.jobAd, outLang: choice,
+        }, 90000);
+        newCv = await readNdjson(res, "cv");
+      }
+      if (!newCv) throw new Error("empty");
+      setCv(newCv);
+    } catch {
+      setLangErr(true);
+    } finally {
+      setLangBusy(false);
+      setOrbState("idle");
+    }
+  }
+
+  /* Read a streaming NDJSON response and return one field of the result. */
+  async function readNdjson(res: Response, field: string): Promise<string> {
+    const ctype = res.headers.get("content-type") || "";
+    if (!ctype.includes("ndjson")) throw new Error("failed");
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let out = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.t === "result" && msg.d?.[field]) out = msg.d[field];
+        } catch { /* ignore */ }
+      }
+    }
+    return out;
   }
 
   /* ── voice input (feature-detected) ── */
@@ -809,14 +894,57 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       </button>
     );
 
-  const qNumber = Math.max(1, ORDER.indexOf(step));
+  // Stable question numbering (survives draft restore; moreJobs shares its
+  // job's number; gaps is the last "question"; build/reveal show status text).
+  const Q_NUM: Partial<Record<StepId, number>> = { welcome: 1, pasteCv: 1, updateGoal: 2, name: 2, contact: 3, jobHeader: 4, jobDuties: 5, moreJobs: 5, education: 6, skills: 7, jobAd: 8, gaps: 9 };
+  const qNumber = Math.min(9, Q_NUM[step] ?? 9);
   const showChips = step === "moreJobs" || step === "updateGoal" || (step === "gaps" && !gapAnswering);
   const showInput = step !== "build" && step !== "reveal" && !showChips && !resume;
 
   /* ══════════════════ render ══════════════════ */
   return (
-    <div dir={rtl ? "rtl" : "ltr"} className="relative min-h-screen" style={{ background: "#0B1220", color: "#f4f5f3" }}>
-      <div className="aurora-bg" aria-hidden />
+    <div dir={rtl ? "rtl" : "ltr"} className="relative min-h-screen" style={{ background: "#06080d", color: "#f4f5f3" }}>
+      {/* Siri-style aurora wave — the Advisor's presence. Warm (purple→pink→
+          ember) at rest, green while listening, faster sway while thinking. */}
+      <div className="advisor-wave" aria-hidden data-state={orbState === "listening" ? "listening" : orbState === "thinking" ? "thinking" : "idle"}>
+        <svg viewBox="0 0 1200 360" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="awg-warm" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#7c3aed" />
+              <stop offset="0.45" stopColor="#d946ef" />
+              <stop offset="0.75" stopColor="#f472b6" />
+              <stop offset="1" stopColor="#f97316" />
+            </linearGradient>
+            <linearGradient id="awg-green" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#059669" />
+              <stop offset="0.5" stopColor="#22c55e" />
+              <stop offset="1" stopColor="#2dd4bf" />
+            </linearGradient>
+            <filter id="awb-soft" x="-20%" y="-150%" width="140%" height="400%"><feGaussianBlur stdDeviation="26" /></filter>
+            <filter id="awb-mid" x="-20%" y="-150%" width="140%" height="400%"><feGaussianBlur stdDeviation="9" /></filter>
+          </defs>
+          <g className="set-warm">
+            <g className="wave-group">
+              <path d="M-40,190 C280,60 820,300 1240,150" stroke="url(#awg-warm)" strokeWidth="70" fill="none" filter="url(#awb-soft)" opacity="0.55" strokeLinecap="round" />
+              <path d="M-40,190 C280,60 820,300 1240,150" stroke="url(#awg-warm)" strokeWidth="16" fill="none" filter="url(#awb-mid)" opacity="0.8" strokeLinecap="round" />
+              <path d="M-40,190 C280,60 820,300 1240,150" stroke="#fdf2f8" strokeWidth="2" fill="none" opacity="0.85" strokeLinecap="round" />
+            </g>
+            <g className="wave-group w2">
+              <path d="M-40,150 C360,300 900,40 1240,220" stroke="url(#awg-warm)" strokeWidth="50" fill="none" filter="url(#awb-soft)" opacity="0.35" strokeLinecap="round" />
+            </g>
+          </g>
+          <g className="set-green">
+            <g className="wave-group">
+              <path d="M-40,190 C280,60 820,300 1240,150" stroke="url(#awg-green)" strokeWidth="70" fill="none" filter="url(#awb-soft)" opacity="0.55" strokeLinecap="round" />
+              <path d="M-40,190 C280,60 820,300 1240,150" stroke="url(#awg-green)" strokeWidth="16" fill="none" filter="url(#awb-mid)" opacity="0.8" strokeLinecap="round" />
+              <path d="M-40,190 C280,60 820,300 1240,150" stroke="#f0fdf4" strokeWidth="2" fill="none" opacity="0.85" strokeLinecap="round" />
+            </g>
+            <g className="wave-group w2">
+              <path d="M-40,150 C360,300 900,40 1240,220" stroke="url(#awg-green)" strokeWidth="50" fill="none" filter="url(#awb-soft)" opacity="0.35" strokeLinecap="round" />
+            </g>
+          </g>
+        </svg>
+      </div>
 
       {/* nav: logo + language + escape hatch for people who already have a CV */}
       <nav className="relative z-20 mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
@@ -826,7 +954,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         </div>
         <div className="flex items-center gap-1">
           <Link href={t.optimize_href} className="hidden min-h-11 items-center px-3 text-sm font-semibold sm:flex" style={{ color: "rgba(244,245,243,0.7)" }}>{t.have_cv}</Link>
-          <Link href={rtl ? "/" : "/ar"} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: GREEN }}>{rtl ? "English" : "عربي"}</Link>
+          <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: GREEN }}>{rtl ? "English" : "عربي"}</Link>
         </div>
       </nav>
 
@@ -867,14 +995,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             </div>
           )}
 
-          {/* typed greeting before the first message lands */}
+          {/* typed greeting before the first message lands — Siri-large */}
           {!resume && msgs.length === 0 && (
-            <p className="px-1 text-base font-semibold" style={{ lineHeight: 1.9 }}>{typed}<span className="animate-pulse" style={{ color: GREEN }}>▌</span></p>
+            <p className="advisor-prompt px-1 text-center">{typed}<span className="animate-pulse" style={{ color: GREEN }}>▌</span></p>
           )}
 
-          {/* chat log */}
-          <div ref={chatRef} className="flex-1 space-y-3 overflow-y-auto px-1" style={{ maxHeight: "48vh" }}>
-            {msgs.map((mm, i) => (
+          {/* chat log (history — the current question renders big below it) */}
+          <div ref={chatRef} className="flex-1 space-y-3 overflow-y-auto px-1" style={{ maxHeight: "38vh" }}>
+            {(msgs.length && msgs[msgs.length - 1].who === "ai" && !msgs[msgs.length - 1].lines ? msgs.slice(0, -1) : msgs).map((mm, i) => (
               <div key={i} className={`flex ${mm.who === "user" ? (rtl ? "justify-start" : "justify-end") : rtl ? "justify-end" : "justify-start"}`} style={mm.who === "user" ? {} : {}}>
                 <div
                   className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px]"
@@ -902,6 +1030,11 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               </div>
             )}
           </div>
+
+          {/* the current question — Siri-large, centered over the wave */}
+          {!resume && !busy && msgs.length > 0 && msgs[msgs.length - 1].who === "ai" && !msgs[msgs.length - 1].lines && (
+            <p key={msgs.length} className="advisor-prompt mt-5 px-1 text-center">{msgs[msgs.length - 1].text}</p>
+          )}
 
           {/* build failure → retry (never an infinite spinner) */}
           {buildPhase === "failed" && (
@@ -1038,7 +1171,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                         <div className="font-semibold">{editableLine(`header:${ji}`, j.header)}</div>
                         <ul className="mt-1 space-y-1">
                           {j.bullets.map((b1, bi) => (
-                            <li key={bi} className="flex gap-1.5 text-[13px]" style={{ color: "rgba(244,245,243,0.75)" }}>
+                            <li key={bi} className="cv-line-in flex gap-1.5 text-[13px]" style={{ color: "rgba(244,245,243,0.75)" }}>
                               <span style={{ color: GREEN }}>•</span>
                               <span className="flex-1">{editableLine(`bullet:${ji}:${bi}`, b1)}</span>
                             </li>
@@ -1090,6 +1223,21 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               </div>
               {/* actions */}
               <div className="glass-panel p-5" onClickCapture={(e) => { const el = e.target as HTMLElement; if (el.closest("button")) track("download_clicked", { lang }); }}>
+                {/* CV language: Arabic speakers must not be locked into English */}
+                <div className="mb-3">
+                  <div className="mb-1.5 text-xs font-bold">{t.lang_pick}</div>
+                  <div className="flex gap-1.5">
+                    {(["en", "ar", "both"] as const).map((c) => (
+                      <button key={c} onClick={() => switchLang(c)} disabled={langBusy}
+                        className="min-h-9 flex-1 rounded-lg px-2 text-xs font-semibold disabled:opacity-60"
+                        style={outChoice === c ? { background: GREEN, color: "#05130a" } : { border: "1px solid rgba(255,255,255,0.18)", color: "rgba(244,245,243,0.75)" }}>
+                        {t.lang_opts[c]}
+                      </button>
+                    ))}
+                  </div>
+                  {langBusy && <div className="mt-2 flex items-center gap-2"><AiOrb size={18} thinking /><span className="font-mono text-[11px]" style={{ color: "rgba(244,245,243,0.55)" }}>…</span></div>}
+                  {langErr && <button onClick={() => { setLangErr(false); switchLang(outChoice, true); }} className="mt-2 text-xs font-semibold" style={{ color: "#fca5a5" }}>{t.lang_err}</button>}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <PdfExport text={cv} watermark={score?.watermark !== false} lang={lang} label={rtl ? "↓ PDF" : "↓ PDF"} />
                   <DocxExport text={cv} watermark={score?.watermark !== false} lang={lang} filename={lang === "ar" ? "resume-ar.docx" : "resume.docx"} label={rtl ? "↓ Word" : "↓ Word"} />

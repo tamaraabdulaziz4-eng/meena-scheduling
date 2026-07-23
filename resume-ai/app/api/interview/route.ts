@@ -64,28 +64,37 @@ ${stateSummary}
 Output ONLY the lines — nothing else.`;
     }
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
-    let res: Response;
-    try {
-      res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          model,
-          temperature: 0.5,
-          top_p: 0.9,
-          max_tokens: 400,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-    } finally {
-      clearTimeout(timer);
+    // The upstream LLM hiccups intermittently — one silent server-side retry
+    // keeps the "live rephrase" magic from breaking on transient failures.
+    let out = "";
+    for (let attempt = 0; attempt < 2 && !out; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 22000);
+      try {
+        const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            model,
+            temperature: 0.5,
+            top_p: 0.9,
+            max_tokens: 400,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          out = String(data?.choices?.[0]?.message?.content || "").replace(/\*\*/g, "").trim();
+        } else {
+          console.error(`Interview ${action} upstream ${res.status} (attempt ${attempt + 1})`);
+        }
+      } catch (e) {
+        console.error(`Interview ${action} error (attempt ${attempt + 1}):`, e instanceof Error ? e.message : e);
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    if (!res.ok) return NextResponse.json({ error: "busy" }, { status: 502 });
-    const data = await res.json();
-    const out = String(data?.choices?.[0]?.message?.content || "").replace(/\*\*/g, "").trim();
     if (!out) return NextResponse.json({ error: "busy" }, { status: 502 });
 
     if (action === "rephrase") {
