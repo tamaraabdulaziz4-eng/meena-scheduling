@@ -4,6 +4,7 @@ import Link from "next/link";
 import PdfExport from "../components/PdfExport";
 import DocxExport from "../components/DocxExport";
 import BeforeAfter from "../components/BeforeAfter";
+import ResumeTemplate from "../components/ResumeTemplate";
 import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
@@ -66,6 +67,7 @@ export default function OptimizePage() {
   const [coverCopied, setCoverCopied] = useState(false);
   const [thinking, setThinking] = useState("");
   const [mode, setMode] = useState<"general" | "target">("general");
+  const [resumeView, setResumeView] = useState<"text" | "designed">("text");
   const thinkRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -539,10 +541,27 @@ export default function OptimizePage() {
                     </div>
                   )}
                 </div>
-                <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
-                  style={{ color: "rgba(244,245,243,0.85)" }}>
-                  {result.optimizedResume}
-                </div>
+                {/* Text (ATS-safe) vs a designed template — the market "buys
+                    with the eye", so show the optimized resume both ways. */}
+                {!result.locked && (
+                  <div className="mb-3 flex gap-2">
+                    {(["text", "designed"] as const).map((v) => (
+                      <button key={v} onClick={() => setResumeView(v)}
+                        className="rounded-lg px-4 py-2 text-sm font-semibold"
+                        style={resumeView === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                        {v === "text" ? "Text (ATS)" : "📄 Designed template"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {!result.locked && resumeView === "designed" ? (
+                  <ResumeTemplate text={result.optimizedResume} name="optimized-resume" />
+                ) : (
+                  <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
+                    style={{ color: "rgba(244,245,243,0.85)" }}>
+                    {result.optimizedResume}
+                  </div>
+                )}
                 {result.watermark && (
                   <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
                     <div className="chip mb-3">✓ Your resume is ready — free</div>
