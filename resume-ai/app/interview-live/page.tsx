@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import InterviewerAvatar from "../components/InterviewerAvatar";
 
 /**
  * AI video mock-interview: the candidate sits on camera, the AI asks real
@@ -27,6 +28,7 @@ export default function InterviewLivePage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [micSupported, setMicSupported] = useState(true);
+  const [aiSpeaking, setAiSpeaking] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -52,9 +54,12 @@ export default function InterviewLivePage() {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "ar-SA";
       u.rate = 0.95;
+      u.onstart = () => setAiSpeaking(true);
+      u.onend = () => setAiSpeaking(false);
+      u.onerror = () => setAiSpeaking(false);
       window.speechSynthesis?.cancel();
       window.speechSynthesis?.speak(u);
-    } catch { /* speech optional */ }
+    } catch { setAiSpeaking(false); }
   }
 
   async function start() {
@@ -96,6 +101,7 @@ export default function InterviewLivePage() {
     setTranscript("");
     setPhase("recording");
     window.speechSynthesis?.cancel();
+    setAiSpeaking(false);
     if (!micSupported) return; // typed fallback only
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -171,6 +177,7 @@ export default function InterviewLivePage() {
         {phase === "setup" && (
           <>
             <div className="mb-8 text-center">
+              <div className="mx-auto mb-5 h-40 w-40"><InterviewerAvatar speaking={false} label="مُقابِلك الذكي" /></div>
               <div className="chip mb-4">● مقابلة فيديو بالذكاء الاصطناعي</div>
               <h1 className="text-4xl font-extrabold tracking-tight">تدرّب على المقابلة أمام الكاميرا</h1>
               <p className="mt-3" style={{ color: "var(--muted)" }}>
@@ -197,24 +204,38 @@ export default function InterviewLivePage() {
 
         {phase !== "setup" && phase !== "done" && (
           <div className="space-y-5">
-            {/* Progress */}
-            <div className="flex items-center justify-between text-sm" style={{ color: "var(--faint)" }}>
-              <span>السؤال {idx + 1} من {questions.length}</span>
-              {scores.length > 0 && <span>متوسط تقييمك: <b style={{ color: "var(--accent)" }}>{avg}/10</b></span>}
+            {/* Progress bar */}
+            <div>
+              <div className="mb-2 flex items-center justify-between text-sm" style={{ color: "var(--faint)" }}>
+                <span>السؤال {idx + 1} من {questions.length}</span>
+                {scores.length > 0 && <span>متوسط تقييمك: <b style={{ color: "var(--accent)" }}>{avg}/10</b></span>}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
+                <div className="h-full rounded-full" style={{ width: `${(idx / Math.max(1, questions.length)) * 100}%`, background: "linear-gradient(90deg,var(--accent-deep),var(--accent))", transition: "width .5s ease" }} />
+              </div>
             </div>
 
-            {/* Camera */}
-            <div className="relative overflow-hidden rounded-2xl" style={{ border: "1px solid var(--line)", background: "#000", aspectRatio: "16/10" }}>
-              <video ref={videoRef} muted playsInline className="h-full w-full object-cover" style={{ transform: "scaleX(-1)" }} />
-              {phase === "recording" && (
-                <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: "rgba(248,113,113,0.9)", color: "#fff" }}>
-                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-white" /> تسجيل
-                </div>
-              )}
+            {/* Two-panel video call: AI interviewer + you */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {/* AI interviewer */}
+              <div className="relative overflow-hidden rounded-2xl p-4" style={{ border: "1px solid var(--line)", background: "radial-gradient(ellipse at 50% 0%, rgba(74,222,128,0.08), var(--surface) 70%)", aspectRatio: "1/1" }}>
+                <div className="absolute right-3 top-3 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>AI</div>
+                <InterviewerAvatar speaking={aiSpeaking} />
+              </div>
+              {/* You */}
+              <div className="relative overflow-hidden rounded-2xl" style={{ border: "1px solid var(--line)", background: "#000", aspectRatio: "1/1" }}>
+                <video ref={videoRef} muted playsInline className="h-full w-full object-cover" style={{ transform: "scaleX(-1)" }} />
+                <div className="absolute bottom-3 right-3 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold" style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}>أنت</div>
+                {phase === "recording" && (
+                  <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: "rgba(248,113,113,0.9)", color: "#fff" }}>
+                    <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-white" /> تسجيل
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Question */}
-            <div className="card p-5">
+            <div className="card p-5" style={{ borderColor: aiSpeaking ? "rgba(74,222,128,0.4)" : "var(--line)" }}>
               <div className="mb-1 font-mono text-xs" style={{ color: "var(--accent)" }}>🎤 المُقابِل يسأل</div>
               <div className="text-lg font-bold leading-relaxed">{questions[idx]}</div>
               <button onClick={() => speak(questions[idx])} className="mt-2 text-xs" style={{ color: "var(--faint)" }}>🔊 أعد سماع السؤال</button>
