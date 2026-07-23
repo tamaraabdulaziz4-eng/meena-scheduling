@@ -64,13 +64,24 @@ function parse(text: string): Parsed {
 
 const SIDEBAR = new Set(["SKILLS", "CORE SKILLS", "TECHNICAL SKILLS", "PERSONAL DETAILS", "PERSONAL INFORMATION", "LANGUAGES", "CERTIFICATIONS", "CERTIFICATES", "REFERENCES"]);
 
-export default function ResumeTemplate({ text, name = "resume", accent = "#0f766e" }: { text: string; name?: string; accent?: string }) {
+export type TemplateVariant = "classic" | "modern" | "minimal" | "elegant";
+
+export default function ResumeTemplate({ text, name = "resume", accent = "#0f766e", variant = "classic", preview = false }: { text: string; name?: string; accent?: string; variant?: TemplateVariant; preview?: boolean }) {
   const parsed = useMemo(() => parse(text), [text]);
   const ref = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
 
   const sidebar = parsed.sections.filter((s) => SIDEBAR.has(s.heading));
   const main = parsed.sections.filter((s) => !SIDEBAR.has(s.heading));
+
+  // Per-variant styling — same parsed content, different visual treatment so the
+  // gallery can offer genuinely distinct named templates (not just recolors).
+  const sidebarRight = variant === "modern";
+  const headerCentered = variant === "elegant";
+  const flatHeader = variant === "minimal"; // white header, accent text
+  const showSidebarBg = variant !== "minimal";
+  const headerBg = flatHeader ? "#ffffff" : accent;
+  const headerFg = flatHeader ? "#111827" : "#ffffff";
 
   async function downloadPdf() {
     if (!ref.current) return;
@@ -108,41 +119,49 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
       return <div key={idx} style={{ fontWeight: subhead ? 700 : 400, marginTop: subhead ? 8 : 2, marginBottom: 2, lineHeight: 1.45, color: subhead ? "#111827" : "#374151" }}>{content}</div>;
     });
 
+  const sidebarCol = (
+    <div key="sb" style={{ width: 250, background: showSidebarBg ? "#f3f4f6" : "#ffffff", padding: "24px 22px", borderInlineEnd: showSidebarBg ? undefined : "1px solid #e5e7eb" }}>
+      {sidebar.map((s) => (
+        <div key={s.heading} style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: accent, letterSpacing: 1, textTransform: "uppercase", borderBottom: `2px solid ${accent}`, paddingBottom: 4, marginBottom: 8 }}>{s.heading}</div>
+          <ul style={{ margin: 0, paddingInlineStart: 16, fontSize: 12.5 }}>{renderLines(s.lines)}</ul>
+        </div>
+      ))}
+    </div>
+  );
+  const mainCol = (
+    <div key="mn" style={{ flex: 1, padding: "24px 30px" }}>
+      {main.map((s) => (
+        <div key={s.heading} style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#111827", letterSpacing: 0.5, textTransform: "uppercase", borderBottom: `2px solid ${headerCentered ? accent : "#e5e7eb"}`, paddingBottom: 4, marginBottom: 8 }}>{s.heading}</div>
+          <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 12.8 }}>{renderLines(s.lines)}</ul>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button onClick={downloadPdf} disabled={busy} className="btn-accent px-5 py-2.5 text-sm font-bold disabled:opacity-50">
-          {busy ? "…" : "↓ تنزيل القالب المصمّم (PDF)"}
-        </button>
-        <span className="text-xs" style={{ color: "var(--faint)" }}>نسخة مصمّمة للعرض — للـ ATS استخدم PDF/Word النصي</span>
-      </div>
+      {!preview && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <button onClick={downloadPdf} disabled={busy} className="btn-accent px-5 py-2.5 text-sm font-bold disabled:opacity-50">
+            {busy ? "…" : "↓ تنزيل القالب المصمّم (PDF)"}
+          </button>
+          <span className="text-xs" style={{ color: "var(--faint)" }}>نسخة مصمّمة للعرض — للـ ATS استخدم PDF/Word النصي</span>
+        </div>
+      )}
 
       {/* Live preview (also the capture source) */}
-      <div className="overflow-x-auto rounded-xl" style={{ border: "1px solid var(--line)" }}>
+      <div className={preview ? "" : "overflow-x-auto rounded-xl"} style={preview ? undefined : { border: "1px solid var(--line)" }}>
         <div ref={ref} dir="ltr" style={{ width: 794, minHeight: 1123, background: "#ffffff", color: "#374151", fontFamily: "Arial, Helvetica, sans-serif", fontSize: 13 }}>
           {/* Header */}
-          <div style={{ background: accent, color: "#ffffff", padding: "28px 36px" }}>
-            <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 0.3 }}>{parsed.name}</div>
+          <div style={{ background: headerBg, color: headerFg, padding: "28px 36px", textAlign: headerCentered ? "center" : "start", borderBottom: flatHeader ? `3px solid ${accent}` : undefined }}>
+            <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 0.3, color: flatHeader ? accent : headerFg }}>{parsed.name}</div>
             {parsed.contact && <div style={{ marginTop: 8, fontSize: 12.5, opacity: 0.95 }}>{parsed.contact}</div>}
           </div>
-          {/* Body: two columns */}
+          {/* Body: two columns (sidebar side depends on variant) */}
           <div style={{ display: "flex", alignItems: "stretch" }}>
-            <div style={{ width: 250, background: "#f3f4f6", padding: "24px 22px" }}>
-              {sidebar.map((s) => (
-                <div key={s.heading} style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: accent, letterSpacing: 1, textTransform: "uppercase", borderBottom: `2px solid ${accent}`, paddingBottom: 4, marginBottom: 8 }}>{s.heading}</div>
-                  <ul style={{ margin: 0, paddingInlineStart: 16, fontSize: 12.5 }}>{renderLines(s.lines)}</ul>
-                </div>
-              ))}
-            </div>
-            <div style={{ flex: 1, padding: "24px 30px" }}>
-              {main.map((s) => (
-                <div key={s.heading} style={{ marginBottom: 18 }}>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: "#111827", letterSpacing: 0.5, textTransform: "uppercase", borderBottom: "2px solid #e5e7eb", paddingBottom: 4, marginBottom: 8 }}>{s.heading}</div>
-                  <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 12.8 }}>{renderLines(s.lines)}</ul>
-                </div>
-              ))}
-            </div>
+            {sidebar.length === 0 ? mainCol : sidebarRight ? [mainCol, sidebarCol] : [sidebarCol, mainCol]}
           </div>
         </div>
       </div>

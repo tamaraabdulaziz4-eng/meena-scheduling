@@ -21,16 +21,40 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: "ResumeAI — Honest AI Resume Optimization", description: "Free ATS score + a no-fabrication rewrite in 10 seconds." },
 };
 
+// Rich structured data — Organization + SoftwareApplication (with real SAR
+// offers) + FAQPage. No aggregateRating/review is emitted because we have no
+// verified ratings yet, and the brand promise is zero fabrication.
 const structuredData = {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  name: "ResumeAI",
-  applicationCategory: "BusinessApplication",
-  operatingSystem: "Web",
-  description: "AI resume optimizer that scores your resume against a job description, finds missing ATS keywords, and rewrites it to pass applicant tracking systems.",
-  offers: [
-    { "@type": "Offer", price: "35", priceCurrency: "SAR", name: "Single optimization" },
-    { "@type": "Offer", price: "99", priceCurrency: "SAR", name: "Complete Pack (one-time)" },
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${BASE}/#org`,
+      name: "ResumeAI",
+      url: BASE,
+      description: "Honest AI resume optimizer for the Saudi, Gulf, and global job markets.",
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "ResumeAI",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web",
+      publisher: { "@id": `${BASE}/#org` },
+      description: "AI resume optimizer that scores your resume against a job description, finds missing ATS keywords, and rewrites it to pass applicant tracking systems — without inventing facts you didn't provide.",
+      offers: [
+        { "@type": "Offer", price: "35", priceCurrency: "SAR", name: "One-time optimization — 24-hour full access" },
+        { "@type": "Offer", price: "99", priceCurrency: "SAR", name: "Complete Pack — 90-day full access (one-time)" },
+      ],
+    },
+    {
+      "@type": "FAQPage",
+      mainEntity: [
+        { "@type": "Question", name: "Is the resume scan free?", acceptedAnswer: { "@type": "Answer", text: "Yes. The ATS match score, missing keywords, skills-gap analysis, and a preview of improvements are free. The full rewritten resume and downloads unlock with a one-time payment." } },
+        { "@type": "Question", name: "Does it invent experience or skills?", acceptedAnswer: { "@type": "Answer", text: "No. The engine can only reorganize and reword your own facts. It never adds a number, employer, degree, or skill you didn't provide — it marks missing metrics with a placeholder instead." } },
+        { "@type": "Question", name: "Is it a subscription?", acceptedAnswer: { "@type": "Answer", text: "No subscription. Pay once — SAR 35 for 24-hour full access or SAR 99 for 90 days. There is a 7-day money-back guarantee." } },
+        { "@type": "Question", name: "Does it support Arabic?", acceptedAnswer: { "@type": "Answer", text: "Yes. Full Arabic (RTL) interface, Saudi/Gulf resume fields, and you can even write in Arabic and get a polished English resume back." } },
+      ],
+    },
   ],
 };
 
