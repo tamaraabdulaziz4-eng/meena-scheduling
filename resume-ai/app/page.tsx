@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import LandingScroll from "./components/LandingScroll";
+import AdvisorLanding from "./components/AdvisorLanding";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "Free ATS Resume Scan — Real Match Score in Seconds | cv.rabit.sa",
+  title: "Your Resume, By Interview — AI Builds It With You | cv.rabit.sa",
   description:
-    "Paste your resume and see it through the ATS's eyes — free, no signup. Honest AI optimization, 10 templates, English & Arabic (true RTL) downloads. Pay once, SAR 35.",
+    "Talk to the AI Advisor for two minutes: it interviews you, rephrases your casual words into professional ATS-ready lines, and hands you a downloadable resume — free, no signup. Arabic & English.",
   alternates: {
     canonical: `${BASE}/`,
     languages: { en: `${BASE}/`, ar: `${BASE}/ar`, "x-default": `${BASE}/` },
@@ -14,5 +14,5 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <LandingScroll lang="en" />;
+  return <AdvisorLanding lang="en" />;
 }

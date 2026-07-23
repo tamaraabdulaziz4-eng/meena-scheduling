@@ -9,11 +9,12 @@
  * Drop it next to anything the AI touches so the whole site reads as one
  * living assistant wired into every line.
  */
-export default function AiOrb({ size = 40, thinking = false, className = "" }: { size?: number; thinking?: boolean; className?: string }) {
+export default function AiOrb({ size = 40, thinking = false, state, className = "" }: { size?: number; thinking?: boolean; state?: "idle" | "listening" | "thinking" | "talking"; className?: string }) {
+  const mode = state ?? (thinking ? "thinking" : "idle");
   return (
     <span
       aria-hidden
-      className={`ai-orb ${thinking ? "thinking" : ""} ${className}`}
+      className={`ai-orb ${mode !== "idle" ? mode : ""} ${className}`}
       style={{ ["--orb-size" as string]: `${size}px` }}
     >
       <span className="ai-orb-blob b1" />

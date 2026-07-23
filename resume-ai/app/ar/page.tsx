@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import LandingScroll from "../components/LandingScroll";
+import AdvisorLanding from "../components/AdvisorLanding";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "افحص سيرتك الذاتية مجاناً بمعايير ATS — خلال ثوانٍ | cv.rabit.sa",
+  title: "سيرتك بمقابلة — الذكاء الاصطناعي يبنيها معك | cv.rabit.sa",
   description:
-    "الصق سيرتك وشفها بعيون أنظمة التوظيف — مجاناً وبدون تسجيل. تحسين صادق بدون اختلاق، 10 قوالب، تنزيل عربي RTL وإنجليزي. دفعة وحدة 35 ريال.",
+    "كلم المستشار دقيقتين: يسألك، يعيد صياغة كلامك العادي لصياغة احترافية تعبر أنظمة التوظيف (ATS)، ويسلمك سيرة جاهزة للتنزيل — مجاناً وبدون تسجيل. عربي وإنجليزي.",
   alternates: {
     canonical: `${BASE}/ar`,
     languages: { en: `${BASE}/`, ar: `${BASE}/ar`, "x-default": `${BASE}/` },
@@ -14,5 +14,5 @@ export const metadata: Metadata = {
 };
 
 export default function ArabicHome() {
-  return <LandingScroll lang="ar" />;
+  return <AdvisorLanding lang="ar" />;
 }

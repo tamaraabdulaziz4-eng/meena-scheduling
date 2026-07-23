@@ -42,7 +42,14 @@ export async function POST(req: NextRequest) {
         const { value } = await mammoth.extractRawText({ buffer: buf });
         text = value;
       } else {
+        // Arabic .txt files saved by Windows Notepad are often Windows-1256,
+        // which decoded as UTF-8 turns into replacement chars / mojibake. If
+        // the UTF-8 read looks broken, fall back to cp1256.
         text = buf.toString("utf-8");
+        const bad = (text.match(/�/g) || []).length;
+        if (bad > 0 && bad > text.length * 0.02) {
+          try { text = new TextDecoder("windows-1256").decode(buf); } catch { /* keep utf-8 */ }
+        }
       }
     } catch (parseErr) {
       // A corrupt or password-protected file that passes the extension check
