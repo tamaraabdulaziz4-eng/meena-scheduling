@@ -677,13 +677,26 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
         </Rise>
         <Rise delay={0.15}>
           <div className="mt-10 flex w-full max-w-sm flex-col gap-3">
-            <button
-              onClick={() => { track("cta_click", { cta: "finale_scan" }); mirrorRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth" }); }}
-              className="min-h-13 rounded-xl px-8 py-4 text-lg font-bold"
-              style={{ background: GREEN, color: "#05130a" }}
-            >
-              {t.fin_scan}
-            </button>
+            {result ? (
+              /* A scan already ran on this page — continue the real workflow
+                 with the result carried over, don't loop back to the top. */
+              <Link
+                href={t.optimize_href}
+                onClick={() => track("cta_click", { cta: "finale_continue" })}
+                className="min-h-13 rounded-xl px-8 py-4 text-lg font-bold"
+                style={{ background: GREEN, color: "#05130a" }}
+              >
+                {t.score_cta}
+              </Link>
+            ) : (
+              <button
+                onClick={() => { track("cta_click", { cta: "finale_scan" }); mirrorRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth" }); }}
+                className="min-h-13 rounded-xl px-8 py-4 text-lg font-bold"
+                style={{ background: GREEN, color: "#05130a" }}
+              >
+                {t.fin_scan}
+              </button>
+            )}
             <Link
               href={t.build_href}
               onClick={() => track("builder_started", { where: "landing_finale" })}

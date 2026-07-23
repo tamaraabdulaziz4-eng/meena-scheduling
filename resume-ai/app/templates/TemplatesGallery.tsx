@@ -76,9 +76,9 @@ interface Tpl { slug: string; name: string; nameAr: string; variant: TemplateVar
 
 const TEMPLATES: Tpl[] = [
   { slug: "ats-pro", name: "ATS Pro", nameAr: "إيه تي إس برو", variant: "column", accent: "#0f766e", tag: "Single-column · Best ATS pass-rate", tagAr: "عمود واحد · الأعلى في اجتياز ATS", best: true },
-  { slug: "onyx", name: "Onyx", nameAr: "أونيكس", variant: "classic", accent: "#0f766e", tag: "Two-column · Balanced", tagAr: "عمودان · متوازن" },
+  { slug: "onyx", name: "Onyx", nameAr: "أونيكس", variant: "classic", accent: "#0f766e", tag: "Classic rule · Balanced", tagAr: "كلاسيكي · متوازن" },
   { slug: "riyadh", name: "Riyadh", nameAr: "الرياض", variant: "classic", accent: "#b45309", tag: "Warm · Gulf", tagAr: "دافئ · خليجي" },
-  { slug: "azure", name: "Azure", nameAr: "أزور", variant: "modern", accent: "#1d4ed8", tag: "Sidebar · Modern", tagAr: "شريط جانبي · عصري" },
+  { slug: "azure", name: "Azure", nameAr: "أزور", variant: "modern", accent: "#1d4ed8", tag: "Accent bars · Modern", tagAr: "لمسات جانبية · عصري" },
   { slug: "executive", name: "Executive", nameAr: "تنفيذي", variant: "elegant", accent: "#111827", tag: "Centered · Formal", tagAr: "متوسّط · رسمي" },
   { slug: "minimal", name: "Minimalist", nameAr: "بسيط", variant: "minimal", accent: "#0f766e", tag: "Clean · No fill", tagAr: "نظيف · بلا تعبئة" },
   { slug: "emerald", name: "Emerald", nameAr: "زمرّد", variant: "classic", accent: "#047857", tag: "Fresh · Green", tagAr: "منعش · أخضر" },

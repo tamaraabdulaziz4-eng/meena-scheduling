@@ -338,7 +338,7 @@ export default function ArBuildPage() {
               ))}
             </div>
             {view === "designed" ? (
-              <ResumeTemplate text={cv} name={name || "resume"} variant={tpl.variant} accent={tpl.accent} dir={tpl.dir} />
+              <ResumeTemplate text={cv} name={name || "resume"} variant={tpl.variant} accent={tpl.accent} />
             ) : (
               <div dir="auto" className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{cv}</div>
             )}
