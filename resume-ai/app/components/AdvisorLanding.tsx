@@ -42,9 +42,10 @@ interface AdvisorData {
 }
 interface Msg { who: "ai" | "user"; text: string; lines?: string[] }
 interface Gap { q: string; field: string }
+type Mode = "new" | "update";
 
 type StepId =
-  | "welcome" | "name" | "contact" | "jobHeader" | "jobDuties" | "moreJobs"
+  | "welcome" | "pasteCv" | "updateGoal" | "name" | "contact" | "jobHeader" | "jobDuties" | "moreJobs"
   | "education" | "skills" | "jobAd" | "gaps" | "build" | "reveal";
 
 const EMPTY: AdvisorData = { targetRole: "", name: "", contact: "", jobs: [], education: "", skills: "", extras: [], jobAd: "" };
@@ -87,6 +88,21 @@ const T = {
     panel_ready: "سيرتك {p}% جاهزة",
     panel_edit_hint: "اضغط أي سطر لتعديله",
     have_cv: "عندي سيرة جاهزة — افحصها",
+    chip_new: "✍️ أبني سيرة من الصفر",
+    chip_update: "📄 عندي سيرة — أبي أحدثها",
+    q_pasteCv: "ممتاز! الصق نص سيرتك الحالية هنا، أو ارفع الملف (PDF / Word / txt) 👇",
+    upload_btn: "📎 ارفع ملف",
+    uploading: "أقرأ الملف…",
+    upload_fail: "ما قدرت أقرأ الملف — الصق النص مباشرة.",
+    cv_received: "وصلتني سيرتك 👌 وش تبي نسوي فيها؟",
+    goal_add: "➕ أضف خبرة جديدة",
+    goal_tailor: "🎯 فصّلها على وظيفة محددة",
+    goal_improve: "✨ حسّنها وارفع نتيجتها",
+    q_jobAd_update: "الصق إعلان الوظيفة اللي تبي نفصّل سيرتك عليها، أو اكتب «تخطَّ»",
+    updating: "ثواني… أدمج الجديد وأعيد صياغة سيرتك كاملة 🪄",
+    panel_base: "سيرتك الحالية",
+    panel_additions: "الإضافات الجديدة",
+    cv_too_short: "النص قصير — الصق سيرتك كاملة عشان أقدر أشتغل عليها.",
     reveal_title: "سيرتك جاهزة 🎉",
     reveal_score: "نتيجتها أمام أنظمة التوظيف",
     tpl_pick: "غيّر القالب:",
@@ -137,6 +153,21 @@ const T = {
     panel_ready: "Your CV is {p}% ready",
     panel_edit_hint: "Tap any line to edit it",
     have_cv: "I already have a resume — scan it",
+    chip_new: "✍️ Build one from scratch",
+    chip_update: "📄 I have a resume — update it",
+    q_pasteCv: "Great! Paste your current resume text here, or upload the file (PDF / Word / txt) 👇",
+    upload_btn: "📎 Upload file",
+    uploading: "Reading the file…",
+    upload_fail: "Couldn't read the file — paste the text directly.",
+    cv_received: "Got your resume 👌 What shall we do with it?",
+    goal_add: "➕ Add new experience",
+    goal_tailor: "🎯 Tailor it to a specific job",
+    goal_improve: "✨ Improve it and lift the score",
+    q_jobAd_update: "Paste the job posting you want it tailored to, or type \"skip\"",
+    updating: "One moment… merging the new material and rewriting your full resume 🪄",
+    panel_base: "Your current resume",
+    panel_additions: "New additions",
+    cv_too_short: "That's quite short — paste your full resume so I can work with it.",
     reveal_title: "Your resume is ready 🎉",
     reveal_score: "Its score against ATS robots",
     tpl_pick: "Switch template:",
@@ -177,6 +208,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   const DRAFT_KEY = `ra_advisor_${lang}`;
 
   const [step, setStep] = useState<StepId>("welcome");
+  const [mode, setMode] = useState<Mode>("new");
+  const [cvBase, setCvBase] = useState(""); // the visitor's existing resume (update mode)
+  const [uploading, setUploading] = useState(false);
   const [data, setData] = useState<AdvisorData>(EMPTY);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -242,11 +276,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   }
 
   /* ── draft persistence: after EVERY answer ── */
-  const persist = useCallback((next: { step: StepId; data: AdvisorData; msgs: Msg[] }) => {
+  const persist = useCallback((next: { step: StepId; data: AdvisorData; msgs: Msg[]; mode?: Mode; cvBase?: string }) => {
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ step: next.step, data: next.data, msgs: next.msgs.slice(-40) }));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        step: next.step, data: next.data, msgs: next.msgs.slice(-40),
+        mode: next.mode ?? mode, cvBase: next.cvBase ?? cvBase,
+      }));
     } catch { /* storage blocked — non-fatal */ }
-  }, [DRAFT_KEY]);
+  }, [DRAFT_KEY, mode, cvBase]);
 
   function restoreDraft() {
     try {
@@ -254,6 +291,8 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       if (d?.data) setData({ ...EMPTY, ...d.data });
       if (Array.isArray(d?.msgs)) setMsgs(d.msgs);
       if (d?.step) setStep(d.step);
+      if (d?.mode === "update") setMode("update");
+      if (typeof d?.cvBase === "string") setCvBase(d.cvBase);
       setTyped(t.greeting);
       setMsgs((m) => [...m, { who: "ai", text: questionFor(d?.step || "name") }]);
     } catch { beginGreeting(); }
@@ -262,6 +301,8 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
 
   function questionFor(s: StepId): string {
     switch (s) {
+      case "pasteCv": return t.q_pasteCv;
+      case "updateGoal": return t.cv_received;
       case "name": return t.q_name;
       case "contact": return t.q_contact;
       case "jobHeader": return t.q_jobHeader;
@@ -269,13 +310,13 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       case "moreJobs": return t.q_moreJobs;
       case "education": return t.q_education;
       case "skills": return t.q_skills;
-      case "jobAd": return t.q_jobAd;
+      case "jobAd": return mode === "update" ? t.q_jobAd_update : t.q_jobAd;
       default: return t.greeting;
     }
   }
 
   /* ── browser back = one question back ── */
-  const ORDER: StepId[] = useMemo(() => ["welcome", "name", "contact", "jobHeader", "jobDuties", "moreJobs", "education", "skills", "jobAd", "gaps", "build", "reveal"], []);
+  const ORDER: StepId[] = useMemo(() => ["welcome", "pasteCv", "updateGoal", "name", "contact", "jobHeader", "jobDuties", "moreJobs", "education", "skills", "jobAd", "gaps", "build", "reveal"], []);
   useEffect(() => {
     const onPop = () => {
       setStep((cur) => {
@@ -322,6 +363,19 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         advance("name", d, say(m, t.q_name));
         return;
       }
+      case "pasteCv": {
+        if (text.length < 100) {
+          setMsgs(say(m, t.cv_too_short));
+          return;
+        }
+        setCvBase(text.slice(0, 8000));
+        try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ step: "updateGoal", data: d, msgs: m.slice(-40), mode: "update", cvBase: text.slice(0, 8000) })); } catch { /* noop */ }
+        try { history.pushState({ step: "updateGoal" }, ""); } catch { /* noop */ }
+        setStep("updateGoal");
+        setData(d);
+        setMsgs(say(m, t.cv_received));
+        return;
+      }
       case "name": {
         d.name = text.slice(0, 100);
         advance("contact", d, say(m, t.q_contact));
@@ -364,7 +418,8 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           m = [...m, { who: "ai", text: t.rephrase_fail }];
         }
         if (d.jobs.length >= 3) {
-          advance("education", d, say(m, t.q_education));
+          if (mode === "update") advance("jobAd", d, say(m, t.q_jobAd_update));
+          else advance("education", d, say(m, t.q_education));
         } else {
           advance("moreJobs", d, say(m, t.q_moreJobs));
         }
@@ -373,6 +428,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       case "moreJobs": {
         const yes = new RegExp(`^(${t.yes}|نعم|اي|ايه|yes|y)`, "i").test(text);
         if (yes) advance("jobHeader", d, say(m, t.q_jobHeader));
+        else if (mode === "update") advance("jobAd", d, say(m, t.q_jobAd_update));
         else advance("education", d, say(m, t.q_education));
         return;
       }
@@ -389,7 +445,13 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       case "jobAd": {
         if (!t.skip_words.test(text)) d.jobAd = text.slice(0, 3000);
         setMsgs(m);
-        startGaps(d, m);
+        if (mode === "update") {
+          const mm = [...m, { who: "ai" as const, text: t.updating }];
+          advance("build", d, mm);
+          runUpdate(d, mm);
+        } else {
+          startGaps(d, m);
+        }
         return;
       }
       default:
@@ -452,6 +514,120 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     } else {
       advance("build", d, [...m, { who: "ai", text: t.building }]);
       runBuild(d, [...m, { who: "ai", text: t.building }]);
+    }
+  }
+
+  /* ── update mode: entry chips + goal routing ── */
+  function startUpdateFlow() {
+    if (!startedRef.current) { startedRef.current = true; track("interview_started", { lang, mode: "update" }); }
+    setMode("update");
+    const m: Msg[] = [...msgs, { who: "user", text: t.chip_update }, { who: "ai", text: t.q_pasteCv }];
+    try { history.pushState({ step: "pasteCv" }, ""); } catch { /* noop */ }
+    setStep("pasteCv");
+    setMsgs(m);
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ step: "pasteCv", data, msgs: m.slice(-40), mode: "update", cvBase: "" })); } catch { /* noop */ }
+  }
+
+  function chooseGoal(goal: "add" | "tailor" | "improve") {
+    const label = goal === "add" ? t.goal_add : goal === "tailor" ? t.goal_tailor : t.goal_improve;
+    const m: Msg[] = [...msgs, { who: "user", text: label }];
+    track("question_answered", { q: `updateGoal:${goal}` });
+    if (goal === "add") {
+      advance("jobHeader", data, [...m, { who: "ai", text: t.q_jobHeader }]);
+    } else if (goal === "tailor") {
+      advance("jobAd", data, [...m, { who: "ai", text: t.q_jobAd_update }]);
+    } else {
+      const mm: Msg[] = [...m, { who: "ai", text: t.updating }];
+      advance("build", data, mm);
+      runUpdate(data, mm);
+    }
+  }
+
+  /* ── update mode: file upload → /api/extract → into the input ── */
+  async function onFilePicked(file: File | null) {
+    if (!file) return;
+    setUploading(true);
+    setOrbState("thinking");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 45000);
+      let res: Response;
+      try {
+        res = await fetch("/api/extract", { method: "POST", body: fd, signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      const j = await res.json();
+      if (!res.ok || !j.text) throw new Error(j.error || "failed");
+      setInput(j.text); // lands in the textarea so they can review before sending
+    } catch {
+      setMsgs((m) => [...m, { who: "ai", text: t.upload_fail }]);
+    } finally {
+      setUploading(false);
+      setOrbState("idle");
+    }
+  }
+
+  /* ── update mode: merge base CV + confirmed additions via /api/optimize ── */
+  async function runUpdate(d: AdvisorData, m: Msg[]) {
+    setBuildPhase("working");
+    setOrbState("thinking");
+    try {
+      const additions: string[] = [];
+      for (const j of d.jobs) {
+        additions.push(j.header);
+        additions.push(...j.bullets.map((b1) => `- ${b1}`));
+      }
+      additions.push(...d.extras.map((x) => `- ${x}`));
+      // Same contract as the GapFiller: confirmed real additions are appended
+      // under an explicit marker so the optimizer weaves them in as user facts,
+      // never as inventions.
+      const resumeText = additions.length
+        ? `${cvBase}\n\nADDITIONAL EXPERIENCE CONFIRMED BY THE CANDIDATE (integrate these real facts):\n${additions.join("\n")}`
+        : cvBase;
+      const res = await fetchT("/api/optimize", { resume: resumeText.slice(0, 11000), jobDescription: d.jobAd, outLang: lang === "ar" ? "ar" : "en" }, 90000);
+      const ctype = res.headers.get("content-type") || "";
+      if (!ctype.includes("ndjson")) {
+        const j = await res.json();
+        throw new Error(j.error || "failed");
+      }
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let got: { optimizedResume?: string; matchScore?: number; watermark?: boolean } | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.t === "result") got = msg.d;
+            else if (msg.t === "error") throw new Error(msg.d);
+          } catch (e) {
+            if (e instanceof Error && e.message !== line) throw e;
+          }
+        }
+      }
+      if (!got?.optimizedResume) throw new Error("empty");
+      setCv(got.optimizedResume);
+      if (typeof got.matchScore === "number") {
+        setScore({ value: got.matchScore, watermark: got.watermark !== false });
+        setScorePhase("done");
+      }
+      setBuildPhase("idle");
+      setOrbState("idle");
+      track("cv_completed", { lang, mode: "update" });
+      try { saveResume({ title: `${d.name || "CV"} — ${rtl ? "محدثة" : "updated"}`, source: "optimized", text: got.optimizedResume }); } catch { /* noop */ }
+      advance("reveal", d, [...m, { who: "ai", text: t.reveal_title }]);
+    } catch {
+      setBuildPhase("failed");
+      setOrbState("idle");
     }
   }
 
@@ -634,7 +810,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     );
 
   const qNumber = Math.max(1, ORDER.indexOf(step));
-  const showChips = step === "moreJobs" || (step === "gaps" && !gapAnswering);
+  const showChips = step === "moreJobs" || step === "updateGoal" || (step === "gaps" && !gapAnswering);
   const showInput = step !== "build" && step !== "reveal" && !showChips && !resume;
 
   /* ══════════════════ render ══════════════════ */
@@ -681,7 +857,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button onClick={restoreDraft} className="min-h-11 rounded-xl px-5 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.continue_btn}</button>
                 <button
-                  onClick={() => { try { localStorage.removeItem(DRAFT_KEY); } catch { /* noop */ } setResume(null); setData(EMPTY); setStep("welcome"); setMsgs([]); beginGreeting(); }}
+                  onClick={() => { try { localStorage.removeItem(DRAFT_KEY); } catch { /* noop */ } setResume(null); setData(EMPTY); setMode("new"); setCvBase(""); setStep("welcome"); setMsgs([]); beginGreeting(); }}
                   className="min-h-11 rounded-xl px-5 text-sm font-semibold"
                   style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(244,245,243,0.7)" }}
                 >
@@ -731,7 +907,35 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           {buildPhase === "failed" && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl p-4" style={{ background: "rgba(229,72,77,0.1)", border: "1px solid rgba(229,72,77,0.35)" }}>
               <span className="text-sm" style={{ color: "#fca5a5" }}>{t.build_fail}</span>
-              <button onClick={() => { setMsgs((m) => [...m, { who: "ai", text: t.building }]); runBuild(data, msgs); }} className="min-h-11 rounded-lg px-5 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.retry}</button>
+              <button
+                onClick={() => {
+                  const mm: Msg[] = [...msgs, { who: "ai", text: mode === "update" ? t.updating : t.building }];
+                  setMsgs(mm);
+                  if (mode === "update") runUpdate(data, mm);
+                  else runBuild(data, mm);
+                }}
+                className="min-h-11 rounded-lg px-5 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}
+              >
+                {t.retry}
+              </button>
+            </div>
+          )}
+
+          {/* welcome fork: build from scratch (just answer) or update an existing CV */}
+          {step === "welcome" && !resume && msgs.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button onClick={startUpdateFlow} className="min-h-11 rounded-xl px-4 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(244,245,243,0.85)" }}>
+                {t.chip_update}
+              </button>
+            </div>
+          )}
+
+          {/* update goal chips */}
+          {step === "updateGoal" && (
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <button onClick={() => chooseGoal("add")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.goal_add}</button>
+              <button onClick={() => chooseGoal("tailor")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_tailor}</button>
+              <button onClick={() => chooseGoal("improve")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_improve}</button>
             </div>
           )}
 
@@ -769,12 +973,19 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-                placeholder={t.input_ph}
-                rows={step === "jobAd" || step === "jobDuties" ? 3 : 1}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && step !== "pasteCv") { e.preventDefault(); submit(); } }}
+                placeholder={step === "pasteCv" ? t.q_pasteCv : t.input_ph}
+                rows={step === "pasteCv" ? 6 : step === "jobAd" || step === "jobDuties" ? 3 : 1}
                 className="min-h-11 flex-1 resize-none rounded-xl px-4 py-2.5 outline-none"
                 style={{ background: "rgba(11,18,32,0.7)", border: "1px solid rgba(255,255,255,0.15)", color: "#f4f5f3", fontSize: 16, lineHeight: 1.7 }}
               />
+              {step === "pasteCv" && (
+                <label className="flex min-h-11 cursor-pointer items-center rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(244,245,243,0.85)" }}>
+                  {uploading ? t.uploading : t.upload_btn}
+                  <input type="file" accept=".pdf,.docx,.txt,.md" className="hidden" disabled={uploading}
+                    onChange={(e) => { onFilePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                </label>
+              )}
               {micSupported && (
                 <button onClick={toggleMic} title={t.mic_title} aria-label={t.mic_title}
                   className="min-h-11 w-11 rounded-xl text-lg"
@@ -794,13 +1005,26 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           {step !== "reveal" ? (
             <div className="glass-panel p-5">
               <div className="mb-1 flex items-center justify-between">
-                <h2 className="text-sm font-bold">{t.panel_title}</h2>
-                <span className="font-mono text-xs" style={{ color: GREEN }}>{progress}%</span>
+                <h2 className="text-sm font-bold">{mode === "update" && cvBase ? t.panel_base : t.panel_title}</h2>
+                {mode !== "update" && <span className="font-mono text-xs" style={{ color: GREEN }}>{progress}%</span>}
               </div>
-              <div className="mb-4 h-1.5 overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
-                <div className="h-full rounded-full transition-all duration-700" style={{ width: `${progress}%`, background: GREEN }} />
-              </div>
+              {mode !== "update" && (
+                <div className="mb-4 h-1.5 overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
+                  <div className="h-full rounded-full transition-all duration-700" style={{ width: `${progress}%`, background: GREEN }} />
+                </div>
+              )}
               <p className="mb-3 text-[11px]" style={{ color: "rgba(244,245,243,0.4)" }}>{t.panel_edit_hint}</p>
+
+              {mode === "update" && cvBase && (
+                <div className="mb-4">
+                  <div dir="auto" className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg p-3 font-mono text-[11px] leading-relaxed" style={{ background: "rgba(11,18,32,0.55)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(244,245,243,0.65)" }}>
+                    {cvBase.slice(0, 900)}{cvBase.length > 900 ? "…" : ""}
+                  </div>
+                  {(data.jobs.length > 0 || data.extras.length > 0) && (
+                    <div className="mt-3 font-mono text-[11px] font-bold uppercase tracking-wider" style={{ color: GREEN }}>{t.panel_additions}</div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-3 text-sm" style={{ lineHeight: 1.8 }}>
                 {data.name && <div className="text-lg font-extrabold">{data.name}</div>}
