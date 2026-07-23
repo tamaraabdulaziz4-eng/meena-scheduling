@@ -8,7 +8,7 @@ import { useState } from "react";
  * nothing on mobile Safari. Layout: A4, name header, underlined section
  * headings, bullets, automatic wrapping + page breaks.
  */
-export default function PdfExport({ text, label = "↓ Download PDF" }: { text: string; label?: string }) {
+export default function PdfExport({ text, label = "↓ Download PDF", watermark = false }: { text: string; label?: string; watermark?: boolean }) {
   const [busy, setBusy] = useState(false);
 
   async function exportPdf() {
@@ -133,6 +133,24 @@ export default function PdfExport({ text, label = "↓ Download PDF" }: { text: 
         y += wrapped.length * 4.8 + 0.8;
       }
 
+      // Free downloads: stamp every page with a subtle "cv.rabit.sa" footer +
+      // a faint diagonal watermark. Paying removes it entirely.
+      if (watermark) {
+        const pages = doc.getNumberOfPages();
+        for (let p = 1; p <= pages; p++) {
+          doc.setPage(p);
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(150);
+          doc.text("أُنشئت مجاناً عبر cv.rabit.sa — أزل هذه العلامة بالاشتراك", 105, 290, { align: "center" });
+          doc.setTextColor(232);
+          doc.setFontSize(46);
+          try {
+            doc.text("cv.rabit.sa", 105, 160, { align: "center", angle: 32 } as Parameters<typeof doc.text>[3]);
+          } catch { /* angle unsupported — footer alone is fine */ }
+          doc.setTextColor(20);
+        }
+      }
       doc.save("resume.pdf");
     } catch (e) {
       console.error("PDF export failed:", e);

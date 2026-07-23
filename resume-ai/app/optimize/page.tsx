@@ -18,6 +18,14 @@ interface OptimizeResult {
   improvements: { area: string; issue: string; fix: string }[];
   optimizedResume: string;
   locked?: boolean;
+  watermark?: boolean; // free result: full text, but downloads are watermarked
+}
+
+// Prepend/append a watermark to the plain-text (.txt) free download.
+const WM = "cv.rabit.sa";
+function wmTxt(text: string): string {
+  const line = `— أُنشئت مجاناً عبر ${WM} · أزل هذه العلامة بالاشتراك —`;
+  return `${line}\n\n${text}\n\n${line}`;
 }
 
 // Try-before-you-share: a realistic sample so visitors can see a full result
@@ -48,16 +56,8 @@ export default function OptimizePage() {
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
   const [thinking, setThinking] = useState("");
-  const [hasAccess, setHasAccess] = useState(false);
   const [mode, setMode] = useState<"general" | "target">("general");
   const thinkRef = useRef<HTMLDivElement>(null);
-
-  // Does this browser have paid access? Drives the locked-result card: a paid
-  // user who scanned BEFORE paying still holds the old truncated result — they
-  // need a one-click rescan, not another "pay" CTA.
-  useEffect(() => {
-    fetch("/api/auth/me").then((r) => r.json()).then((d) => setHasAccess(!!d.hasAccess)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
@@ -488,69 +488,38 @@ export default function OptimizePage() {
                         {copied ? "✓ Copied" : "Copy"}
                       </button>
                       <button
-                        onClick={() => download("optimized-resume.txt", result.optimizedResume)}
+                        onClick={() => download("optimized-resume.txt", result.watermark ? wmTxt(result.optimizedResume) : result.optimizedResume)}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"
                         style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
                         ↓ .txt
                       </button>
-                      <PdfExport text={result.optimizedResume} />
-                      <DocxExport text={result.optimizedResume} />
+                      <PdfExport text={result.optimizedResume} watermark={result.watermark} />
+                      <DocxExport text={result.optimizedResume} watermark={result.watermark} />
                     </div>
                   )}
                 </div>
-                {result.locked ? (
-                  <div className="relative">
-                    {/* Free preview: first lines, then blurred + locked. */}
-                    <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
-                      style={{ color: "rgba(244,245,243,0.85)" }}>
-                      {result.optimizedResume}
-                      <div className="pointer-events-none mt-2 select-none blur-sm" style={{ color: "rgba(244,245,243,0.5)" }}>
-                        {"• Rewrote every bullet with strong action verbs and quantified impact\n• Front-loaded the exact keywords the ATS scans for\n• Restructured into an ATS-safe, single-column layout\n• …the full rewritten resume continues…"}
-                      </div>
+                <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
+                  style={{ color: "rgba(244,245,243,0.85)" }}>
+                  {result.optimizedResume}
+                </div>
+                {result.watermark && (
+                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                    <div className="chip mb-3">✓ Your resume is ready — free</div>
+                    <h3 className="text-xl font-bold">
+                      {typeof result.afterScore === "number"
+                        ? `Download a clean copy — turn your ${score} into a projected ${result.afterScore}.`
+                        : "Download a clean, watermark-free version"}
+                    </h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                      Your free PDF/Word download carries a small “cv.rabit.sa” mark. Remove it — and unlock cover letters, LinkedIn &amp; interview prep — for a one-time SAR 35, or the SAR 99 Complete Pack. No subscription.
+                    </p>
+                    <div className="mx-auto mt-5 max-w-xs space-y-3">
+                      <CheckoutButton plan="single" label="Remove watermark — SAR 35" variant="accent" />
+                      <CheckoutButton plan="complete" label="Complete Pack (SAR 99)" variant="ghost" />
                     </div>
-                    {hasAccess ? (
-                      <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.07)" }}>
-                        <div className="chip mb-3">✓ You&apos;re unlocked</div>
-                        <h3 className="text-xl font-bold">Payment confirmed — get your full resume</h3>
-                        <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                          This result was generated before your purchase, so it only holds the preview. Rescan now (takes ~10 seconds) to receive the complete rewritten resume.
-                        </p>
-                        <button onClick={runScan} disabled={loading || !resume.trim()} className="btn-accent mt-5 inline-block px-8 py-3 disabled:opacity-50">
-                          {loading ? "Unlocking…" : "⚡ Get my full resume now"}
-                        </button>
-                        {!resume.trim() && (
-                          <p className="mt-3 text-xs" style={{ color: "#fbbf24" }}>Your resume text isn&apos;t saved on this device — paste it again above first.</p>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-                        <div className="chip mb-3">🔒 Your rewritten resume is ready</div>
-                        <h3 className="text-xl font-bold">
-                          {typeof result.afterScore === "number"
-                            ? `Unlock to turn your ${score} into a projected ${result.afterScore}.`
-                            : "Unlock your full ATS-optimized resume"}
-                        </h3>
-                        <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                          You&apos;ve seen your score and exactly what&apos;s missing. Unlock to get the complete rewritten resume — every bullet fixed, keywords added, ready to download. One-time SAR 35, or the SAR 99 Complete Pack (no subscription).
-                        </p>
-                        <p className="mx-auto mt-3 max-w-md text-xs" style={{ color: "var(--faint)" }}>
-                          One-time SAR 35 — Jobscan and Rezi charge that much every month.
-                        </p>
-                        <div className="mx-auto mt-5 max-w-xs space-y-3">
-                          <CheckoutButton plan="single" label="Unlock my resume — SAR 35" variant="accent" />
-                          <CheckoutButton plan="complete" label="Or get the Complete Pack (SAR 99)" variant="ghost" />
-                        </div>
-                        <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
-                          <a href="/terms" className="underline underline-offset-2">7-day money-back guarantee</a> — refunded if it didn&apos;t deliver.
-                        </p>
-                        <a href="/#pricing" className="mt-2 inline-block text-xs underline underline-offset-2" style={{ color: "var(--faint)" }}>Compare plans</a>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
-                    style={{ color: "rgba(244,245,243,0.85)" }}>
-                    {result.optimizedResume}
+                    <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
+                      <a href="/terms" className="underline underline-offset-2">7-day money-back guarantee</a>
+                    </p>
                   </div>
                 )}
 
@@ -565,7 +534,7 @@ export default function OptimizePage() {
                           : "Generate a tailored cover letter from the same job post."}
                       </p>
                     </div>
-                    {result.locked ? (
+                    {result.watermark ? (
                       <a href="/#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 Unlock to generate</a>
                     ) : !coverLetter ? (
                       <button

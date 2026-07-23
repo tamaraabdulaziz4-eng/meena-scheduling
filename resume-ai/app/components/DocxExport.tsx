@@ -8,13 +8,13 @@ import { useState } from "react";
  * correctly (RTL-aware), so this doubles as the Arabic-safe download path.
  * Client-side via the `docx` library (dynamic import → no SSR weight).
  */
-export default function DocxExport({ text, label = "↓ Word (.docx)", filename = "resume.docx" }: { text: string; label?: string; filename?: string }) {
+export default function DocxExport({ text, label = "↓ Word (.docx)", filename = "resume.docx", watermark = false }: { text: string; label?: string; filename?: string; watermark?: boolean }) {
   const [busy, setBusy] = useState(false);
 
   async function exportDocx() {
     setBusy(true);
     try {
-      const { Document, Packer, Paragraph, TextRun, AlignmentType } = await import("docx");
+      const { Document, Packer, Paragraph, TextRun, AlignmentType, Footer } = await import("docx");
       const hasArabic = /[؀-ۿ]/.test(text);
       const lines = text.replace(/\r/g, "").split("\n");
 
@@ -49,9 +49,21 @@ export default function DocxExport({ text, label = "↓ Word (.docx)", filename 
         });
       });
 
+      // Free downloads carry a subtle footer watermark; paying removes it.
+      const footers = watermark
+        ? {
+            default: new Footer({
+              children: [new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: "أُنشئت مجاناً عبر cv.rabit.sa — أزل هذه العلامة بالاشتراك · Created free with cv.rabit.sa", size: 14, color: "9AA0A6" })],
+              })],
+            }),
+          }
+        : undefined;
+
       const doc = new Document({
         styles: { default: { document: { run: { font: hasArabic ? "Arial" : "Calibri" } } } },
-        sections: [{ properties: {}, children: paragraphs }],
+        sections: [{ properties: {}, children: paragraphs, ...(footers ? { footers } : {}) }],
       });
 
       const blob = await Packer.toBlob(doc);

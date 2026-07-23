@@ -18,9 +18,16 @@ interface OptimizeResult {
   improvements: { area: string; issue: string; fix: string }[];
   optimizedResume: string;
   locked?: boolean;
+  watermark?: boolean;
 }
 
 const inputStyle = { background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)" };
+
+// علامة مائية لتنزيل النص المجاني (.txt).
+function wmTxt(text: string): string {
+  const line = "— أُنشئت مجاناً عبر cv.rabit.sa · أزل هذه العلامة بالاشتراك —";
+  return `${line}\n\n${text}\n\n${line}`;
+}
 
 // تجربة نموذجية: يشوف الزائر النتيجة كاملة بدون ما يرفع بياناته.
 const SAMPLE_RESUME = `سارة العتيبي
@@ -48,15 +55,8 @@ export default function ArOptimizePage() {
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCopied, setCoverCopied] = useState(false);
-  const [hasAccess, setHasAccess] = useState(false);
   const [mode, setMode] = useState<"general" | "target">("general");
   const thinkRef = useRef<HTMLDivElement>(null);
-
-  // هل هذا المتصفح عنده وصول مدفوع؟ المشترك اللي فحص قبل الدفع لسه معه
-  // النتيجة المقصوصة القديمة — يحتاج زر إعادة فحص، مو بطاقة دفع ثانية.
-  useEffect(() => {
-    fetch("/api/auth/me").then((r) => r.json()).then((d) => setHasAccess(!!d.hasAccess)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
@@ -407,66 +407,37 @@ export default function ArOptimizePage() {
                     className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
                     {copied ? "✓ نُسخت" : "نسخ"}
                   </button>
-                  <button onClick={() => download("optimized-resume.txt", result.optimizedResume)}
+                  <button onClick={() => download("optimized-resume.txt", result.watermark ? wmTxt(result.optimizedResume) : result.optimizedResume)}
                     className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
                     ↓ نص
                   </button>
-                  <PdfExport text={result.optimizedResume} label="↓ تنزيل PDF" />
-                  <DocxExport text={result.optimizedResume} label="↓ تنزيل Word" filename="resume-ar.docx" />
+                  <PdfExport text={result.optimizedResume} label="↓ تنزيل PDF" watermark={result.watermark} />
+                  <DocxExport text={result.optimizedResume} label="↓ تنزيل Word" filename="resume-ar.docx" watermark={result.watermark} />
                 </div>
               )}
             </div>
 
-            {result.locked ? (
-              <div>
-                <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
-                  {result.optimizedResume}
-                  <div className="pointer-events-none mt-2 select-none blur-sm" style={{ color: "rgba(244,245,243,0.5)" }}>
-                    {"• Rewrote every bullet with strong action verbs and quantified impact\n• Front-loaded the exact ATS keywords\n• …the full rewritten resume continues…"}
-                  </div>
+            <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
+              {result.optimizedResume}
+            </div>
+            {result.watermark && (
+              <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                <div className="chip mb-3">✓ سيرتك جاهزة — مجاناً</div>
+                <h3 className="text-xl font-bold">
+                  {typeof result.afterScore === "number"
+                    ? `حمّل نسخة نظيفة — ارفع نتيجتك من ${score} إلى ${result.afterScore} (متوقّعة).`
+                    : "حمّل نسخة نظيفة بدون علامة مائية"}
+                </h3>
+                <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
+                  تنزيلك المجاني (PDF/Word) عليه علامة صغيرة «cv.rabit.sa». أزلها — وافتح خطاب التعريف ولينكدإن وتحضير المقابلة — بـ٣٥ ريال مرة واحدة، أو الحزمة الكاملة ٩٩ ريال. بدون اشتراك.
+                </p>
+                <div className="mx-auto mt-5 max-w-xs space-y-3">
+                  <CheckoutButton ar plan="single" label="أزل العلامة — ٣٥ ريالاً" variant="accent" />
+                  <CheckoutButton ar plan="complete" label="الحزمة الكاملة (٩٩ ريالاً)" variant="ghost" />
                 </div>
-                {hasAccess ? (
-                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.07)" }}>
-                    <div className="chip mb-3">✓ اشتراكك مفعّل</div>
-                    <h3 className="text-xl font-bold">الدفع مؤكّد — استلم سيرتك الكاملة</h3>
-                    <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                      هذي النتيجة انولدت قبل ماتدفع فماتحمل إلا المعاينة. أعد الفحص الآن (~١٠ ثوانٍ) وتستلم السيرة الكاملة المعاد كتابتها.
-                    </p>
-                    <button onClick={runScan} disabled={loading || !resume.trim()} className="btn-accent mt-5 inline-block px-8 py-3 disabled:opacity-50">
-                      {loading ? "جارٍ الفتح…" : "⚡ استلم سيرتي الكاملة الآن"}
-                    </button>
-                    {!resume.trim() && (
-                      <p className="mt-3 text-xs" style={{ color: "#fbbf24" }}>نص سيرتك مو محفوظ على هذا الجهاز — الصقه فوق أولاً.</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
-                    <div className="chip mb-3">🔒 سيرتك الجديدة جاهزة</div>
-                    <h3 className="text-xl font-bold">
-                      {typeof result.afterScore === "number"
-                        ? `افتح لترفع نتيجتك من ${score} إلى ${result.afterScore} (متوقّعة).`
-                        : "افتح سيرتك الكاملة المحسّنة"}
-                    </h3>
-                    <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
-                      شفت نتيجتك ووش الناقص بالضبط. افتح الوصول للسيرة الكاملة المعاد كتابتها — كل نقطة مصلّحة والكلمات المفتاحية مضافة وجاهزة للتحميل. ٣٥ ريال لمرة واحدة، أو الحزمة الكاملة ٩٩ ريال دفعة واحدة بدون اشتراك.
-                    </p>
-                    <p className="mx-auto mt-3 max-w-md text-xs" style={{ color: "var(--faint)" }}>
-                      ٣٥ ريالاً مرة واحدة — أدوات مثل Jobscan تاخذ هذا المبلغ شهرياً.
-                    </p>
-                    <div className="mx-auto mt-5 max-w-xs space-y-3">
-                      <CheckoutButton ar plan="single" label="افتح سيرتي — ٣٥ ريالاً" variant="accent" />
-                      <CheckoutButton ar plan="complete" label="أو الحزمة الكاملة (٩٩ ريالاً)" variant="ghost" />
-                    </div>
-                    <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
-                      <a href="/terms" className="underline underline-offset-2">ضمان استرجاع خلال ٧ أيام</a> — نرجّع لك إن لم تنفع الخدمة.
-                    </p>
-                    <a href="/ar#pricing" className="mt-2 inline-block text-xs underline underline-offset-2" style={{ color: "var(--faint)" }}>قارن الباقات</a>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
-                {result.optimizedResume}
+                <p className="mt-4 text-xs" style={{ color: "var(--faint)" }}>
+                  <a href="/terms" className="underline underline-offset-2">ضمان استرجاع خلال ٧ أيام</a>
+                </p>
               </div>
             )}
 
@@ -481,7 +452,7 @@ export default function ArOptimizePage() {
                       : "خطاب تعريف مفصّل على نفس إعلان الوظيفة."}
                   </p>
                 </div>
-                {result.locked ? (
+                {result.watermark ? (
                   <a href="/ar#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 افتح الوصول لإنشائه</a>
                 ) : !coverLetter ? (
                   <button onClick={generateCoverLetter} disabled={coverLoading || jobDescription.trim().length < 30} className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">

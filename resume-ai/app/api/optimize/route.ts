@@ -419,19 +419,12 @@ export async function POST(req: NextRequest) {
 
             if (!raw.trim()) throw new Error("Empty response from AI provider");
             const result = parseSections(raw);
-            // Freemium: free users see the score + full analysis, but the
-            // rewritten resume is locked behind payment. Send only a short
-            // teaser (never the full text — can't be unlocked from the network).
-            if (!hasPass) {
-              const full = result.optimizedResume;
-              const preview = full.split("\n").slice(0, 6).join("\n");
-              send({
-                t: "result",
-                d: { ...result, optimizedResume: preview, locked: true },
-              });
-            } else {
-              send({ t: "result", d: { ...result, locked: false } });
-            }
+            // Freemium (watermark model): EVERYONE gets the full rewritten resume
+            // — the growth lever is a free, usable result that spreads. Free users
+            // download it with a "cv.rabit.sa" watermark (applied client-side);
+            // paying removes the watermark (and unlocks cover letters etc.). So we
+            // deliberately send the full text to free users too, flagged watermark.
+            send({ t: "result", d: { ...result, locked: false, watermark: !hasPass } });
             done = true;
           } catch (err) {
             console.error(`Optimize stream error (attempt ${attempt + 1}):`, err);
