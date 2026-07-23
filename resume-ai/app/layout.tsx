@@ -74,6 +74,17 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={isArabic ? "ar" : "en"} dir={isArabic ? "rtl" : "ltr"}>
       <body style={{ margin: 0, padding: 0 }}>
+        {/* THE VOICE — IBM Plex Sans Arabic: engineered, bilingual, premium.
+            (The 'cheap Android' feel was the unstyled system fallback.) */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap"
+        />
         <OrbProvider>{children}</OrbProvider>
         <div className="grain-overlay" aria-hidden="true" />
         <Analytics />
