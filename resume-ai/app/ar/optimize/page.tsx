@@ -59,6 +59,7 @@ export default function ArOptimizePage() {
   const [coverCopied, setCoverCopied] = useState(false);
   const [mode, setMode] = useState<"general" | "target">("general");
   const [resumeView, setResumeView] = useState<"text" | "designed">("text");
+  const [outLang, setOutLang] = useState<"en" | "ar" | "both">("ar");
   const thinkRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -202,7 +203,7 @@ export default function ArOptimizePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // «تقييم عام» يتجاهل الإعلان فعلاً — الوضع يَعِد بذلك فنلتزم به.
-        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "", uiLang: "ar" }),
+        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "", uiLang: "ar", outLang }),
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
@@ -322,6 +323,7 @@ export default function ArOptimizePage() {
         )}
 
         {!result && !loading && (
+          <>
           <div className="mb-6 flex justify-center gap-2">
             {([
               { id: "general" as const, label: "تقييم عام" },
@@ -336,6 +338,27 @@ export default function ArOptimizePage() {
               </button>
             ))}
           </div>
+          {/* Output-language choice — the rewritten resume was always English
+              before; the user can now pick Arabic, English, or both. */}
+          <div className="mb-6 text-center">
+            <div className="mb-2 font-mono text-xs" style={{ color: "var(--faint)" }}>لغة السيرة المحسّنة</div>
+            <div className="flex justify-center gap-2">
+              {([
+                { id: "ar" as const, label: "العربية" },
+                { id: "en" as const, label: "الإنجليزية" },
+                { id: "both" as const, label: "الاثنتان" },
+              ]).map((o) => (
+                <button key={o.id} type="button" onClick={() => setOutLang(o.id)}
+                  className="rounded-lg px-4 py-2 text-xs font-semibold transition-all"
+                  style={outLang === o.id
+                    ? { background: "var(--accent)", color: "#05130a" }
+                    : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          </>
         )}
         {!result ? (
           <form onSubmit={handleSubmit} className="grid gap-6 md:grid-cols-2">
@@ -389,7 +412,8 @@ export default function ArOptimizePage() {
         ) : (
           <div>
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
-              <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>{mode === "target" ? "نسبة التطابق ATS" : "تقييم جودة السيرة"}</div>
+              <div className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--faint)" }}>{mode === "target" ? "درجة الملاءمة مع الوظيفة" : "تقييم جودة السيرة"}</div>
+              {mode === "target" && <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>مدى قرب سيرتك من الإعلان — ليست ضماناً لاجتياز أي نظام توظيف</div>}
               <div className="my-2 flex items-baseline justify-center gap-1" dir="ltr">
                 <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{displayScore}</span>
                 <span className="font-mono text-2xl" style={{ color: "var(--faint)" }}>%</span>
@@ -443,7 +467,7 @@ export default function ArOptimizePage() {
               </div>
             )}
             {!result.locked && resumeView === "designed" ? (
-              <ResumeTemplate text={result.optimizedResume} name="resume" />
+              <ResumeTemplate text={result.optimizedResume} name="resume" dir={outLang === "ar" ? "rtl" : "ltr"} />
             ) : (
               <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>
                 {result.optimizedResume}

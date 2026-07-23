@@ -501,10 +501,10 @@ export default function OptimizePage() {
             {/* Score banner */}
             <div className="card mb-8 p-8 text-center" style={{ borderColor: `${scoreColor}55`, background: `${scoreColor}0d` }}>
               <div className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>
-                {mode === "target" ? "ATS Match Score" : "Overall resume score"}
+                {mode === "target" ? "Job-match score" : "Overall resume score"}
               </div>
               <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>
-                {mode === "target" ? "Scored against the job you pasted" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
+                {mode === "target" ? "How closely your resume matches this posting — not a guarantee any ATS will pass it" : "General quality review (no specific job) — switch to “Target a job” to match a posting"}
               </div>
               <div className="my-2 flex items-baseline justify-center gap-1">
                 <span className="font-mono text-7xl font-bold tabular-nums" style={{ color: scoreColor }}>{displayScore}</span>

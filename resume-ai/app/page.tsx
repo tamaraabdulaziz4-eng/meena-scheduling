@@ -114,7 +114,7 @@ export default function Home() {
       <section className="mx-auto max-w-5xl px-6 py-24">
         <div className="mb-14 text-center">
           <div className="chip mb-4">How it works</div>
-          <h2 className="text-4xl font-bold tracking-tight">Three steps. One passing score.</h2>
+          <h2 className="text-4xl font-bold tracking-tight">Three steps. One honest match score.</h2>
         </div>
         <div className="grid gap-5 md:grid-cols-3">
           {[
