@@ -5,6 +5,7 @@ import PdfExport from "../components/PdfExport";
 import DocxExport from "../components/DocxExport";
 import BeforeAfter from "../components/BeforeAfter";
 import ResumeTemplate from "../components/ResumeTemplate";
+import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
 import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
@@ -101,6 +102,7 @@ export default function OptimizePage() {
   const [step, setStep] = useState(1); // guided wizard: 1 resume · 2 job · 3 language+go
   const [outLang, setOutLang] = useState<"en" | "ar" | "both">("en");
   const [resumeView, setResumeView] = useState<"text" | "designed">("text");
+  const [tplSlug, setTplSlug] = useState("ats-pro");
   const [jobUrl, setJobUrl] = useState("");
   const [fetchingJob, setFetchingJob] = useState(false);
   const [jobUrlMsg, setJobUrlMsg] = useState("");
@@ -629,7 +631,24 @@ export default function OptimizePage() {
                   </div>
                 )}
                 {!result.locked && resumeView === "designed" ? (
-                  <ResumeTemplate text={result.optimizedResume} name="optimized-resume" />
+                  <div>
+                    {/* Template picker — choose from the full catalogue, not one. */}
+                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                      {TEMPLATE_CATALOG.map((tp) => (
+                        <button key={tp.slug} onClick={() => setTplSlug(tp.slug)}
+                          className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                          style={tplSlug === tp.slug
+                            ? { background: "var(--accent)", color: "#05130a" }
+                            : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                          {tp.name}{tp.best ? " ★" : ""}
+                        </button>
+                      ))}
+                    </div>
+                    {(() => {
+                      const tp = TEMPLATE_CATALOG.find((x) => x.slug === tplSlug) || TEMPLATE_CATALOG[0];
+                      return <ResumeTemplate text={result.optimizedResume} name="optimized-resume" variant={tp.variant} accent={tp.accent} fitWidth />;
+                    })()}
+                  </div>
                 ) : (
                   <div className="card whitespace-pre-wrap p-6 font-mono text-sm leading-relaxed"
                     style={{ color: "rgba(244,245,243,0.85)" }}>

@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Visual, designed resume template with a live preview + a one-click designed
@@ -85,10 +85,28 @@ const SIDEBAR = new Set(["SKILLS", "CORE SKILLS", "TECHNICAL SKILLS", "PERSONAL 
 // are two-column designs for human/LinkedIn use.
 export type TemplateVariant = "classic" | "modern" | "minimal" | "elegant" | "column";
 
-export default function ResumeTemplate({ text, name = "resume", accent = "#0f766e", variant = "classic", preview = false, dir = "ltr" }: { text: string; name?: string; accent?: string; variant?: TemplateVariant; preview?: boolean; dir?: "ltr" | "rtl" }) {
+export default function ResumeTemplate({ text, name = "resume", accent = "#0f766e", variant = "classic", preview = false, dir = "ltr", fitWidth = false }: { text: string; name?: string; accent?: string; variant?: TemplateVariant; preview?: boolean; dir?: "ltr" | "rtl"; fitWidth?: boolean }) {
   const parsed = useMemo(() => parse(text), [text]);
   const ref = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
+  // Scale the A4-width (794px) page down to fit the container so the preview is
+  // never cropped on mobile; PDF capture still uses the full-res `ref`.
+  const [fit, setFit] = useState(1);
+  const [pageH, setPageH] = useState(0);
+  useEffect(() => {
+    if (!fitWidth) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => {
+      setFit(Math.min(1, el.clientWidth / 794));
+      if (ref.current) setPageH(ref.current.scrollHeight);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fitWidth, text, variant, dir]);
 
   const sidebar = parsed.sections.filter((s) => SIDEBAR.has(s.heading));
   const main = parsed.sections.filter((s) => !SIDEBAR.has(s.heading));
@@ -187,7 +205,8 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
 
       {/* Live preview (also the capture source). dir drives RTL for Arabic;
           the contact line stays LTR so phone/email/dates read correctly. */}
-      <div className={preview ? "" : "overflow-x-auto rounded-xl"} style={preview ? undefined : { border: "1px solid var(--line)" }}>
+      <div ref={wrapRef} className={preview ? "" : "rounded-xl"} style={preview ? undefined : { border: "1px solid var(--line)", overflow: "hidden", height: fitWidth && pageH ? pageH * fit : undefined }}>
+        <div style={fitWidth ? { width: 794, transform: `scale(${fit})`, transformOrigin: isRtl ? "top right" : "top left" } : undefined}>
         <div ref={ref} dir={dir} lang={isRtl ? "ar" : undefined} style={{ width: 794, minHeight: 1123, background: "#ffffff", color: "#374151", fontFamily: isRtl ? "'Segoe UI', Tahoma, Arial, sans-serif" : "Arial, Helvetica, sans-serif", fontSize: 13, textAlign: isRtl ? "right" : "left" }}>
           {/* Header */}
           <div style={{ background: headerBg, color: headerFg, padding: "28px 36px", textAlign: headerCentered ? "center" : "start", borderBottom: flatHeader ? `3px solid ${accent}` : undefined }}>
@@ -200,6 +219,7 @@ export default function ResumeTemplate({ text, name = "resume", accent = "#0f766
               {sidebar.length === 0 ? mainCol : sidebarRight ? [mainCol, sidebarCol] : [sidebarCol, mainCol]}
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>
