@@ -8,6 +8,7 @@ import ResumeTemplate from "../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
 import ScoreRing from "../components/ScoreRing";
 import ResultCoaching from "../components/ResultCoaching";
+import GapFiller from "../components/GapFiller";
 import CheckoutButton from "../components/CheckoutButton";
 import AuthNav from "../components/AuthNav";
 import { addScan, saveResume } from "../lib/localdata";
@@ -260,7 +261,8 @@ export default function OptimizePage() {
     await runScan();
   }
 
-  async function runScan() {
+  async function runScan(resumeOverride?: string) {
+    const resumeText = typeof resumeOverride === "string" ? resumeOverride : resume;
     // Target mode promises job-specific tailoring — a job post is required there.
     if (mode === "target" && jobDescription.trim().length < 30) {
       setError("Target-a-job mode needs the job posting — paste it, or switch to General review.");
@@ -270,6 +272,7 @@ export default function OptimizePage() {
     setResult(null);
     setCoverLetter("");
     setThinking("");
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
     setLoading(true);
 
     // NOTE: no client-side retry here. The server already retries the model
@@ -287,7 +290,7 @@ export default function OptimizePage() {
         signal: ctrl.signal,
         // General review deliberately ignores the JD field — the mode label
         // promises that, so honor it.
-        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "", outLang }),
+        body: JSON.stringify({ resume: resumeText, jobDescription: mode === "target" ? jobDescription : "", outLang }),
       });
 
       // Non-streaming replies (validation errors, paywall) are plain JSON.
@@ -575,6 +578,14 @@ export default function OptimizePage() {
               missingKeywords={result.missingKeywords || []}
               skillsGap={result.skillsGap || []}
               hasPlaceholders={/\[add [^\]]*\]/i.test(result.optimizedResume || "")}
+            />
+
+            {/* Interactive: ask the user for what's missing, then re-optimize. */}
+            <GapFiller
+              missingKeywords={result.missingKeywords || []}
+              skillsGap={result.skillsGap || []}
+              busy={loading}
+              onApply={(additions) => { const enriched = resume + additions; setResume(enriched); runScan(enriched); }}
             />
 
             {/* Tabs + a visible way OUT of a stale result (it rehydrates on

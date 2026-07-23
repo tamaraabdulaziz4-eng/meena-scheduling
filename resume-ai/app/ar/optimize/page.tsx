@@ -8,6 +8,7 @@ import ResumeTemplate from "../../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../../lib/templateCatalog";
 import ScoreRing from "../../components/ScoreRing";
 import ResultCoaching from "../../components/ResultCoaching";
+import GapFiller from "../../components/GapFiller";
 import CheckoutButton from "../../components/CheckoutButton";
 import AuthNav from "../../components/AuthNav";
 import { addScan, saveResume } from "../../lib/localdata";
@@ -191,7 +192,8 @@ export default function ArOptimizePage() {
     await runScan();
   }
 
-  async function runScan() {
+  async function runScan(resumeOverride?: string) {
+    const resumeText = typeof resumeOverride === "string" ? resumeOverride : resume;
     // وضع الاستهداف يوعد بتفصيل السيرة على الوظيفة — الإعلان إلزامي فيه.
     if (mode === "target" && jobDescription.trim().length < 30) {
       setError("وضع «تخصيص لوظيفة» يحتاج إعلان الوظيفة — الصقه، أو بدّل إلى «تقييم عام».");
@@ -201,6 +203,7 @@ export default function ArOptimizePage() {
     setResult(null);
     setCoverLetter("");
     setThinking("");
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
     setLoading(true);
     // ملاحظة: بدون إعادة محاولة من المتصفح — السيرفر يعيد المحاولة داخلياً.
     try {
@@ -208,7 +211,7 @@ export default function ArOptimizePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // «تقييم عام» يتجاهل الإعلان فعلاً — الوضع يَعِد بذلك فنلتزم به.
-        body: JSON.stringify({ resume, jobDescription: mode === "target" ? jobDescription : "", uiLang: "ar", outLang }),
+        body: JSON.stringify({ resume: resumeText, jobDescription: mode === "target" ? jobDescription : "", uiLang: "ar", outLang }),
       });
       const ctype = res.headers.get("content-type") || "";
       if (!ctype.includes("ndjson")) {
@@ -404,6 +407,14 @@ export default function ArOptimizePage() {
               skillsGap={result.skillsGap || []}
               hasPlaceholders={/\[(add|أضف)[^\]]*\]/i.test(result.optimizedResume || "")}
               ar
+            />
+
+            <GapFiller
+              missingKeywords={result.missingKeywords || []}
+              skillsGap={result.skillsGap || []}
+              ar
+              busy={loading}
+              onApply={(additions) => { const enriched = resume + additions; setResume(enriched); runScan(enriched); }}
             />
 
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
