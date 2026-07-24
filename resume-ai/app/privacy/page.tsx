@@ -102,7 +102,7 @@ export default function PrivacyPage() {
         <div className="card mt-10 p-6" dir="ltr">
           <h2 className="mb-3 text-lg font-bold">English summary</h2>
           <ul className="ml-5 list-disc space-y-1 text-sm" style={{ color: "rgba(244,245,243,0.75)" }}>
-            <li><strong>Your resume text is never stored on our servers.</strong> It is processed by a cloud AI provider (US-based) to generate your result, then discarded. Drafts live only in your browser&apos;s localStorage.</li>
+            <li><strong>Your resume text is never stored on our servers.</strong> It is processed by a cloud AI provider (US-based) to generate your result, then discarded. Drafts live only in your browser&apos;s localStorage. The single exception: if you explicitly publish a public resume link, that link&apos;s content is stored so it can be served — and it is removed when you delete it.</li>
             <li>We never use your data to train models, and never sell or share it.</li>
             <li>We keep only your email + subscription status. Card details are handled entirely by the licensed gateway Paylink.</li>
             <li>Public resume links exist only if you publish one, and you can unpublish anytime.</li>

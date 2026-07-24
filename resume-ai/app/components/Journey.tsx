@@ -56,9 +56,9 @@ const T = {
     dpB2: "• يدير دفاتر ١٥ فرعاً بإيرادات سنوية ٤٠ مليون ريال",
     dpSk: "IFRS · SAP · التقارير المالية · قيادة الفريق",
     cap3: "سيرة احترافية بدرجة توافق ATS — خلال دقيقتين",
-    brand: "سيرة", login: "دخول", journey: "رحلتك",
+    brand: "سيرة", login: "حسابي", journey: "رحلتك",
     step: "الخطوة", of5: "من ٥",
-    st0t: "دورك — العقل جاهز", st0s: "أجب عن أسئلة المستشار، والسيرة تتبنى قدامك.",
+    st0t: "دورك — العقل جاهز", st0s: "أجب عن أسئلة المستشار، وسيرتك تُبنى أمامك.",
     advisor: "المستشار", online: "متصل",
     greet: "ما مهنتك؟",
     typePh: "اكتب إجابتك…",
@@ -89,7 +89,7 @@ const T = {
     st2t: "لوّن سيرتك", st2s: "اختيار واحد — وسيرتك تتلوّن فوراً.",
     browse_templates: "كل القوالب ←",
     st3t: "خذها معك", st3s: "PDF للتقديم، Word للتعديل.",
-    lang_pick: "لغة السيرة:", lang_opts: { en: "English", ar: "العربية", both: "الاثنين" } as Record<string, string>,
+    lang_pick: "لغة السيرة:", lang_opts: { en: "English", ar: "العربية", both: "كلاهما" } as Record<string, string>,
     lang_err: "تعذّر التحويل — حاول مرة أخرى.",
     wm_note: "النسخة المجانية تحمل علامة مائية — تُزال بالباقة.",
     st4t: "آخر خطوة", st4s: "اختر ما يناسبك — أو أكمل مجاناً بالعلامة المائية.",
@@ -113,7 +113,7 @@ const T = {
     q2: "هل السيرة متوافقة مع أنظمة ATS؟",
     a2: "نعم — كل القوالب بعمود واحد وبدون جداول تكسر القراءة الآلية، وتظهر لك درجة توافق واضحة قبل التحميل.",
     q3: "أحتاج أسوّي حساب؟",
-    a3: "لا. بنيت سيرتك كاملة الآن بدون تسجيل. الحساب اختياري فقط لحفظ سيرك سحابياً.",
+    a3: "لا. بنيت سيرتك كاملة الآن بدون تسجيل، وسيرك محفوظة على جهازك فقط — لا يُرفع شيء إلا إذا اخترت نشر رابط عام بنفسك.",
     footBrand: "سيرة — cv.rabit.sa", terms: "الشروط", privacy: "الخصوصية", contact: "الأسعار",
   },
   en: {
@@ -132,7 +132,7 @@ const T = {
     dpB2: "• Managed books for 15 branches, SAR 40M annual revenue",
     dpSk: "IFRS · SAP · Financial Reporting · Team Leadership",
     cap3: "A professional resume with an ATS score — in two minutes",
-    brand: "Sira", login: "Sign in", journey: "Journey",
+    brand: "Sira", login: "My resumes", journey: "Journey",
     step: "Step", of5: "of 5",
     st0t: "Your turn — the mind is ready", st0s: "Answer the Advisor's questions, and the resume builds in front of you.",
     advisor: "Advisor", online: "online",
@@ -189,7 +189,7 @@ const T = {
     q2: "Is the resume ATS-compatible?",
     a2: "Yes — every template is single-column with no parsing-breaking tables, and you see a clear match score before downloading.",
     q3: "Do I need an account?",
-    a3: "No. You just built a full resume with no signup. An account is optional — only to save your resumes in the cloud.",
+    a3: "No. You just built a full resume with no signup, and your resumes stay on this device — nothing is uploaded unless you publish a public link yourself.",
     footBrand: "Sira — cv.rabit.sa", terms: "Terms", privacy: "Privacy", contact: "Pricing",
   },
 };
@@ -928,7 +928,7 @@ export default function Journey({ lang }: { lang: Lang }) {
                 onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); localStorage.setItem("ra_lang", rtl ? "en" : "ar"); } catch { /* noop */ } }}
                 className="jn-pill-btn"
               >{rtl ? "EN" : "ع"}</Link>
-              <Link href={rtl ? "/account?lang=ar" : "/account"} className="jn-pill-btn solid">{t.login}</Link>
+              <Link href={rtl ? "/ar/account" : "/account"} className="jn-pill-btn solid">{t.login}</Link>
             </div>
           </header>
 
@@ -1012,9 +1012,9 @@ export default function Journey({ lang }: { lang: Lang }) {
                   <div className="jn-sub-links">
                     {!pasteMode && <button onClick={startUpdate}>{t.have_cv}</button>}
                     {!pasteMode && <span>·</span>}
-                    <Link href="/pricing">{t.tool_pricing}</Link>
+                    <Link href={rtl ? "/ar/pricing" : "/pricing"}>{t.tool_pricing}</Link>
                     <span>·</span>
-                    <Link href={rtl ? "/account?lang=ar" : "/account"}>{t.tool_account}</Link>
+                    <Link href={rtl ? "/ar/account" : "/account"}>{t.tool_account}</Link>
                   </div>
                 </div>
 
@@ -1146,7 +1146,7 @@ export default function Journey({ lang }: { lang: Lang }) {
                 ))}
               </div>
               <div style={{ textAlign: "center", marginTop: 12 }}>
-                <Link href={rtl ? "/templates?lang=ar" : "/templates"} className="jn-pill-btn">{t.browse_templates}</Link>
+                <Link href={rtl ? "/ar/templates" : "/templates"} className="jn-pill-btn">{t.browse_templates}</Link>
               </div>
               {cv && (
                 <div className="jn-preview-wrap">
@@ -1207,7 +1207,7 @@ export default function Journey({ lang }: { lang: Lang }) {
                   <div className="price">35<small>{t.sar}</small></div>
                   <div className="per">{t.once}</div>
                   <ul><li>{t.p1a}</li><li>{t.p1b}</li><li>{t.p1c}</li></ul>
-                  <Link href="/pricing" className="btn" onClick={() => { setPlan(t.planDay); unlockNext(); }}>{t.choose}</Link>
+                  <Link href={rtl ? "/ar/pricing" : "/pricing"} className="btn" onClick={() => { setPlan(t.planDay); unlockNext(); }}>{t.choose}</Link>
                 </div>
                 <div className="jn-plan hot">
                   <div className="tag">{t.bestVal}</div>
@@ -1215,7 +1215,7 @@ export default function Journey({ lang }: { lang: Lang }) {
                   <div className="price">99<small>{t.sar}</small></div>
                   <div className="per">{t.once}</div>
                   <ul><li>{t.p2a}</li><li>{t.p2b}</li><li>{t.p2c}</li><li>{t.p2d}</li></ul>
-                  <Link href="/pricing" className="btn" onClick={() => { setPlan(t.plan90); unlockNext(); }}>{t.chooseB}</Link>
+                  <Link href={rtl ? "/ar/pricing" : "/pricing"} className="btn" onClick={() => { setPlan(t.plan90); unlockNext(); }}>{t.chooseB}</Link>
                 </div>
               </div>
               <button className="jn-free-link" onClick={() => { setPlan(t.freePlan); unlockNext(); }}>{t.freeLink}</button>
@@ -1248,13 +1248,13 @@ export default function Journey({ lang }: { lang: Lang }) {
               <section style={{ paddingTop: 44 }}>
                 <div className="jn-sec-sub" style={{ marginBottom: 18 }}>{t.afterCv}</div>
                 <div className="jn-tools">
-                  <Link href={rtl ? "/interview?lang=ar" : "/interview"} className="jn-tool jn-rv">
+                  <Link href={rtl ? "/ar/interview" : "/interview"} className="jn-tool jn-rv">
                     <div className="ic">◉</div><h3>{t.t1}</h3><p>{t.t1d}</p>
                   </Link>
                   <Link href="/interview-live" className="jn-tool jn-rv">
                     <div className="ic">▶</div><h3>{t.t2}</h3><p>{t.t2d}</p>
                   </Link>
-                  <Link href={rtl ? "/linkedin?lang=ar" : "/linkedin"} className="jn-tool jn-rv">
+                  <Link href={rtl ? "/ar/linkedin" : "/linkedin"} className="jn-tool jn-rv">
                     <div className="ic">in</div><h3>{t.t3}</h3><p>{t.t3d}</p>
                   </Link>
                 </div>
@@ -1282,7 +1282,7 @@ export default function Journey({ lang }: { lang: Lang }) {
                 <div className="links">
                   <Link href="/terms">{t.terms}</Link>
                   <Link href="/privacy">{t.privacy}</Link>
-                  <Link href="/pricing">{t.contact}</Link>
+                  <Link href={rtl ? "/ar/pricing" : "/pricing"}>{t.contact}</Link>
                 </div>
               </footer>
             </div>

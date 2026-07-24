@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     "Browse professional, ATS-safe resume templates in Arabic (RTL) and English. Pick a design, then let AI fill it with your real experience — no fabricated facts. Free to start.",
   alternates: {
     canonical: `${BASE}/templates`,
-    languages: { en: `${BASE}/templates`, ar: `${BASE}/templates`, "x-default": `${BASE}/templates` },
+    languages: { en: `${BASE}/templates`, ar: `${BASE}/ar/templates`, "x-default": `${BASE}/templates` },
   },
   openGraph: { title: "Resume Templates — ATS-Safe, Arabic & English", description: "Professional resume templates that pass ATS, in RTL and English.", url: `${BASE}/templates` },
 };
@@ -29,6 +29,7 @@ export default function TemplatesPage() {
             <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <div className="flex items-center gap-4">
+            <Link href="/ar/templates" className="text-sm font-semibold" style={{ color: "var(--muted)" }}>ع</Link>
             <Link href="/pricing" className="text-sm font-semibold" style={{ color: "var(--muted)" }}>Pricing</Link>
             <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Free scan →</Link>
           </div>

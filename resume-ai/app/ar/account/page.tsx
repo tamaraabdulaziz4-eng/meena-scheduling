@@ -1,7 +1,11 @@
-import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+import AccountClient from "../../components/AccountClient";
 
-// The account feature currently lives on the shared (English UI) route; Arabic
-// visitors who hit /ar/account directly are sent there instead of a 404.
-export default function ArRedirect() {
-  redirect("/account?lang=ar");
+export const metadata: Metadata = {
+  title: "حسابي — سيرك ومسوحك | سيرة",
+  robots: { index: false, follow: false },
+};
+
+export default function ArabicAccountPage() {
+  return <AccountClient initialLang="ar" />;
 }

@@ -11,6 +11,18 @@ export const metadata: Metadata = {
     canonical: `${BASE}/ar`,
     languages: { en: `${BASE}/`, ar: `${BASE}/ar`, "x-default": `${BASE}/` },
   },
+  openGraph: {
+    title: "سيرتك بالمقابلة — الذكاء يبنيها معك | سيرة",
+    description:
+      "تحدّث مع المستشار دقيقتين: يقابلك، يعيد صياغة كلامك العفوي إلى أسطر احترافية متوافقة مع أنظمة الفرز ATS، ويسلّمك سيرة جاهزة للتحميل — مجاناً وبدون تسجيل.",
+    url: `${BASE}/ar`,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "سيرتك بالمقابلة — الذكاء يبنيها معك | سيرة",
+    description: "مقابلة دقيقتين ← سيرة احترافية بدرجة توافق ATS. مجاناً وبدون تسجيل.",
+  },
 };
 
 export default function ArabicHome() {

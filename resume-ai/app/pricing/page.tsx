@@ -10,10 +10,10 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 export const metadata: Metadata = {
   title: "Pricing — One-time, No Subscription | Sira",
   description:
-    "Simple one-time pricing: SAR 35 for 24-hour full access or SAR 99 for 90 days. Every feature is included in both — the only difference is how long access lasts. No subscription, 7-day money-back guarantee.",
+    "Simple one-time pricing: SAR 35 for 24-hour full access or SAR 99 for 90 days. Every feature is included in both — the only difference is how long access lasts. No subscription; 7-day money-back guarantee on the 90-day pack.",
   alternates: {
     canonical: `${BASE}/pricing`,
-    languages: { en: `${BASE}/pricing`, ar: `${BASE}/pricing`, "x-default": `${BASE}/pricing` },
+    languages: { en: `${BASE}/pricing`, ar: `${BASE}/ar/pricing`, "x-default": `${BASE}/pricing` },
   },
   openGraph: { title: "Sira Pricing — Pay once, no subscription", description: "SAR 35 (24h) or SAR 99 (90 days). Every feature in both.", url: `${BASE}/pricing` },
 };
@@ -38,6 +38,11 @@ function PlanCard({ id, highlight }: { id: "single" | "complete"; highlight?: bo
             <span className="text-accent">✓</span> {f}
           </li>
         ))}
+        {id === "complete" && (
+          <li className="flex items-center gap-3" style={{ color: "rgba(244,245,243,0.85)" }}>
+            <span className="text-accent">✓</span> 7-day money-back guarantee
+          </li>
+        )}
       </ul>
       <div className="mt-8">
         <CheckoutButton plan={id} label={id === "single" ? "Get 24-hour access" : "Get the Complete Pack →"} variant={highlight ? "accent" : "ghost"} />
@@ -56,7 +61,10 @@ export default function PricingPage() {
             <OrbBrand size={26} />
             <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
-          <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Free scan →</Link>
+          <div className="flex items-center gap-4">
+            <Link href="/ar/pricing" className="text-sm font-semibold" style={{ color: "var(--muted)" }}>ع</Link>
+            <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Free scan →</Link>
+          </div>
         </div>
       </nav>
 
@@ -74,7 +82,7 @@ export default function PricingPage() {
           <PlanCard id="complete" highlight />
         </div>
         <p className="mt-8 text-center font-mono text-xs" style={{ color: "var(--faint)" }}>
-          Secure Paylink checkout · Instant access · 7-day money-back guarantee · No subscription, ever
+          Secure Paylink checkout · Instant access · 7-day money-back guarantee on the Complete Pack · No subscription, ever
         </p>
 
         <div className="mt-16">
@@ -84,7 +92,7 @@ export default function PricingPage() {
               ["Is the scan free?", "Yes — the ATS score, missing keywords, skills-gap, and a preview of improvements are free. The full rewrite and downloads unlock with a one-time payment."],
               ["Is this a subscription?", "No. Pay once. SAR 35 gives 24-hour full access; SAR 99 gives 90 days. Nothing recurs."],
               ["What's the difference between the two plans?", "Nothing in features — both unlock everything. SAR 99 simply keeps your access open for 90 days, ideal for an active job hunt."],
-              ["Can I get a refund?", "Yes, there's a 7-day money-back guarantee."],
+              ["Can I get a refund?", "Yes — the Complete Pack (90 days) carries a 7-day money-back guarantee."],
             ].map(([q, a]) => (
               <div key={q} className="card p-5">
                 <h3 className="font-bold">{q}</h3>

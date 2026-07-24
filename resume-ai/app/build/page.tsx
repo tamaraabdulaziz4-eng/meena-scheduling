@@ -39,6 +39,7 @@ export default function BuildPage() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<"text" | "designed">("text");
+  const [siteLang, setSiteLang] = useState<"en" | "ar">("en");
   // Template chosen from the /templates gallery (?template=slug&lang=en|ar|bi).
   const [tpl, setTpl] = useState<{ variant: "classic" | "modern" | "minimal" | "elegant" | "column"; accent: string; dir: "ltr" | "rtl" }>({ variant: "classic", accent: "#0f766e", dir: "ltr" });
   const thinkRef = useRef<HTMLDivElement>(null);
@@ -55,8 +56,9 @@ export default function BuildPage() {
     try {
       const q = new URLSearchParams(window.location.search);
       const m = MAP[q.get("template") || ""];
-      const dir = q.get("lang") === "ar" ? "rtl" : "ltr";
-      if (m) { setTpl({ ...m, dir }); setView("designed"); }
+      const ar = q.get("lang") === "ar";
+      setSiteLang(ar ? "ar" : "en");
+      if (m) { setTpl({ ...m, dir: ar ? "rtl" : "ltr" }); setView("designed"); }
     } catch { /* noop */ }
   }, []);
 
@@ -273,7 +275,7 @@ export default function BuildPage() {
                       <textarea value={e.duties} onChange={(ev) => setExp(i, "duties", ev.target.value)} rows={3}
                         placeholder="What did you do? e.g. 'I handled customer complaints, trained 3 new staff, sales went up while I was there...'"
                         className="w-full resize-none rounded-lg px-3 py-2 text-sm focus:outline-none" style={inputStyle} />
-                      <AiSuggest kind="duties" lang="en" targetRole={targetRole} role={e.role} company={e.company} value={e.duties} onWrite={(txt) => setExp(i, "duties", txt)} />
+                      <AiSuggest kind="duties" lang={siteLang} targetRole={targetRole} role={e.role} company={e.company} value={e.duties} onWrite={(txt) => setExp(i, "duties", txt)} />
                       {exps.length > 1 && (
                         <button onClick={() => setExps((p) => p.filter((_, j) => j !== i))} className="text-xs" style={{ color: "#f87171" }}>Remove</button>
                       )}
@@ -294,19 +296,19 @@ export default function BuildPage() {
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Education</label>
                     <textarea value={education} onChange={(e) => setEducation(e.target.value)} rows={2}
                       placeholder="e.g. BSc Computer Science, King Saud University, 2022" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
-                    <AiSuggest kind="education" lang="en" targetRole={targetRole} value={education} onWrite={setEducation} />
+                    <AiSuggest kind="education" lang={siteLang} targetRole={targetRole} value={education} onWrite={setEducation} />
                   </div>
                   <div>
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Skills (just list them, any order)</label>
                     <textarea value={skills} onChange={(e) => setSkills(e.target.value)} rows={2}
                       placeholder="e.g. Excel, customer service, Python, teamwork, Arabic & English" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
-                    <AiSuggest kind="skills" lang="en" targetRole={targetRole} value={skills} onWrite={setSkills} />
+                    <AiSuggest kind="skills" lang={siteLang} targetRole={targetRole} value={skills} onWrite={setSkills} />
                   </div>
                   <div>
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Certifications, languages, projects (optional)</label>
                     <textarea value={extras} onChange={(e) => setExtras(e.target.value)} rows={2}
                       placeholder="e.g. PMP certificate, IELTS 7.0, built a small online store" className="w-full resize-none rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
-                    <AiSuggest kind="extras" lang="en" targetRole={targetRole} value={extras} onWrite={setExtras} />
+                    <AiSuggest kind="extras" lang={siteLang} targetRole={targetRole} value={extras} onWrite={setExtras} />
                   </div>
                   <div>
                     <label className="mb-2 block font-mono text-xs uppercase tracking-wider" style={{ color: "var(--faint)" }}>Personal details for a Gulf CV (optional)</label>

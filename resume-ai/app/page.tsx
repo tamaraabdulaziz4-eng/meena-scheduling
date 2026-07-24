@@ -11,6 +11,13 @@ export const metadata: Metadata = {
     canonical: `${BASE}/`,
     languages: { en: `${BASE}/`, ar: `${BASE}/ar`, "x-default": `${BASE}/` },
   },
+  openGraph: {
+    title: "Your Resume, By Interview — AI Builds It With You",
+    description:
+      "Talk to the AI Advisor for two minutes: it interviews you, rephrases your words into professional ATS-ready lines, and hands you a downloadable resume — free, no signup.",
+    url: `${BASE}/`,
+    type: "website",
+  },
 };
 
 export default function Home() {
