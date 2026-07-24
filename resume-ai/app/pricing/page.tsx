@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 function PlanCard({ id, highlight }: { id: "single" | "complete"; highlight?: boolean }) {
   const p = PLANS[id];
   return (
-    <div className="card p-8" style={highlight ? { borderColor: "rgba(139,92,246,0.5)", background: "rgba(139,92,246,0.05)", position: "relative" } : undefined}>
+    <div className="card p-8" style={highlight ? { borderColor: "rgba(139,92,246,0.5)", background: "rgba(139,92,246,0.06)", position: "relative", boxShadow: "0 30px 80px -30px rgba(139,92,246,0.55)" } : undefined}>
       {highlight && (
         <div className="absolute right-5 top-5 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider" style={{ background: "var(--accent)", color: "#ffffff" }}>BEST VALUE</div>
       )}
@@ -60,8 +60,9 @@ export default function PricingPage() {
         </div>
       </nav>
 
-      <section className="mx-auto max-w-3xl px-6 py-16">
-        <div className="mb-12 text-center">
+      <section className="relative mx-auto max-w-3xl px-6 py-16">
+        <div className="hero-ambient" aria-hidden />
+        <div className="relative mb-12 text-center">
           <div className="chip mb-4">Pricing</div>
           <h1 className="text-4xl font-extrabold tracking-tight">Pay once. No subscription.</h1>
           <p className="mx-auto mt-3 max-w-xl" style={{ color: "var(--muted)" }}>
