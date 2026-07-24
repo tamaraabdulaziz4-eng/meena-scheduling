@@ -21,7 +21,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { motion, AnimatePresence, useInView, useReducedMotion } from "framer-motion";
 import { track } from "@vercel/analytics";
 import AiOrb from "./AiOrb";
 import { useOrbScene } from "./orb/OrbProvider";
@@ -34,7 +34,7 @@ import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
 import { saveResume } from "../lib/localdata";
 
 type Lang = "ar" | "en";
-type Stage = "greeting" | "conversation" | "thinking" | "weaving" | "reveal";
+type Stage = "boot" | "landing" | "greeting" | "conversation" | "thinking" | "weaving" | "reveal";
 type OutLang = "en" | "ar" | "both";
 interface Msg { who: "ai" | "user"; text: string }
 interface Chip { label: string; patch?: Record<string, unknown> }
@@ -55,6 +55,22 @@ const T = {
     seo_sub: "كلم المستشار دقيقتين ويطلع لك سيرة تخترق أنظمة التوظيف — مجاناً وبدون تسجيل.",
     greet: "هلا، وش تشتغل؟",
     greet_sub: "دقيقتين وتطلع بسيرة تخترق الروبوتات — بدون تسجيل",
+    boot_hi: "أهلاً",
+    boot_me: "أنا رابط",
+    land_scroll: "انزل",
+    land_problem_num: "٪",
+    land_problem: "من السير الذاتية ترفضها أنظمة التتبع الآلي — قبل أن يقرأها إنسان",
+    land_solution: "مقابلة ذكية تكتب من كلامك — لا تختلق رقماً واحداً",
+    demo_user: "اشتغل محاسب ٦ سنوات في شركة مقاولات",
+    demo_ai: "إذن تُقفل حسابات شهرية — كم فرعاً تدير؟",
+    land_cv_l1: "محاسب أول — شركة المقاولات المتحدة",
+    land_cv_l2: "خفضت أخطاء الإقفال الشهري ٣٠٪ عبر أتمتة التسويات",
+    land_cv_l3: "أدرت حسابات ١٥ فرعاً بإيرادات ٤٠ مليون ريال سنوياً",
+    land_result: "سيرة تخترق الروبوتات — بدرجة ATS — في دقيقتين",
+    path_new: "ابنِ سيرتي من الصفر",
+    path_new_sub: "مقابلة دقيقتين · مجاناً",
+    path_scan: "عندي سيرة — افحصها",
+    path_scan_sub: "درجة ATS فورية",
     think: ["يفكّر…", "يصيغ…", "يرتّب أفكارك…"],
     input_ph: "اكتب جوابك…",
     send: "أرسل",
@@ -97,6 +113,22 @@ const T = {
     seo_sub: "Talk to the Advisor for two minutes and walk away with an ATS-beating resume — free, no signup.",
     greet: "Hi — what do you do?",
     greet_sub: "Two minutes to a robot-proof resume — no signup",
+    boot_hi: "Hello",
+    boot_me: "I'm Rabit",
+    land_scroll: "scroll",
+    land_problem_num: "%",
+    land_problem: "of resumes are rejected by tracking robots — before a human ever reads them",
+    land_solution: "An honest interview that writes from YOUR words — never invents a single number",
+    demo_user: "I've been an accountant at a construction firm for 6 years",
+    demo_ai: "So you close monthly books — for how many branches?",
+    land_cv_l1: "Senior Accountant — United Contracting Co.",
+    land_cv_l2: "Cut monthly-close errors 30% by automating reconciliations",
+    land_cv_l3: "Managed books for 15 branches with SAR 40M annual revenue",
+    land_result: "A robot-proof resume with an ATS score — in two minutes",
+    path_new: "Build my resume from scratch",
+    path_new_sub: "A two-minute interview · free",
+    path_scan: "I have a resume — scan it",
+    path_scan_sub: "Instant ATS score",
     think: ["Thinking…", "Writing…", "Organizing your thoughts…"],
     input_ph: "Type your answer…",
     send: "Send",
@@ -166,13 +198,33 @@ async function readNdjson(res: Response, field: string): Promise<{ text: string;
   return { text, score, watermark };
 }
 
+/* count-up on scroll into view (landing S1 — the 75% problem stat) */
+function Counter({ to, suffix }: { to: number; suffix: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true, amount: 0.6 });
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!inView) return;
+    const t0 = performance.now();
+    const id = setInterval(() => {
+      const p = Math.min(1, (performance.now() - t0) / 1300);
+      setN(Math.round(to * (1 - Math.pow(1 - p, 3))));
+      if (p >= 1) clearInterval(id);
+    }, 16);
+    return () => clearInterval(id);
+  }, [inView, to]);
+  return <span ref={ref} className="block font-extrabold" style={{ fontSize: "clamp(5rem, 17vw, 9.5rem)", lineHeight: 1, letterSpacing: "-0.03em" }}>{n}{suffix}</span>;
+}
+
 export default function AdvisorLanding({ lang }: { lang: Lang }) {
   const t = T[lang];
   const rtl = lang === "ar";
   const DRAFT_KEY = `ra_advisor3_${lang}`;
   const reduce = useReducedMotion();
 
-  const [stage, setStage] = useState<Stage>("greeting");
+  const [stage, setStage] = useState<Stage>("boot");
+  const [bootLine, setBootLine] = useState(0); // 0 dark · 1 أهلاً · 2 أنا رابط
+  const [landSec, setLandSec] = useState(0);   // active landing section (0..4)
   const [profile, setProfile] = useState<Profile>(EMPTY);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -222,7 +274,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     setMicSupported(Boolean(w.webkitSpeechRecognition || w.SpeechRecognition));
     try {
       const saved = localStorage.getItem(DRAFT_KEY);
-      if (saved) { const d = JSON.parse(saved); if (d?.stage && d.stage !== "greeting" && d.stage !== "reveal") { setWelcomeBack(true); return; } }
+      if (saved) { const d = JSON.parse(saved); if (d?.stage && d.stage !== "greeting" && d.stage !== "reveal" && d.stage !== "boot" && d.stage !== "landing") { setWelcomeBack(true); setStage("greeting"); return; } }
     } catch { /* ignore */ }
     beginGreeting();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -233,6 +285,29 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     let i = 0;
     const id = setInterval(() => { i += 1; setTypedGreet(t.greet.slice(0, i)); if (i >= t.greet.length) clearInterval(id); }, 45);
   }
+
+  /* ── BOOT (Windows-style opening): أهلاً يظهر ويتلاشى ← أنا رابط ← العالم ينفتح ── */
+  useEffect(() => {
+    if (stage !== "boot") return;
+    document.body.style.overflow = "hidden";
+    const timers = [
+      setTimeout(() => setBootLine(1), 600),
+      setTimeout(() => setBootLine(2), 2300),
+      setTimeout(() => setStage("landing"), 4200),
+    ];
+    return () => { timers.forEach(clearTimeout); document.body.style.overflow = ""; };
+  }, [stage]);
+
+  /* ── landing: the orb follows the scroll — which section is on stage ── */
+  useEffect(() => {
+    if (stage !== "landing") return;
+    const obs = new IntersectionObserver(
+      (es) => es.forEach((e) => e.isIntersecting && setLandSec(Number((e.target as HTMLElement).dataset.sec || 0))),
+      { threshold: 0.45 }
+    );
+    document.querySelectorAll("[data-sec]").forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, [stage]);
 
   /* rotate thinking labels */
   useEffect(() => {
@@ -512,13 +587,21 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   const lastAi = msgs.length && msgs[msgs.length - 1].who === "ai" ? msgs[msgs.length - 1].text : "";
   const inputActive = stage === "greeting" || stage === "conversation";
   const showGoal = goalMode;
-  // ECLIPSE hero: the orb DOMINATES the greeting (root-cause fix — a presence
-  // can't be a 200px marble lost in a black void). Desktop ~380px, mobile 62vw.
-  const orbSize = stage === "greeting"
-    ? (typeof window !== "undefined" && window.innerWidth < 640 ? Math.round(Math.min(window.innerWidth * 0.62, 300)) : 380)
+  // ECLIPSE choreography: the orb OWNS boot + the landing hero, recedes while
+  // the story plays, swells huge at the awakening, then settles as interviewer.
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const orbSize =
+    stage === "boot" ? (isMobile ? Math.round(Math.min(window.innerWidth * 0.56, 280)) : 320)
+    : stage === "landing" ? (landSec === 0 ? (isMobile ? Math.round(Math.min(window.innerWidth * 0.6, 300)) : 340) : landSec === 4 ? (isMobile ? 250 : Math.min(420, Math.round(vh * 0.48))) : (isMobile ? 90 : 130))
+    : stage === "greeting" ? (isMobile ? 150 : 190)
     : stage === "thinking" ? 230 : stage === "weaving" ? 44 : 72;
-  const orbTop = stage === "greeting" ? "11vh" : stage === "thinking" ? "30vh" : stage === "weaving" ? "84px" : "78px";
-  const greetTextTop = `calc(11vh + ${orbSize + 72}px)`;
+  const orbTop =
+    stage === "boot" ? "28vh"
+    : stage === "landing" ? (landSec === 0 ? "9vh" : landSec === 4 ? "15vh" : "6vh")
+    : stage === "greeting" ? "10vh"
+    : stage === "thinking" ? "30vh" : stage === "weaving" ? "84px" : "78px";
+  const greetTextTop = `calc(10vh + ${orbSize + 48}px)`;
 
   // Delegate to رابط, the one global orb: it flies to each stage and carries
   // the progress ring / pulse rings. Hidden at the reveal (retires to the
@@ -532,25 +615,92 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
 
   /* ══════════════════ render ══════════════════ */
   return (
-    <div dir={rtl ? "rtl" : "ltr"} className="relative min-h-screen overflow-hidden" style={{ background: stage === "reveal" ? "var(--glass-bg)" : "var(--cosmos-bg)", color: stage === "reveal" ? "var(--glass-text)" : "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
+    <div dir={rtl ? "rtl" : "ltr"} className={stage === "landing" ? "relative min-h-screen overflow-x-hidden" : "relative min-h-screen overflow-hidden"} style={{ background: stage === "reveal" ? "var(--glass-bg)" : "var(--cosmos-bg)", color: stage === "reveal" ? "var(--glass-text)" : "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
       {/* the world's light — a silver bloom behind the orb + vignette edges */}
       {stage !== "reveal" && <div className="stage-bloom" aria-hidden />}
 
       {/* SEO headline — visually hidden but crawlable */}
       <h1 className="sr-only">{t.seo_h1}. {t.seo_sub}</h1>
 
-      {/* nav */}
+      {/* nav — EMPTY by design: the brand IS the orb, no header text at all */}
       <nav className="relative z-40 mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-        <div className="flex items-center gap-2.5">
-          {/* the brand IS the orb — no colored box */}
-          <AiOrb size={24} />
-          <span className="text-[15px] font-bold tracking-tight" style={{ color: stage === "reveal" ? "var(--glass-text)" : "#f4f5f3" }}>ResumeAI</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Link href={t.optimize_href} className="hidden min-h-11 items-center px-3 text-sm font-semibold sm:flex" style={{ color: stage === "reveal" ? "var(--glass-muted)" : "rgba(244,245,243,0.6)" }}>{t.escape}</Link>
-          <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: "rgba(232,236,245,0.75)" }}>{rtl ? "English" : "عربي"}</Link>
-        </div>
+        <AiOrb size={24} />
+        <span />
       </nav>
+
+      {/* ══ STATE 0: BOOT — Windows-style opening. Text appears, then FADES. ══ */}
+      {stage === "boot" && (
+        <div className="fixed inset-0 z-20">
+          <AnimatePresence mode="wait">
+            {bootLine > 0 && (
+              <motion.p key={bootLine} initial={{ opacity: 0, y: 16, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, y: -16, filter: "blur(8px)" }} transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+                className="absolute inset-x-0 px-6 text-center font-bold" style={{ top: "64vh", fontSize: "clamp(1.8rem, 5.5vw, 3rem)", letterSpacing: "-0.02em" }}>
+                {bootLine === 1 ? t.boot_hi : t.boot_me}
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* ══ STATE 0.5: LANDING — the scroll explains, the orb follows ══ */}
+      {stage === "landing" && (
+        <div className="relative z-10">
+          {/* S0 — hero */}
+          <section data-sec="0" className="relative flex min-h-screen flex-col items-center justify-end px-6 pb-[13vh] text-center">
+            <p className="font-extrabold" style={{ fontSize: "clamp(2rem, 6.5vw, 3.6rem)", lineHeight: 1.16, letterSpacing: "-0.02em" }}>{typedGreet}<span className="animate-pulse" style={{ color: ACCENT }}>▌</span></p>
+            <p className="mt-4 max-w-md text-base" style={{ color: "var(--cosmos-muted)", lineHeight: 1.9 }}>{t.greet_sub}</p>
+            <motion.div animate={{ y: [0, 7, 0] }} transition={{ repeat: Infinity, duration: 1.9, ease: "easeInOut" }} className="mt-12 text-xl" style={{ color: "var(--cosmos-faint)" }}>⌄</motion.div>
+            <p className="mt-1 text-xs" style={{ color: "var(--cosmos-faint)" }}>{t.land_scroll}</p>
+          </section>
+
+          {/* S1 — the problem */}
+          <section data-sec="1" className="relative grid min-h-screen place-items-center px-6">
+            <motion.div initial={{ opacity: 0, y: 44, filter: "blur(8px)" }} whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }} viewport={{ once: true, amount: 0.5 }} transition={{ duration: 0.8, ease: [0.32, 0.72, 0, 1] }}>
+              <div className="float-slow text-center">
+                <Counter to={75} suffix={t.land_problem_num} />
+                <p className="mx-auto mt-6 max-w-md text-lg" style={{ color: "var(--cosmos-muted)", lineHeight: 1.9 }}>{t.land_problem}</p>
+              </div>
+            </motion.div>
+          </section>
+
+          {/* S2 — the solution (live chat demo) */}
+          <section data-sec="2" className="relative grid min-h-screen place-items-center px-6">
+            <div className="float-slow flex w-full max-w-sm flex-col gap-3">
+              <motion.div initial={{ opacity: 0, x: rtl ? -28 : 28 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true, amount: 0.6 }} transition={{ duration: 0.55 }} className="self-end rounded-2xl px-4 py-2.5 text-sm" style={{ background: "rgba(139,92,246,0.18)", lineHeight: 1.85 }}>{t.demo_user}</motion.div>
+              <motion.div initial={{ opacity: 0, x: rtl ? 28 : -28 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true, amount: 0.6 }} transition={{ duration: 0.55, delay: 0.55 }} className="self-start rounded-2xl px-4 py-2.5 text-sm" style={{ background: "rgba(255,255,255,0.06)", lineHeight: 1.85 }}>{t.demo_ai}</motion.div>
+              <motion.p initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.6 }} transition={{ duration: 0.6, delay: 1.15 }} className="mt-8 text-center text-xl font-bold" style={{ lineHeight: 1.7 }}>{t.land_solution}</motion.p>
+            </div>
+          </section>
+
+          {/* S3 — the result (CV weaving itself) */}
+          <section data-sec="3" className="relative grid min-h-screen place-items-center px-6">
+            <motion.div initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.45 }} transition={{ duration: 0.7 }} className="w-full max-w-md">
+              <div className="float-slow rounded-3xl border p-6" style={{ background: "rgba(255,255,255,0.03)", borderColor: "var(--line)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+                {[t.land_cv_l1, t.land_cv_l2, t.land_cv_l3].map((l, i) => (
+                  <motion.div key={i} initial={{ opacity: 0, y: 10 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.6 }} transition={{ duration: 0.5, delay: 0.3 + i * 0.4 }} className="py-2.5 text-sm" style={{ lineHeight: 1.9, borderBottom: i < 2 ? "1px solid var(--line)" : "none", fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "var(--cosmos-text)" : "var(--cosmos-muted)" }}>{l}</motion.div>
+                ))}
+                <motion.p initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ delay: 1.6, duration: 0.6 }} className="pt-5 text-center text-lg font-bold" style={{ lineHeight: 1.7 }}>{t.land_result}</motion.p>
+              </div>
+            </motion.div>
+          </section>
+
+          {/* S4 — the awakening: choose your path */}
+          <section data-sec="4" className="relative flex min-h-screen flex-col items-center justify-end px-6 pb-[9vh]">
+            <div className="flex w-full max-w-2xl flex-col gap-4 sm:flex-row">
+              <motion.button initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.35 }} transition={{ duration: 0.65, ease: [0.32, 0.72, 0, 1] }} whileHover={{ scale: 1.03, y: -5 }} whileTap={{ scale: 0.97 }} onClick={() => setStage("greeting")} className="path-card flex-1 rounded-3xl border p-7 text-start"
+                style={{ background: "rgba(255,255,255,0.05)", borderColor: "rgba(185,166,255,0.3)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", boxShadow: "0 24px 60px rgba(0,0,0,0.4)" }}>
+                <p className="text-xl font-bold">{t.path_new}</p>
+                <p className="mt-2 text-sm" style={{ color: "var(--cosmos-muted)" }}>{t.path_new_sub}</p>
+              </motion.button>
+              <motion.button initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.35 }} transition={{ duration: 0.65, delay: 0.12, ease: [0.32, 0.72, 0, 1] }} whileHover={{ scale: 1.03, y: -5 }} whileTap={{ scale: 0.97 }} onClick={startUpdate} className="path-card flex-1 rounded-3xl border p-7 text-start"
+                style={{ background: "rgba(255,255,255,0.03)", borderColor: "var(--line)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", boxShadow: "0 24px 60px rgba(0,0,0,0.4)" }}>
+                <p className="text-xl font-bold">{t.path_scan}</p>
+                <p className="mt-2 text-sm" style={{ color: "var(--cosmos-muted)" }}>{t.path_scan_sub}</p>
+              </motion.button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* ══ STATE 1: GREETING ══ */}
       <AnimatePresence>
@@ -655,11 +805,12 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             )}
             <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold disabled:opacity-30" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)", color: "#ffffff" }}>↑</button>
           </div>
-          {stage === "greeting" && (
-            <div className="mt-2 flex justify-center gap-4 text-xs">
-              <button onClick={startUpdate} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.have_cv}</button>
-            </div>
-          )}
+          <div className="mt-2.5 flex items-center justify-center gap-3.5 text-xs" style={{ color: "var(--cosmos-faint, rgba(244,245,243,0.5))" }}>
+            {stage === "greeting" && <button onClick={startUpdate} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.have_cv}</button>}
+            {stage === "greeting" && <span>·</span>}
+            {/* language lives here now — the header is empty by design */}
+            <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{rtl ? "English" : "عربي"}</Link>
+          </div>
         </div>
       )}
 
