@@ -43,7 +43,7 @@ export default async function PublicResumePage({ params }: { params: Promise<{ s
             <AiOrb size={22} />
             {ar ? "سُوِّيت بـ cv.rabit.sa" : "Built with cv.rabit.sa"}
           </Link>
-          <Link href={ar ? "/ar" : "/"} className="rounded-full px-7 py-3 text-sm font-bold text-white" style={{ background: "#16a34a", boxShadow: "0 6px 24px rgba(22,163,74,0.3)" }}>
+          <Link href={ar ? "/ar" : "/"} className="rounded-full px-7 py-3 text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#8b5cf6,#7c3aed)", boxShadow: "0 6px 24px rgba(139,92,246,0.35)" }}>
             {ar ? "سوّ سيرتك مثلها — مجاناً ↗" : "Make your own like this — free ↗"}
           </Link>
         </div>
