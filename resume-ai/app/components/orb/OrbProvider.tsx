@@ -17,7 +17,8 @@ import AiOrb, { type OrbState } from "../AiOrb";
 export interface OrbScene {
   visible: boolean;
   mood: OrbState;
-  top: string;        // vh or px from the top; horizontally always centered
+  top: string;        // vh or px from the top
+  left?: string;      // horizontal anchor (default "50%" = centered)
   size: number;
   progress: number;   // 0–100 ring around the orb (0 = none)
   rings: boolean;     // full-screen aurora pulse rings (thinking)
@@ -25,7 +26,7 @@ export interface OrbScene {
   radio: boolean;     // radio-pulse broadcast (magic link sent)
   z: number;
 }
-const DEFAULT: OrbScene = { visible: false, mood: "idle", top: "40vh", size: 120, progress: 0, rings: false, badge: null, radio: false, z: 30 };
+const DEFAULT: OrbScene = { visible: false, mood: "idle", top: "40vh", left: "50%", size: 120, progress: 0, rings: false, badge: null, radio: false, z: 30 };
 
 interface Ctx { setScene: (s: Partial<OrbScene> | null) => void }
 const OrbCtx = createContext<Ctx>({ setScene: () => {} });
@@ -67,10 +68,10 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
       {children}
       {scene.visible && (
         <motion.div
-          className="pointer-events-none fixed left-1/2"
+          className="pointer-events-none fixed"
           style={{ zIndex: scene.z }}
           initial={false}
-          animate={{ top: scene.top, x: "-50%", opacity: 1 }}
+          animate={{ top: scene.top, left: scene.left ?? "50%", x: "-50%", opacity: 1 }}
           transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 18 }}
         >
           <div className={`relative flex items-center justify-center ${scene.radio ? "radio-pulse" : ""}`} style={{ width: displaySize, height: displaySize }}>

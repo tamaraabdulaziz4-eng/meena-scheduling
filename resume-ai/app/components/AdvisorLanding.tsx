@@ -606,11 +606,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   // Delegate to رابط, the one global orb: it flies to each stage and carries
   // the progress ring / pulse rings. Hidden at the reveal (retires to the
   // inline green ✓ in the reveal header).
+  // While the STORY plays (landing sections 1–3), the orb steps ASIDE to the
+  // corner — it watches, it never sits on top of the content (overlap bug fix).
+  const orbLeft = stage === "landing" && landSec >= 1 && landSec <= 3 ? (rtl ? "14%" : "86%") : "50%";
   useOrbScene(
     stage === "reveal"
       ? { visible: false }
-      : { visible: true, top: orbTop, size: orbSize, mood: stage === "thinking" ? "thinking" : micOn ? "listening" : "idle", progress: stage === "conversation" ? progress : 0, rings: stage === "thinking", badge: null, radio: false, z: 30 },
-    [stage, orbSize, micOn, progress]
+      : { visible: true, top: orbTop, left: orbLeft, size: orbSize, mood: stage === "thinking" ? "thinking" : micOn ? "listening" : "idle", progress: stage === "conversation" ? progress : 0, rings: stage === "thinking", badge: null, radio: false, z: 30 },
+    [stage, orbSize, orbLeft, micOn, progress]
   );
 
   /* ══════════════════ render ══════════════════ */
@@ -631,6 +634,8 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       {/* ══ STATE 0: BOOT — Windows-style opening. Text appears, then FADES. ══ */}
       {stage === "boot" && (
         <div className="fixed inset-0 z-20">
+          {/* the spotlight the words stand in (reference: 'Hi, we're Eloquent') */}
+          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 62% 36% at 50% 62%, rgba(232,236,245,0.10), transparent 70%)" }} />
           <AnimatePresence mode="wait">
             {bootLine > 0 && (
               <motion.p key={bootLine} initial={{ opacity: 0, y: 16, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, y: -16, filter: "blur(8px)" }} transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
@@ -801,9 +806,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               </label>
             )}
             {micSupported && !pasteMode && (
-              <button onClick={toggleMic} title={t.mic_title} aria-label={t.mic_title} className="grid h-11 w-11 place-items-center rounded-xl text-lg" style={micOn ? { background: ACCENT, color: "#ffffff" } : { border: "1px solid rgba(255,255,255,0.2)" }}>🎙</button>
+              <button onClick={toggleMic} title={t.mic_title} aria-label={t.mic_title} className="grid h-11 w-11 place-items-center rounded-full text-lg" style={micOn ? { background: ACCENT, color: "#ffffff" } : { border: "1px solid rgba(255,255,255,0.2)" }}>🎙</button>
             )}
-            <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold disabled:opacity-30" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)", color: "#ffffff" }}>↑</button>
+            <button onClick={() => onSend()} disabled={!input.trim()} className="grid h-11 w-11 place-items-center rounded-full text-lg font-bold disabled:opacity-30" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)", color: "#ffffff" }}>↑</button>
           </div>
           <div className="mt-2.5 flex items-center justify-center gap-3.5 text-xs" style={{ color: "var(--cosmos-faint, rgba(244,245,243,0.5))" }}>
             {stage === "greeting" && <button onClick={startUpdate} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.have_cv}</button>}

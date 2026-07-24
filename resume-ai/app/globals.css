@@ -730,6 +730,35 @@ body {
   /* FLOATING by law — nothing on this site sits still like Android chrome */
   animation: dock-float 6.5s ease-in-out infinite;
 }
+/* the aurora it carries — colored light leaking around the pill's edges,
+   circling slowly (the Apple-Intelligence glow from the reference) */
+@property --dock-aura-a { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+.dock::before {
+  content: "";
+  position: absolute;
+  inset: -9px -16px;
+  border-radius: 36px;
+  background: conic-gradient(from var(--dock-aura-a), #8b5cf6, #22d3ee, #f59e0b, #ec4899, #8b5cf6);
+  filter: blur(24px);
+  opacity: 0.42;
+  z-index: -1;
+  animation: dock-aura 10s linear infinite;
+}
+@keyframes dock-aura { to { --dock-aura-a: 360deg; } }
+/* light pooled beneath it */
+.dock::after {
+  content: "";
+  position: absolute;
+  left: 8%; right: 8%; bottom: -12px;
+  height: 26px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(139,92,246,0.45), transparent 70%);
+  filter: blur(14px);
+  z-index: -1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock::before { animation: none; }
+}
 @keyframes dock-float {
   0%, 100% { transform: translateX(-50%) translateY(0); }
   50% { transform: translateX(-50%) translateY(-6px); }
