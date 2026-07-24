@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import OrbBrand from "../../components/OrbBrand";
+import OrbSceneSetter from "../../components/orb/OrbSceneSetter";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ShareButtons from "../../components/ShareButtons";
@@ -55,9 +57,10 @@ export default async function ScorePage(
       className="flex min-h-screen flex-col items-center justify-center px-6 py-12"
       style={{ background: "var(--bg)", color: "var(--fg)" }}
     >
+      <OrbSceneSetter visible mood="idle" top="14vh" left="86%" size={100} />
       <div className="card w-full max-w-md p-8 text-center" style={{ borderColor: `${accent}55` }}>
         <div className="flex items-center justify-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+          <OrbBrand size={26} />
           <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
         </div>
         <div className="mt-6 font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>

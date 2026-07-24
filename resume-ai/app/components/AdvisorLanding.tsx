@@ -779,12 +779,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         {(stage === "weaving" || (stage === "conversation" && showCvMobile)) && (
           <motion.div key="weave" initial={{ opacity: 0, y: reduce ? 0 : 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduce ? 0 : 20 }}
             transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute inset-x-0 z-30 mx-auto px-5" style={{ top: "150px", bottom: "20px", maxWidth: 640 }}>
-            <div className="glass-panel h-full overflow-y-auto p-5" style={{ background: "rgba(10,14,26,0.9)" }}>
+            className="absolute inset-x-0 z-30 mx-auto px-5" style={{ top: "130px", bottom: "20px", maxWidth: 720 }}>
+            <div className="glass-panel relative h-full overflow-y-auto p-5" style={{ background: "rgba(10,14,26,0.9)" }}>
+              {stage === "weaving" && <div className="weave-scan" aria-hidden />}
               <div className="mb-3 flex items-center justify-between">
                 <span className="font-mono text-[11px] font-bold uppercase tracking-wider" style={{ background: "linear-gradient(90deg,#8B5CF6,#EC4899,#F59E0B)", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{t.weaving_title}</span>
                 {showCvMobile && <button onClick={() => setShowCvMobile(false)} className="text-xs" style={{ color: "var(--cosmos-muted)" }}>✕</button>}
               </div>
+              {stage === "weaving" && <div className="weave-bar mb-4" aria-hidden />}
               {cvPanelBody()}
             </div>
           </motion.div>
@@ -827,10 +829,11 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       {/* ══ STATE 5: REVEAL (glass world) ══ */}
       {stage === "reveal" && (
         <div className="relative z-20 mx-auto max-w-5xl px-5 pb-24 pt-4">
-          <div className="mb-6 flex items-center gap-3">
+          <motion.div initial={{ opacity: 0, y: reduce ? 0 : 22, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, ease: [0.32, 0.72, 0, 1] }}
+            className="mb-6 flex items-center gap-3">
             <AiOrb size={40} state="done" />
             <h2 className="text-2xl font-extrabold">{t.reveal_title}</h2>
-          </div>
+          </motion.div>
           {buildFail ? (
             <div className="glass-surface p-6 text-center">
               <p className="mb-3 text-sm" style={{ color: "var(--glass-muted)" }}>{t.build_fail}</p>
@@ -839,16 +842,18 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           ) : (
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
               {/* template preview */}
-              <div className="glass-surface p-5" style={{ background: "rgba(255,255,255,0.9)" }}>
+              <motion.div initial={{ opacity: 0, y: reduce ? 0 : 26, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, delay: 0.15, ease: [0.32, 0.72, 0, 1] }}
+                className="glass-surface p-5" style={{ background: "rgba(255,255,255,0.9)" }}>
                 <div className="mb-3 flex flex-wrap gap-1.5">
                   {TEMPLATE_CATALOG.map((tp) => (
                     <button key={tp.slug} onClick={() => setTpl(tp)} className="min-h-9 rounded-lg px-2.5 text-[11px] font-semibold" style={tpl.slug === tp.slug ? { background: tp.accent, color: "#fff" } : { border: "1px solid #e5e7eb", color: "#4b5563" }}>{rtl ? tp.nameAr : tp.name}</button>
                   ))}
                 </div>
                 {cv && <ResumeTemplate text={cv} name={profile.name || "resume"} variant={tpl.variant} accent={tpl.accent} fitWidth />}
-              </div>
+              </motion.div>
               {/* score + actions */}
-              <div className="space-y-4">
+              <motion.div initial={{ opacity: 0, y: reduce ? 0 : 26, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, delay: 0.3, ease: [0.32, 0.72, 0, 1] }}
+                className="space-y-4">
                 <div className="glass-surface p-5 text-center">
                   <h3 className="mb-3 text-sm font-bold">{t.reveal_score}</h3>
                   {scorePhase === "done" && score ? <div className="mx-auto"><ScoreOrb value={score.value} size={150} /></div>
@@ -873,7 +878,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                   <PublishLink ar={rtl} text={cv} name={profile.name} role={profile.role} />
                   <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "#b45309" }}>{t.unlock}</Link>
                 </div>
-              </div>
+              </motion.div>
             </div>
           )}
         </div>

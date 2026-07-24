@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import OrbBrand from "../components/OrbBrand";
+import OrbSceneSetter from "../components/orb/OrbSceneSetter";
 import Link from "next/link";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
@@ -19,10 +21,11 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 export default function TermsPage() {
   return (
     <main dir="rtl" lang="ar" className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
+      <OrbSceneSetter visible mood="idle" top="14vh" left="86%" size={100} />
       <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <OrbBrand size={26} />
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <Link href="/privacy" className="text-sm" style={{ color: "var(--muted)" }}>سياسة الخصوصية</Link>

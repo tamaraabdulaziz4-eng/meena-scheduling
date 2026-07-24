@@ -573,6 +573,35 @@ body {
 /* Advisor entrances: each question and each new CV line springs in */
 .advisor-prompt { animation: prompt-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
 .cv-line-in { animation: prompt-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ══ WEAVING THEATER — light sweeping over the page as it writes itself ══ */
+.weave-scan {
+  position: absolute; inset: 0; pointer-events: none; z-index: 5;
+  background: linear-gradient(180deg, transparent 0%, rgba(185,166,255,0.10) 46%, rgba(236,72,153,0.14) 50%, rgba(185,166,255,0.10) 54%, transparent 100%);
+  background-size: 100% 240%;
+  mix-blend-mode: screen;
+  animation: weave-scan 3.2s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+}
+@keyframes weave-scan {
+  0% { background-position: 0% -60%; }
+  100% { background-position: 0% 160%; }
+}
+.weave-bar {
+  height: 2px; border-radius: 999px; overflow: hidden; position: relative;
+  background: rgba(255,255,255,0.07);
+}
+.weave-bar::after {
+  content: ""; position: absolute; inset: 0; width: 42%;
+  background: linear-gradient(90deg, transparent, #8B5CF6, #EC4899, #F59E0B, transparent);
+  animation: weave-bar 1.6s ease-in-out infinite;
+}
+@keyframes weave-bar {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(260%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .weave-scan, .weave-bar::after { animation: none; }
+}
 @keyframes prompt-in {
   from { opacity: 0; transform: translateY(14px) scale(0.985); }
   to { opacity: 1; transform: none; }

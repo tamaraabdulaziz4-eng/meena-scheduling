@@ -1,4 +1,6 @@
 import Link from "next/link";
+import OrbBrand from "./OrbBrand";
+import OrbSceneSetter from "./orb/OrbSceneSetter";
 
 export interface Faq {
   q: string;
@@ -24,10 +26,11 @@ export interface SeoLandingProps {
 export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs, ctaLine, methodology }: SeoLandingProps) {
   return (
     <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
+      <OrbSceneSetter visible mood="idle" top="14vh" left="86%" size={100} />
       <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <OrbBrand size={26} />
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
@@ -112,7 +115,7 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            <OrbBrand size={20} />
             <span className="text-sm font-bold">ResumeAI</span>
           </div>
           <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
