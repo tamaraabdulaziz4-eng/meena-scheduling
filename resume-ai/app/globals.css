@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #05070d;            /* COSMOS — the creation world */
+  --bg: #0b0626;            /* COSMOS — the creation world (deep violet) */
   --surface: #101316;
   --fg: #f5f6fa;
   /* Bumped for WCAG AA contrast on the dark bg (flagged in audit):
@@ -669,6 +669,13 @@ body {
   z-index: 1; /* above page backgrounds, below content (z-10+) and the orb (z-30) */
   pointer-events: none;
   overflow: hidden;
+}
+.cosmos-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 .amb-tint {
   position: absolute;

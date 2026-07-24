@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef } from "react";
 import type { OrbState } from "../AiOrb";
+import CosmosField from "./CosmosField";
 
 const TINTS: Record<string, string> = {
   idle: "rgba(232,236,245,0.04)",
@@ -66,6 +67,7 @@ export default function AmbientField({ mood, active }: { mood: OrbState; active:
 
   return (
     <div ref={ref} className={`ambient-field ${active ? "is-active" : ""}`} aria-hidden>
+      <CosmosField />
       <div className="amb-tint" style={{ background: TINTS[mood] ?? TINTS.idle }} />
       <div className="amb-parallax">
         <div className="amb-drift d1" />
