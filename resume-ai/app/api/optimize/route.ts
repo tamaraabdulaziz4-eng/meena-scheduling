@@ -64,6 +64,7 @@ Rules for the rewritten resume — NO-FABRICATION CONTRACT (absolute, overrides 
 - Where a metric would strengthen a bullet but the user gave none, write exactly: [add your real number] — never estimate, never make one up.
 - You may only: rephrase, reorganize, translate, use stronger verbs, and surface the user's OWN facts more clearly.
 - Where a required skill is missing, surface adjacent/transferable experience from the source — never claim the missing skill.
+- TONE ELEVATION: the source may be written in casual dialect, slang, or messy fragments (يعني، كذا، الحين، اشتغل، "i do everything") — NEVER let that phrasing leak into the resume. Every line must be elevated to polished professional language.
 
 RICHNESS MANDATE (equally absolute — this is what the user pays for; a thin resume is a FAILED result):
 - The rewritten resume must read as PROFESSIONALLY WRITTEN, never as a summary of the source. Target 260-450 words for a one-page CV — NEVER shorter than the source in coverage, and almost always substantially longer in professional language.
@@ -382,7 +383,9 @@ export async function POST(req: NextRequest) {
     if (!resume) {
       return NextResponse.json({ error: "Resume is required." }, { status: 400 });
     }
-    if (resume.trim().length < 50) {
+    // Naive users often write a single line — the honesty system (placeholders)
+    // handles sparse input; a hard rejection just strands them. Only block true empties.
+    if (resume.trim().length < 25) {
       return NextResponse.json({ error: "Please paste a fuller resume (at least a few lines)." }, { status: 400 });
     }
     // Job description is OPTIONAL: with one we match against it; without, general improvement.

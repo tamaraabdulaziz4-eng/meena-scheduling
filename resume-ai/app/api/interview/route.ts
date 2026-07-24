@@ -171,7 +171,8 @@ Honor THE ONE LAW: preserve every number/currency/proper-noun the user gave; nev
       return NextResponse.json({
         think: String(j.think || ""),
         action: ["ASK", "DEEPEN", "REPHRASE", "SUGGEST", "FINISH"].includes(String(j.action)) ? j.action : "ASK",
-        say: String(j.say || ""),
+        // never dead-air the user: if the model returned an empty say, fall back
+        say: String(j.say || "").trim() || (outputLang === "ar" ? "أخبرني المزيد عن دورك ومهامك اليومية." : "Tell me more about your role and daily tasks."),
         profile_patch: j.profile_patch && typeof j.profile_patch === "object" ? j.profile_patch : {},
         resume_lines: resumeLines,
         chips: Array.isArray(j.chips) ? j.chips.slice(0, 4) : [],
