@@ -71,6 +71,16 @@ const T = {
     path_new_sub: "مقابلة دقيقتين · مجاناً",
     path_scan: "عندي سيرة — افحصها",
     path_scan_sub: "درجة ATS فورية",
+    tools_title: "كل شيء — يبدأ من هنا",
+    tool_templates: "القوالب",
+    tool_interview: "تحضير المقابلة",
+    tool_live: "مقابلة حية بالفيديو",
+    tool_linkedin: "محسّن لينكدإن",
+    tool_examples: "أمثلة السير",
+    tool_pricing: "الأسعار",
+    tool_account: "حسابي",
+    browse_templates: "كل القوالب ←",
+    reveal_tools: "أدواتك — كلها ضمن الباقة:",
     think: ["يفكّر…", "يصيغ…", "يرتّب أفكارك…"],
     input_ph: "اكتب جوابك…",
     send: "أرسل",
@@ -129,6 +139,16 @@ const T = {
     path_new_sub: "A two-minute interview · free",
     path_scan: "I have a resume — scan it",
     path_scan_sub: "Instant ATS score",
+    tools_title: "Everything — starts here",
+    tool_templates: "Templates",
+    tool_interview: "Interview prep",
+    tool_live: "Live video interview",
+    tool_linkedin: "LinkedIn optimizer",
+    tool_examples: "Resume examples",
+    tool_pricing: "Pricing",
+    tool_account: "My account",
+    browse_templates: "All templates →",
+    reveal_tools: "Your tools — all in the pack:",
     think: ["Thinking…", "Writing…", "Organizing your thoughts…"],
     input_ph: "Type your answer…",
     send: "Send",
@@ -703,6 +723,23 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                 <p className="mt-2 text-sm" style={{ color: "var(--cosmos-muted)" }}>{t.path_scan_sub}</p>
               </motion.button>
             </div>
+            {/* the constellation — every tool, page and door starts here */}
+            <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.4 }} transition={{ duration: 0.6, delay: 0.28, ease: [0.32, 0.72, 0, 1] }}
+              className="mt-9 flex w-full max-w-2xl flex-wrap items-center justify-center gap-2">
+              <span className="mb-1.5 w-full text-center font-mono text-[11px] uppercase tracking-[0.18em]" style={{ color: "rgba(244,245,243,0.4)" }}>{t.tools_title}</span>
+              {([
+                [t.tool_templates, "/templates"],
+                [t.tool_interview, rtl ? "/ar/interview" : "/interview"],
+                [t.tool_live, "/interview-live"],
+                [t.tool_linkedin, rtl ? "/ar/linkedin" : "/linkedin"],
+                [t.tool_examples, rtl ? "/ar/resume-examples" : "/resume-examples"],
+                [t.tool_pricing, "/pricing"],
+                [t.tool_account, rtl ? "/ar/account" : "/account"],
+              ] as [string, string][]).map(([label, href]) => (
+                <Link key={href} href={href} className="tool-chip rounded-full px-4 py-2 text-xs font-semibold"
+                  style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(244,245,243,0.78)", background: "rgba(255,255,255,0.04)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>{label}</Link>
+              ))}
+            </motion.div>
           </section>
         </div>
       )}
@@ -726,6 +763,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             <button onClick={restoreDraft} className="min-h-11 rounded-xl px-6 text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>{t.continue_btn}</button>
             <button onClick={hardRestart} className="min-h-11 rounded-xl px-6 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(244,245,243,0.7)" }}>{t.restart_btn}</button>
           </div>
+          <Link href={rtl ? "/ar/account" : "/account"} className="mt-4 text-xs font-semibold" style={{ color: "rgba(244,245,243,0.55)" }}>{t.tool_account} ←</Link>
         </div>
       )}
 
@@ -820,6 +858,10 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           <div className="mt-2.5 flex items-center justify-center gap-3.5 text-xs" style={{ color: "var(--cosmos-faint, rgba(244,245,243,0.5))" }}>
             {stage === "greeting" && <button onClick={startUpdate} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.have_cv}</button>}
             {stage === "greeting" && <span>·</span>}
+            <Link href="/pricing" className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.tool_pricing}</Link>
+            <span>·</span>
+            <Link href={rtl ? "/ar/account" : "/account"} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.tool_account}</Link>
+            <span>·</span>
             {/* language lives here now — the header is empty by design */}
             <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{rtl ? "English" : "عربي"}</Link>
           </div>
@@ -848,6 +890,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                   {TEMPLATE_CATALOG.map((tp) => (
                     <button key={tp.slug} onClick={() => setTpl(tp)} className="min-h-9 rounded-lg px-2.5 text-[11px] font-semibold" style={tpl.slug === tp.slug ? { background: tp.accent, color: "#fff" } : { border: "1px solid #e5e7eb", color: "#4b5563" }}>{rtl ? tp.nameAr : tp.name}</button>
                   ))}
+                  <Link href="/templates" className="min-h-9 content-center px-2 text-[11px] font-bold" style={{ color: "#7C3AED" }}>{t.browse_templates}</Link>
                 </div>
                 {cv && <ResumeTemplate text={cv} name={profile.name || "resume"} variant={tpl.variant} accent={tpl.accent} fitWidth />}
               </motion.div>
@@ -876,6 +919,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                     <DocxExport text={cv} watermark={score?.watermark !== false} lang={lang} filename={lang === "ar" ? "resume-ar.docx" : "resume.docx"} label="↓ Word" />
                   </div>
                   <PublishLink ar={rtl} text={cv} name={profile.name} role={profile.role} />
+                  <div className="mt-4">
+                    <div className="mb-1.5 text-xs font-bold">{t.reveal_tools}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Link href={rtl ? "/ar/interview" : "/interview"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_interview}</Link>
+                      <Link href="/interview-live" className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_live}</Link>
+                      <Link href={rtl ? "/ar/linkedin" : "/linkedin"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_linkedin}</Link>
+                    </div>
+                  </div>
                   <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "#b45309" }}>{t.unlock}</Link>
                 </div>
               </motion.div>

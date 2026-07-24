@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import HubLinks from "../components/HubLinks";
 import OrbBrand from "../components/OrbBrand";
 import OrbSceneSetter from "../components/orb/OrbSceneSetter";
 import Link from "next/link";
@@ -47,6 +48,7 @@ export default function TemplatesPage() {
           Designed PDF is great for recruiters &amp; LinkedIn. For the applicant-tracking upload, use the plain ATS PDF/Word — both are included.
         </p>
       </section>
+          <HubLinks current="/templates" />
     </main>
   );
 }

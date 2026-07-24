@@ -1,6 +1,7 @@
 import Link from "next/link";
 import OrbBrand from "./OrbBrand";
 import OrbSceneSetter from "./orb/OrbSceneSetter";
+import HubLinks from "./HubLinks";
 
 export interface Faq {
   q: string;
@@ -111,6 +112,8 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
           <p className="mt-4 font-mono text-xs" style={{ color: "var(--faint)" }}>Free scan · No card required</p>
         </div>
       </section>
+
+      <HubLinks />
 
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import HubLinks from "../../components/HubLinks";
 import OrbBrand from "../../components/OrbBrand";
 import OrbSceneSetter from "../../components/orb/OrbSceneSetter";
 import Link from "next/link";
@@ -55,6 +56,7 @@ export default function Hub() {
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
         <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · خدمة سير ذاتية من Rabit</p>
       </footer>
+          <HubLinks ar current="/ar/resume-examples" />
     </main>
   );
 }
