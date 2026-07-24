@@ -84,7 +84,7 @@ const T = {
     welcome_back: "أهلاً بعودتك. نكمل من وين وقفنا؟",
     continue_btn: "كمّل",
     restart_btn: "من جديد",
-    reveal_title: "سيرتك جاهزة 🎉",
+    reveal_title: "سيرتك جاهزة",
     reveal_score: "نتيجتها أمام أنظمة التوظيف",
     tpl_pick: "غيّر القالب:",
     lang_pick: "لغة السيرة:",
@@ -98,9 +98,9 @@ const T = {
     upload_fail: "ما قدرت أقرأ الملف — الصق النص.",
     cv_short: "النص قصير — الصق سيرتك كاملة.",
     goal_q: "وصلتني سيرتك 👌 وش نسوي فيها؟",
-    goal_add: "➕ أضف خبرة",
-    goal_tailor: "🎯 فصّلها على وظيفة",
-    goal_improve: "✨ حسّنها",
+    goal_add: "أضف خبرة",
+    goal_tailor: "فصّلها على وظيفة",
+    goal_improve: "حسّنها",
     jobad_q: "الصق إعلان الوظيفة، أو اكتب «تخطَّ»",
     updating: "أدمج الجديد وأعيد صياغة سيرتك 🪄",
     sections: { exp: "الخبرة", edu: "التعليم", skills: "المهارات", extras: "إضافات" },
@@ -142,7 +142,7 @@ const T = {
     welcome_back: "Welcome back. Continue where we left off?",
     continue_btn: "Continue",
     restart_btn: "Start over",
-    reveal_title: "Your resume is ready 🎉",
+    reveal_title: "Your resume is ready",
     reveal_score: "Its score against ATS robots",
     tpl_pick: "Switch template:",
     lang_pick: "CV language:",
@@ -156,9 +156,9 @@ const T = {
     upload_fail: "Couldn't read the file — paste the text.",
     cv_short: "That's short — paste your full resume.",
     goal_q: "Got your resume 👌 What shall we do with it?",
-    goal_add: "➕ Add experience",
-    goal_tailor: "🎯 Tailor to a job",
-    goal_improve: "✨ Improve it",
+    goal_add: "Add experience",
+    goal_tailor: "Tailor to a job",
+    goal_improve: "Improve it",
     jobad_q: "Paste the job posting, or type \"skip\"",
     updating: "Merging the new material and rewriting your resume 🪄",
     sections: { exp: "Experience", edu: "Education", skills: "Skills", extras: "Extras" },
@@ -782,7 +782,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             className="absolute inset-x-0 z-30 mx-auto px-5" style={{ top: "150px", bottom: "20px", maxWidth: 640 }}>
             <div className="glass-panel h-full overflow-y-auto p-5" style={{ background: "rgba(10,14,26,0.9)" }}>
               <div className="mb-3 flex items-center justify-between">
-                <span className="font-mono text-[11px] font-bold uppercase tracking-wider" style={{ color: ACCENT }}>{t.weaving_title}</span>
+                <span className="font-mono text-[11px] font-bold uppercase tracking-wider" style={{ background: "linear-gradient(90deg,#8B5CF6,#EC4899,#F59E0B)", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{t.weaving_title}</span>
                 {showCvMobile && <button onClick={() => setShowCvMobile(false)} className="text-xs" style={{ color: "var(--cosmos-muted)" }}>✕</button>}
               </div>
               {cvPanelBody()}
@@ -834,7 +834,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
           {buildFail ? (
             <div className="glass-surface p-6 text-center">
               <p className="mb-3 text-sm" style={{ color: "var(--glass-muted)" }}>{t.build_fail}</p>
-              <button onClick={() => (mode === "update" ? runUpdate(profile) : finalize(profile))} className="min-h-11 rounded-xl px-6 text-sm font-bold text-white" style={{ background: "#16a34a" }}>{t.retry}</button>
+              <button onClick={() => (mode === "update" ? runUpdate(profile) : finalize(profile))} className="min-h-11 rounded-xl px-6 text-sm font-bold text-white" style={{ background: "#7C3AED" }}>{t.retry}</button>
             </div>
           ) : (
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -853,14 +853,14 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                   <h3 className="mb-3 text-sm font-bold">{t.reveal_score}</h3>
                   {scorePhase === "done" && score ? <div className="mx-auto"><ScoreOrb value={score.value} size={150} /></div>
                     : scorePhase === "working" ? <div className="flex items-center justify-center gap-3 py-6"><AiOrb size={34} thinking /><span className="font-mono text-xs" style={{ color: "var(--glass-muted)" }}>…</span></div>
-                    : <button onClick={() => finalize(profile)} className="min-h-11 rounded-lg px-5 text-sm font-bold text-white" style={{ background: "#16a34a" }}>{t.retry}</button>}
+                    : <button onClick={() => finalize(profile)} className="min-h-11 rounded-lg px-5 text-sm font-bold text-white" style={{ background: "#7C3AED" }}>{t.retry}</button>}
                 </div>
                 <div className="glass-surface p-5" onClickCapture={(e) => { if ((e.target as HTMLElement).closest("button")) track("download_clicked", { lang }); }}>
                   <div className="mb-3">
                     <div className="mb-1.5 text-xs font-bold">{t.lang_pick}</div>
                     <div className="flex gap-1.5">
                       {(["en", "ar", "both"] as const).map((c) => (
-                        <button key={c} onClick={() => switchLang(c)} disabled={langBusy} className="min-h-9 flex-1 rounded-lg px-2 text-xs font-semibold disabled:opacity-60" style={outChoice === c ? { background: "#16a34a", color: "#fff" } : { border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.lang_opts[c]}</button>
+                        <button key={c} onClick={() => switchLang(c)} disabled={langBusy} className="min-h-9 flex-1 rounded-lg px-2 text-xs font-semibold disabled:opacity-60" style={outChoice === c ? { background: "#7C3AED", color: "#fff" } : { border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.lang_opts[c]}</button>
                       ))}
                     </div>
                     {langBusy && <div className="mt-2 flex items-center gap-2"><AiOrb size={18} thinking /><span className="font-mono text-[11px]" style={{ color: "var(--glass-muted)" }}>…</span></div>}
@@ -871,7 +871,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                     <DocxExport text={cv} watermark={score?.watermark !== false} lang={lang} filename={lang === "ar" ? "resume-ar.docx" : "resume.docx"} label="↓ Word" />
                   </div>
                   <PublishLink ar={rtl} text={cv} name={profile.name} role={profile.role} />
-                  <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "#b45309" }}>🔓 {t.unlock}</Link>
+                  <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "#b45309" }}>{t.unlock}</Link>
                 </div>
               </div>
             </div>
