@@ -219,7 +219,7 @@ export default function BuildPage() {
         {!cv && !loading && (
           <>
             <div className="mb-8 text-center">
-              <div className="chip mb-4">● CV Builder</div>
+              <div className="chip mb-4">CV Builder</div>
               <h1 className="text-4xl font-extrabold tracking-tight">Build your CV from scratch</h1>
               <p className="mt-3" style={{ color: "var(--muted)" }}>
                 Answer in plain words — the AI turns your answers into a professional, ATS-ready CV.

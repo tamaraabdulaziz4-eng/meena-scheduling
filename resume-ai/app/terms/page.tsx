@@ -33,7 +33,7 @@ export default function TermsPage() {
       </nav>
 
       <div className="mx-auto max-w-3xl px-6 py-14">
-        <div className="chip mb-4">● الشروط والأحكام</div>
+        <div className="chip mb-4">الشروط والأحكام</div>
         <h1 className="mb-2 text-3xl font-extrabold">شروط الاستخدام وسياسة الاسترجاع</h1>
         <p className="mb-10 text-sm" style={{ color: "var(--muted)" }}>آخر تحديث: يوليو ٢٠٢٦ · تنطبق على cv.rabit.sa</p>
 

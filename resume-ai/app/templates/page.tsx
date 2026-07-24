@@ -38,7 +38,7 @@ export default function TemplatesPage() {
       <section className="relative mx-auto max-w-6xl px-6 py-14">
         <div className="hero-ambient" aria-hidden />
         <div className="relative mb-10 text-center">
-          <div className="chip mb-4">● Templates</div>
+          <div className="chip mb-4">Templates</div>
           <h1 className="text-4xl font-extrabold tracking-tight">Professional resume templates</h1>
           <p className="mx-auto mt-3 max-w-2xl" style={{ color: "var(--muted)" }}>
             Every template is <strong>ATS-safe</strong> and works in both <strong>Arabic (RTL)</strong> and English. Pick a design — then AI fills it with <em>your</em> real experience, never invented facts.

@@ -66,7 +66,7 @@ export default function LinkedInPage() {
 
       <div className="mx-auto max-w-2xl px-6 py-12">
         <div className="mb-8 text-center">
-          <div className="chip mb-4">● {ar ? "محسّن لينكدإن" : "LinkedIn Optimizer"}</div>
+          <div className="chip mb-4">{ar ? "محسّن لينكدإن" : "LinkedIn Optimizer"}</div>
           <h1 className="text-4xl font-extrabold tracking-tight">{ar ? "ليجدك مسؤولو التوظيف" : "Get found by recruiters"}</h1>
           <p className="mt-3" style={{ color: "var(--muted)" }}>
             {ar ? "الصق سيرتك أو نص لينكدإن الحالي — واحصل على عنوان غني بالكلمات المفتاحية، وقسم «نبذة»، وقائمة مهارات مضبوطة لبحث مسؤولي التوظيف." : "Paste your resume or current LinkedIn text — get a keyword-rich headline, About section, and skills list tuned for recruiter search."}

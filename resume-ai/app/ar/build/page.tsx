@@ -192,7 +192,7 @@ export default function ArBuildPage() {
         {!cv && !loading && (
           <>
             <div className="mb-8 text-center">
-              <div className="chip mb-4">● إنشاء سيرة ذاتية</div>
+              <div className="chip mb-4">إنشاء سيرة ذاتية</div>
               <h1 className="text-4xl font-extrabold tracking-tight">اكتب بالعربي — واستلم سيرة إنجليزية احترافية</h1>
               <p className="mt-3" style={{ color: "var(--muted)" }}>
                 جاوب بكلامك العادي وبأي لغة. الذكاء الاصطناعي يترجم ويصيغ ويضبط كل شيء بصياغة احترافية تعبر أنظمة التوظيف.

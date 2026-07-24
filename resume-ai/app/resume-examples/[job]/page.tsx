@@ -78,7 +78,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           <Link href="/resume-examples" style={{ color: "var(--faint)" }}>Resume Examples</Link> › {j.title}
         </div>
 
-        <div className="chip mb-4">● {j.category} · ATS-optimized</div>
+        <div className="chip mb-4">{j.category} · ATS-optimized</div>
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight">{j.title} Resume Example &amp; ATS Keywords (2026)</h1>
         <p className="mt-4 text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
           {j.demand} Typical salary: {j.salary}. Below is a complete {j.title} resume example plus the exact keywords applicant tracking systems (ATS) scan for — then build yours free in 60 seconds.

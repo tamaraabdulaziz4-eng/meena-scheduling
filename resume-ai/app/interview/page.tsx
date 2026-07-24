@@ -85,7 +85,7 @@ export default function InterviewPage() {
 
       <div className="mx-auto max-w-2xl px-6 py-12">
         <div className="mb-8 text-center">
-          <div className="chip mb-4">● {ar ? "تحضير المقابلة" : "Interview Prep"}</div>
+          <div className="chip mb-4">{ar ? "تحضير المقابلة" : "Interview Prep"}</div>
           <h1 className="text-4xl font-extrabold tracking-tight">{ar ? "اعرف الأسئلة قبل أن تُطرح" : "Know the questions before they ask"}</h1>
           <p className="mt-3" style={{ color: "var(--muted)" }}>
             {ar ? "الصق سيرتك وإعلان الوظيفة — واحصل على الأسئلة الثمانية الأكثر احتمالاً، مع إجابات قوية مبنية على خبرتك أنت." : "Paste your resume and the job posting — get the 8 questions they'll most likely ask, with strong answers built from YOUR background."}

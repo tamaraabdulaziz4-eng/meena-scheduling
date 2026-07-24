@@ -54,7 +54,7 @@ export default async function ResumeSkillsPage({ params }: { params: Promise<{ j
           <Link href="/">Home</Link> / <Link href="/resume-skills">Resume Skills</Link> / <span style={{ color: "var(--muted)" }}>{j.title}</span>
         </nav>
 
-        <div className="chip mb-4">● {j.category}</div>
+        <div className="chip mb-4">{j.category}</div>
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight">
           {j.title} skills <span className="accent-underline text-accent">for your resume</span>
         </h1>

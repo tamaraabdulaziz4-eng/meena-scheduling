@@ -29,7 +29,7 @@ export default function CoverLetterHub() {
 
       <div className="mx-auto max-w-5xl px-6 py-14">
         <div className="text-center">
-          <div className="chip mb-4">● Cover letter examples</div>
+          <div className="chip mb-4">Cover letter examples</div>
           <h1 className="text-4xl font-extrabold tracking-tight">Cover letter examples <span className="accent-underline text-accent">by job</span></h1>
           <p className="mx-auto mt-4 max-w-2xl" style={{ color: "var(--muted)" }}>
             A proven 4-paragraph structure, a fill-in template, and the role-specific keywords — for 50 jobs. Every template uses your real facts only.

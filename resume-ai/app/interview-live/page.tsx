@@ -260,7 +260,7 @@ export default function InterviewLivePage() {
           <>
             <div className="mb-8 text-center">
               <div className="mx-auto mb-5 h-40 w-40"><InterviewerAvatar speaking={false} label="مُقابِلك الذكي" /></div>
-              <div className="chip mb-4">● مقابلة فيديو بالذكاء الاصطناعي</div>
+              <div className="chip mb-4">مقابلة فيديو بالذكاء الاصطناعي</div>
               <h1 className="text-4xl font-extrabold tracking-tight">تدرّب على المقابلة أمام الكاميرا</h1>
               <p className="mt-3" style={{ color: "var(--muted)" }}>
                 الذكاء الاصطناعي يسألك أسئلة مقابلة حقيقية، تجاوب أمام الكاميرا، ويعطيك تقييماً ونصائح فورية لكل إجابة. فيديوك يبقى على جهازك فقط.
@@ -388,7 +388,7 @@ export default function InterviewLivePage() {
 
         {phase === "done" && (
           <div className="text-center">
-            <div className="chip mb-4">● انتهت المقابلة</div>
+            <div className="chip mb-4">انتهت المقابلة</div>
             <h2 className="text-3xl font-extrabold">تدرّبت على {questions.length} أسئلة</h2>
             <div className="my-6 inline-flex items-baseline gap-2">
               <span className="font-mono text-6xl font-bold" style={{ color: "var(--accent)" }}>{avg}</span>

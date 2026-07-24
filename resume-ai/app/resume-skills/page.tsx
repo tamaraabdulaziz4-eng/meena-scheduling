@@ -29,7 +29,7 @@ export default function ResumeSkillsHub() {
 
       <div className="mx-auto max-w-5xl px-6 py-14">
         <div className="text-center">
-          <div className="chip mb-4">● Resume skills</div>
+          <div className="chip mb-4">Resume skills</div>
           <h1 className="text-4xl font-extrabold tracking-tight">The right skills <span className="accent-underline text-accent">for every resume</span></h1>
           <p className="mx-auto mt-4 max-w-2xl" style={{ color: "var(--muted)" }}>
             Role-by-role: the ATS keywords hiring systems scan for, the skills recruiters shortlist on, and how to present them honestly.

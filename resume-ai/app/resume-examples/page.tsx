@@ -31,7 +31,7 @@ export default function Hub() {
       <section className="relative overflow-hidden px-6 py-16 text-center">
         <div className="hero-ambient"><div className="grid-lines" /></div>
         <div className="relative z-10 mx-auto max-w-3xl">
-          <div className="chip mb-4">● Free · ATS-optimized</div>
+          <div className="chip mb-4">Free · ATS-optimized</div>
           <h1 className="text-4xl font-extrabold tracking-tight md:text-5xl">Resume examples &amp; ATS keywords by job</h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg" style={{ color: "var(--muted)" }}>
             Pick your role for a complete resume example plus the exact keywords applicant tracking systems scan for — then build or check yours free.

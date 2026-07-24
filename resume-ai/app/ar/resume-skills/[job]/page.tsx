@@ -63,7 +63,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
         <div className="mb-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
           <Link href="/ar" style={{ color: "var(--faint)" }}>الرئيسية</Link> › {j.title}
         </div>
-        <div className="chip mb-4">● {j.category}</div>
+        <div className="chip mb-4">{j.category}</div>
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight">مهارات وكلمات ATS لسيرة {j.title}</h1>
         <p className="mt-4 text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
           لتعبر سيرة {j.title} أنظمة التوظيف، تحتاج المهارات والكلمات المفتاحية الصحيحة بصياغة الإعلان الوظيفي. أدرج ما تملكه فعلاً فقط.

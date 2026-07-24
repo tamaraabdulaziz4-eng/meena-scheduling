@@ -33,7 +33,7 @@ export default function PrivacyPage() {
       </nav>
 
       <div className="mx-auto max-w-3xl px-6 py-14">
-        <div className="chip mb-4">● سياسة الخصوصية</div>
+        <div className="chip mb-4">سياسة الخصوصية</div>
         <h1 className="mb-2 text-3xl font-extrabold">خصوصيتك وسيرتك الذاتية</h1>
         <p className="mb-10 text-sm" style={{ color: "var(--muted)" }}>
           آخر تحديث: يوليو ٢٠٢٦ · تنطبق على cv.rabit.sa — خدمة السير الذاتية المقدَّمة عبر نطاق Rabit.sa

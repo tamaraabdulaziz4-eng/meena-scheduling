@@ -58,7 +58,7 @@ export default async function Page({ params }: { params: Promise<{ style: string
 
         <div className="grid items-center gap-10 lg:grid-cols-2">
           <div>
-            <div className="chip mb-4">● Free · ATS score {t.atsScore}/100</div>
+            <div className="chip mb-4">Free · ATS score {t.atsScore}/100</div>
             <h1 className="text-4xl font-extrabold leading-tight tracking-tight">Free {t.name} Resume Template</h1>
             <p className="mt-4 text-lg leading-relaxed" style={{ color: "var(--muted)" }}>{t.tagline}</p>
             <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}><strong>Best for:</strong> {t.bestFor}</p>

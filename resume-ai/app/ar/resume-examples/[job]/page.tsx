@@ -85,7 +85,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           <Link href="/ar/resume-examples" style={{ color: "var(--faint)" }}>أمثلة السير</Link> › {j.title}
         </div>
 
-        <div className="chip mb-4">● {j.category} · متوافقة مع ATS</div>
+        <div className="chip mb-4">{j.category} · متوافقة مع ATS</div>
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight">مثال سيرة ذاتية {j.title} + كلمات ATS (2026)</h1>
         <p className="mt-4 text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
           {j.demand} نطاق الراتب التقريبي: {j.salary}. تجد أدناه نموذج سيرة {j.title} كاملاً مع الكلمات المفتاحية التي تفحصها أنظمة التوظيف (ATS) — ثم ابنِ سيرتك مجاناً بالثواني.

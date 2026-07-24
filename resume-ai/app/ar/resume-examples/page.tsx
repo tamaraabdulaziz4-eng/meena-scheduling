@@ -31,7 +31,7 @@ export default function Hub() {
       </nav>
 
       <div className="mx-auto max-w-5xl px-6 py-12">
-        <div className="chip mb-4">● أمثلة السير الذاتية</div>
+        <div className="chip mb-4">أمثلة السير الذاتية</div>
         <h1 className="text-4xl font-extrabold tracking-tight">أمثلة سير ذاتية عربية لكل مهنة</h1>
         <p className="mt-4 max-w-2xl text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
           اختر مهنتك لترى نموذج سيرة ذاتية كاملاً، كلمات ATS التي تفحصها أنظمة التوظيف، المهارات، وخطاب تعريف جاهز — ثم ابنِ سيرتك مجاناً.

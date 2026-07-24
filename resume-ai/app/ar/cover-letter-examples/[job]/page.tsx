@@ -81,7 +81,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
         <div className="mb-6 font-mono text-xs" style={{ color: "var(--faint)" }}>
           <Link href="/ar" style={{ color: "var(--faint)" }}>الرئيسية</Link> › خطاب تعريف {j.title}
         </div>
-        <div className="chip mb-4">● {j.category}</div>
+        <div className="chip mb-4">{j.category}</div>
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight">مثال خطاب تعريف {j.title}</h1>
         <p className="mt-4 text-lg leading-relaxed" style={{ color: "var(--muted)" }}>
           نموذج خطاب تعريف احترافي لوظيفة {j.title} — انسخه وخصّصه بمعلوماتك، أو أنشئ خطاباً مخصصاً لوظيفتك تلقائياً.

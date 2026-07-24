@@ -69,7 +69,7 @@ Sincerely,
           <Link href="/">Home</Link> / <Link href="/cover-letter-examples">Cover Letter Examples</Link> / <span style={{ color: "var(--muted)" }}>{j.title}</span>
         </nav>
 
-        <div className="chip mb-4">● {j.category}</div>
+        <div className="chip mb-4">{j.category}</div>
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight">
           {j.title} Cover Letter <span className="accent-underline text-accent">Example &amp; Template</span>
         </h1>
