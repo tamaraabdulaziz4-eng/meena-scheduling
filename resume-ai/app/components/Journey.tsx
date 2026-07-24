@@ -259,6 +259,8 @@ export default function Journey({ lang }: { lang: Lang }) {
   const [netFail, setNetFail] = useState(false);
   const [started, setStarted] = useState(false);
   const [welcomeBack, setWelcomeBack] = useState(false);
+  const [takeover, setTakeover] = useState(false);   // interview owns the screen until the CV is built
+  const [paperOpen, setPaperOpen] = useState(false); // mobile bottom-sheet for the live paper
 
   /* ── update mode ── */
   const [mode, setMode] = useState<"new" | "update">("new");
@@ -302,6 +304,7 @@ export default function Journey({ lang }: { lang: Lang }) {
   const msgsRef = useRef<HTMLDivElement>(null);
   const ringFgRef = useRef<SVGCircleElement>(null);
   const scoreNumRef = useRef<HTMLElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const pendingAns = useRef("");
 
   /* ═══ intro fade ═══ */
@@ -587,7 +590,6 @@ export default function Journey({ lang }: { lang: Lang }) {
   }
   async function finalize(p: Profile) {
     setScorePhase("working"); setBuildFail(false);
-    unlockTo(1);
     try {
       const resumeText = assembleResume(p).slice(0, 8000);
       const jd = p.jobAd.trim().length >= 30 ? p.jobAd : "";
@@ -602,7 +604,6 @@ export default function Journey({ lang }: { lang: Lang }) {
   }
   async function runUpdate(p: Profile) {
     setScorePhase("working"); setBuildFail(false);
-    unlockTo(1);
     try {
       const additions = [...p.wovenLines, ...p.extras.map((x) => `- ${x}`)].join("\n");
       const resumeText = (additions
@@ -722,9 +723,51 @@ export default function Journey({ lang }: { lang: Lang }) {
     return () => { clearTimeout(t1); clearTimeout(t2); cancelAnimationFrame(raf); };
   }, [stage, scorePhase, score, reduce]);
 
+  /* ═══ TAKEOVER — once the conversation starts, it owns the screen (scroll
+     locked, stages hidden behind) until the CV is built; then it releases and
+     the journey glides to the score stage ═══ */
+  useEffect(() => {
+    if (!started) return;
+    // hard scroll lock: pinning the body collapses the document's scroll range,
+    // so neither wheel nor programmatic scrolling can move past the conversation
+    let lockedAt = 0;
+    const lock = () => {
+      lockedAt = window.scrollY;
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${lockedAt}px`;
+      document.body.style.width = "100%";
+    };
+    const unlock = () => {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      window.scrollTo(0, lockedAt);
+    };
+    if (scorePhase === "done" || scorePhase === "failed") {
+      setTakeover(false);
+      unlock();
+      unlockTo(1);
+      return;
+    }
+    setTakeover(true);
+    lock();
+    return () => unlock();
+  }, [started, scorePhase, unlockTo]);
+
+  /* focus the input when the theater opens (desktop pointers only — never pop
+     the mobile keyboard uninvited) */
+  useEffect(() => {
+    if (!takeover) return;
+    if (window.matchMedia("(pointer: fine)").matches) inputRef.current?.focus({ preventScroll: true });
+  }, [takeover]);
+
   const verdict = score ? (score.value >= 75 ? { txt: t.verdict_hi, cls: "" } : score.value >= 55 ? { txt: t.verdict_mid, cls: " mid" } : { txt: t.verdict_low, cls: " mid" }) : null;
   const tplName = (tp: TemplateDef) => (rtl ? tp.nameAr : tp.name);
-  const busy = thinking || lastMsgTyping;
+  const busy = thinking || lastMsgTyping || scorePhase === "working";
 
   /* ═══════════════════════ RENDER ═══════════════════════ */
   const num = (i: number) => (rtl ? AR_NUM[i] : String(i + 1));
@@ -816,12 +859,18 @@ export default function Journey({ lang }: { lang: Lang }) {
             </div>
           </header>
 
-          {/* ── STAGE 0: the interview ── */}
-          <div className="jn-stage" ref={(el) => { stageRefs.current[0] = el; }}>
+          {/* ── STAGE 0: the interview — TAKES OVER the screen until built ── */}
+          <div className={`jn-stage${takeover ? " takeover" : ""}`} ref={(el) => { stageRefs.current[0] = el; }}>
             <div className="jn-stage-tag"><span>{t.step}</span> <span className="n">{num(0)}</span> <span>{t.of5}</span></div>
             <h2 className="jn-sec-title">{t.st0t}</h2>
             <p className="jn-sec-sub">{t.st0s}</p>
             <div className="jn-stage-body">
+              <div className="jn-takeover-box">
+              <div className="jn-takeover-head">
+                <span>{t.step}</span> <span className="n">{num(0)}</span> <span>{t.of5}</span>
+                <span className="tt">· {t.st0t}</span>
+                {progress > 0 && <span className="prog">{progress}%</span>}
+              </div>
               {welcomeBack && (
                 <div className="jn-dl-card" style={{ marginBottom: 16, textAlign: "center" }}>
                   <div style={{ fontSize: 14, marginBottom: 12 }}>{t.welcome_back}</div>
@@ -868,12 +917,13 @@ export default function Journey({ lang }: { lang: Lang }) {
                   )}
                   <div className="jn-chat-input">
                     <input
+                      ref={inputRef}
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") onSend(); }}
                       placeholder={t.typePh}
-                      disabled={thinking}
+                      disabled={thinking || scorePhase === "working"}
                     />
                     {pasteMode && (
                       <label className="jn-mic" style={{ display: "grid", placeItems: "center", cursor: "pointer" }} title={t.upload}>
@@ -896,8 +946,8 @@ export default function Journey({ lang }: { lang: Lang }) {
                 </div>
 
                 {/* the live paper */}
-                <div className="jn-paper-wrap">
-                  <div className="jn-paper-live">{cv ? t.done2 : t.building}</div>
+                <div className={`jn-paper-wrap${paperOpen ? " open" : ""}`}>
+                  <div className={`jn-paper-live${scorePhase === "working" ? " working" : ""}`}>{cv ? t.done2 : t.building}</div>
                   <div className="jn-paper">
                     {profile.name && <div className="jn-pl"><div className="jn-ph-name">{profile.name}</div></div>}
                     {profile.role && <div className="jn-pl"><div className="jn-ph-role">{profile.role}</div><hr className="jn-ph-line" /></div>}
@@ -922,6 +972,10 @@ export default function Journey({ lang }: { lang: Lang }) {
                     ))}
                   </div>
                 </div>
+              </div>
+              <button className="jn-paper-fab" onClick={() => setPaperOpen((o) => !o)} aria-expanded={paperOpen}>
+                {rtl ? "📄 سيرتك" : "📄 Your CV"}
+              </button>
               </div>
             </div>
           </div>
