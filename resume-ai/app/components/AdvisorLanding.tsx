@@ -116,6 +116,7 @@ const T = {
     sections: { exp: "الخبرة", edu: "التعليم", skills: "المهارات", extras: "إضافات" },
     optimize_href: "/ar/optimize",
     cv_toggle: "سيرتك",
+    finish_now: "جاهز — اعرض سيرتي",
     skip: "تخطَّ",
   },
   en: {
@@ -184,6 +185,7 @@ const T = {
     sections: { exp: "Experience", edu: "Education", skills: "Skills", extras: "Extras" },
     optimize_href: "/optimize",
     cv_toggle: "Your CV",
+    finish_now: "I'm ready — show my resume",
     skip: "skip",
   },
 } as const;
@@ -309,6 +311,12 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   /* ── BOOT (Windows-style opening): أهلاً يظهر ويتلاشى ← أنا رابط ← العالم ينفتح ── */
   useEffect(() => {
     if (stage !== "boot") return;
+    // Skip the cinematic boot for reduced-motion users, and show it only once
+    // per session (a returning visitor jumps straight to the landing).
+    let seen = false;
+    try { seen = sessionStorage.getItem("ra_booted") === "1"; } catch { /* noop */ }
+    if (reduce || seen) { setStage("landing"); return; }
+    try { sessionStorage.setItem("ra_booted", "1"); } catch { /* noop */ }
     document.body.style.overflow = "hidden";
     const timers = [
       setTimeout(() => setBootLine(1), 600),
@@ -316,7 +324,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       setTimeout(() => setStage("landing"), 4200),
     ];
     return () => { timers.forEach(clearTimeout); document.body.style.overflow = ""; };
-  }, [stage]);
+  }, [stage, reduce]);
 
   /* ── landing: the orb follows the scroll — which section is on stage ── */
   useEffect(() => {
@@ -469,9 +477,17 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
   }
 
   function pickChip(c: Chip) {
-    if (c.patch) setProfile((p) => mergePatch(p, c.patch!));
-    onSend(c.label.replace(/^[➕🎯✨\s]+/, ""));
+    // Apply the chip's patch AND thread the patched profile straight into the
+    // turn — setProfile is async, so onSend/sendTurn would otherwise read the
+    // stale profile and drop this chip's facts for that turn.
+    const patched = c.patch ? mergePatch(profile, c.patch) : profile;
+    if (c.patch) setProfile(patched);
     setChips([]);
+    const text = c.label.replace(/^[➕🎯✨\s]+/, "").trim();
+    if (!text) return;
+    if (!startedRef.current) { startedRef.current = true; track("interview_started", { lang }); }
+    setMsgs((m) => [...m, { who: "user", text }]);
+    sendTurn(text, patched);
   }
 
   /* ── update-mode entry ── */
@@ -633,7 +649,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
     stage === "reveal"
       ? { visible: false }
       : { visible: true, top: orbTop, left: orbLeft, size: orbSize, mood: stage === "thinking" ? "thinking" : micOn ? "listening" : "idle", progress: stage === "conversation" ? progress : 0, rings: stage === "thinking", badge: null, radio: false, z: 30 },
-    [stage, orbSize, orbLeft, micOn, progress]
+    [stage, landSec, orbSize, orbTop, orbLeft, micOn, progress]
   );
 
   /* ══════════════════ render ══════════════════ */
@@ -664,6 +680,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               </motion.p>
             )}
           </AnimatePresence>
+          {/* skip — never trap the visitor in the intro */}
+          <button onClick={() => setStage("landing")} className="absolute bottom-6 z-30 text-xs font-semibold"
+            style={{ insetInlineEnd: 20, color: "rgba(244,245,243,0.45)" }}>{t.skip}</button>
         </div>
       )}
 
@@ -772,7 +791,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         <div className="relative z-20 mx-auto flex w-full max-w-2xl flex-col px-5" style={{ paddingTop: "150px", paddingBottom: "160px" }}>
           <div ref={chatRef} className="space-y-3 overflow-y-auto" style={{ maxHeight: "calc(100vh - 340px)" }}>
             {msgs.slice(0, -1).map((m, i) => (
-              <motion.div key={i} initial={{ opacity: 0, y: 14 }} animate={{ opacity: m.who === "user" ? 0.75 : 0.55, y: 0 }} transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
+              <motion.div key={`${i}-${m.who}-${m.text.slice(0, 12)}`} initial={{ opacity: 0, y: 14 }} animate={{ opacity: m.who === "user" ? 0.75 : 0.55, y: 0 }} transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
                 className={`flex ${m.who === "user" ? (rtl ? "justify-start" : "justify-end") : rtl ? "justify-end" : "justify-start"}`}>
                 <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px]" dir="auto" style={m.who === "user" ? { background: "rgba(139,92,246,0.18)", lineHeight: 1.8 } : { background: "rgba(255,255,255,0.06)", lineHeight: 1.8 }}>{m.text}</div>
               </motion.div>
@@ -801,6 +820,16 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                   onClick={() => pickChip(c)} className="min-h-11 rounded-full px-4 text-sm font-semibold" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(244,245,243,0.9)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>{c.label}</motion.button>
               ))}
             </div>
+          )}
+
+          {/* manual finish — the interview can NEVER dead-end waiting for the
+              model to emit FINISH. Appears once enough is collected. */}
+          {!showGoal && (progress >= 60 || msgs.filter((m) => m.who === "user").length >= 3) && (
+            <motion.button initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+              onClick={() => (mode === "update" ? runUpdate(profile) : finalize(profile))}
+              className="mt-6 self-start rounded-full px-5 py-2.5 text-sm font-bold" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)", color: "#ffffff" }}>
+              {t.finish_now}
+            </motion.button>
           )}
         </div>
       )}
