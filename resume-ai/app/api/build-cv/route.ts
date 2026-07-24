@@ -22,6 +22,7 @@ type OutLang = "en" | "ar" | "both";
 const langRule = (outLang: OutLang) =>
   outLang === "ar"
     ? `- Write the ENTIRE CV in professional Modern Standard Arabic (فصحى). Translate and professionally rephrase any English input into polished Arabic CV language. Keep proper nouns sensible — you may keep well-known company/technology names in their common form.
+- ARABIC RICHNESS MANDATE: the Arabic CV must be just as RICH as an English one — full professional فصحى bullets (3-5 per role, varied strong verbs), named skill groups, a 3-4 line summary naming the target role. Never compress into generic one-liners.
 - Write the "tips" array and the ANALYSIS section in Arabic.`
     : outLang === "both"
       ? `- Write the CV TWICE: first the complete English version, then a line containing exactly === النسخة العربية === on its own, then the complete Arabic (فصحى) version of the same CV. Both versions must contain the same facts.
@@ -64,7 +65,7 @@ CV FORMULA (research-backed — follow exactly):
 - Reverse-chronological, single column, plain text, standard headings — ATS-parseable
 - PROFESSIONAL SUMMARY: 3-4 lines, contains the target role title, their strongest selling points
 - SKILLS: grouped by category, front-loading what matters for the target role
-- EXPERIENCE: each role 3-5 bullets; every bullet starts with a strong action verb. NO-FABRICATION CONTRACT (absolute): NEVER write any number, metric, team size, percentage, employer, date, degree, certification, or achievement the candidate did not state. Where the candidate gave a number, use it. Where a metric would help but wasn't given, write exactly: [add your real number: e.g. team size, % improvement, customers served].
+- EXPERIENCE: each role 3-5 bullets; every bullet starts with a different strong action verb. RICHNESS MANDATE: the CV must read as professionally WRITTEN, never as a summary — expand every stated duty into full professional bullets that articulate the HOW, the setting, and the scope of the stated work (260-450 words total). NO-FABRICATION CONTRACT (absolute): NEVER write any number, metric, team size, percentage, employer, date, degree, certification, or achievement the candidate did not state. Where the candidate gave a number, use it. Where a metric would help but wasn't given, write exactly: [add your real number: e.g. team size, % improvement, customers served]. COVERAGE GUARANTEE: every employer, role, date, degree, and skill the candidate gave MUST appear — no merging, no dropping.
 - EDUCATION after experience (unless they have no experience — then education first)
 - PERSONAL DETAILS: include a short "PERSONAL DETAILS" section (e.g. Nationality, Date of Birth, Marital Status, Residency/Iqama status) ONLY if the candidate provided them — this is common and expected in Gulf/GCC CVs. Never invent or guess any of these fields; include only what was given.
 - Include certifications/languages/projects sections only if they gave content for them

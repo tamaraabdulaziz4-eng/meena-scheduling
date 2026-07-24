@@ -23,7 +23,7 @@ const PROMPT = (resume: string, jobDescription: string, uiLang?: string, outLang
   // What language the rewritten resume itself should be in.
   const resumeLangRule =
     outLang === "ar"
-      ? "The optimizedResume must be written in professional MODERN STANDARD ARABIC (translate everything into Arabic; keep proper names, emails, and widely-known English tool names as-is)."
+      ? "The optimizedResume must be written in professional MODERN STANDARD ARABIC (translate everything into Arabic; keep proper names, emails, and widely-known English tool names as-is). ARABIC RICHNESS MANDATE: the Arabic CV must be just as RICH as an English one — full professional فصحى bullets (3-5 per role, varied strong verbs), 2-4 NAMED skill groups, a 3-4 line summary naming the target role. Never compress into generic one-liners. Example of the expected Arabic depth: «- إدارة فريق مبيعات من ٨ مندوبين عبر متابعة أسبوعية للأداء وتوجيه فردي، مما مكّن الفريق من تجاوز المستهدف سنتين متتاليتين بنسبة ١٢٠٪» — elaborate the STATED work with professional vocabulary, never invent facts. All placeholder metrics stay in the exact form [add your real number]."
       : outLang === "both"
         ? "The optimizedResume must contain BOTH versions: first a complete professional ENGLISH resume, then a line '=== النسخة العربية ===', then the same resume in professional Modern Standard Arabic."
         : "The optimizedResume must ALWAYS be 100% professional ENGLISH — translate EVERYTHING including Arabic job titles and role names (never leave an Arabic word inside an English sentence).";
@@ -64,7 +64,26 @@ Rules for the rewritten resume — NO-FABRICATION CONTRACT (absolute, overrides 
 - Where a metric would strengthen a bullet but the user gave none, write exactly: [add your real number] — never estimate, never make one up.
 - You may only: rephrase, reorganize, translate, use stronger verbs, and surface the user's OWN facts more clearly.
 - Where a required skill is missing, surface adjacent/transferable experience from the source — never claim the missing skill.
-- Structure: Name/contact, PROFESSIONAL SUMMARY (3 lines, contains the job title), SKILLS (grouped, front-loading required skills the candidate genuinely has), EXPERIENCE (reverse-chronological), EDUCATION
+
+RICHNESS MANDATE (equally absolute — this is what the user pays for; a thin resume is a FAILED result):
+- The rewritten resume must read as PROFESSIONALLY WRITTEN, never as a summary of the source. Target 260-450 words for a one-page CV — NEVER shorter than the source in coverage, and almost always substantially longer in professional language.
+- EXPAND every stated fact into full, vivid professional bullets. You may elaborate on the HOW, the setting, the scope, and the standard professional vocabulary of the stated work — but never add facts, numbers, tools, employers, or achievements not stated.
+- EACH role: 3-5 bullets, each starting with a different strong action verb.
+- PROFESSIONAL SUMMARY: 3-4 full lines naming the target role, years of experience (only if stated), and the candidate's 2-3 strongest selling points.
+- SKILLS: 2-4 NAMED groups (e.g. "Clinical Skills", "Systems & Tools") containing ONLY genuine skills from the source.
+EXAMPLE of the expected transformation (source line → bullets):
+  source: "ICU nurse, 2021-now: care for critical patients; cut med errors 30%"
+  output:
+  ICU Nurse — King Fahad Hospital, Riyadh | 2021 – Present
+  - Deliver comprehensive bedside care to critically ill patients in the ICU, continuously monitoring condition changes and responding within protocol
+  - Reduced medication administration errors by 30% by introducing a disciplined double-check routine across shifts
+  - Collaborate with physicians and the care team to adjust treatment plans for high-acuity cases [add your real number: patients per shift]
+NOTE how the example elaborates the STATED work with professional vocabulary without inventing facts — do exactly this for every role.
+
+COVERAGE GUARANTEE (verify before finishing — dropping content is a FAILED result):
+- Every employer, every role, every date range, every degree/certificate, every skill, and every language from the source MUST appear in the output. If the source has 2 jobs, the output has 2 jobs. No merging, no dropping, no "and more".
+
+- Structure: Name/contact, PROFESSIONAL SUMMARY (3-4 lines, contains the job title), SKILLS (grouped, front-loading required skills the candidate genuinely has), EXPERIENCE (reverse-chronological), EDUCATION
 - Plain text, standard headings, ATS-parseable
 
 OUTPUT FORMAT — plain text with EXACTLY these section markers, in this order (NO JSON, no markdown):
