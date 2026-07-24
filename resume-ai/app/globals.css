@@ -763,6 +763,8 @@ body {
   0%, 100% { transform: translateX(-50%) translateY(0); }
   50% { transform: translateX(-50%) translateY(-6px); }
 }
+/* it floats to invite you — and SETTLES the moment you reach for it */
+.dock:hover, .dock:focus-within { animation-play-state: paused; }
 /* perpetual ambient float for landing objects */
 .float-slow { animation: float-slow 7s ease-in-out infinite; }
 @keyframes float-slow {

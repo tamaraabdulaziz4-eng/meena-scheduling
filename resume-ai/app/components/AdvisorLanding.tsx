@@ -732,30 +732,35 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
       {/* ══ STATE 2: CONVERSATION ══ */}
       {stage === "conversation" && (
         <div className="relative z-20 mx-auto flex w-full max-w-2xl flex-col px-5" style={{ paddingTop: "150px", paddingBottom: "160px" }}>
-          <div ref={chatRef} className="space-y-3 overflow-y-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
+          <div ref={chatRef} className="space-y-3 overflow-y-auto" style={{ maxHeight: "calc(100vh - 340px)" }}>
             {msgs.slice(0, -1).map((m, i) => (
-              <div key={i} className={`flex ${m.who === "user" ? (rtl ? "justify-start" : "justify-end") : rtl ? "justify-end" : "justify-start"}`}>
+              <motion.div key={i} initial={{ opacity: 0, y: 14 }} animate={{ opacity: m.who === "user" ? 0.75 : 0.55, y: 0 }} transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
+                className={`flex ${m.who === "user" ? (rtl ? "justify-start" : "justify-end") : rtl ? "justify-end" : "justify-start"}`}>
                 <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px]" dir="auto" style={m.who === "user" ? { background: "rgba(139,92,246,0.18)", lineHeight: 1.8 } : { background: "rgba(255,255,255,0.06)", lineHeight: 1.8 }}>{m.text}</div>
-              </div>
+              </motion.div>
             ))}
           </div>
-          {/* current question — larger, natural alignment */}
-          {lastAi && <p key={msgs.length} dir="auto" className="advisor-prompt mt-4" style={{ textAlign: rtl ? "right" : "left", fontSize: "clamp(1.3rem,3.8vw,1.9rem)" }}>{lastAi}</p>}
+          {/* current question — THE HERO of this beat: it materializes from blur */}
+          {lastAi && (
+            <motion.p key={msgs.length} dir="auto" initial={{ opacity: 0, y: 18, filter: "blur(6px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+              className="advisor-prompt mt-6 font-bold" style={{ textAlign: rtl ? "right" : "left", fontSize: "clamp(1.5rem, 4.2vw, 2.15rem)", lineHeight: 1.55, letterSpacing: "-0.01em" }}>{lastAi}</motion.p>
+          )}
           {netFail && <p className="mt-3 text-sm" style={{ color: "#fca5a5" }}>{t.net_fail}</p>}
 
           {/* goal chips (update mode) */}
           {showGoal && (
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <button onClick={() => chooseGoal("add")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>{t.goal_add}</button>
-              <button onClick={() => chooseGoal("tailor")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_tailor}</button>
-              <button onClick={() => chooseGoal("improve")} className="min-h-11 flex-1 rounded-xl px-3 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_improve}</button>
+            <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
+              <motion.button initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }} onClick={() => chooseGoal("add")} className="min-h-12 flex-1 rounded-full px-4 text-sm font-bold" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)", color: "#ffffff" }}>{t.goal_add}</motion.button>
+              <motion.button initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.07 }} whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }} onClick={() => chooseGoal("tailor")} className="min-h-12 flex-1 rounded-full px-4 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_tailor}</motion.button>
+              <motion.button initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }} whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }} onClick={() => chooseGoal("improve")} className="min-h-12 flex-1 rounded-full px-4 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)" }}>{t.goal_improve}</motion.button>
             </div>
           )}
-          {/* brain chips */}
+          {/* brain chips — floating pills, staggered */}
           {!showGoal && chips.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap gap-2.5">
               {chips.map((c, i) => (
-                <button key={i} onClick={() => pickChip(c)} className="min-h-11 rounded-full px-4 text-sm font-semibold" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(244,245,243,0.9)" }}>{c.label}</button>
+                <motion.button key={i} initial={{ opacity: 0, y: 12, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.35, delay: 0.1 + i * 0.07, ease: [0.32, 0.72, 0, 1] }} whileHover={{ scale: 1.05, y: -2 }} whileTap={{ scale: 0.96 }}
+                  onClick={() => pickChip(c)} className="min-h-11 rounded-full px-4 text-sm font-semibold" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(244,245,243,0.9)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>{c.label}</motion.button>
               ))}
             </div>
           )}
