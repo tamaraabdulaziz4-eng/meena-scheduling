@@ -729,12 +729,12 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
               <span className="mb-1.5 w-full text-center font-mono text-[11px] uppercase tracking-[0.18em]" style={{ color: "rgba(244,245,243,0.4)" }}>{t.tools_title}</span>
               {([
                 [t.tool_templates, "/templates"],
-                [t.tool_interview, rtl ? "/ar/interview" : "/interview"],
+                [t.tool_interview, rtl ? "/interview?lang=ar" : "/interview"],
                 [t.tool_live, "/interview-live"],
-                [t.tool_linkedin, rtl ? "/ar/linkedin" : "/linkedin"],
+                [t.tool_linkedin, rtl ? "/linkedin?lang=ar" : "/linkedin"],
                 [t.tool_examples, rtl ? "/ar/resume-examples" : "/resume-examples"],
                 [t.tool_pricing, "/pricing"],
-                [t.tool_account, rtl ? "/ar/account" : "/account"],
+                [t.tool_account, rtl ? "/account?lang=ar" : "/account"],
               ] as [string, string][]).map(([label, href]) => (
                 <Link key={href} href={href} className="tool-chip rounded-full px-4 py-2 text-xs font-semibold"
                   style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(244,245,243,0.78)", background: "rgba(255,255,255,0.04)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>{label}</Link>
@@ -763,7 +763,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             <button onClick={restoreDraft} className="min-h-11 rounded-xl px-6 text-sm font-bold" style={{ background: ACCENT, color: "#ffffff" }}>{t.continue_btn}</button>
             <button onClick={hardRestart} className="min-h-11 rounded-xl px-6 text-sm font-semibold" style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(244,245,243,0.7)" }}>{t.restart_btn}</button>
           </div>
-          <Link href={rtl ? "/ar/account" : "/account"} className="mt-4 text-xs font-semibold" style={{ color: "rgba(244,245,243,0.55)" }}>{t.tool_account} ←</Link>
+          <Link href={rtl ? "/account?lang=ar" : "/account"} className="mt-4 text-xs font-semibold" style={{ color: "rgba(244,245,243,0.55)" }}>{t.tool_account} ←</Link>
         </div>
       )}
 
@@ -861,10 +861,10 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
             {stage === "greeting" && <span>·</span>}
             <Link href="/pricing" className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.tool_pricing}</Link>
             <span>·</span>
-            <Link href={rtl ? "/ar/account" : "/account"} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.tool_account}</Link>
+            <Link href={rtl ? "/account?lang=ar" : "/account"} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{t.tool_account}</Link>
             <span>·</span>
             {/* language lives here now — the header is empty by design */}
-            <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{rtl ? "English" : "عربي"}</Link>
+            <Link href={rtl ? "/" : "/ar"} onClick={() => { try { localStorage.setItem("ra_lang_choice", rtl ? "en" : "ar"); localStorage.setItem("ra_lang", rtl ? "en" : "ar"); } catch { /* noop */ } }} className="font-semibold" style={{ color: "rgba(244,245,243,0.7)" }}>{rtl ? "English" : "عربي"}</Link>
           </div>
         </div>
       )}
@@ -923,9 +923,9 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                   <div className="mt-4">
                     <div className="mb-1.5 text-xs font-bold">{t.reveal_tools}</div>
                     <div className="flex flex-wrap gap-1.5">
-                      <Link href={rtl ? "/ar/interview" : "/interview"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_interview}</Link>
+                      <Link href={rtl ? "/interview?lang=ar" : "/interview"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_interview}</Link>
                       <Link href="/interview-live" className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_live}</Link>
-                      <Link href={rtl ? "/ar/linkedin" : "/linkedin"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_linkedin}</Link>
+                      <Link href={rtl ? "/linkedin?lang=ar" : "/linkedin"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_linkedin}</Link>
                     </div>
                   </div>
                   <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "#b45309" }}>{t.unlock}</Link>

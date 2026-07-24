@@ -6,9 +6,11 @@ import Link from "next/link";
 import AuroraBlobs from "../components/orb/AuroraBlobs";
 import { useOrbScene } from "../components/orb/OrbProvider";
 import AiOrb from "../components/AiOrb";
+import useLang from "../components/useLang";
 
 function LoginInner() {
   const params = useSearchParams();
+  const ar = useLang();
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   // Survive refresh/back after sending — otherwise users re-request duplicates.
@@ -24,7 +26,7 @@ function LoginInner() {
       if (saved) { setEmail(saved); setState("sent"); }
     } catch { /* noop */ }
   }, [params]);
-  const [error, setError] = useState(params.get("error") === "expired" ? "That link expired — request a new one." : "");
+  const [error, setError] = useState(params.get("error") === "expired" ? (ar ? "انتهت صلاحية الرابط — اطلب رابطاً جديداً." : "That link expired — request a new one.") : "");
 
   // رابط drives this scene: the Gate. Thinking while sending, a radio-pulse
   // broadcast the moment the magic link is sent.
@@ -54,7 +56,7 @@ function LoginInner() {
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-6" style={{ background: "var(--cosmos-bg)", color: "var(--cosmos-text)" }}>
+    <main dir={ar ? "rtl" : "ltr"} className="relative flex min-h-screen items-center justify-center overflow-hidden px-6" style={{ background: "var(--cosmos-bg)", color: "var(--cosmos-text)" }}>
       <AuroraBlobs />
       <div className="relative w-full max-w-sm rounded-3xl p-8" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(12px)" }}>
         <Link href="/" className="mb-6 flex items-center gap-2.5">
@@ -64,20 +66,20 @@ function LoginInner() {
 
         {state === "sent" ? (
           <div className="text-center">
-            <h1 className="text-2xl font-bold">Check your inbox</h1>
+            <h1 className="text-2xl font-bold">{ar ? "تفقّد بريدك الوارد" : "Check your inbox"}</h1>
             <p className="mt-2 text-sm" style={{ color: "var(--cosmos-muted)" }}>
-              We sent a sign-in link to <strong>{email}</strong>. Click it to continue — it expires in 15 minutes.
+              {ar ? <>أرسلنا رابط الدخول إلى <strong>{email}</strong>. انقره للمتابعة — تنتهي صلاحيته خلال ١٥ دقيقة.</> : <>We sent a sign-in link to <strong>{email}</strong>. Click it to continue — it expires in 15 minutes.</>}
             </p>
             <button
               onClick={() => { try { sessionStorage.removeItem("ra_login_sent"); } catch { /* noop */ } setEmail(""); setState("idle"); }}
               className="mt-4 text-sm font-semibold" style={{ color: "var(--accent)" }}>
-              Use a different email →
+              {ar ? "استخدام بريد آخر ←" : "Use a different email →"}
             </button>
           </div>
         ) : (
           <>
-            <h1 className="text-2xl font-bold">Your resume awaits</h1>
-            <p className="mt-1 text-sm" style={{ color: "var(--cosmos-muted)" }}>Enter your email and we&apos;ll send you a magic link — no password.</p>
+            <h1 className="text-2xl font-bold">{ar ? "سيرتك بانتظارك" : "Your resume awaits"}</h1>
+            <p className="mt-1 text-sm" style={{ color: "var(--cosmos-muted)" }}>{ar ? "أدخل بريدك الإلكتروني وسنرسل لك رابط دخول — بلا كلمة مرور." : "Enter your email and we'll send you a magic link — no password."}</p>
             <form onSubmit={submit} className="mt-5 space-y-3">
               <input
                 type="email"
@@ -90,7 +92,7 @@ function LoginInner() {
               />
               {error && <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>{error}</div>}
               <button type="submit" disabled={state === "sending"} className="btn-accent w-full py-3 disabled:opacity-50">
-                {state === "sending" ? "Sending…" : "Send magic link"}
+                {state === "sending" ? (ar ? "جارٍ الإرسال…" : "Sending…") : (ar ? "أرسل رابط الدخول" : "Send magic link")}
               </button>
             </form>
           </>

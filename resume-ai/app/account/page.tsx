@@ -74,13 +74,17 @@ function AccountInner() {
   // Follow the SITE language the user chose (via the عربي/English toggle), NOT
   // the browser locale — otherwise a Saudi user browsing the English flow got a
   // fully mirrored RTL account screen. Default English; RTL only on explicit ar.
-  const [lang] = useState<"en" | "ar">(() => {
+  // Starts "en" on both server and first client render so hydration matches;
+  // the stored/URL language flips in right after mount (one-frame, no mismatch).
+  const [lang, setLang] = useState<"en" | "ar">("en");
+  useEffect(() => {
     try {
-      const stored = localStorage.getItem("ra_lang");
-      if (stored === "ar") return "ar";
+      const q = new URLSearchParams(window.location.search).get("lang");
+      if (q === "ar" || q === "en") localStorage.setItem("ra_lang", q);
+      const stored = q || localStorage.getItem("ra_lang") || localStorage.getItem("ra_lang_choice");
+      if (stored === "ar") setLang("ar");
     } catch { /* noop */ }
-    return "en";
-  });
+  }, []);
   const t = STRINGS[lang];
   // Capture the welcome flag once into state — router.replace below strips the
   // param, which flips the reactive searchParams value back to false and would
