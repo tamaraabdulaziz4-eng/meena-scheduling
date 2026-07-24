@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import AdvisorLanding from "./components/AdvisorLanding";
+import Journey from "./components/Journey";
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
@@ -14,5 +14,5 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <AdvisorLanding lang="en" />;
+  return <Journey lang="en" />;
 }
