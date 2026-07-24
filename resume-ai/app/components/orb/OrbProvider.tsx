@@ -50,9 +50,10 @@ export interface OrbScene {
   rings: boolean;     // full-screen aurora pulse rings (thinking)
   badge: string | null; // a glyph layered on the orb (e.g. 🔒 / 🔓)
   radio: boolean;     // radio-pulse broadcast (magic link sent)
+  light: boolean;     // render the light-surface variant (glass/document worlds)
   z: number;
 }
-const DEFAULT: OrbScene = { visible: false, mood: "idle", top: "40vh", left: "50%", size: 120, progress: 0, rings: false, badge: null, radio: false, z: 30 };
+const DEFAULT: OrbScene = { visible: false, mood: "idle", top: "40vh", left: "50%", size: 120, progress: 0, rings: false, badge: null, radio: false, light: false, z: 30 };
 
 interface Ctx { setScene: (s: Partial<OrbScene> | null) => void }
 const OrbCtx = createContext<Ctx>({ setScene: () => {} });
@@ -117,7 +118,7 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
                 <circle cx={(displaySize + 16) / 2} cy={(displaySize + 16) / 2} r="44" fill="none" stroke="url(#orbProgressGrad)" strokeWidth="3" strokeLinecap="round" strokeDasharray={ring} strokeDashoffset={ring * (1 - scene.progress / 100)} style={{ transition: "stroke-dashoffset .6s ease" }} />
               </svg>
             )}
-            <AiOrb size={displaySize} state={scene.mood} />
+            <AiOrb size={displaySize} state={scene.mood} light={scene.light} />
             {scene.badge && <span className="absolute" style={{ fontSize: displaySize * 0.3 }}>{scene.badge}</span>}
           </div>
         </motion.div>

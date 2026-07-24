@@ -33,18 +33,22 @@ export default function AiOrb({
   state,
   className = "",
   style,
+  light = false,
 }: {
   size?: number;
   thinking?: boolean;
   state?: OrbState;
   className?: string;
   style?: CSSProperties;
+  /** Render on a LIGHT surface (the glass/document world): a luminous violet
+   *  marble instead of the black eclipse, which would read as a black hole. */
+  light?: boolean;
 }) {
   const mode = state ?? (thinking ? "thinking" : "idle");
   return (
     <span
       aria-hidden
-      className={`ai-orb ${mode !== "idle" ? mode : ""} ${size < 100 ? "mini" : ""} ${className}`}
+      className={`ai-orb ${mode !== "idle" ? mode : ""} ${size < 100 ? "mini" : ""} ${light ? "on-light" : ""} ${className}`}
       style={{ ["--orb-size" as string]: `${size}px`, ...style }}
     >
       <span className="orb-bloom" />

@@ -10,8 +10,8 @@ import AiOrb from "../AiOrb";
  * looks the same across the whole site.
  */
 export default function ScoreOrb({
-  value, size = 180, label, sub, animate = true, color: colorOverride,
-}: { value: number; size?: number; label?: string; sub?: string; animate?: boolean; color?: string }) {
+  value, size = 180, label, sub, animate = true, color: colorOverride, light = false,
+}: { value: number; size?: number; label?: string; sub?: string; animate?: boolean; color?: string; light?: boolean }) {
   const target = Math.max(0, Math.min(100, Math.round(value)));
   const [display, setDisplay] = useState(animate ? 0 : target);
   const rafRef = useRef<number | null>(null);
@@ -44,13 +44,18 @@ export default function ScoreOrb({
     <div className="flex flex-col items-center">
       <div className="relative" style={{ width: size, height: size }}>
         {/* glowing orb core behind the arc — tinted with the band color */}
-        <AiOrb
-          size={size * 0.62}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-          style={{ ["--light" as string]: color, ["--bloom-o" as string]: "0.65" }}
-        />
+        {/* wrapper carries the absolute centering — `.ai-orb` is position:relative
+            in CSS and would otherwise override an `absolute` class on the orb,
+            dropping it into flow and stacking it above the ring. */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <AiOrb
+            size={size * 0.62}
+            light={light}
+            style={{ ["--light" as string]: color, ["--bloom-o" as string]: "0.65" }}
+          />
+        </div>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="relative">
-          <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} />
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke={light ? "rgba(15,23,42,0.10)" : "rgba(255,255,255,0.1)"} strokeWidth={stroke} />
           <circle
             cx={cx} cy={cx} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
             strokeDasharray={`${dash} ${c}`} transform={`rotate(-90 ${cx} ${cx})`}

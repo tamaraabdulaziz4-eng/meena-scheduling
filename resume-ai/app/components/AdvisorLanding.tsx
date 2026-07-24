@@ -28,6 +28,7 @@ import { useOrbScene } from "./orb/OrbProvider";
 import ScoreOrb from "./orb/ScoreOrb";
 import PdfExport from "./PdfExport";
 import DocxExport from "./DocxExport";
+import TemplateThumb from "./TemplateThumb";
 import PublishLink from "./PublishLink";
 import ResumeTemplate from "./ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
@@ -95,6 +96,7 @@ const T = {
     continue_btn: "متابعة",
     restart_btn: "من جديد",
     reveal_title: "سيرتك جاهزة",
+    reveal_pick_template: "اختر تصميماً",
     reveal_score: "نتيجتها أمام أنظمة التوظيف",
     tpl_pick: "غيّر القالب:",
     lang_pick: "لغة السيرة:",
@@ -164,6 +166,7 @@ const T = {
     continue_btn: "Continue",
     restart_btn: "Start over",
     reveal_title: "Your resume is ready",
+    reveal_pick_template: "Pick a design",
     reveal_score: "Its ATS score",
     tpl_pick: "Switch template:",
     lang_pick: "CV language:",
@@ -654,7 +657,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
 
   /* ══════════════════ render ══════════════════ */
   return (
-    <div dir={rtl ? "rtl" : "ltr"} className={stage === "landing" ? "relative min-h-screen overflow-x-hidden" : "relative min-h-screen overflow-hidden"} style={{ background: stage === "reveal" ? "var(--glass-bg)" : "var(--cosmos-bg)", color: stage === "reveal" ? "var(--glass-text)" : "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
+    <div dir={rtl ? "rtl" : "ltr"} className={stage === "landing" ? "relative min-h-screen overflow-x-hidden" : "relative min-h-screen overflow-hidden"} style={{ background: "var(--cosmos-bg)", color: "var(--cosmos-text)", transition: "background 0.9s var(--smooth)" }}>
       {/* the world's light — a silver bloom behind the orb + vignette edges */}
       {stage !== "reveal" && <div className="stage-bloom" aria-hidden />}
 
@@ -898,51 +901,65 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         </div>
       )}
 
-      {/* ══ STATE 5: REVEAL (glass world) ══ */}
+      {/* ══ STATE 5: REVEAL — dark glass + aurora, bento template cards ══ */}
       {stage === "reveal" && (
         <div className="relative z-20 mx-auto max-w-5xl px-5 pb-24 pt-4">
+          {!reduce && <div className="reveal-aurora" aria-hidden />}
           <motion.div initial={{ opacity: 0, y: reduce ? 0 : 22, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, ease: [0.32, 0.72, 0, 1] }}
-            className="mb-6 flex items-center gap-3">
+            className="relative mb-6 flex items-center gap-3">
             <AiOrb size={40} state="done" />
             <h2 className="text-2xl font-extrabold">{t.reveal_title}</h2>
           </motion.div>
           {buildFail ? (
-            <div className="glass-surface p-6 text-center">
-              <p className="mb-3 text-sm" style={{ color: "var(--glass-muted)" }}>{t.build_fail}</p>
-              <button onClick={() => (mode === "update" ? runUpdate(profile) : finalize(profile))} className="min-h-11 rounded-xl px-6 text-sm font-bold text-white" style={{ background: "#7C3AED" }}>{t.retry}</button>
+            <div className="card relative p-6 text-center">
+              <p className="mb-3 text-sm" style={{ color: "rgba(244,245,243,0.6)" }}>{t.build_fail}</p>
+              <button onClick={() => (mode === "update" ? runUpdate(profile) : finalize(profile))} className="btn-accent min-h-11 px-6 text-sm">{t.retry}</button>
             </div>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-              {/* template preview */}
+            <div className="relative grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+              {/* LEFT: bento template card gallery + the chosen preview */}
               <motion.div initial={{ opacity: 0, y: reduce ? 0 : 26, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, delay: 0.15, ease: [0.32, 0.72, 0, 1] }}
-                className="glass-surface p-5" style={{ background: "rgba(255,255,255,0.9)" }}>
-                <div className="mb-3 flex flex-wrap gap-1.5">
-                  {TEMPLATE_CATALOG.map((tp) => (
-                    <button key={tp.slug} onClick={() => setTpl(tp)} className="min-h-9 rounded-lg px-2.5 text-[11px] font-semibold" style={tpl.slug === tp.slug ? { background: tp.accent, color: "#fff" } : { border: "1px solid #e5e7eb", color: "#4b5563" }}>{rtl ? tp.nameAr : tp.name}</button>
-                  ))}
-                  <Link href="/templates" className="min-h-9 content-center px-2 text-[11px] font-bold" style={{ color: "#7C3AED" }}>{t.browse_templates}</Link>
+                className="min-w-0 space-y-4">
+                {/* the gallery — pick a look */}
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="font-mono text-[11px] uppercase tracking-[0.18em]" style={{ color: "rgba(244,245,243,0.5)" }}>{t.reveal_pick_template}</div>
+                    <Link href="/templates" className="text-[11px] font-bold" style={{ color: "var(--accent)" }}>{t.browse_templates}</Link>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4">
+                    {TEMPLATE_CATALOG.map((tp) => (
+                      <button key={tp.slug} onClick={() => setTpl(tp)} className={`tpl-card ${tpl.slug === tp.slug ? "is-active" : ""}`} aria-pressed={tpl.slug === tp.slug} title={rtl ? tp.nameAr : tp.name}>
+                        {tpl.slug === tp.slug && <span className="tpl-check">✓</span>}
+                        <TemplateThumb def={tp} />
+                        <div className="mt-1.5 truncate text-center text-[10px] font-semibold" style={{ color: tpl.slug === tp.slug ? "#fff" : "rgba(244,245,243,0.7)" }}>{rtl ? tp.nameAr : tp.name}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                {cv && <ResumeTemplate text={cv} name={profile.name || "resume"} variant={tpl.variant} accent={tpl.accent} fitWidth />}
+                {/* the chosen resume — a white page floating in dark glass */}
+                <div className="card min-w-0 p-3">
+                  {cv && <ResumeTemplate text={cv} name={profile.name || "resume"} variant={tpl.variant} accent={tpl.accent} fitWidth />}
+                </div>
               </motion.div>
-              {/* score + actions */}
+              {/* RIGHT: score + download actions */}
               <motion.div initial={{ opacity: 0, y: reduce ? 0 : 26, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, delay: 0.3, ease: [0.32, 0.72, 0, 1] }}
                 className="space-y-4">
-                <div className="glass-surface p-5 text-center">
+                <div className="card p-5 text-center">
                   <h3 className="mb-3 text-sm font-bold">{t.reveal_score}</h3>
                   {scorePhase === "done" && score ? <div className="mx-auto"><ScoreOrb value={score.value} size={150} /></div>
-                    : scorePhase === "working" ? <div className="flex items-center justify-center gap-3 py-6"><AiOrb size={34} thinking /><span className="font-mono text-xs" style={{ color: "var(--glass-muted)" }}>…</span></div>
-                    : <button onClick={() => finalize(profile)} className="min-h-11 rounded-lg px-5 text-sm font-bold text-white" style={{ background: "#7C3AED" }}>{t.retry}</button>}
+                    : scorePhase === "working" ? <div className="flex items-center justify-center gap-3 py-6"><AiOrb size={34} thinking /><span className="font-mono text-xs" style={{ color: "rgba(244,245,243,0.55)" }}>…</span></div>
+                    : <button onClick={() => finalize(profile)} className="btn-accent min-h-11 px-5 text-sm">{t.retry}</button>}
                 </div>
-                <div className="glass-surface p-5" onClickCapture={(e) => { if ((e.target as HTMLElement).closest("button")) track("download_clicked", { lang }); }}>
+                <div className="card p-5" onClickCapture={(e) => { if ((e.target as HTMLElement).closest("button")) track("download_clicked", { lang }); }}>
                   <div className="mb-3">
                     <div className="mb-1.5 text-xs font-bold">{t.lang_pick}</div>
                     <div className="flex gap-1.5">
                       {(["en", "ar", "both"] as const).map((c) => (
-                        <button key={c} onClick={() => switchLang(c)} disabled={langBusy} className="min-h-9 flex-1 rounded-lg px-2 text-xs font-semibold disabled:opacity-60" style={outChoice === c ? { background: "#7C3AED", color: "#fff" } : { border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.lang_opts[c]}</button>
+                        <button key={c} onClick={() => switchLang(c)} disabled={langBusy} className="min-h-9 flex-1 rounded-lg px-2 text-xs font-semibold disabled:opacity-60" style={outChoice === c ? { background: "#7C3AED", color: "#fff" } : { border: "1px solid rgba(255,255,255,0.14)", color: "rgba(244,245,243,0.72)" }}>{t.lang_opts[c]}</button>
                       ))}
                     </div>
-                    {langBusy && <div className="mt-2 flex items-center gap-2"><AiOrb size={18} thinking /><span className="font-mono text-[11px]" style={{ color: "var(--glass-muted)" }}>…</span></div>}
-                    {langErr && <button onClick={() => { setLangErr(false); switchLang(outChoice, true); }} className="mt-2 text-xs font-semibold" style={{ color: "#dc2626" }}>{t.lang_err}</button>}
+                    {langBusy && <div className="mt-2 flex items-center gap-2"><AiOrb size={18} thinking /><span className="font-mono text-[11px]" style={{ color: "rgba(244,245,243,0.55)" }}>…</span></div>}
+                    {langErr && <button onClick={() => { setLangErr(false); switchLang(outChoice, true); }} className="mt-2 text-xs font-semibold" style={{ color: "#f87171" }}>{t.lang_err}</button>}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <PdfExport text={cv} watermark={score?.watermark !== false} lang={lang} label="↓ PDF" />
@@ -952,12 +969,12 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
                   <div className="mt-4">
                     <div className="mb-1.5 text-xs font-bold">{t.reveal_tools}</div>
                     <div className="flex flex-wrap gap-1.5">
-                      <Link href={rtl ? "/interview?lang=ar" : "/interview"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_interview}</Link>
-                      <Link href="/interview-live" className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_live}</Link>
-                      <Link href={rtl ? "/linkedin?lang=ar" : "/linkedin"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid #e5e7eb", color: "#4b5563" }}>{t.tool_linkedin}</Link>
+                      <Link href={rtl ? "/interview?lang=ar" : "/interview"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(244,245,243,0.72)" }}>{t.tool_interview}</Link>
+                      <Link href="/interview-live" className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(244,245,243,0.72)" }}>{t.tool_live}</Link>
+                      <Link href={rtl ? "/linkedin?lang=ar" : "/linkedin"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(244,245,243,0.72)" }}>{t.tool_linkedin}</Link>
                     </div>
                   </div>
-                  <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "#b45309" }}>{t.unlock}</Link>
+                  <Link href="/pricing" className="mt-3 block rounded-xl py-3 text-center text-sm font-bold" style={{ background: "rgba(245,184,64,0.14)", border: "1px solid rgba(245,184,64,0.4)", color: "var(--gold)" }}>{t.unlock}</Link>
                 </div>
               </motion.div>
             </div>

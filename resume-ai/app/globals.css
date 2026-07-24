@@ -478,6 +478,72 @@ body {
 /* mini orbs (nav, inline, chips): halos + field are sub-pixel noise — hide them */
 .ai-orb.mini .orb-halo, .ai-orb.mini .orb-field { display: none; }
 
+/* ── REVEAL — the download step: dark glass + aurora, bento template cards ── */
+.reveal-aurora {
+  position: absolute;
+  inset: -10% -10% auto -10%;
+  height: 60vh;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(40% 55% at 22% 20%, rgba(139, 92, 246, 0.28), transparent 70%),
+    radial-gradient(38% 50% at 82% 12%, rgba(236, 72, 153, 0.22), transparent 70%),
+    radial-gradient(45% 55% at 60% 40%, rgba(245, 158, 11, 0.12), transparent 72%);
+  filter: blur(30px);
+}
+/* a template choice — a tiny paper in a glass frame; lifts + glows when picked */
+.tpl-card {
+  position: relative;
+  border-radius: 14px;
+  padding: 7px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: transform 0.22s var(--smooth, ease), border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
+  cursor: pointer;
+}
+.tpl-card:hover { transform: translateY(-3px); border-color: rgba(139, 92, 246, 0.4); }
+.tpl-card.is-active {
+  border-color: rgba(139, 92, 246, 0.75);
+  background: rgba(139, 92, 246, 0.12);
+  box-shadow: 0 16px 40px -14px rgba(139, 92, 246, 0.6), inset 0 0 0 1px rgba(139, 92, 246, 0.4);
+}
+.tpl-card.is-active .tpl-check {
+  position: absolute; top: 5px; inset-inline-end: 5px;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 800; z-index: 2;
+  box-shadow: 0 2px 8px -1px rgba(124, 58, 237, 0.7);
+}
+@media (prefers-reduced-motion: reduce) { .tpl-card { transition: none; } }
+
+/* ── LIGHT SURFACE — the glass/document world ──────────────────────────────
+   The black-moon eclipse reads as a black hole on white. On a light surface we
+   swap the core for a luminous violet marble and drop the eclipse drama (corona,
+   halos, particle field) that only reads against a dark sky. Mood tints still
+   flow through `--light` (thinking=violet, done=green) via the bloom + core. */
+.ai-orb.on-light .orb-corona,
+.ai-orb.on-light .orb-halo,
+.ai-orb.on-light .orb-field { display: none; }
+.ai-orb.on-light .orb-core {
+  background: radial-gradient(circle at 34% 30%,
+    #ffffff 0%, #ede9fe 16%, color-mix(in srgb, var(--light) 78%, #a78bfa) 52%, #7c3aed 100%);
+  box-shadow:
+    inset 0 calc(var(--orb-size) * 0.03) calc(var(--orb-size) * 0.05) rgba(255, 255, 255, 0.75),
+    inset 0 calc(var(--orb-size) * -0.10) calc(var(--orb-size) * 0.18) rgba(76, 29, 149, 0.5),
+    0 calc(var(--orb-size) * 0.10) calc(var(--orb-size) * 0.28) calc(var(--orb-size) * -0.08) rgba(124, 58, 237, 0.5);
+}
+.ai-orb.on-light .orb-sphere::before { /* keep a crisp specular highlight */
+  background: conic-gradient(from 300deg, transparent 0deg, rgba(255,255,255,0.85) 55deg, transparent 130deg);
+}
+.ai-orb.on-light .orb-bloom {
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--light) 55%, #8b5cf6), transparent 60%);
+  mix-blend-mode: normal;
+  opacity: 0.4;
+}
+
 /* ── MOODS — same body, different light ────────────────────────────────── */
 .ai-orb.thinking { --light: #b9a6ff; --bloom-o: 0.85; --speed: 3.2; animation-duration: 2.4s; }
 .ai-orb.listening { --light: #a5d8ff; --bloom-o: 0.7; --speed: 1.8; }
