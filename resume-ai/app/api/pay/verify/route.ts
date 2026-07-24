@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
               <h2 style="margin:0 0 8px">Payment received — thank you! ✅</h2>
               <p>Your <strong>${planName}</strong> access is active until <strong>${untilStr}</strong>.</p>
               <p>Open your paid access from any device with this link (valid 15 min; you stay signed in after):</p>
-              <p><a href="${signin}" style="display:inline-block;background:#22c55e;color:#05130a;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none">Open my account →</a></p>
+              <p><a href="${signin}" style="display:inline-block;background:#7c3aed;color:#ffffff;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none">Open my account →</a></p>
               <p style="color:#666;font-size:13px">Plan: ${planName}<br/>Access until: ${untilStr}<br/>7-day money-back guarantee applies.</p>`),
           });
         } catch (e) {

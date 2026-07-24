@@ -430,7 +430,7 @@ export default function ArOptimizePage() {
                 </button>
               </div>
               {!result.locked && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                     className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
                     {copied ? "نُسخت" : "نسخ"}

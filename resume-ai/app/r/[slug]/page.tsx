@@ -34,14 +34,14 @@ export default async function PublicResumePage({ params }: { params: Promise<{ s
       <div className="mx-auto max-w-3xl px-5 py-12">
         {/* The resume inside a light glass frame */}
         <div className="glass-surface p-8" style={{ background: "rgba(255,255,255,0.9)" }}>
-          <div dir="auto" className="whitespace-pre-wrap font-mono text-sm leading-relaxed" style={{ color: "#1f2937" }}>{r.text}</div>
+          <div dir="auto" className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed" style={{ color: "#1f2937", overflowWrap: "anywhere" }}>{r.text}</div>
         </div>
 
         {/* Viral footer — orb + "make your own" (free growth channel on every share) */}
         <div className="mt-7 flex flex-col items-center gap-4 text-center">
           <Link href="/" className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--glass-muted)" }}>
             <AiOrb size={22} />
-            {ar ? "سُوِّيت بـ cv.rabit.sa" : "Built with cv.rabit.sa"}
+            {ar ? "سُوِّيت بـ سيرة · cv.rabit.sa" : "Built with Sira · cv.rabit.sa"}
           </Link>
           <Link href={ar ? "/ar" : "/"} className="rounded-full px-7 py-3 text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#8b5cf6,#7c3aed)", boxShadow: "0 6px 24px rgba(139,92,246,0.35)" }}>
             {ar ? "سوّ سيرتك مثلها — مجاناً ↗" : "Make your own like this — free ↗"}

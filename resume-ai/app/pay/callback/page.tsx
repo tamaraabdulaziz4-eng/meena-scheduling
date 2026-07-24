@@ -239,7 +239,7 @@ function CallbackInner() {
         </p>
         {showSupport && (
           <p className="mt-3 text-sm">
-            <a href="mailto:alanziabdulaziz4@gmail.com?subject=Payment%20issue" className="font-semibold underline" style={{ color: paid ? "#16a34a" : "var(--accent)" }}>
+            <a href="mailto:alanziabdulaziz4@gmail.com?subject=Payment%20issue" className="font-semibold underline" style={{ color: paid ? "var(--gold)" : "var(--accent)" }}>
               {t.contactSupport}
             </a>
           </p>
@@ -263,7 +263,7 @@ function CallbackInner() {
               <button onClick={downloadReceipt} className="mt-3 w-full rounded-lg py-2 text-xs font-bold" style={{ background: "rgba(11,18,32,0.06)", color: "var(--glass-text)" }}>↓ {t.downloadReceipt}</button>
             </div>
 
-            <Link href={ar ? "/ar/optimize" : "/optimize"} className="mt-6 inline-block rounded-xl px-8 py-3 font-bold" style={{ background: "#22C55E", color: "#ffffff" }}>{t.start}</Link>
+            <Link href={ar ? "/ar/optimize" : "/optimize"} className="mt-6 inline-block rounded-xl px-8 py-3 font-bold" style={{ background: "linear-gradient(135deg,#8b5cf6,#7c3aed)", color: "#ffffff" }}>{t.start}</Link>
           </>
         )}
         {state === "pending" && (

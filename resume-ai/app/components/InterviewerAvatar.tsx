@@ -21,7 +21,7 @@ export default function InterviewerAvatar({ speaking = false, label = "المُ�
             <defs>
               <clipPath id="ia-clip"><circle cx="80" cy="80" r="76" /></clipPath>
               <linearGradient id="ia-bg" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#0f766e" /><stop offset="1" stopColor="#134e4a" />
+                <stop offset="0" stopColor="#7c3aed" /><stop offset="1" stopColor="#4c1d95" />
               </linearGradient>
             </defs>
             <g clipPath="url(#ia-clip)">

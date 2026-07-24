@@ -5,6 +5,7 @@ import PdfExport from "../components/PdfExport";
 import DocxExport from "../components/DocxExport";
 import BeforeAfter from "../components/BeforeAfter";
 import AiOrb from "../components/AiOrb";
+import OrbBrand from "../components/OrbBrand";
 import OrbSceneSetter from "../components/orb/OrbSceneSetter";
 import ResumeTemplate from "../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
@@ -371,8 +372,8 @@ export default function OptimizePage() {
       <nav className="sticky top-0 z-50" style={{ background: "linear-gradient(180deg, rgba(5,7,13,0.85), transparent)" }}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
-            {/* the brand IS the orb — no colored box */}
-            <AiOrb size={26} />
+            {/* flat logo mark — the living orb is the single flying one */}
+            <OrbBrand size={26} />
             <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <div className="flex items-center gap-5">
@@ -620,7 +621,7 @@ export default function OptimizePage() {
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-xl font-bold">Your optimized resume</h2>
                   {!result.locked && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"

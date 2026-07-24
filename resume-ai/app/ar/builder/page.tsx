@@ -278,7 +278,7 @@ export default function ArChatBuilderPage() {
             <div className="flex-1 space-y-3 overflow-y-auto pb-4">
               {msgs.map((m, i) =>
                 m.who === "suggest" ? (
-                  <div key={i} className="rounded-2xl p-4" style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)" }}>
+                  <div key={i} className="rounded-2xl p-4" style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.3)" }}>
                     <div className="mb-1 font-mono text-[11px]" style={{ color: "#a5b4fc" }}>اقتراح بالإنجليزية{m.note ? ` — ${m.note}` : ""}</div>
                     <div dir="ltr" className="whitespace-pre-wrap text-left font-mono text-sm" style={{ color: "rgba(244,245,243,0.9)" }}>{m.text}</div>
                   </div>
