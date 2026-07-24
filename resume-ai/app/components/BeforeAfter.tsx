@@ -56,7 +56,7 @@ export default function BeforeAfter({
       {/* After row */}
       <div>
         <div className="mb-1.5 flex items-center justify-between text-xs" style={{ color: "var(--muted)" }}>
-          <span className="font-semibold">{t("With the ResumeAI rewrite", "بعد إعادة كتابة ResumeAI")}</span>
+          <span className="font-semibold">{t("With the Sira rewrite", "بعد إعادة كتابة سيرة")}</span>
           <span className="font-mono font-bold tabular-nums" style={{ color: "var(--accent)" }}>{shown}%</span>
         </div>
         <div className="h-2.5 w-full overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>

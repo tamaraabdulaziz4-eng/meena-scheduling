@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     const res = await fetch(url.toString(), {
       signal: ctrl.signal,
       redirect: "follow",
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; ResumeAIBot/1.0)", Accept: "text/html,application/xhtml+xml" },
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; SiraBot/1.0)", Accept: "text/html,application/xhtml+xml" },
     }).finally(() => clearTimeout(timer));
     if (!res.ok) return NextResponse.json({ error: `Couldn't open the link (HTTP ${res.status}). Paste the text instead.` }, { status: 502 });
     const ctype = res.headers.get("content-type") || "";

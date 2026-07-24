@@ -284,7 +284,7 @@ export default function ArOptimizePage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">سيرة</span>
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/optimize" className="rounded-lg px-3 py-2 text-sm" style={{ color: "var(--muted)", border: "1px solid var(--line)" }}

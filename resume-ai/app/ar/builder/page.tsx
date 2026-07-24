@@ -266,7 +266,7 @@ export default function ArChatBuilderPage() {
         <div className="mx-auto flex max-w-2xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">سيرة</span>
           </Link>
           <Link href="/ar/build" className="text-sm" style={{ color: "var(--muted)" }}>الوضع الكلاسيكي</Link>
         </div>

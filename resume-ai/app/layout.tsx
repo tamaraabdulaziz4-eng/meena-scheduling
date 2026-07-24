@@ -8,18 +8,18 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE),
-  title: "ResumeAI — Honest AI Resume Optimizer (No-Fabrication Engine)",
+  title: "Sira — Honest AI Resume Optimizer (No-Fabrication Engine)",
   description:
     "Optimize your resume with AI in 10 seconds. Free ATS match score, missing keywords, and a rewritten resume aligned to any job description — without inventing a single fact you didn't provide.",
   keywords: "resume optimizer, ATS resume, AI resume writer, resume checker, ATS resume checker, job application, cover letter generator",
   openGraph: {
-    title: "ResumeAI — Honest AI Resume Optimization in 10 Seconds",
+    title: "Sira — Honest AI Resume Optimization in 10 Seconds",
     description: "Free ATS score + analysis, and a rewritten resume that never invents facts you didn't provide.",
     type: "website",
     url: BASE,
-    siteName: "ResumeAI",
+    siteName: "Sira",
   },
-  twitter: { card: "summary_large_image", title: "ResumeAI — Honest AI Resume Optimization", description: "Free ATS score + a no-fabrication rewrite in 10 seconds." },
+  twitter: { card: "summary_large_image", title: "Sira — Honest AI Resume Optimization", description: "Free ATS score + a no-fabrication rewrite in 10 seconds." },
 };
 
 // Rich structured data — Organization + SoftwareApplication (with real SAR
@@ -31,13 +31,13 @@ const structuredData = {
     {
       "@type": "Organization",
       "@id": `${BASE}/#org`,
-      name: "ResumeAI",
+      name: "Sira",
       url: BASE,
       description: "Honest AI resume optimizer for the Saudi, Gulf, and global job markets.",
     },
     {
       "@type": "SoftwareApplication",
-      name: "ResumeAI",
+      name: "Sira",
       applicationCategory: "BusinessApplication",
       operatingSystem: "Web",
       publisher: { "@id": `${BASE}/#org` },

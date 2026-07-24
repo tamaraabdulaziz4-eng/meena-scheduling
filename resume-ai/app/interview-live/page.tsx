@@ -249,7 +249,7 @@ export default function InterviewLivePage() {
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/ar/optimize" className="btn-accent px-4 py-2 text-sm">افحص سيرتي</Link>
         </div>

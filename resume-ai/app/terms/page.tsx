@@ -6,8 +6,8 @@ import Link from "next/link";
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "الشروط والأحكام وسياسة الاسترجاع | Terms — ResumeAI",
-  description: "شروط استخدام خدمة ResumeAI على cv.rabit.sa، الأسعار، وسياسة الاسترجاع.",
+  title: "الشروط والأحكام وسياسة الاسترجاع | Terms — Sira",
+  description: "شروط استخدام خدمة «سيرة» على cv.rabit.sa، الأسعار، وسياسة الاسترجاع.",
   alternates: { canonical: `${BASE}/terms` },
 };
 
@@ -26,7 +26,7 @@ export default function TermsPage() {
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/privacy" className="text-sm" style={{ color: "var(--muted)" }}>سياسة الخصوصية</Link>
         </div>
@@ -39,7 +39,7 @@ export default function TermsPage() {
 
         <Section title="١. الخدمة">
           <p>
-            ResumeAI أداة ذكاء اصطناعي تساعدك على تحسين وضوح سيرتك الذاتية وملاءمتها لمتطلبات الوظائف،
+            «سيرة» أداة ذكاء اصطناعي تساعدك على تحسين وضوح سيرتك الذاتية وملاءمتها لمتطلبات الوظائف،
             وبناء سيرة إنجليزية من إجاباتك. النتائج <strong>مساعدة تحريرية</strong> — لا نضمن قبولك في وظيفة
             ولا اجتياز أي نظام توظيف معيّن، لأن قرارات التوظيف بيد جهات التوظيف وأنظمتها المختلفة.
           </p>
@@ -89,7 +89,7 @@ export default function TermsPage() {
         <div className="card mt-10 p-6" dir="ltr">
           <h2 className="mb-3 text-lg font-bold">English summary</h2>
           <ul className="ml-5 list-disc space-y-1 text-sm" style={{ color: "rgba(244,245,243,0.75)" }}>
-            <li>ResumeAI is an editorial AI aid — we don&apos;t guarantee hiring outcomes or passage through any specific ATS.</li>
+            <li>Sira is an editorial AI aid — we don&apos;t guarantee hiring outcomes or passage through any specific ATS.</li>
             <li>Pricing: SAR 35 one-time (24h full access) or SAR 99 one-time Complete Pack (90 days full access, no subscription).</li>
             <li><strong>Refunds:</strong> full refund within 7 days if you paid and the service failed to deliver. Processed within 3 business days via Paylink.</li>
             <li>Payments handled by licensed Saudi gateway Paylink; we never see your card details.</li>

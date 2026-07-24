@@ -3,7 +3,7 @@ import { ImageResponse } from "next/og";
 // Branded default social-share card (og:image + twitter:image site-wide).
 // Pure JSX/divs — no external assets — so it statically optimizes at build.
 // Every multi-child div declares display:flex (required by Satori).
-export const alt = "ResumeAI — Honest AI Resume Optimizer";
+export const alt = "Sira — Honest AI Resume Optimizer";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -25,7 +25,7 @@ export default function Image() {
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 44 }}>
           <div style={{ width: 56, height: 56, borderRadius: 13, background: "#a78bfa", color: "#05130a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 800, marginRight: 18 }}>R</div>
-          <div style={{ display: "flex", fontSize: 40, fontWeight: 700 }}>ResumeAI</div>
+          <div style={{ display: "flex", fontSize: 40, fontWeight: 700 }}>Sira</div>
         </div>
         <div style={{ display: "flex", fontSize: 68, fontWeight: 800, lineHeight: 1.1, maxWidth: 900 }}>
           Honest AI resume optimization in <span style={{ color: "#a78bfa", marginLeft: 16 }}>10 seconds</span>

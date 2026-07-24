@@ -342,7 +342,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>R</div>
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </div>
           <Link href={t.nav_lang_href} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: GREEN }}>{t.nav_lang}</Link>
         </div>

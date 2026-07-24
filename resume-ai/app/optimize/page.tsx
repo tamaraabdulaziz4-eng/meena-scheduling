@@ -373,7 +373,7 @@ export default function OptimizePage() {
           <Link href="/" className="flex items-center gap-2.5">
             {/* the brand IS the orb — no colored box */}
             <AiOrb size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/ar/optimize" className="rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: "var(--accent)", border: "1px solid var(--line)" }}

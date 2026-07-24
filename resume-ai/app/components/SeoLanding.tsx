@@ -32,7 +32,7 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
         </div>
@@ -119,9 +119,9 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
             <OrbBrand size={20} />
-            <span className="text-sm font-bold">ResumeAI</span>
+            <span className="text-sm font-bold">Sira</span>
           </div>
-          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
+          <p className="font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 Sira · a resume service by Rabit</p>
         </div>
       </footer>
 

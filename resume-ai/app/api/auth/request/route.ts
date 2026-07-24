@@ -43,9 +43,9 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         from: FROM,
         to: [email],
-        subject: "Your ResumeAI sign-in link",
+        subject: "Your Sira sign-in link",
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto">
-          <h2>Sign in to ResumeAI</h2>
+          <h2>Sign in to Sira</h2>
           <p>Click the button below to sign in. This link expires in 15 minutes.</p>
           <p><a href="${link}" style="display:inline-block;background:#22c55e;color:#05130a;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none">Sign in →</a></p>
           <p style="color:#888;font-size:12px">If you didn't request this, you can ignore it.</p>

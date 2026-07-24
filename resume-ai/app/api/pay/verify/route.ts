@@ -142,7 +142,7 @@ export async function GET(req: NextRequest) {
           const signin = `${APP_URL}/api/auth/verify?token=${encodeURIComponent(createMagicToken(orderEmail, now))}`;
           await sendEmail({
             to: orderEmail,
-            subject: "Your ResumeAI receipt & access link",
+            subject: "Your Sira receipt & access link",
             html: emailShell(`
               <h2 style="margin:0 0 8px">Payment received — thank you! ✅</h2>
               <p>Your <strong>${planName}</strong> access is active until <strong>${untilStr}</strong>.</p>

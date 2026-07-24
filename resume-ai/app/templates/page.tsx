@@ -8,7 +8,7 @@ import TemplatesGallery from "./TemplatesGallery";
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "Resume Templates — ATS-Safe, RTL & English | ResumeAI",
+  title: "Resume Templates — ATS-Safe, RTL & English | Sira",
   description:
     "Browse professional, ATS-safe resume templates in Arabic (RTL) and English. Pick a design, then let AI fill it with your real experience — no fabricated facts. Free to start.",
   alternates: {
@@ -26,7 +26,7 @@ export default function TemplatesPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <div className="flex items-center gap-4">
             <Link href="/pricing" className="text-sm font-semibold" style={{ color: "var(--muted)" }}>Pricing</Link>

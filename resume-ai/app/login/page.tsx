@@ -61,7 +61,7 @@ function LoginInner() {
       <div className="relative w-full max-w-sm rounded-3xl p-8" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(12px)" }}>
         <Link href="/" className="mb-6 flex items-center gap-2.5">
           <AiOrb size={30} />
-          <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+          <span className="text-[15px] font-bold tracking-tight">Sira</span>
         </Link>
 
         {state === "sent" ? (

@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const scoreLine = Number.isFinite(score) ? `<p>Your job-match score: <strong>${Math.round(score)}%</strong></p>` : "";
   const ok = await sendEmail({
     to: email,
-    subject: "Your optimized resume — ResumeAI",
+    subject: "Your optimized resume — Sira",
     html: emailShell(`
       <h2 style="margin:0 0 8px">Here's your optimized resume</h2>
       ${scoreLine}

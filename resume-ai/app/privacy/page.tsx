@@ -6,7 +6,7 @@ import Link from "next/link";
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "سياسة الخصوصية | Privacy Policy — ResumeAI",
+  title: "سياسة الخصوصية | Privacy Policy — Sira",
   description: "كيف نعالج سيرتك الذاتية وبياناتك: لا نخزّن سيرتك على خوادمنا، لا نستخدم بياناتك لتدريب النماذج، وتقدر تحذف كل شيء.",
   alternates: { canonical: `${BASE}/privacy` },
 };
@@ -26,7 +26,7 @@ export default function PrivacyPage() {
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/terms" className="text-sm" style={{ color: "var(--muted)" }}>الشروط والأحكام</Link>
         </div>
@@ -90,7 +90,7 @@ export default function PrivacyPage() {
 
         <Section title="٦. من نحن وكيف تتواصل معنا؟">
           <p>
-            «ResumeAI» خدمة سير ذاتية تعمل على نطاق <span dir="ltr">cv.rabit.sa</span> التابع لـ«رابِت» (Rabit).
+            «سيرة» خدمة سير ذاتية تعمل على نطاق <span dir="ltr">cv.rabit.sa</span> التابع لـ«رابِت» (Rabit).
             لأي استفسار عن بياناتك أو الدفع أو الحذف:
           </p>
           <p dir="ltr">

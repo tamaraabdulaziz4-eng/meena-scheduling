@@ -8,14 +8,14 @@ import { PLANS } from "../lib/plans";
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "Pricing — One-time, No Subscription | ResumeAI",
+  title: "Pricing — One-time, No Subscription | Sira",
   description:
     "Simple one-time pricing: SAR 35 for 24-hour full access or SAR 99 for 90 days. Every feature is included in both — the only difference is how long access lasts. No subscription, 7-day money-back guarantee.",
   alternates: {
     canonical: `${BASE}/pricing`,
     languages: { en: `${BASE}/pricing`, ar: `${BASE}/pricing`, "x-default": `${BASE}/pricing` },
   },
-  openGraph: { title: "ResumeAI Pricing — Pay once, no subscription", description: "SAR 35 (24h) or SAR 99 (90 days). Every feature in both.", url: `${BASE}/pricing` },
+  openGraph: { title: "Sira Pricing — Pay once, no subscription", description: "SAR 35 (24h) or SAR 99 (90 days). Every feature in both.", url: `${BASE}/pricing` },
 };
 
 function PlanCard({ id, highlight }: { id: "single" | "complete"; highlight?: boolean }) {
@@ -54,7 +54,7 @@ export default function PricingPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Free scan →</Link>
         </div>

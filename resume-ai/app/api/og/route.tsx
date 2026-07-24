@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
       <div style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#08090a", color: "#f4f5f3", fontFamily: "sans-serif" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 30 }}>
           <div style={{ width: 44, height: 44, borderRadius: 10, background: "#4ade80", color: "#05130a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, fontWeight: 800, marginRight: 14 }}>R</div>
-          <div style={{ display: "flex", fontSize: 30, fontWeight: 700 }}>ResumeAI</div>
+          <div style={{ display: "flex", fontSize: 30, fontWeight: 700 }}>Sira</div>
         </div>
         <div style={{ display: "flex", fontSize: 26, color: "#8a8a8a", letterSpacing: 6 }}>MY ATS RESUME SCORE</div>
         <div style={{ display: "flex", alignItems: "baseline" }}>

@@ -27,9 +27,9 @@ export async function sendEmail(opts: { to: string; subject: string; html: strin
 /** Branded wrapper so every email looks consistent. */
 export function emailShell(bodyHtml: string): string {
   return `<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:auto;color:#111">
-    <div style="font-size:20px;font-weight:800;color:#0f766e;margin-bottom:16px">ResumeAI · cv.rabit.sa</div>
+    <div style="font-size:20px;font-weight:800;color:#7c3aed;margin-bottom:16px">Sira · cv.rabit.sa</div>
     ${bodyHtml}
     <hr style="border:none;border-top:1px solid #eee;margin:24px 0" />
-    <p style="color:#999;font-size:12px">ResumeAI — honest AI resume optimization. No subscription.</p>
+    <p style="color:#999;font-size:12px">Sira — honest AI resume optimization. No subscription.</p>
   </div>`;
 }

@@ -19,7 +19,7 @@ async function getAudienceId(key: string): Promise<string> {
     if (first) { cachedAudienceId = first; return first; }
   }
   const created = await fetch("https://api.resend.com/audiences", {
-    method: "POST", headers, body: JSON.stringify({ name: "ResumeAI Newsletter" }),
+    method: "POST", headers, body: JSON.stringify({ name: "Sira Newsletter" }),
   });
   if (!created.ok) throw new Error(`audience create ${created.status}`);
   const d = await created.json();

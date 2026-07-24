@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: { params: Promise<{ job: stri
   const j = getJob(job);
   if (!j) return { title: "Not found" };
   return {
-    title: `Top ${j.title} Skills for Your Resume (2026) — ATS Keywords | ResumeAI`,
+    title: `Top ${j.title} Skills for Your Resume (2026) — ATS Keywords | Sira`,
     description: `The ${j.atsKeywords.length} keywords ATS software scans for in ${j.title} resumes, the skills recruiters shortlist for, and how to present them honestly.`,
     alternates: { canonical: `${BASE}/resume-skills/${j.slug}` },
   };
@@ -43,7 +43,7 @@ export default async function ResumeSkillsPage({ params }: { params: Promise<{ j
         <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
         </div>
@@ -160,7 +160,7 @@ EXPERIENCE (example bullet)
       </div>
 
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
-        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
+        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 Sira · a resume service by Rabit</p>
       </footer>
 
       <script

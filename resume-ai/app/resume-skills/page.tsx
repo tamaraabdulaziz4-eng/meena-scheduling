@@ -8,7 +8,7 @@ import { JOBS, CATEGORIES } from "../lib/jobs";
 const BASE = process.env.NEXT_PUBLIC_APP_URL || "https://cv.rabit.sa";
 
 export const metadata: Metadata = {
-  title: "Resume Skills by Job (2026) — ATS Keywords for 50 Roles | ResumeAI",
+  title: "Resume Skills by Job (2026) — ATS Keywords for 50 Roles | Sira",
   description: "The exact skills and ATS keywords to put on your resume, role by role — plus a free scanner that shows which ones your resume is missing.",
   alternates: { canonical: `${BASE}/resume-skills` },
 };
@@ -21,7 +21,7 @@ export default function ResumeSkillsHub() {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
             <OrbBrand size={26} />
-            <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+            <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </Link>
           <Link href="/optimize" className="btn-accent px-4 py-2 text-sm">Scan my resume</Link>
         </div>
@@ -51,7 +51,7 @@ export default function ResumeSkillsHub() {
       </div>
 
       <footer className="px-6 py-10" style={{ borderTop: "1px solid var(--line)" }}>
-        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 ResumeAI · a resume service by Rabit</p>
+        <p className="text-center font-mono text-xs" style={{ color: "var(--faint)" }}>© 2026 Sira · a resume service by Rabit</p>
       </footer>
           <HubLinks current="/resume-skills" />
     </main>

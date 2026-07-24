@@ -18,7 +18,7 @@ export default function Page() {
       eyebrow="Jobscan alternative"
       h1="Everything Jobscan does —"
       h1Accent="without the $49.95/month"
-      intro="Jobscan pioneered ATS resume scanning, but at $49.95/month it's the priciest tool on the market. ResumeAI gives you the same job-specific match score and keyword analysis — plus a complete AI rewrite Jobscan doesn't include — starting at just SAR 35 (~$9) once, with no subscription."
+      intro="Jobscan pioneered ATS resume scanning, but at $49.95/month it's the priciest tool on the market. Sira gives you the same job-specific match score and keyword analysis — plus a complete AI rewrite Jobscan doesn't include — starting at just SAR 35 (~$9) once, with no subscription."
       bullets={[
         { title: "Same ATS match score", body: "Paste your resume and the job post and get an instant 0–100 match score and keyword gap analysis — the core of what you pay Jobscan for." },
         { title: "A full rewrite, included", body: "Jobscan tells you what's wrong; we fix it. Every scan includes a rewritten, keyword-optimized resume ready to submit." },
@@ -26,9 +26,9 @@ export default function Page() {
         { title: "Cover letters too", body: "Generate a matching cover letter from the same job description — no extra tool, no extra fee on the unlimited plan." },
       ]}
       faqs={[
-        { q: "Is ResumeAI really cheaper than Jobscan?", a: "Yes. Jobscan's cheapest paid plan is $49.95/month. ResumeAI is SAR 35 (~$9) one-time or SAR 99 one-time for the Complete Pack — and includes a full resume rewrite that Jobscan charges more for." },
+        { q: "Is Sira really cheaper than Jobscan?", a: "Yes. Jobscan's cheapest paid plan is $49.95/month. Sira is SAR 35 (~$9) one-time or SAR 99 one-time for the Complete Pack — and includes a full resume rewrite that Jobscan charges more for." },
         { q: "Does it do the same ATS keyword matching?", a: "Yes — you get a job-specific match score, the keywords present in your resume, and the keywords you're missing, just like Jobscan's core scan." },
-        { q: "What does ResumeAI do that Jobscan doesn't?", a: "It rewrites your entire resume automatically — injecting missing keywords, strengthening bullet points, and fixing ATS-unfriendly formatting — and it generates matching cover letters." },
+        { q: "What does Sira do that Jobscan doesn't?", a: "It rewrites your entire resume automatically — injecting missing keywords, strengthening bullet points, and fixing ATS-unfriendly formatting — and it generates matching cover letters." },
         { q: "Do I need a subscription?", a: "No. You can pay SAR 35 (~$9) one time for a single optimization. The SAR 99 one-time unlimited plan is optional for active job seekers applying to many roles." },
       ]}
       ctaLine="Try the cheaper Jobscan alternative free"

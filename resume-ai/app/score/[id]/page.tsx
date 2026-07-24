@@ -61,7 +61,7 @@ export default async function ScorePage(
       <div className="card w-full max-w-md p-8 text-center" style={{ borderColor: `${accent}55` }}>
         <div className="flex items-center justify-center gap-2.5">
           <OrbBrand size={26} />
-          <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
+          <span className="text-[15px] font-bold tracking-tight">Sira</span>
         </div>
         <div className="mt-6 font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--faint)" }}>
           {ar ? "نسبة توافق سيرتي مع أنظمة التوظيف" : "ATS Resume Score"}
