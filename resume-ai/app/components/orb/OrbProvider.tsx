@@ -102,7 +102,7 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
           animate={{ top: scene.top, left: scene.left ?? "50%", x: "-50%", opacity: 1 }}
           transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 18 }}
         >
-          <div className={`relative flex items-center justify-center ${scene.radio ? "radio-pulse" : ""}`} style={{ width: displaySize, height: displaySize }}>
+          <div className={`orb-body relative flex items-center justify-center ${scene.left && scene.left !== "50%" ? "orb-corner" : ""} ${scene.radio ? "radio-pulse" : ""}`} style={{ width: displaySize, height: displaySize }}>
             {scene.rings && !reduce && (<><span className="pulse-ring r1" /><span className="pulse-ring r2" /><span className="pulse-ring r3" /><span className="pulse-ring r4" /></>)}
             {scene.progress > 0 && (
               <svg className="absolute" width={displaySize + 16} height={displaySize + 16} style={{ transform: "rotate(-90deg)" }}>

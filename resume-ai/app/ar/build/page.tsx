@@ -206,8 +206,8 @@ export default function ArBuildPage() {
                     style={i <= step ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--faint)", border: "1px solid var(--line)" }}>
                     {i + 1}
                   </div>
-                  <span className="text-[11px] sm:text-xs" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
-                  {i < steps.length - 1 && <div className="h-px w-6" style={{ background: "var(--line)" }} />}
+                  <span className="hidden text-[11px] sm:inline sm:text-xs" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
+                  {i < steps.length - 1 && <div className="h-px w-4 sm:w-6" style={{ background: "var(--line)" }} />}
                 </div>
               ))}
             </div>
