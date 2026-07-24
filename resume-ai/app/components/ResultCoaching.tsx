@@ -24,26 +24,26 @@ export default function ResultCoaching({
 
   const t = ar
     ? {
-        improved: "✨ حسّنّا سيرتك!",
-        gained: gain > 0 ? `رفعنا درجتك ${before} ← ${after} (+${gain})` : "أعدنا صياغة سيرتك بشكل أقوى",
-        heading: "🚀 كمّل بنفسك — أضف هذي لترفع درجتك أكثر",
-        sub: "محرّكنا لا يختلق شيئاً، فالباقي بيدك. أضف هذي المعلومات الحقيقية وأعد الفحص لترتفع الدرجة:",
+        improved: "تم تحسين سيرتك",
+        gained: gain > 0 ? `ارتفعت درجتك ${before} ← ${after} (+${gain})` : "أعدنا صياغة سيرتك بصياغة أقوى",
+        heading: "أكملها بنفسك — أضف ما يلي لرفع درجتك",
+        sub: "لا نختلق أي معلومة — الباقي بين يديك. أضف هذه المعلومات الحقيقية ثم أعد الفحص لترتفع الدرجة:",
         numbers: "أضف أرقاماً حقيقية لإنجازاتك",
         numbersHint: "استبدل [أضف رقمك] بنسبة/رقم فعلي — مثال: «رفعت المبيعات ٣٠٪» بدل «مسؤول عن المبيعات». الأرقام ترفع الدرجة كثيراً.",
-        keywords: "كلمات مفتاحية تطلبها الوظيفة وناقصة عندك",
-        keywordsHint: "لو عندك خبرة فيها فعلاً، أضفها لسيرتك (لا تكتب شيئاً غير صحيح):",
+        keywords: "كلمات مفتاحية تطلبها الوظيفة وتنقص سيرتك",
+        keywordsHint: "إن كنت تملك هذه الخبرة فعلاً فأضفها — لا تكتب ما ليس صحيحاً:",
         skills: "مهارات مطلوبة قد تنقصك",
-        skillsHint: "لو تملكها أضفها؛ لو لا، فكّر بتعلّمها لتقوية ملفك:",
-        confirm: "تأكّد أن هذي التعديلات صحيحة",
-        confirmHint: "رفعنا مستوى الصياغة — تأكّد أنها تطابق دورك الحقيقي قبل الاعتماد:",
+        skillsHint: "إن كنت تملكها فأضفها، وإلا فكّر في تعلّمها:",
+        confirm: "راجع هذه التعديلات",
+        confirmHint: "حسّنّا الصياغة — تأكد أنها تطابق دورك الفعلي قبل الاعتماد:",
         missing: "متطلبات الوظيفة غير الظاهرة في سيرتك",
-        rescan: "بعد ما تضيف، أعد الفحص وشوف الدرجة ترتفع ⬆️",
+        rescan: "بعد الإضافة، أعد الفحص لترى الدرجة ترتفع",
       }
     : {
-        improved: "✨ Your resume is improved!",
+        improved: "Your resume has been improved",
         gained: gain > 0 ? `We raised your score ${before} → ${after} (+${gain})` : "We rewrote your resume stronger",
-        heading: "🚀 Finish it yourself — add these to go higher",
-        sub: "Our engine never invents anything, so the rest is in your hands. Add this REAL info and re-scan to push the score up:",
+        heading: "Finish it yourself — add these to raise the score",
+        sub: "Our engine never invents anything, so the rest is in your hands. Add this real information and re-scan to raise the score:",
         numbers: "Add real numbers to your achievements",
         numbersHint: "Replace [add your number] with an actual metric — e.g. \"grew sales 30%\" beats \"responsible for sales\". Numbers raise the score the most.",
         keywords: "Keywords the job wants that you're missing",
@@ -53,7 +53,7 @@ export default function ResultCoaching({
         confirm: "Confirm these edits are true",
         confirmHint: "We strengthened the wording — make sure it matches your real role before using it:",
         missing: "Job requirements not shown in your resume",
-        rescan: "After you add them, re-scan and watch the score rise ⬆️",
+        rescan: "After you add them, re-scan to see the score rise",
       };
 
   const Section = ({ icon, title, hint, items }: { icon: string; title: string; hint: string; items: string[] }) =>
@@ -84,12 +84,12 @@ export default function ResultCoaching({
         <div className="space-y-3">
           {hasPlaceholders && (
             <div className="reveal-rise rounded-xl p-4" style={{ background: "var(--surface)", border: "1px solid rgba(251,191,36,0.35)" }}>
-              <div className="mb-1 text-sm font-bold" style={{ color: "#fbbf24" }}>🔢 {t.numbers}</div>
+              <div className="mb-1 text-sm font-bold" style={{ color: "#fbbf24" }}>{t.numbers}</div>
               <div className="text-xs" style={{ color: "var(--muted)" }}>{t.numbersHint}</div>
             </div>
           )}
-          <Section icon="🎯" title={t.keywords} hint={t.keywordsHint} items={missingKeywords} />
-          <Section icon="🧩" title={t.skills} hint={t.skillsHint} items={skillsGap} />
+          <Section icon="" title={t.keywords} hint={t.keywordsHint} items={missingKeywords} />
+          <Section icon="" title={t.skills} hint={t.skillsHint} items={skillsGap} />
           {confirm.length > 0 && (
             <div className="reveal-rise rounded-xl p-4" style={{ background: "var(--surface)", border: "1px solid rgba(251,191,36,0.35)" }}>
               <div className="mb-2 text-sm font-bold" style={{ color: "#fbbf24" }}>⚠️ {t.confirm}</div>

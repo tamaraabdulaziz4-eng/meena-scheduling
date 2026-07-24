@@ -122,7 +122,7 @@ export default function OptimizePage() {
       if (!res.ok || !data.text) throw new Error(data.error || "Couldn't read that link.");
       setJobDescription(data.text);
       setMode("target");
-      setJobUrlMsg("✓ Imported — review the text below, then scan.");
+      setJobUrlMsg("Imported — review the text below, then scan.");
     } catch (e) {
       setJobUrlMsg(e instanceof Error ? e.message : "Couldn't fetch that link.");
     } finally {
@@ -427,7 +427,7 @@ export default function OptimizePage() {
                 <div className="mb-3 flex flex-wrap gap-2">
                   <label className="cursor-pointer rounded-lg px-4 py-2 text-sm font-semibold"
                     style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
-                    {uploading ? "Reading…" : uploadedName ? `✓ ${uploadedName.slice(0, 22)}` : "↑ Upload PDF / Word"}
+                    {uploading ? "Reading…" : uploadedName ? `${uploadedName.slice(0, 22)}` : "↑ Upload PDF / Word"}
                     <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
                   </label>
                   {!resume && (
@@ -443,7 +443,7 @@ export default function OptimizePage() {
                 <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>{resume.length}/8000</p>
                 {extraction && uploadedName && (
                   <div className="mt-3 rounded-xl p-4" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid var(--line)" }}>
-                    <div className="mb-2 text-sm font-bold" style={{ color: "var(--accent)" }}>✓ Here&apos;s what we read — check it</div>
+                    <div className="mb-2 text-sm font-bold" style={{ color: "var(--accent)" }}>Here&apos;s what we read — check it</div>
                     <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4" style={{ color: "var(--muted)" }}>
                       <div><span style={{ color: "var(--faint)" }}>Name</span><br /><strong>{extraction.name}</strong></div>
                       <div><span style={{ color: "var(--faint)" }}>Dated entries</span><br /><strong>{extraction.expCount}</strong></div>
@@ -506,7 +506,7 @@ export default function OptimizePage() {
                   ))}
                 </div>
                 <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--muted)" }}>
-                  <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "🎯 Tailored to your job posting" : "📄 General improvement"}</div>
+                  <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "Tailored to your job posting" : "General improvement"}</div>
                   Free: match score, missing keywords, skills gap, preview. <span style={{ color: "var(--accent)" }}>Full rewrite unlocks after.</span>
                 </div>
                 {error && (
@@ -625,7 +625,7 @@ export default function OptimizePage() {
                         onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"
                         style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
-                        {copied ? "✓ Copied" : "Copy"}
+                        {copied ? "Copied" : "Copy"}
                       </button>
                       <button
                         onClick={() => download("optimized-resume.txt", result.watermark ? wmTxt(result.optimizedResume) : result.optimizedResume)}
@@ -641,7 +641,7 @@ export default function OptimizePage() {
                 {/* Email my results — delivery + opt-in capture. */}
                 {!result.locked && (
                   emailState === "sent" ? (
-                    <div className="mb-4 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.35)", color: "var(--accent)" }}>✓ Sent — check your inbox.</div>
+                    <div className="mb-4 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.35)", color: "var(--accent)" }}>Sent — check your inbox.</div>
                   ) : (
                     <div className="mb-4 flex flex-wrap gap-2">
                       <input type="email" value={emailTo} onChange={(e) => setEmailTo(e.target.value)} dir="ltr" placeholder="you@email.com"
@@ -662,7 +662,7 @@ export default function OptimizePage() {
                       <button key={v} onClick={() => setResumeView(v)}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"
                         style={resumeView === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                        {v === "text" ? "Text (ATS)" : "📄 Designed template"}
+                        {v === "text" ? "Text (ATS)" : "Designed template"}
                       </button>
                     ))}
                   </div>
@@ -694,7 +694,7 @@ export default function OptimizePage() {
                 )}
                 {result.watermark && (
                   <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
-                    <div className="chip mb-3">✓ Your resume is ready — free</div>
+                    <div className="chip mb-3">Your resume is ready — free</div>
                     <h3 className="text-xl font-bold">
                       {typeof result.afterScore === "number"
                         ? `Download a clean copy — turn your ${score} into a projected ${result.afterScore}.`
@@ -733,7 +733,7 @@ export default function OptimizePage() {
                         onClick={generateCoverLetter}
                         disabled={coverLoading || jobDescription.trim().length < 30}
                         className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
-                        {coverLoading ? "Writing…" : "✨ Generate cover letter"}
+                        {coverLoading ? "Writing…" : "Generate cover letter"}
                       </button>
                     ) : (
                       <div className="flex gap-2">
@@ -741,7 +741,7 @@ export default function OptimizePage() {
                           onClick={() => { navigator.clipboard.writeText(coverLetter); setCoverCopied(true); setTimeout(() => setCoverCopied(false), 1800); }}
                           className="rounded-lg px-4 py-2 text-sm font-semibold"
                           style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
-                          {coverCopied ? "✓ Copied" : "Copy"}
+                          {coverCopied ? "Copied" : "Copy"}
                         </button>
                         <button
                           onClick={() => download("cover-letter.txt", coverLetter)}
@@ -784,7 +784,7 @@ export default function OptimizePage() {
                   }}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
                   style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
-                  {copied ? "✓ Copied" : "Copy analysis"}
+                  {copied ? "Copied" : "Copy analysis"}
                 </button>
               </div>
               <div className="grid gap-6 md:grid-cols-2">
@@ -835,7 +835,7 @@ export default function OptimizePage() {
                             <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: b.c, background: b.bg, border: `1px solid ${b.c}40` }}>{b.t}</span>
                           </div>
                           <div className="mb-1 text-xs" style={{ color: "var(--faint)" }}>{imp.issue}</div>
-                          <div className="text-xs" style={{ color: "#86efac" }}>✓ {imp.fix}</div>
+                          <div className="text-xs" style={{ color: "#86efac" }}>{imp.fix}</div>
                         </li>
                       );
                     })}

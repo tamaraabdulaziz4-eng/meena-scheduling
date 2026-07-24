@@ -337,7 +337,7 @@ export default function BuildPage() {
                     Next →
                   </button>
                 ) : (
-                  <button onClick={generate} disabled={loading} className="btn-accent px-8 py-2.5 text-sm disabled:opacity-40">✨ Build my CV</button>
+                  <button onClick={generate} disabled={loading} className="btn-accent px-8 py-2.5 text-sm disabled:opacity-40">Build my CV</button>
                 )}
               </div>
             </div>
@@ -360,11 +360,11 @@ export default function BuildPage() {
         {cv && !loading && (
           <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-2xl font-bold">Your CV is ready 🎉</h2>
+              <h2 className="text-2xl font-bold">Your CV is ready</h2>
               <div className="flex gap-2">
                 <button onClick={() => { navigator.clipboard.writeText(cv); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                   className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
-                  {copied ? "✓ Copied" : "Copy"}
+                  {copied ? "Copied" : "Copy"}
                 </button>
                 <button onClick={() => download("my-cv.txt", cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
                   ↓ .txt
@@ -378,7 +378,7 @@ export default function BuildPage() {
                 <button key={v} onClick={() => setView(v)}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
                   style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                  {v === "text" ? "Text (ATS)" : "📄 Designed template"}
+                  {v === "text" ? "Text (ATS)" : "Designed template"}
                 </button>
               ))}
             </div>

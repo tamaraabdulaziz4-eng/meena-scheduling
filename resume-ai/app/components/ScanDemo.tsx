@@ -194,7 +194,7 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
               border: `1px solid ${accent}40`,
             }}
           >
-            {phase === "scanning" ? "···" : passing ? (ar ? "✓ قوي" : "✓ STRONG") : (ar ? "✕ ضعيف" : "✕ WEAK")}
+            {phase === "scanning" ? "···" : passing ? (ar ? "قوي" : "STRONG") : (ar ? "✕ ضعيف" : "✕ WEAK")}
           </div>
         </div>
       </div>

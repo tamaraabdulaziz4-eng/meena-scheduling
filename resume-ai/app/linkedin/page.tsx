@@ -91,7 +91,7 @@ export default function LinkedInPage() {
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-black/30 border-t-black" />
                   Optimizing your profile…
                 </span>
-              ) : "✨ Optimize my LinkedIn"}
+              ) : "Optimize my LinkedIn"}
             </button>
           </form>
         ) : (
@@ -99,21 +99,21 @@ export default function LinkedInPage() {
             <div className="card p-6">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="font-bold">Headline</h3>
-                <button onClick={() => copy("h", result.headline)} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "h" ? "✓ Copied" : "Copy"}</button>
+                <button onClick={() => copy("h", result.headline)} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "h" ? "Copied" : "Copy"}</button>
               </div>
               <p className="text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{result.headline}</p>
             </div>
             <div className="card p-6">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="font-bold">About section</h3>
-                <button onClick={() => copy("a", result.about)} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "a" ? "✓ Copied" : "Copy"}</button>
+                <button onClick={() => copy("a", result.about)} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "a" ? "Copied" : "Copy"}</button>
               </div>
               <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.85)" }}>{result.about}</p>
             </div>
             <div className="card p-6">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="font-bold">Skills to list (in this order)</h3>
-                <button onClick={() => copy("s", result.skills.join(", "))} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "s" ? "✓ Copied" : "Copy"}</button>
+                <button onClick={() => copy("s", result.skills.join(", "))} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{copied === "s" ? "Copied" : "Copy"}</button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {result.skills.map((s, i) => (

@@ -183,7 +183,7 @@ export default function ArBuildPage() {
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/build" className="text-sm" style={{ color: "var(--muted)" }}>English</Link>
-            <Link href="/ar/builder" className="text-sm font-semibold" style={{ color: "var(--accent)" }}>✨ جرّب الوضع التفاعلي</Link>
+            <Link href="/ar/builder" className="text-sm font-semibold" style={{ color: "var(--accent)" }}>الوضع التفاعلي</Link>
           </div>
         </div>
       </nav>
@@ -224,7 +224,7 @@ export default function ArBuildPage() {
                     <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="ahmed@email.com · 05xxxxxxxx · الرياض" className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
                   </div>
                   <div>
-                    <label className="mb-2 block text-xs font-semibold" style={{ color: "var(--faint)" }}>وش الوظيفة اللي تبيها؟</label>
+                    <label className="mb-2 block text-xs font-semibold" style={{ color: "var(--faint)" }}>ما الوظيفة التي تستهدفها؟</label>
                     <input value={targetRole} onChange={(e) => setTargetRole(e.target.value)} placeholder="مثال: محاسب، مهندس برمجيات، مدير مبيعات" className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
                   </div>
                 </>
@@ -233,7 +233,7 @@ export default function ArBuildPage() {
               {step === 1 && (
                 <>
                   <p className="text-sm" style={{ color: "var(--muted)" }}>
-                    اكتب عن كل وظيفة اشتغلتها بكلامك العادي — وش كنت تسوي؟ وش حسّنت؟ كم شخص/عميل/مشروع؟ لا تهتم بالصياغة، هذي شغلة الذكاء الاصطناعي. ما عندك خبرة؟ تجاوز هذه الخطوة.
+                    اكتب عن كل وظيفة عملت بها بأسلوبك — ماذا كنت تفعل؟ وماذا حسّنت؟ وكم عدد الأشخاص أو العملاء أو المشاريع؟ لا تقلق بشأن الصياغة، فهذه مهمتنا. لا خبرة لديك؟ تجاوز هذه الخطوة.
                   </p>
                   {exps.map((e, i) => (
                     <div key={i} className="space-y-3 rounded-xl p-4" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)" }}>
@@ -303,7 +303,7 @@ export default function ArBuildPage() {
                     التالي ←
                   </button>
                 ) : (
-                  <button onClick={generate} disabled={loading} className="btn-accent px-8 py-2.5 text-sm disabled:opacity-40">✨ ابنِ سيرتي</button>
+                  <button onClick={generate} disabled={loading} className="btn-accent px-8 py-2.5 text-sm disabled:opacity-40">ابنِ سيرتي</button>
                 )}
               </div>
             </div>
@@ -326,11 +326,11 @@ export default function ArBuildPage() {
         {cv && !loading && (
           <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-2xl font-bold">سيرتك جاهزة 🎉</h2>
+              <h2 className="text-2xl font-bold">سيرتك جاهزة</h2>
               <div className="flex gap-2">
                 <button onClick={() => { navigator.clipboard.writeText(cv); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                   className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
-                  {copied ? "✓ نُسخت" : "نسخ"}
+                  {copied ? "نُسخت" : "نسخ"}
                 </button>
                 <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>↓ تنزيل .txt</button>
                 <PdfExport text={cv} label="↓ تنزيل PDF" />
@@ -342,7 +342,7 @@ export default function ArBuildPage() {
                 <button key={v} onClick={() => setView(v)}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
                   style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                  {v === "text" ? "نص (ATS)" : "📄 قالب مصمّم"}
+                  {v === "text" ? "نص (ATS)" : "قالب مصمّم"}
                 </button>
               ))}
             </div>
@@ -365,7 +365,7 @@ export default function ArBuildPage() {
             )}
 
             <div className="card mt-6 p-7 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
-              <h3 className="text-xl font-bold">الحين خلّها تعبر أنظمة التوظيف</h3>
+              <h3 className="text-xl font-bold">الآن اجعلها تجتاز أنظمة التوظيف</h3>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                 افحص سيرتك الجديدة ضد إعلان وظيفة حقيقي واعرف نسبة تطابقك.
               </p>

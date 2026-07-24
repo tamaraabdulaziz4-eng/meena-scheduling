@@ -44,7 +44,7 @@ USER'S ANSWER (may be Arabic, casual): ${input}
 
 Reply in EXACTLY this format, nothing else:
 EN: <the polished English version — plain text, no markdown>
-NOTE: <ملاحظة قصيرة جداً بالعربي عن وش سوّيت (مثال: "ترجمت المسمى للصيغة المعتمدة") — أو "جاهز ✓" إذا ما احتاج تغيير>`;
+NOTE: <ملاحظة قصيرة جداً بالعربية الفصحى عما فعلته (مثال: "ترجمت المسمى للصيغة المعتمدة") — أو "جاهز" إن لم يحتج تغييراً>`;
 
     let out = "";
     for (let attempt = 0; attempt < 2 && !out; attempt++) {

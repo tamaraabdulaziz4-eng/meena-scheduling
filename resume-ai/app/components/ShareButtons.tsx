@@ -22,7 +22,7 @@ export default function ShareButtons({ url, text, ar = false }: { url: string; t
         ))}
         <button onClick={() => { navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
           className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "var(--surface)", color: "var(--fg)", border: "1px solid var(--line)" }}>
-          {copied ? (ar ? "✓ تم النسخ" : "✓ Copied") : (ar ? "نسخ الرابط" : "Copy link")}
+          {copied ? (ar ? "تم النسخ" : "Copied") : (ar ? "نسخ الرابط" : "Copy link")}
         </button>
       </div>
     </div>

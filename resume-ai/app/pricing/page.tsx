@@ -63,7 +63,7 @@ export default function PricingPage() {
       <section className="mx-auto max-w-3xl px-6 py-16">
         <div className="mb-12 text-center">
           <div className="chip mb-4">Pricing</div>
-          <h1 className="text-4xl font-extrabold tracking-tight">Pay for the fix. Not a subscription.</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight">Pay once. No subscription.</h1>
           <p className="mx-auto mt-3 max-w-xl" style={{ color: "var(--muted)" }}>
             Both plans include <strong>every feature</strong> — full resume rewrite, cover letter, LinkedIn, interview prep, and watermark-free downloads. The only difference is how long your access lasts.
           </p>

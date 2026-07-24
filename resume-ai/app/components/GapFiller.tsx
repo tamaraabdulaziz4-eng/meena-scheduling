@@ -31,7 +31,7 @@ export default function GapFiller({
         q: (g: string) => `عندك خبرة في «${g}»؟ صفها بجملة`,
         ph: "مثال: استخدمت … في مشروع … لمدة …",
         extra: "أي إنجاز أو رقم آخر تحب تضيفه؟",
-        apply: "أضِف وأعد التحسين ⬆️",
+        apply: "أضِف وأعد التحسين",
         applying: "جارٍ التحسين…",
         none: "الحقول الفارغة تُتجاهَل — نضيف فقط ما كتبته.",
       }
@@ -41,7 +41,7 @@ export default function GapFiller({
         q: (g: string) => `Do you have experience with "${g}"? Describe it in a sentence`,
         ph: "e.g. Used … on … project for … months",
         extra: "Any other achievement or number to add?",
-        apply: "Add & re-optimize ⬆️",
+        apply: "Add & re-optimize",
         applying: "Optimizing…",
         none: "Empty fields are ignored — we only add what you write.",
       };

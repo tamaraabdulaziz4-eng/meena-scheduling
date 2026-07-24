@@ -21,7 +21,7 @@ export default function MobileMenu({ ar = false }: { ar?: boolean }) {
   const links = ar
     ? [
         { href: "/ar/optimize", label: "افحص سيرتك" },
-        { href: "/ar/builder", label: "ابنِ سيرتك ✨" },
+        { href: "/ar/builder", label: "ابنِ سيرتك" },
         { href: "/ar#pricing", label: "الأسعار" },
         acct,
         { href: "/", label: "English" },

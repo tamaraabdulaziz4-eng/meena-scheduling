@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     to: email,
     subject: "Your optimized resume — ResumeAI",
     html: emailShell(`
-      <h2 style="margin:0 0 8px">Here's your optimized resume 📄</h2>
+      <h2 style="margin:0 0 8px">Here's your optimized resume</h2>
       ${scoreLine}
       <pre style="white-space:pre-wrap;font-family:inherit;background:#f7f7f7;border:1px solid #eee;border-radius:8px;padding:16px;font-size:13px">${escapeHtml(resume)}</pre>
       <p><a href="${APP_URL}/optimize" style="color:#0f766e;font-weight:bold">Refine it again →</a></p>`),

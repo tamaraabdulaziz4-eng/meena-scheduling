@@ -371,7 +371,7 @@ export default function InterviewLivePage() {
                     <span className="font-bold">تقييم إجابتك</span>
                     <span className="font-mono text-2xl font-bold" style={{ color: feedback.score >= 7 ? "#a78bfa" : feedback.score >= 5 ? "#fbbf24" : "#f87171" }}>{feedback.score}/10</span>
                   </div>
-                  {feedback.strengths && <p className="text-sm" style={{ color: "rgba(244,245,243,0.85)" }}><b style={{ color: "#a78bfa" }}>✓ نقطة قوة:</b> {feedback.strengths}</p>}
+                  {feedback.strengths && <p className="text-sm" style={{ color: "rgba(244,245,243,0.85)" }}><b style={{ color: "#a78bfa" }}>نقطة قوة:</b> {feedback.strengths}</p>}
                   {feedback.improve && <p className="mt-2 text-sm" style={{ color: "rgba(244,245,243,0.85)" }}><b style={{ color: "#fbbf24" }}>↑ للتحسين:</b> {feedback.improve}</p>}
                   {feedback.model && (
                     <div className="mt-3 rounded-lg p-3 text-sm leading-relaxed" style={{ background: "rgba(139,92,246,0.06)", color: "var(--muted)" }}>
@@ -389,7 +389,7 @@ export default function InterviewLivePage() {
         {phase === "done" && (
           <div className="text-center">
             <div className="chip mb-4">● انتهت المقابلة</div>
-            <h2 className="text-3xl font-extrabold">تدرّبت على {questions.length} أسئلة 🎉</h2>
+            <h2 className="text-3xl font-extrabold">تدرّبت على {questions.length} أسئلة</h2>
             <div className="my-6 inline-flex items-baseline gap-2">
               <span className="font-mono text-6xl font-bold" style={{ color: "var(--accent)" }}>{avg}</span>
               <span className="text-2xl" style={{ color: "var(--faint)" }}>/10</span>

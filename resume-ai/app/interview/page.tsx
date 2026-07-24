@@ -119,7 +119,7 @@ export default function InterviewPage() {
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-black/30 border-t-black" />
                   Preparing your interview…
                 </span>
-              ) : "🎯 Prep my interview"}
+              ) : "Prep my interview"}
             </button>
           </form>
         ) : (
@@ -135,7 +135,7 @@ export default function InterviewPage() {
                 }}
                 className="rounded-lg px-4 py-2 text-sm font-semibold"
                 style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
-                {copied ? "✓ Copied" : "Copy all"}
+                {copied ? "Copied" : "Copy all"}
               </button>
             </div>
             {result.questions.map((item, i) => (

@@ -7,8 +7,8 @@ export default function SubscribeBox({ ar = false }: { ar?: boolean }) {
   const [state, setState] = useState<"idle" | "busy" | "done" | "err">("idle");
 
   const t = ar
-    ? { title: "نصيحة توظيف أسبوعية 🎯", sub: "نصائح ATS وفرص السوق السعودي — مجاناً على بريدك، وإلغاء الاشتراك بضغطة.", ph: "بريدك الإلكتروني", cta: "اشترك", done: "تم! أول رسالة توصلك قريباً ✓", err: "تعذّر الاشتراك — حاول ثانية." }
-    : { title: "One sharp career tip, weekly 🎯", sub: "ATS tactics and Saudi/Gulf market insights — free, unsubscribe anytime.", ph: "Your email", cta: "Subscribe", done: "Done! First issue coming soon ✓", err: "Couldn't subscribe — try again." };
+    ? { title: "نصيحة توظيف أسبوعية", sub: "نصائح ATS وفرص السوق السعودي — مجاناً على بريدك، وإلغاء الاشتراك بضغطة.", ph: "بريدك الإلكتروني", cta: "اشترك", done: "تم! أول رسالة توصلك قريباً ✓", err: "تعذّر الاشتراك — حاول ثانية." }
+    : { title: "One sharp career tip, weekly", sub: "ATS tactics and Saudi/Gulf market insights — free, unsubscribe anytime.", ph: "Your email", cta: "Subscribe", done: "Done! First issue coming soon ✓", err: "Couldn't subscribe — try again." };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

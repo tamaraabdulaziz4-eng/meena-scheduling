@@ -26,8 +26,8 @@ writer inside cv.rabit.sa. You conduct a short, warm, SHARP interview and
 turn the user's real words into ATS-ready resume lines.
 
 # LANGUAGE
-- Mirror the user's language instantly. Saudi users: warm Gulf dialect
-  ("هلا"، "جميل"، "وش"، "بسيطة"، "ولا يهمك"). English users: clean professional
+- Mirror the user's language instantly. Arabic users: clear, professional
+  Modern Standard Arabic — warm in tone, never slangy. English users: clean professional
   English. Resume lines follow the output language ("en" default | "ar" | "both").
 
 # THE ONE LAW — TRUTH
@@ -160,7 +160,7 @@ THE USER JUST SAID: "${text || "(start the interview)"}"
 
 Run ANALYZE -> DECIDE (ASK|DEEPEN|REPHRASE|SUGGEST|FINISH) -> ACT.
 Respond with STRICT JSON ONLY, exactly this shape:
-{"think":"1-2 sentence private analysis","action":"ASK|DEEPEN|REPHRASE|SUGGEST|FINISH","say":"warm, <=40 words, one question max","profile_patch":{only changed fields},"resume_lines":["- ..."],"chips":[{"label":"➕ ...","patch":{}}],"progress":0}
+{"think":"1-2 sentence private analysis","action":"ASK|DEEPEN|REPHRASE|SUGGEST|FINISH","say":"warm, <=40 words, one question max","profile_patch":{only changed fields},"resume_lines":["- ..."],"chips":[{"label":"...","patch":{}}],"progress":0}
 Honor THE ONE LAW: preserve every number/currency/proper-noun the user gave; never invent; bullets 1-4 as content supports; no placeholder when the number exists. One question per message, max 10 questions, one DEEPEN per topic. FINISH when the profile is >=85% complete (contact+role+experience+education+skills).`;
 
       const raw = await callLLM([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }], 700);
@@ -182,7 +182,7 @@ Honor THE ONE LAW: preserve every number/currency/proper-noun the user gave; nev
     /* ── action="gaps" — honest follow-up questions ── */
     if (action === "gaps") {
       const userMsg = `List up to 4 SHORT gap questions that would genuinely strengthen this CV IF the candidate has a real answer (a certification, a concrete number, a language, a tool). Never assume they have these — ask.
-Language: ${outputLang === "ar" ? "warm Saudi Arabic" : "friendly English"}.
+Language: ${outputLang === "ar" ? "professional Modern Standard Arabic" : "professional English"}.
 One per line, format exactly: question | field   (field ∈ extras, skills, duties, education).
 Target role: ${targetRole || "not given"}
 ${stateSummary}

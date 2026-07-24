@@ -332,7 +332,7 @@ export default function ArOptimizePage() {
                 <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>ارفع ملفاً أو الصق النص. لن نغيّر أي كلمة بدون موافقتك.</p>
                 <div className="mb-3 flex flex-wrap gap-2">
                   <label className="cursor-pointer rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
-                    {uploading ? "جارٍ القراءة…" : uploadedName ? `✓ ${uploadedName.slice(0, 18)}` : "↑ رفع PDF / Word"}
+                    {uploading ? "جارٍ القراءة…" : uploadedName ? `${uploadedName.slice(0, 18)}` : "↑ رفع PDF / Word"}
                     <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
                   </label>
                   {!resume && <button onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }} className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>👀 جرّب نموذج</button>}
@@ -368,7 +368,7 @@ export default function ArOptimizePage() {
                   ))}
                 </div>
                 <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--muted)" }}>
-                  <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "🎯 مخصّصة لإعلان الوظيفة" : "📄 تحسين شامل"}</div>
+                  <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "مخصّصة لإعلان الوظيفة" : "تحسين شامل"}</div>
                   مجاناً: درجة الملاءمة، الكلمات الناقصة، فجوة المهارات، معاينة. <span style={{ color: "var(--accent)" }}>السيرة الكاملة بعد الفتح.</span>
                 </div>
                 {error && (
@@ -433,7 +433,7 @@ export default function ArOptimizePage() {
                 <div className="flex gap-2">
                   <button onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                     className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
-                    {copied ? "✓ نُسخت" : "نسخ"}
+                    {copied ? "نُسخت" : "نسخ"}
                   </button>
                   <button onClick={() => download("optimized-resume.txt", result.watermark ? wmTxt(result.optimizedResume) : result.optimizedResume)}
                     className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
@@ -451,7 +451,7 @@ export default function ArOptimizePage() {
                   <button key={v} onClick={() => setResumeView(v)}
                     className="rounded-lg px-4 py-2 text-sm font-semibold"
                     style={resumeView === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                    {v === "text" ? "نص (ATS)" : "📄 قالب مصمّم"}
+                    {v === "text" ? "نص (ATS)" : "قالب مصمّم"}
                   </button>
                 ))}
               </div>
@@ -479,7 +479,7 @@ export default function ArOptimizePage() {
             )}
             {result.watermark && (
               <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
-                <div className="chip mb-3">✓ سيرتك جاهزة — مجاناً</div>
+                <div className="chip mb-3">سيرتك جاهزة — مجاناً</div>
                 <h3 className="text-xl font-bold">
                   {typeof result.afterScore === "number"
                     ? `حمّل نسخة نظيفة — ارفع نتيجتك من ${score} إلى ${result.afterScore} (متوقّعة).`
@@ -513,13 +513,13 @@ export default function ArOptimizePage() {
                   <a href="/ar#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 افتح الوصول لإنشائه</a>
                 ) : !coverLetter ? (
                   <button onClick={generateCoverLetter} disabled={coverLoading || jobDescription.trim().length < 30} className="btn-accent px-5 py-2.5 text-sm disabled:opacity-50">
-                    {coverLoading ? "جارٍ الكتابة…" : "✨ أنشئ خطاب التعريف"}
+                    {coverLoading ? "جارٍ الكتابة…" : "إنشاء خطاب التعريف"}
                   </button>
                 ) : (
                   <div className="flex gap-2">
                     <button onClick={() => { navigator.clipboard.writeText(coverLetter); setCoverCopied(true); setTimeout(() => setCoverCopied(false), 1800); }}
                       className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
-                      {coverCopied ? "✓ نُسخ" : "نسخ"}
+                      {coverCopied ? "نُسخ" : "نسخ"}
                     </button>
                     <button onClick={() => download("cover-letter.txt", coverLetter)}
                       className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "var(--accent)", color: "#05130a" }}>

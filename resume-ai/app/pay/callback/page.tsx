@@ -213,7 +213,7 @@ function CallbackInner() {
   const orbState = paid ? "done" : state === "failed" ? "locked" : "golden";
 
   // رابط becomes the Vault: golden while confirming (with a 🔒), opens to a
-  // green ✓ (🔓) on success, dims (locked) on failure.
+  // green(🔓) on success, dims (locked) on failure.
   useOrbScene(
     { visible: true, top: "20vh", size: 84, mood: orbState, badge: paid ? "🔓" : "🔒" },
     [orbState, paid]

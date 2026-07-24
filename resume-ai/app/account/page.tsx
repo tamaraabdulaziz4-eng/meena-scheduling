@@ -25,7 +25,7 @@ const STATUS_LABELS: Record<JobStatus, string> = {
   saved: "Saved",
   applied: "Applied",
   interview: "Interview",
-  offer: "Offer 🎉",
+  offer: "Offer",
   rejected: "Rejected",
 };
 const STATUS_COLORS: Record<JobStatus, string> = {
@@ -40,7 +40,7 @@ const STATUS_COLORS: Record<JobStatus, string> = {
 // visitor (arriving from /ar) must not suddenly hit an English dashboard.
 const STRINGS = {
   en: {
-    optimizeCta: "Optimize a resume →", welcome: "✓ You're signed in — welcome back!",
+    optimizeCta: "Optimize a resume →", welcome: "You're signed in — welcome back!",
     myAccount: "● My account", dashboard: "Your dashboard", loading: "Loading…",
     email: "Email", plan: "Plan", unlimited: "Unlimited — active", free: "Free",
     accessUntil: "Access until", unlockUnlimited: "Unlock unlimited →",
@@ -54,7 +54,7 @@ const STRINGS = {
     open: "Open", builder: "CV Builder", optimizer: "Optimizer",
   },
   ar: {
-    optimizeCta: "حسّن سيرتك ←", welcome: "✓ سجّلت دخولك — أهلاً بعودتك!",
+    optimizeCta: "حسّن سيرتك ←", welcome: "سجّلت دخولك — أهلاً بعودتك!",
     myAccount: "● حسابي", dashboard: "لوحتك", loading: "جارٍ التحميل…",
     email: "البريد", plan: "الباقة", unlimited: "كامل — نشط", free: "مجاني",
     accessUntil: "الوصول حتى", unlockUnlimited: "افتح الوصول الكامل ←",
@@ -344,7 +344,7 @@ function AccountInner() {
 
         {/* ── Saved resumes ── */}
         <div className={`${sectionCard} mt-6`}>
-          <h2 className={sectionTitle}>📄 {t.savedResumes} ({resumes.length})</h2>
+          <h2 className={sectionTitle}>{t.savedResumes} ({resumes.length})</h2>
           {resumes.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-4 text-center">
               <AiOrb size={40} />

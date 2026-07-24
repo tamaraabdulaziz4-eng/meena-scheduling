@@ -29,18 +29,18 @@ type StepId =
   | "education" | "skills" | "extras" | "generate";
 
 const QUESTIONS: Record<string, { q: string; refine?: string; multiline?: boolean }> = {
-  name: { q: "أهلاً! أنا مساعدك لبناء سيرة إنجليزية احترافية. بنمشي خطوة خطوة وكل إجابة أحسّنها لك وتعتمدها قبل ما ننتقل.\n\nأول شي — وش اسمك الكامل؟", refine: "name" },
-  contact: { q: "تمام! عطني وسائل التواصل: رقم جوالك، إيميلك، ومدينتك.", refine: "contact" },
-  personal: { q: "بعض جهات التوظيف الخليجية تحب معلومات إضافية في السيرة (اختياري):\nالجنسية · تاريخ الميلاد · الحالة الاجتماعية · حالة الإقامة/الإقامة النظامية.\n\nاكتبها إذا تبي تضيفها، أو اكتب «تخطي»." },
-  targetRole: { q: "وش الوظيفة اللي تستهدفها؟ (اكتبها بالعربي عادي وأنا أطلع لك مسماها المعتمد بالإنجليزي)", refine: "role" },
-  company: { q: "الحين خبرتك العملية 💼\nوين تشتغل حالياً أو آخر جهة اشتغلت فيها؟ اكتب اسمها حتى لو ما تعرف اسمها بالإنجليزي — أنا أجيبه لك.", refine: "company" },
-  jobTitle: { q: "وش كان مسماك الوظيفي هناك؟", refine: "role" },
+  name: { q: "أهلاً بك. سأبني معك سيرة إنجليزية احترافية خطوة بخطوة — كل إجابة أحسّنها وأعرضها عليك قبل الانتقال.\n\nما اسمك الكامل؟", refine: "name" },
+  contact: { q: "حسناً. أحتاج وسائل التواصل: رقم الجوال، والبريد الإلكتروني، والمدينة.", refine: "contact" },
+  personal: { q: "بعض جهات التوظيف الخليجية تحب معلومات إضافية في السيرة (اختياري):\nالجنسية · تاريخ الميلاد · الحالة الاجتماعية · حالة الإقامة/الإقامة النظامية.\n\nاكتبها إن أردت إضافتها، أو اكتب «تخطي»." },
+  targetRole: { q: "ما الوظيفة التي تستهدفها؟ (اكتبها بالعربية، وسأعتمد مسماها الإنجليزي الصحيح)", refine: "role" },
+  company: { q: "ننتقل إلى خبرتك العملية.\nأين تعمل حالياً، أو ما آخر جهة عملت بها؟ اكتب اسمها حتى لو بالعربية — وسأوفّر المقابل الإنجليزي.", refine: "company" },
+  jobTitle: { q: "ما مسمّاك الوظيفي هناك؟", refine: "role" },
   dates: { q: "من متى إلى متى؟ (مثال: 2020 - الآن)" },
-  duties: { q: "الحين أهم جزء — احكِ لي وش كنت تسوي: مهامك، إنجازاتك، أي أرقام تذكرها (عدد الفريق، نسبة تحسّن، عدد العملاء…). اكتب براحتك بالعامية وأنا أحوّلها لنقاط قوية.", refine: "achievements", multiline: true },
-  moreJobs: { q: "أضفتها ✓ — عندك وظيفة سابقة ثانية تبي تضيفها؟ (اكتب: نعم / لا)" },
-  education: { q: "وش تعليمك؟ (الشهادة، التخصص، الجامعة، السنة)", refine: "education" },
-  skills: { q: "اذكر مهاراتك — تقنية أو شخصية، بأي لغة، وأنا أرتّبها.", refine: "skills" },
-  extras: { q: "آخر سؤال: عندك شهادات مهنية، دورات، أو لغات؟ (اكتب «لا يوجد» إذا ما عندك)", refine: "extras" },
+  duties: { q: "الآن الجزء الأهم — صف مهامك وإنجازاتك، وأي أرقام تتذكرها (حجم الفريق، نسبة تحسّن، عدد العملاء…). اكتب بأسلوبك، وسأحوّلها إلى نقاط احترافية.", refine: "achievements", multiline: true },
+  moreJobs: { q: "أُضيفت. هل لديك وظيفة سابقة أخرى تودّ إضافتها؟ (نعم / لا)" },
+  education: { q: "ما مؤهلك الدراسي؟ (الشهادة، التخصص، الجامعة، السنة)", refine: "education" },
+  skills: { q: "اذكر مهاراتك — تقنية أو شخصية، بأي لغة، وسأرتّبها.", refine: "skills" },
+  extras: { q: "سؤال أخير: هل لديك شهادات مهنية أو دورات أو لغات؟ (اكتب «لا يوجد» إن لم يكن)", refine: "extras" },
 };
 
 export default function ArChatBuilderPage() {
@@ -73,7 +73,7 @@ export default function ArChatBuilderPage() {
         if (s.msgs?.length > 1) {
           setMsgs(s.msgs); setStep(s.step); setData(s.data); setExps(s.exps || []); setCurExp(s.curExp || { role: "", company: "", dates: "", duties: "" });
           // Restore the pending suggestion too — otherwise a reload leaves the
-          // "✨ اقتراحي" bubble on screen with no accept/edit buttons (orphaned).
+          // "اقتراحي" bubble on screen with no accept/edit buttons (orphaned).
           if (s.pending?.en) setPending(s.pending);
           // On reload the persisted step can be 'generate' (persistence fires while
           // generation is in flight/errored), but generate() only refires via ask() —
@@ -92,7 +92,7 @@ export default function ArChatBuilderPage() {
   function ask(next: StepId, extraMsgs: Msg[] = [], snapshot?: typeof data) {
     setStep(next);
     if (next === "generate") {
-      setMsgs((m) => [...m, ...extraMsgs, { who: "ai", text: "ممتاز — عندي كل شي! جارٍ كتابة سيرتك الاحترافية الآن… ✨" }]);
+      setMsgs((m) => [...m, ...extraMsgs, { who: "ai", text: "اكتملت المعلومات — جارٍ كتابة سيرتك الآن…" }]);
       void generate(snapshot);
     } else {
       setMsgs((m) => [...m, ...extraMsgs, { who: "ai", text: QUESTIONS[next].q }]);
@@ -144,7 +144,7 @@ export default function ArChatBuilderPage() {
     // فرع «وظيفة ثانية؟»
     if (step === "moreJobs") {
       if (/^(نعم|اي|ايه|yes|y|أجل)/i.test(text)) {
-        if (exps.length >= 3) { ask("education", [{ who: "ai", text: "وصلنا الحد الأقصى (٣ وظائف) — نكمل 👍" }]); return; }
+        if (exps.length >= 3) { ask("education", [{ who: "ai", text: "بلغنا الحد الأقصى (٣ وظائف) — نكمل." }]); return; }
         ask("company");
       } else {
         ask("education");
@@ -169,7 +169,7 @@ export default function ArChatBuilderPage() {
       setMsgs((m) => [...m, { who: "suggest", text: d.en, note: d.note }]);
     } catch {
       // لو فشل التحسين ما نوقف المستخدم — نكمل بالنص كما هو
-      setMsgs((m) => [...m, { who: "ai", text: "ما قدرت أحسّنها الآن — سجّلتها مثل ما كتبتها ونكمل 👍" }]);
+      setMsgs((m) => [...m, { who: "ai", text: "تعذّر التحسين الآن — سُجّل النص كما كتبته." }]);
       commit(text);
     } finally {
       setBusy(false);
@@ -186,7 +186,7 @@ export default function ArChatBuilderPage() {
     if (!pending) return;
     setInput(pending.en);
     setPending(null);
-    setMsgs((m) => [...m, { who: "ai", text: "عدّل النص بالأسفل وأرسله — بيُعتمد مثل ما تكتبه." }]);
+    setMsgs((m) => [...m, { who: "ai", text: "عدّل النص بالأسفل وأرسله — سيُعتمد كما تكتبه." }]);
   }
 
   function download(filename: string, text: string) {
@@ -279,7 +279,7 @@ export default function ArChatBuilderPage() {
               {msgs.map((m, i) =>
                 m.who === "suggest" ? (
                   <div key={i} className="rounded-2xl p-4" style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)" }}>
-                    <div className="mb-1 font-mono text-[11px]" style={{ color: "#a5b4fc" }}>✨ اقتراحي بالإنجليزي{m.note ? ` — ${m.note}` : ""}</div>
+                    <div className="mb-1 font-mono text-[11px]" style={{ color: "#a5b4fc" }}>اقتراح بالإنجليزية{m.note ? ` — ${m.note}` : ""}</div>
                     <div dir="ltr" className="whitespace-pre-wrap text-left font-mono text-sm" style={{ color: "rgba(244,245,243,0.9)" }}>{m.text}</div>
                   </div>
                 ) : (
@@ -317,7 +317,7 @@ export default function ArChatBuilderPage() {
             {/* أزرار الاعتماد */}
             {pending && (
               <div className="mb-3 flex gap-2">
-                <button onClick={approve} className="btn-accent flex-1 py-3 font-bold">✓ اعتماد وانتقال</button>
+                <button onClick={approve} className="btn-accent flex-1 py-3 font-bold">اعتماد وانتقال</button>
                 <button onClick={editSuggestion} className="btn-ghost px-5 py-3 text-sm font-semibold" style={{ color: "var(--fg)" }}>تعديل</button>
               </div>
             )}
@@ -343,13 +343,13 @@ export default function ArChatBuilderPage() {
           </>
         ) : (
           <div>
-            <h2 className="mb-4 text-2xl font-bold">سيرتك جاهزة 🎉</h2>
+            <h2 className="mb-4 text-2xl font-bold">سيرتك جاهزة</h2>
             <div className="mb-3 flex gap-2">
               {(["text", "designed"] as const).map((v) => (
                 <button key={v} onClick={() => setView(v)}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
                   style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
-                  {v === "text" ? "نص (ATS)" : "📄 قالب مصمّم"}
+                  {v === "text" ? "نص (ATS)" : "قالب مصمّم"}
                 </button>
               ))}
             </div>
@@ -359,7 +359,7 @@ export default function ArChatBuilderPage() {
               <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{cv}</div>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>{copied ? "✓ نُسخت" : "نسخ"}</button>
+              <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>{copied ? "نُسخت" : "نسخ"}</button>
               <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>↓ تنزيل .txt</button>
               <PdfExport text={cv} label="↓ تنزيل PDF" />
               <DocxExport text={cv} label="↓ تنزيل Word" filename="resume-ar.docx" />
