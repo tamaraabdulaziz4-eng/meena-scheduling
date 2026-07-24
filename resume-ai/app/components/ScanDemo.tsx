@@ -211,7 +211,7 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
         className="absolute -right-4 -top-4 rotate-[6deg] rounded-lg px-3 py-1.5 font-mono text-[10px] font-bold tracking-wider transition-all duration-500"
         style={{
           background: "#a78bfa",
-          color: "#05130a",
+          color: "#ffffff",
           boxShadow: "0 10px 30px -8px rgba(139,92,246,0.5)",
           opacity: phase === "done" ? 1 : 0,
           transform: phase === "done" ? "translateY(0) rotate(6deg)" : "translateY(8px) rotate(6deg)",

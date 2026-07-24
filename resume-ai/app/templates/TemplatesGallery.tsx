@@ -125,7 +125,7 @@ export default function TemplatesGallery({ ar = false }: { ar?: boolean }) {
         {modeBtns.map((b) => (
           <button key={b.id} onClick={() => setMode(b.id)}
             className="rounded-lg px-4 py-2 text-sm font-semibold transition-all"
-            style={mode === b.id ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+            style={mode === b.id ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
             {b.label}
           </button>
         ))}
@@ -138,7 +138,7 @@ export default function TemplatesGallery({ ar = false }: { ar?: boolean }) {
               <div>
                 <div className="flex items-center gap-2 font-bold">
                   {ar ? t.nameAr : t.name}
-                  {t.best && <span className="rounded-full px-2 py-0.5 font-mono text-[9px] font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>{ar ? "الأفضل" : "BEST"}</span>}
+                  {t.best && <span className="rounded-full px-2 py-0.5 font-mono text-[9px] font-bold" style={{ background: "var(--accent)", color: "#ffffff" }}>{ar ? "الأفضل" : "BEST"}</span>}
                 </div>
                 <div className="font-mono text-[11px]" style={{ color: "var(--faint)" }}>{ar ? t.tagAr : t.tag}</div>
               </div>

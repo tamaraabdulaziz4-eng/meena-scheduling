@@ -203,7 +203,7 @@ export default function ArBuildPage() {
               {steps.map((s, i) => (
                 <div key={s} className="flex items-center gap-2">
                   <div className="flex h-7 w-7 items-center justify-center rounded-full font-mono text-xs font-bold"
-                    style={i <= step ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--faint)", border: "1px solid var(--line)" }}>
+                    style={i <= step ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--faint)", border: "1px solid var(--line)" }}>
                     {i + 1}
                   </div>
                   <span className="text-[11px] sm:text-xs" style={{ color: i <= step ? "var(--fg)" : "var(--faint)" }}>{s}</span>
@@ -341,7 +341,7 @@ export default function ArBuildPage() {
               {(["text", "designed"] as const).map((v) => (
                 <button key={v} onClick={() => setView(v)}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
-                  style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  style={view === v ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                   {v === "text" ? "نص (ATS)" : "قالب مصمّم"}
                 </button>
               ))}

@@ -263,7 +263,7 @@ function CallbackInner() {
               <button onClick={downloadReceipt} className="mt-3 w-full rounded-lg py-2 text-xs font-bold" style={{ background: "rgba(11,18,32,0.06)", color: "var(--glass-text)" }}>↓ {t.downloadReceipt}</button>
             </div>
 
-            <Link href={ar ? "/ar/optimize" : "/optimize"} className="mt-6 inline-block rounded-xl px-8 py-3 font-bold" style={{ background: "#22C55E", color: "#05130a" }}>{t.start}</Link>
+            <Link href={ar ? "/ar/optimize" : "/optimize"} className="mt-6 inline-block rounded-xl px-8 py-3 font-bold" style={{ background: "#22C55E", color: "#ffffff" }}>{t.start}</Link>
           </>
         )}
         {state === "pending" && (

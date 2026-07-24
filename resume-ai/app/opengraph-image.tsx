@@ -24,7 +24,7 @@ export default function Image() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 44 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 13, background: "#a78bfa", color: "#05130a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 800, marginRight: 18 }}>R</div>
+          <div style={{ width: 56, height: 56, borderRadius: 13, background: "#a78bfa", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 800, marginRight: 18 }}>R</div>
           <div style={{ display: "flex", fontSize: 40, fontWeight: 700 }}>Sira</div>
         </div>
         <div style={{ display: "flex", fontSize: 68, fontWeight: 800, lineHeight: 1.1, maxWidth: 900 }}>

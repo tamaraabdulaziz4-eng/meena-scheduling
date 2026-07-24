@@ -308,7 +308,7 @@ export default function ArChatBuilderPage() {
               {genError && (
                 <div className="rounded-2xl p-4 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
                   {genError}
-                  <button onClick={() => generate()} className="mr-3 rounded px-3 py-1 font-semibold" style={{ background: "var(--accent)", color: "#05130a" }}>حاول مرة أخرى</button>
+                  <button onClick={() => generate()} className="mr-3 rounded px-3 py-1 font-semibold" style={{ background: "var(--accent)", color: "#ffffff" }}>حاول مرة أخرى</button>
                 </div>
               )}
               <div ref={bottomRef} />
@@ -348,7 +348,7 @@ export default function ArChatBuilderPage() {
               {(["text", "designed"] as const).map((v) => (
                 <button key={v} onClick={() => setView(v)}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
-                  style={view === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                  style={view === v ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                   {v === "text" ? "نص (ATS)" : "قالب مصمّم"}
                 </button>
               ))}

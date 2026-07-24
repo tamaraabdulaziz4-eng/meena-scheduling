@@ -341,7 +341,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
       <nav className="fixed inset-x-0 top-0 z-50" style={{ background: "rgba(11,18,32,0.72)", backdropFilter: "blur(10px)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>R</div>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: GREEN, color: "#ffffff" }}>R</div>
             <span className="text-[15px] font-bold tracking-tight">Sira</span>
           </div>
           <Link href={t.nav_lang_href} className="flex min-h-11 items-center px-3 text-sm font-semibold" style={{ color: GREEN }}>{t.nav_lang}</Link>
@@ -391,7 +391,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
           <button
             onClick={() => { track("cta_click", { cta: "hero_scroll" }); mirrorRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth" }); }}
             className="mt-10 min-h-11 rounded-full px-8 py-3 text-base font-bold"
-            style={{ background: GREEN, color: "#05130a" }}
+            style={{ background: GREEN, color: "#ffffff" }}
           >
             {t.hero_cta}
           </button>
@@ -436,7 +436,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
               ) : phase === "failed" ? (
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl p-4" style={{ background: "rgba(229,72,77,0.1)", border: "1px solid rgba(229,72,77,0.35)" }}>
                   <span className="text-sm" style={{ color: "#fca5a5" }}>{t.scan_fail}</span>
-                  <button onClick={runScan} className="min-h-11 rounded-lg px-5 text-sm font-bold" style={{ background: GREEN, color: "#05130a" }}>{t.scan_retry}</button>
+                  <button onClick={runScan} className="min-h-11 rounded-lg px-5 text-sm font-bold" style={{ background: GREEN, color: "#ffffff" }}>{t.scan_retry}</button>
                 </div>
               ) : (
                 <div className="mt-4 flex flex-col gap-2">
@@ -444,7 +444,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
                     onClick={runScan}
                     disabled={resume.trim().length < 200}
                     className="min-h-12 w-full rounded-xl text-base font-bold disabled:opacity-40"
-                    style={{ background: GREEN, color: "#05130a" }}
+                    style={{ background: GREEN, color: "#ffffff" }}
                   >
                     {t.mirror_cta}
                   </button>
@@ -493,7 +493,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
               href={t.optimize_href}
               onClick={() => track("cta_click", { cta: "continue_optimize" })}
               className="mt-10 inline-block min-h-12 rounded-xl px-10 py-3.5 text-base font-bold"
-              style={{ background: GREEN, color: "#05130a" }}
+              style={{ background: GREEN, color: "#ffffff" }}
             >
               {t.score_cta}
             </Link>
@@ -638,7 +638,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
                 href={t.optimize_href}
                 onClick={() => track("cta_click", { cta: "pricing_try_free" })}
                 className="mt-7 inline-block min-h-12 w-full rounded-xl px-8 py-3.5 text-base font-bold text-white"
-                style={{ background: GREEN, color: "#05130a" }}
+                style={{ background: GREEN, color: "#ffffff" }}
               >
                 {t.price_cta}
               </Link>
@@ -688,7 +688,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
                 href={t.optimize_href}
                 onClick={() => track("cta_click", { cta: "finale_continue" })}
                 className="min-h-13 rounded-xl px-8 py-4 text-lg font-bold"
-                style={{ background: GREEN, color: "#05130a" }}
+                style={{ background: GREEN, color: "#ffffff" }}
               >
                 {t.score_cta}
               </Link>
@@ -696,7 +696,7 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
               <button
                 onClick={() => { track("cta_click", { cta: "finale_scan" }); mirrorRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth" }); }}
                 className="min-h-13 rounded-xl px-8 py-4 text-lg font-bold"
-                style={{ background: GREEN, color: "#05130a" }}
+                style={{ background: GREEN, color: "#ffffff" }}
               >
                 {t.fin_scan}
               </button>

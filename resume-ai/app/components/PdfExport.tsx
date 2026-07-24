@@ -164,7 +164,7 @@ export default function PdfExport({ text, label = "↓ Download PDF", watermark 
 
   return (
     <button onClick={exportPdf} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
-      style={{ background: "var(--accent)", color: "#05130a" }}>
+      style={{ background: "var(--accent)", color: "#ffffff" }}>
       {busy ? "…" : label}
     </button>
   );

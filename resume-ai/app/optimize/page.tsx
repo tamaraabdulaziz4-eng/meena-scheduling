@@ -491,7 +491,7 @@ export default function OptimizePage() {
                   {([{ id: "en", label: "English" }, { id: "ar", label: "العربية" }, { id: "both", label: "Both" }] as const).map((o) => (
                     <button key={o.id} onClick={() => setOutLang(o.id)}
                       className="rounded-xl py-3 text-sm font-semibold transition-all"
-                      style={outLang === o.id ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
+                      style={outLang === o.id ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
                   ))}
                 </div>
                 {/* Template pick (optional) — choose the look upfront; changeable on the result too. */}
@@ -500,7 +500,7 @@ export default function OptimizePage() {
                   {TEMPLATE_CATALOG.map((tp) => (
                     <button key={tp.slug} onClick={() => setTplSlug(tp.slug)}
                       className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold"
-                      style={tplSlug === tp.slug ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                      style={tplSlug === tp.slug ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                       {tp.name}{tp.best ? " ★" : ""}
                     </button>
                   ))}
@@ -602,7 +602,7 @@ export default function OptimizePage() {
                     onClick={() => setTab(t)}
                     className="rounded-lg px-5 py-2 text-sm font-semibold transition-all"
                     style={tab === t
-                      ? { background: "var(--accent)", color: "#05130a" }
+                      ? { background: "var(--accent)", color: "#ffffff" }
                       : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                     {t === "resume" ? "Optimized resume" : "Full analysis"}
                   </button>
@@ -661,7 +661,7 @@ export default function OptimizePage() {
                     {(["text", "designed"] as const).map((v) => (
                       <button key={v} onClick={() => setResumeView(v)}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"
-                        style={resumeView === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                        style={resumeView === v ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                         {v === "text" ? "Text (ATS)" : "Designed template"}
                       </button>
                     ))}
@@ -675,7 +675,7 @@ export default function OptimizePage() {
                         <button key={tp.slug} onClick={() => setTplSlug(tp.slug)}
                           className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold"
                           style={tplSlug === tp.slug
-                            ? { background: "var(--accent)", color: "#05130a" }
+                            ? { background: "var(--accent)", color: "#ffffff" }
                             : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                           {tp.name}{tp.best ? " ★" : ""}
                         </button>
@@ -746,7 +746,7 @@ export default function OptimizePage() {
                         <button
                           onClick={() => download("cover-letter.txt", coverLetter)}
                           className="rounded-lg px-4 py-2 text-sm font-semibold"
-                          style={{ background: "var(--accent)", color: "#05130a" }}>
+                          style={{ background: "var(--accent)", color: "#ffffff" }}>
                           ↓ Download
                         </button>
                       </div>

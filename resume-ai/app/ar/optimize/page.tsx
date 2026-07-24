@@ -364,7 +364,7 @@ export default function ArOptimizePage() {
                 <div className="mb-6 grid grid-cols-3 gap-2">
                   {([{ id: "ar", label: "العربية" }, { id: "en", label: "الإنجليزية" }, { id: "both", label: "الاثنتان" }] as const).map((o) => (
                     <button key={o.id} onClick={() => setOutLang(o.id)} className="rounded-xl py-3 text-sm font-semibold transition-all"
-                      style={outLang === o.id ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
+                      style={outLang === o.id ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>{o.label}</button>
                   ))}
                 </div>
                 <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--muted)" }}>
@@ -450,7 +450,7 @@ export default function ArOptimizePage() {
                 {(["text", "designed"] as const).map((v) => (
                   <button key={v} onClick={() => setResumeView(v)}
                     className="rounded-lg px-4 py-2 text-sm font-semibold"
-                    style={resumeView === v ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                    style={resumeView === v ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                     {v === "text" ? "نص (ATS)" : "قالب مصمّم"}
                   </button>
                 ))}
@@ -462,7 +462,7 @@ export default function ArOptimizePage() {
                   {TEMPLATE_CATALOG.map((tp) => (
                     <button key={tp.slug} onClick={() => setTplSlug(tp.slug)}
                       className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold"
-                      style={tplSlug === tp.slug ? { background: "var(--accent)", color: "#05130a" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+                      style={tplSlug === tp.slug ? { background: "var(--accent)", color: "#ffffff" } : { background: "var(--surface)", color: "var(--muted)", border: "1px solid var(--line)" }}>
                       {tp.nameAr}{tp.best ? " ★" : ""}
                     </button>
                   ))}
@@ -522,7 +522,7 @@ export default function ArOptimizePage() {
                       {coverCopied ? "نُسخ" : "نسخ"}
                     </button>
                     <button onClick={() => download("cover-letter.txt", coverLetter)}
-                      className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "var(--accent)", color: "#05130a" }}>
+                      className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "var(--accent)", color: "#ffffff" }}>
                       ↓ تنزيل
                     </button>
                   </div>
