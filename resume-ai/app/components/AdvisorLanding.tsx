@@ -841,6 +841,7 @@ export default function AdvisorLanding({ lang }: { lang: Lang }) {
         <div className="dock">
           <div className="dock-inner">
             <textarea value={input} onChange={(e) => setInput(e.target.value)}
+              onFocus={() => document.body.classList.add("typing")} onBlur={() => document.body.classList.remove("typing")}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !pasteMode) { e.preventDefault(); onSend(); } }}
               placeholder={pasteMode ? t.paste_ph : t.input_ph} rows={pasteMode ? 4 : 1}
               className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 outline-none" style={{ color: "#f4f5f3", fontSize: 16, lineHeight: 1.6 }} />

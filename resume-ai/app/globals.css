@@ -574,6 +574,80 @@ body {
 .advisor-prompt { animation: prompt-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
 .cv-line-in { animation: prompt-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
+/* ══ AMBIENT FIELD — the living background (cursor light, click ripples,
+   mood tint, scroll parallax) ══ */
+.ambient-field {
+  position: fixed;
+  inset: 0;
+  z-index: 1; /* above page backgrounds, below content (z-10+) and the orb (z-30) */
+  pointer-events: none;
+  overflow: hidden;
+}
+.amb-tint {
+  position: absolute;
+  inset: 0;
+  transition: background 1.4s ease;
+}
+.amb-parallax {
+  position: absolute;
+  inset: -8%;
+  transform: translateY(calc(var(--scy, 0) * -0.045px));
+  will-change: transform;
+}
+.amb-drift {
+  position: absolute;
+  width: 58vmax;
+  height: 58vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+}
+.amb-drift.d1 {
+  top: -18%;
+  left: -12%;
+  background: radial-gradient(circle, rgba(139,92,246,0.06), transparent 62%);
+  animation: amb-drift1 26s ease-in-out infinite alternate;
+}
+.amb-drift.d2 {
+  bottom: -22%;
+  right: -14%;
+  background: radial-gradient(circle, rgba(236,72,153,0.05), transparent 62%);
+  animation: amb-drift2 34s ease-in-out infinite alternate;
+}
+@keyframes amb-drift1 { to { transform: translate(9vw, 6vh) scale(1.12); } }
+@keyframes amb-drift2 { to { transform: translate(-8vw, -7vh) scale(1.08); } }
+.amb-light {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(660px circle at var(--mx, 50%) var(--my, 32%), rgba(226,232,245,0.12), transparent 70%);
+  mix-blend-mode: screen;
+  opacity: 0.8;
+  transition: opacity 0.8s ease;
+}
+.ambient-field.is-active .amb-light { opacity: 1; }
+body.typing .amb-light {
+  background: radial-gradient(700px circle at var(--mx, 50%) var(--my, 32%), rgba(185,166,255,0.16), transparent 72%);
+}
+.amb-ripple {
+  position: fixed;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid rgba(196,181,253,0.8);
+  box-shadow: 0 0 28px rgba(139,92,246,0.4), inset 0 0 14px rgba(139,92,246,0.25);
+  animation: amb-ripple 1.25s cubic-bezier(0.2, 0.6, 0.2, 1) forwards;
+}
+@keyframes amb-ripple {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(30); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .amb-drift { animation: none; }
+  .amb-ripple { display: none; }
+  .amb-light { opacity: 0.4; }
+  .amb-parallax { transform: none; }
+}
+
 /* the constellation chips — settle brighter when reached for */
 .tool-chip { transition: border-color 0.25s ease, background 0.25s ease, transform 0.25s ease; }
 .tool-chip:hover { border-color: rgba(185,166,255,0.5) !important; background: rgba(139,92,246,0.12) !important; transform: translateY(-1px); }

@@ -13,6 +13,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring } from "framer-motion";
 import AiOrb, { type OrbState } from "../AiOrb";
+import AmbientField from "./AmbientField";
 
 export interface OrbScene {
   visible: boolean;
@@ -65,6 +66,8 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
 
   return (
     <OrbCtx.Provider value={ctx}>
+      {/* the living background — beneath every page, reacting to everything */}
+      <AmbientField mood={scene.mood} active={scene.visible} />
       {children}
       {scene.visible && (
         <motion.div
