@@ -368,7 +368,7 @@ export default function OptimizePage() {
       {/* Nav */}
       {/* the orb watches the wizard — it never leaves you mid-journey */}
       <OrbSceneSetter visible mood="idle" top="12vh" left="86%" size={110} />
-      <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
+      <nav className="sticky top-0 z-50" style={{ background: "linear-gradient(180deg, rgba(5,7,13,0.85), transparent)" }}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
             {/* the brand IS the orb — no colored box */}

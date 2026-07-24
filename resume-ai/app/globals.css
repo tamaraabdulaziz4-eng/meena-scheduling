@@ -266,15 +266,17 @@ body {
 
 /* Cards */
 .card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
 }
 .card-hover:hover {
-  border-color: rgba(74, 222, 128, 0.4);
+  border-color: rgba(139, 92, 246, 0.4);
   transform: translateY(-3px);
-  box-shadow: 0 20px 50px -25px rgba(74, 222, 128, 0.35);
+  box-shadow: 0 24px 60px -25px rgba(139, 92, 246, 0.4);
 }
 
 /* Buttons */
@@ -324,9 +326,11 @@ body {
   gap: 0.5rem;
   padding: 0.4rem 0.9rem;
   border-radius: 999px;
-  background: rgba(74, 222, 128, 0.08);
-  border: 1px solid rgba(74, 222, 128, 0.25);
-  color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: rgba(244, 245, 243, 0.75);
   font-family: ui-monospace, monospace;
   font-size: 0.7rem;
   letter-spacing: 0.12em;

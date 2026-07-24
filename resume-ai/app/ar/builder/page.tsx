@@ -262,7 +262,7 @@ export default function ArChatBuilderPage() {
   return (
     <main dir="rtl" lang="ar" className="flex min-h-screen flex-col" style={{ background: "var(--bg)", color: "var(--fg)" }}>
       <OrbSceneSetter visible mood="idle" top="14vh" left="14%" size={100} />
-      <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
+      <nav className="sticky top-0 z-50" style={{ background: "linear-gradient(180deg, rgba(5,7,13,0.85), transparent)" }}>
         <div className="mx-auto flex max-w-2xl items-center justify-between px-6 py-4">
           <Link href="/ar" className="flex items-center gap-2.5">
             <OrbBrand size={26} />

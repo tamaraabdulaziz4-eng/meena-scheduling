@@ -11,9 +11,34 @@
  * score → golden → success → library → gate → lost — one living entity.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { motion, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring } from "framer-motion";
+import { usePathname } from "next/navigation";
+import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring } from "framer-motion";
 import AiOrb, { type OrbState } from "../AiOrb";
 import AmbientField from "./AmbientField";
+
+/**
+ * Route crossfade. OPACITY ONLY — never y/scale/transform on this wrapper: a
+ * transform on an ancestor collapses `position:fixed` descendants (the global
+ * orb, the landing dock) into it. Every route dissolves into the next so the
+ * site reads as one continuous surface rather than a stack of page loads.
+ */
+function PageTransition({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const reduce = useReducedMotion();
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={pathname}
+        initial={reduce ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={reduce ? undefined : { opacity: 0 }}
+        transition={{ duration: reduce ? 0 : 0.28, ease: "easeInOut" }}
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
+}
 
 export interface OrbScene {
   visible: boolean;
@@ -68,7 +93,7 @@ export default function OrbProvider({ children }: { children: React.ReactNode })
     <OrbCtx.Provider value={ctx}>
       {/* the living background — beneath every page, reacting to everything */}
       <AmbientField mood={scene.mood} active={scene.visible} />
-      {children}
+      <PageTransition>{children}</PageTransition>
       {scene.visible && (
         <motion.div
           className="pointer-events-none fixed"
