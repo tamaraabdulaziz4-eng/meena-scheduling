@@ -255,7 +255,7 @@ export default function ArChatBuilderPage() {
   }
 
   const bubbleAi = { background: "var(--surface)", border: "1px solid var(--line)" };
-  const bubbleUser = { background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.3)" };
+  const bubbleUser = { background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.3)" };
 
   return (
     <main dir="rtl" lang="ar" className="flex min-h-screen flex-col" style={{ background: "var(--bg)", color: "var(--fg)" }}>
@@ -356,8 +356,8 @@ export default function ArChatBuilderPage() {
               <div dir="ltr" className="card whitespace-pre-wrap p-6 text-left font-mono text-sm leading-relaxed" style={{ color: "rgba(244,245,243,0.9)" }}>{cv}</div>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>{copied ? "✓ نُسخت" : "نسخ"}</button>
-              <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>
+              <button onClick={() => { navigator.clipboard.writeText(cv).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>{copied ? "✓ نُسخت" : "نسخ"}</button>
+              <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>↓ تنزيل .txt</button>
               <PdfExport text={cv} label="↓ تنزيل PDF" />
               <DocxExport text={cv} label="↓ تنزيل Word" filename="resume-ar.docx" />
             </div>

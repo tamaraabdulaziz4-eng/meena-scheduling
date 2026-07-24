@@ -70,7 +70,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           <h2 className="mb-4 text-2xl font-bold">كلمات ATS الأساسية</h2>
           <div className="flex flex-wrap gap-2">
             {j.keywords.map((k) => (
-              <span key={k} dir="ltr" className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{k}</span>
+              <span key={k} dir="ltr" className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(139,92,246,0.14)", color: "var(--accent)" }}>{k}</span>
             ))}
           </div>
         </section>
@@ -93,7 +93,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           </div>
         </section>
 
-        <div className="card mt-10 p-7 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+        <div className="card mt-10 p-7 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
           <h2 className="text-2xl font-bold">أضف هذه المهارات لسيرتك تلقائياً</h2>
           <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>الصق سيرتك واحصل على الكلمات الناقصة ونسبة التطابق فوراً — مجاناً.</p>
           <Link href="/ar/optimize" className="btn-accent mt-5 inline-block px-8 py-3">افحص سيرتي مجاناً ←</Link>

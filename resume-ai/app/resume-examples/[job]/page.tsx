@@ -93,7 +93,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>These are the exact terms an ATS scans for. Include the ones you genuinely have, worded like the job posting:</p>
           <div className="flex flex-wrap gap-2">
             {j.atsKeywords.map((k) => (
-              <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{k}</span>
+              <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(139,92,246,0.14)", color: "var(--accent)" }}>{k}</span>
             ))}
           </div>
         </Section>
@@ -129,7 +129,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
         </Section>
 
         {/* CTA */}
-        <div className="card mt-10 p-7 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+        <div className="card mt-10 p-7 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
           <h2 className="text-2xl font-bold">Is your {j.title} resume ATS-ready?</h2>
           <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Paste it and get an instant match score plus the missing keywords — free, no sign-up.</p>
           <Link href="/optimize" className="btn-accent mt-5 inline-block px-8 py-3">Scan my resume free →</Link>

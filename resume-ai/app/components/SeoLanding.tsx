@@ -53,7 +53,7 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
         <div className="grid gap-5 md:grid-cols-2">
           {bullets.map((b) => (
             <div key={b.title} className="card p-6">
-              <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.2)" }}>✓</div>
+              <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "rgba(139,92,246,0.1)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.2)" }}>✓</div>
               <h2 className="font-bold">{b.title}</h2>
               <p className="mt-1.5 text-sm" style={{ color: "var(--muted)" }}>{b.body}</p>
             </div>
@@ -86,7 +86,7 @@ export default function SeoLanding({ eyebrow, h1, h1Accent, intro, bullets, faqs
         </section>
       )}
 
-      <section className="px-6 py-16" style={{ background: "rgba(74,222,128,0.025)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+      <section className="px-6 py-16" style={{ background: "rgba(139,92,246,0.025)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto max-w-3xl">
           <h2 className="mb-10 text-center text-3xl font-bold tracking-tight">Frequently asked questions</h2>
           <div className="space-y-4">

@@ -22,18 +22,18 @@ export default function BeforeAfter({
     return () => clearTimeout(id);
   }, [after]);
 
-  const barColor = (v: number) => (v >= 75 ? "#4ade80" : v >= 55 ? "#fbbf24" : "#f87171");
+  const barColor = (v: number) => (v >= 75 ? "#a78bfa" : v >= 55 ? "#fbbf24" : "#f87171");
   const t = (en: string, arText: string) => (ar ? arText : en);
 
   if (gain <= 0) return null;
 
   return (
-    <div className="card mt-6 p-6" dir={ar ? "rtl" : "ltr"} style={{ borderColor: "rgba(74,222,128,0.3)" }}>
+    <div className="card mt-6 p-6" dir={ar ? "rtl" : "ltr"} style={{ borderColor: "rgba(139,92,246,0.3)" }}>
       <div className="mb-4 flex items-center justify-between">
         <h3 className="font-bold">{t("Before → after the rewrite", "قبل ← بعد إعادة الكتابة")}</h3>
         <span
           className="rounded-lg px-3 py-1 font-mono text-xs font-bold"
-          style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}
+          style={{ background: "rgba(139,92,246,0.14)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}
         >
           +{gain} {t("pts", "نقطة")}
         </span>

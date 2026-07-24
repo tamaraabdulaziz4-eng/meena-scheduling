@@ -342,8 +342,8 @@ export default function BuildPage() {
         )}
 
         {loading && (
-          <div className="card overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
-            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
+          <div className="card overflow-hidden" style={{ borderColor: "rgba(139,92,246,0.35)" }}>
+            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(139,92,246,0.05)" }}>
               <AiOrb size={22} thinking />
               <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>AI writing your CV — live</span>
             </div>
@@ -360,10 +360,10 @@ export default function BuildPage() {
               <h2 className="text-2xl font-bold">Your CV is ready 🎉</h2>
               <div className="flex gap-2">
                 <button onClick={() => { navigator.clipboard.writeText(cv); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
-                  className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
                   {copied ? "✓ Copied" : "Copy"}
                 </button>
-                <button onClick={() => download("my-cv.txt", cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                <button onClick={() => download("my-cv.txt", cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
                   ↓ .txt
                 </button>
                 <PdfExport text={cv} />
@@ -397,7 +397,7 @@ export default function BuildPage() {
               </div>
             )}
 
-            <div className="card mt-6 p-7 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+            <div className="card mt-6 p-7 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
               <h3 className="text-xl font-bold">Now check it against a real job posting</h3>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                 Run your new CV through the optimizer against a real job posting to get your match score.

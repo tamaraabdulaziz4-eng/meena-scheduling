@@ -70,7 +70,7 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
   }
 
   const passing = score >= 75;
-  const accent = passing ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
+  const accent = passing ? "#a78bfa" : score >= 55 ? "#fbbf24" : "#f87171";
   const verdict = passing ? (ar ? "تطابق قوي" : "STRONG MATCH") : (ar ? "تطابق منخفض" : "LOW MATCH");
   const t = {
     header: ar ? "فحص ATS · تجريبي" : "ATS Scan · Demo",
@@ -143,7 +143,7 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
                     background:
                       phase === "done"
                         ? l.present
-                          ? "linear-gradient(90deg,#22c55e,#4ade80)"
+                          ? "linear-gradient(90deg,#22c55e,#a78bfa)"
                           : "rgba(248,113,113,0.6)"
                         : "rgba(255,255,255,0.15)",
                     transitionDelay: `${i * 80}ms`,
@@ -164,7 +164,7 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
             <div
               className="pointer-events-none absolute inset-x-0 top-0 h-8"
               style={{
-                background: "linear-gradient(180deg, rgba(74,222,128,0) 0%, rgba(74,222,128,0.25) 50%, rgba(74,222,128,0) 100%)",
+                background: "linear-gradient(180deg, rgba(139,92,246,0) 0%, rgba(139,92,246,0.25) 50%, rgba(139,92,246,0) 100%)",
                 animation: "scanSweep 1.6s ease-in-out",
               }}
             />
@@ -189,7 +189,7 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
           <div
             className="rounded-lg px-3 py-2 font-mono text-[11px] font-bold tracking-wider transition-all"
             style={{
-              background: passing ? "rgba(74,222,128,0.12)" : "rgba(248,113,113,0.1)",
+              background: passing ? "rgba(139,92,246,0.12)" : "rgba(248,113,113,0.1)",
               color: accent,
               border: `1px solid ${accent}40`,
             }}
@@ -210,9 +210,9 @@ export default function ScanDemo({ ar = false }: { ar?: boolean }) {
       <div
         className="absolute -right-4 -top-4 rotate-[6deg] rounded-lg px-3 py-1.5 font-mono text-[10px] font-bold tracking-wider transition-all duration-500"
         style={{
-          background: "#4ade80",
+          background: "#a78bfa",
           color: "#05130a",
-          boxShadow: "0 10px 30px -8px rgba(74,222,128,0.5)",
+          boxShadow: "0 10px 30px -8px rgba(139,92,246,0.5)",
           opacity: phase === "done" ? 1 : 0,
           transform: phase === "done" ? "translateY(0) rotate(6deg)" : "translateY(8px) rotate(6deg)",
         }}

@@ -104,7 +104,7 @@ export default function InterviewPage() {
                 <div>{error}</div>
                 {resume.trim() && jd.trim() && !loading && (
                   <button type="submit" className="mt-2 inline-block rounded-lg px-3 py-1 text-xs font-semibold"
-                    style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>
+                    style={{ background: "rgba(139,92,246,0.15)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.4)" }}>
                     ↻ Retry
                   </button>
                 )}
@@ -131,7 +131,7 @@ export default function InterviewPage() {
                   setTimeout(() => setCopied(false), 1800);
                 }}
                 className="rounded-lg px-4 py-2 text-sm font-semibold"
-                style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
                 {copied ? "✓ Copied" : "Copy all"}
               </button>
             </div>
@@ -145,7 +145,7 @@ export default function InterviewPage() {
                   <span className="mt-0.5 font-mono text-accent">{open === i ? "−" : "+"}</span>
                 </button>
                 {open === i && (
-                  <div className="border-t px-5 py-4 text-sm leading-relaxed" style={{ borderColor: "var(--line)", color: "rgba(244,245,243,0.85)", background: "rgba(74,222,128,0.03)" }}>
+                  <div className="border-t px-5 py-4 text-sm leading-relaxed" style={{ borderColor: "var(--line)", color: "rgba(244,245,243,0.85)", background: "rgba(139,92,246,0.03)" }}>
                     <div className="mb-1 font-mono text-xs uppercase tracking-wider text-accent">Strong answer</div>
                     {item.answer}
                   </div>
@@ -163,7 +163,7 @@ export default function InterviewPage() {
                 </ul>
               </div>
             )}
-            <div className="card mt-4 p-6 text-center" style={{ borderColor: "rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.04)" }}>
+            <div className="card mt-4 p-6 text-center" style={{ borderColor: "rgba(139,92,246,0.3)", background: "rgba(139,92,246,0.04)" }}>
               <p className="text-sm" style={{ color: "var(--muted)" }}>Make sure your resume matches this job first —</p>
               <Link href="/optimize" className="btn-accent mt-3 inline-block px-6 py-2.5 text-sm">Scan it against this job free →</Link>
             </div>

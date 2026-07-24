@@ -5,6 +5,7 @@ import PdfExport from "../components/PdfExport";
 import DocxExport from "../components/DocxExport";
 import BeforeAfter from "../components/BeforeAfter";
 import AiOrb from "../components/AiOrb";
+import OrbSceneSetter from "../components/orb/OrbSceneSetter";
 import ResumeTemplate from "../components/ResumeTemplate";
 import { TEMPLATE_CATALOG } from "../lib/templateCatalog";
 import ScoreOrb from "../components/orb/ScoreOrb";
@@ -355,7 +356,7 @@ export default function OptimizePage() {
   }
 
   const score = result?.matchScore ?? 0;
-  const scoreColor = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
+  const scoreColor = score >= 75 ? "#a78bfa" : score >= 55 ? "#fbbf24" : "#f87171";
   // "MATCH" language only makes sense against a job. In general review (no JD)
   // there's nothing to match — use neutral quality-review wording instead.
   const verdict = mode === "target"
@@ -365,15 +366,17 @@ export default function OptimizePage() {
   return (
     <main className="min-h-screen" style={{ background: "var(--bg)", color: "var(--fg)" }}>
       {/* Nav */}
+      {/* the orb watches the wizard — it never leaves you mid-journey */}
+      <OrbSceneSetter visible mood="idle" top="12vh" left="86%" size={110} />
       <nav className="sticky top-0 z-50 backdrop-blur" style={{ background: "rgba(8,9,10,0.7)", borderBottom: "1px solid var(--line)" }}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold"
-              style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+            {/* the brand IS the orb — no colored box */}
+            <AiOrb size={26} />
             <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
           </Link>
           <div className="flex items-center gap-5">
-            <Link href="/ar/optimize" className="rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}
+            <Link href="/ar/optimize" className="rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: "var(--accent)", border: "1px solid var(--line)" }}
               onClick={() => {
                 // Carry the draft across the language switch — separate storage
                 // keys otherwise make it look like the user's text vanished.
@@ -407,8 +410,8 @@ export default function OptimizePage() {
 
             {loading ? (
               /* Analyzing — live steps instead of an empty spinner. */
-              <div className="card mx-auto max-w-2xl overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
-                <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
+              <div className="card mx-auto max-w-2xl overflow-hidden" style={{ borderColor: "rgba(139,92,246,0.35)" }}>
+                <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(139,92,246,0.05)" }}>
                   <AiOrb size={22} thinking />
                   <span className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--accent)" }}>Analyzing — live</span>
                 </div>
@@ -423,13 +426,13 @@ export default function OptimizePage() {
                 <p className="mt-2 mb-5 text-sm" style={{ color: "var(--muted)" }}>Upload a file or paste the text. We&apos;ll never change a word without your approval.</p>
                 <div className="mb-3 flex flex-wrap gap-2">
                   <label className="cursor-pointer rounded-lg px-4 py-2 text-sm font-semibold"
-                    style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                    style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
                     {uploading ? "Reading…" : uploadedName ? `✓ ${uploadedName.slice(0, 22)}` : "↑ Upload PDF / Word"}
                     <input type="file" accept=".pdf,.docx,.txt,.md" onChange={handleFile} className="hidden" disabled={uploading} />
                   </label>
                   {!resume && (
                     <button onClick={() => { setResume(SAMPLE_RESUME); setJobDescription(SAMPLE_JD); setMode("target"); }}
-                      className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>👀 Try a sample</button>
+                      className="btn-ghost px-4 py-2 text-sm font-semibold" style={{ color: "var(--fg)" }}>Try a sample</button>
                   )}
                 </div>
                 <textarea value={resume} onChange={(e) => setResume(e.target.value)}
@@ -439,7 +442,7 @@ export default function OptimizePage() {
                   style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--fg)", minHeight: "11rem" }} />
                 <p className="mt-2 font-mono text-xs" style={{ color: resume.length > 7500 ? "#fbbf24" : "var(--faint)" }}>{resume.length}/8000</p>
                 {extraction && uploadedName && (
-                  <div className="mt-3 rounded-xl p-4" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  <div className="mt-3 rounded-xl p-4" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid var(--line)" }}>
                     <div className="mb-2 text-sm font-bold" style={{ color: "var(--accent)" }}>✓ Here&apos;s what we read — check it</div>
                     <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4" style={{ color: "var(--muted)" }}>
                       <div><span style={{ color: "var(--faint)" }}>Name</span><br /><strong>{extraction.name}</strong></div>
@@ -452,7 +455,7 @@ export default function OptimizePage() {
                 )}
                 <button disabled={resume.trim().length < 50} onClick={() => setStep(2)}
                   className="btn-accent mt-5 w-full py-3.5 text-base disabled:cursor-not-allowed disabled:opacity-40">Continue →</button>
-                <p className="mt-3 text-center text-[11px]" style={{ color: "var(--faint)" }}>🔒 Processed instantly · never stored on our servers</p>
+                <p className="mt-3 text-center text-[11px]" style={{ color: "var(--faint)" }}>Processed instantly — never stored on our servers</p>
               </div>
             ) : step === 2 ? (
               /* ── Step 2: target job ── */
@@ -502,14 +505,14 @@ export default function OptimizePage() {
                     </button>
                   ))}
                 </div>
-                <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)", color: "var(--muted)" }}>
+                <div className="mb-4 rounded-xl p-4 text-sm" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--muted)" }}>
                   <div className="mb-1 font-semibold" style={{ color: "var(--fg)" }}>{mode === "target" ? "🎯 Tailored to your job posting" : "📄 General improvement"}</div>
                   Free: match score, missing keywords, skills gap, preview. <span style={{ color: "var(--accent)" }}>Full rewrite unlocks after.</span>
                 </div>
                 {error && (
                   <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
                     <div>{error}</div>
-                    {resume.trim() && <button type="button" onClick={() => runScan()} className="mt-2 inline-block rounded-lg px-4 py-1.5 text-xs font-semibold" style={{ background: "rgba(74,222,128,0.15)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.4)" }}>↻ Retry</button>}
+                    {resume.trim() && <button type="button" onClick={() => runScan()} className="mt-2 inline-block rounded-lg px-4 py-1.5 text-xs font-semibold" style={{ background: "rgba(139,92,246,0.15)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.4)" }}>↻ Retry</button>}
                   </div>
                 )}
                 <button onClick={() => runScan()} disabled={resume.trim().length < 50}
@@ -561,7 +564,7 @@ export default function OptimizePage() {
               })()}
               <a href={`/score/${score}`} target="_blank" rel="noopener noreferrer"
                 className="mt-5 inline-block rounded-lg px-5 py-2 text-sm font-semibold"
-                style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
                 📣 Share my score
               </a>
             </div>
@@ -621,13 +624,13 @@ export default function OptimizePage() {
                       <button
                         onClick={() => { navigator.clipboard.writeText(result.optimizedResume); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"
-                        style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                        style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
                         {copied ? "✓ Copied" : "Copy"}
                       </button>
                       <button
                         onClick={() => download("optimized-resume.txt", result.watermark ? wmTxt(result.optimizedResume) : result.optimizedResume)}
                         className="rounded-lg px-4 py-2 text-sm font-semibold"
-                        style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                        style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
                         ↓ .txt
                       </button>
                       <PdfExport text={result.optimizedResume} watermark={result.watermark} />
@@ -638,7 +641,7 @@ export default function OptimizePage() {
                 {/* Email my results — delivery + opt-in capture. */}
                 {!result.locked && (
                   emailState === "sent" ? (
-                    <div className="mb-4 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.35)", color: "var(--accent)" }}>✓ Sent — check your inbox.</div>
+                    <div className="mb-4 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.35)", color: "var(--accent)" }}>✓ Sent — check your inbox.</div>
                   ) : (
                     <div className="mb-4 flex flex-wrap gap-2">
                       <input type="email" value={emailTo} onChange={(e) => setEmailTo(e.target.value)} dir="ltr" placeholder="you@email.com"
@@ -690,7 +693,7 @@ export default function OptimizePage() {
                   </div>
                 )}
                 {result.watermark && (
-                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+                  <div className="card mt-4 p-8 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
                     <div className="chip mb-3">✓ Your resume is ready — free</div>
                     <h3 className="text-xl font-bold">
                       {typeof result.afterScore === "number"
@@ -711,7 +714,7 @@ export default function OptimizePage() {
                 )}
 
                 {/* Cover letter generator */}
-                <div className="card mt-6 p-6" style={{ borderColor: "rgba(74,222,128,0.25)" }}>
+                <div className="card mt-6 p-6" style={{ borderColor: "rgba(139,92,246,0.25)" }}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h3 className="font-bold">Matching cover letter</h3>
@@ -724,7 +727,7 @@ export default function OptimizePage() {
                       </p>
                     </div>
                     {result.watermark ? (
-                      <a href="/#pricing" className="btn-accent px-5 py-2.5 text-sm">🔒 Unlock to generate</a>
+                      <a href="/#pricing" className="btn-accent px-5 py-2.5 text-sm">Unlock to generate</a>
                     ) : !coverLetter ? (
                       <button
                         onClick={generateCoverLetter}
@@ -737,7 +740,7 @@ export default function OptimizePage() {
                         <button
                           onClick={() => { navigator.clipboard.writeText(coverLetter); setCoverCopied(true); setTimeout(() => setCoverCopied(false), 1800); }}
                           className="rounded-lg px-4 py-2 text-sm font-semibold"
-                          style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                          style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
                           {coverCopied ? "✓ Copied" : "Copy"}
                         </button>
                         <button
@@ -780,7 +783,7 @@ export default function OptimizePage() {
                     navigator.clipboard.writeText(txt); setCopied(true); setTimeout(() => setCopied(false), 1800);
                   }}
                   className="rounded-lg px-4 py-2 text-sm font-semibold"
-                  style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid var(--line)" }}>
                   {copied ? "✓ Copied" : "Copy analysis"}
                 </button>
               </div>
@@ -794,11 +797,11 @@ export default function OptimizePage() {
                   </div>
                 </div>
 
-                <div className="card p-6" style={{ borderColor: "rgba(74,222,128,0.2)" }}>
+                <div className="card p-6" style={{ borderColor: "rgba(139,92,246,0.2)" }}>
                   <h3 className="mb-4 font-bold">Present keywords ({result.presentKeywords.length})</h3>
                   <div className="flex flex-wrap gap-2">
                     {result.presentKeywords.map((k) => (
-                      <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{k}</span>
+                      <span key={k} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(139,92,246,0.14)", color: "var(--accent)" }}>{k}</span>
                     ))}
                   </div>
                 </div>
@@ -812,7 +815,7 @@ export default function OptimizePage() {
                   </ul>
                 </div>
 
-                <div className="card p-6" style={{ borderColor: "rgba(74,222,128,0.15)" }}>
+                <div className="card p-6" style={{ borderColor: "rgba(139,92,246,0.15)" }}>
                   <h3 className="mb-4 font-bold">Improvements made</h3>
                   <ul className="space-y-4">
                     {result.improvements.map((imp) => {
@@ -843,7 +846,7 @@ export default function OptimizePage() {
             )}
 
             {/* Bottom CTA */}
-            <div className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+            <div className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
               <h3 className="text-2xl font-bold">Applying to more than one job?</h3>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>Get the Complete Pack — SAR 99 once, no subscription: cover letters, LinkedIn, and interview prep included.</p>
               <div className="mt-6 flex flex-wrap justify-center gap-4">

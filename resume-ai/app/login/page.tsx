@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import AuroraBlobs from "../components/orb/AuroraBlobs";
 import { useOrbScene } from "../components/orb/OrbProvider";
+import AiOrb from "../components/AiOrb";
 
 function LoginInner() {
   const params = useSearchParams();
@@ -57,7 +58,7 @@ function LoginInner() {
       <AuroraBlobs />
       <div className="relative w-full max-w-sm rounded-3xl p-8" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(12px)" }}>
         <Link href="/" className="mb-6 flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg font-mono text-sm font-bold" style={{ background: "var(--accent)", color: "#05130a" }}>R</div>
+          <AiOrb size={30} />
           <span className="text-[15px] font-bold tracking-tight">ResumeAI</span>
         </Link>
 
@@ -89,7 +90,7 @@ function LoginInner() {
               />
               {error && <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>{error}</div>}
               <button type="submit" disabled={state === "sending"} className="btn-accent w-full py-3 disabled:opacity-50">
-                {state === "sending" ? "Sending…" : "Send magic link ✨"}
+                {state === "sending" ? "Sending…" : "Send magic link"}
               </button>
             </form>
           </>

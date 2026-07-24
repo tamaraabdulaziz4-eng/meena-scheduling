@@ -96,7 +96,7 @@ export default function PublishLink({ text, name, role, ar = false }: { text: st
 
   if (url) {
     return (
-      <div className="card mt-6 p-5" style={{ borderColor: "rgba(74,222,128,0.4)" }}>
+      <div className="card mt-6 p-5" style={{ borderColor: "rgba(139,92,246,0.4)" }}>
         <div className="mb-2 font-mono text-xs tracking-wider" style={{ color: "var(--faint)", textTransform: ar ? "none" : "uppercase" }}>{t.yourLink}</div>
         <div className="flex flex-wrap items-center gap-2">
           <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr" className="flex-1 truncate text-sm text-accent">{url}</a>

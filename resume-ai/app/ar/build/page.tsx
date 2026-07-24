@@ -308,8 +308,8 @@ export default function ArBuildPage() {
         )}
 
         {loading && (
-          <div className="card overflow-hidden" style={{ borderColor: "rgba(74,222,128,0.35)" }}>
-            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(74,222,128,0.05)" }}>
+          <div className="card overflow-hidden" style={{ borderColor: "rgba(139,92,246,0.35)" }}>
+            <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--line)", background: "rgba(139,92,246,0.05)" }}>
               <AiOrb size={22} thinking />
               <span className="font-mono text-xs tracking-wider" style={{ color: "var(--accent)" }}>الذكاء الاصطناعي يكتب سيرتك — مباشرة</span>
             </div>
@@ -326,10 +326,10 @@ export default function ArBuildPage() {
               <h2 className="text-2xl font-bold">سيرتك جاهزة 🎉</h2>
               <div className="flex gap-2">
                 <button onClick={() => { navigator.clipboard.writeText(cv); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
-                  className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                  className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>
                   {copied ? "✓ نُسخت" : "نسخ"}
                 </button>
-                <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>↓ تنزيل .txt</button>
+                <button onClick={() => download('cv.txt', cv)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>↓ تنزيل .txt</button>
                 <PdfExport text={cv} label="↓ تنزيل PDF" />
                 <DocxExport text={cv} label="↓ تنزيل Word" filename="resume-ar.docx" />
               </div>
@@ -361,7 +361,7 @@ export default function ArBuildPage() {
               </div>
             )}
 
-            <div className="card mt-6 p-7 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+            <div className="card mt-6 p-7 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
               <h3 className="text-xl font-bold">الحين خلّها تعبر أنظمة التوظيف</h3>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
                 افحص سيرتك الجديدة ضد إعلان وظيفة حقيقي واعرف نسبة تطابقك.

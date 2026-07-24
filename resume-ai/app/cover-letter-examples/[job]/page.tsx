@@ -113,7 +113,7 @@ Sincerely,
         </section>
 
         {/* CTA */}
-        <section className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+        <section className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
           <h2 className="text-2xl font-bold">Generate yours from the actual job posting</h2>
           <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
             Paste your resume + the posting — the AI writes a tailored letter using only facts you provided. Free ATS scan included.

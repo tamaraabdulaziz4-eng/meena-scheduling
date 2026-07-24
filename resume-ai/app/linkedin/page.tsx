@@ -114,7 +114,7 @@ export default function LinkedInPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {result.skills.map((s, i) => (
-                  <span key={`${s}-${i}`} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>{s}</span>
+                  <span key={`${s}-${i}`} className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(139,92,246,0.14)", color: "var(--accent)" }}>{s}</span>
                 ))}
               </div>
             </div>

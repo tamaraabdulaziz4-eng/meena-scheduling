@@ -64,7 +64,7 @@ export default function InterviewerAvatar({ speaking = false, label = "المُ�
       </div>
 
       <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--muted)" }}>
-        <span className="inline-block h-2 w-2 rounded-full" style={{ background: speaking ? "#4ade80" : "var(--faint)", boxShadow: speaking ? "0 0 8px #4ade80" : "none" }} />
+        <span className="inline-block h-2 w-2 rounded-full" style={{ background: speaking ? "#a78bfa" : "var(--faint)", boxShadow: speaking ? "0 0 8px #a78bfa" : "none" }} />
         {label} {speaking ? "· يتحدّث…" : "· ينصت"}
       </div>
     </div>

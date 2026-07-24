@@ -39,7 +39,7 @@ export default async function ScorePage(
   if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) notFound();
   const score = parsed;
   const ar = (await searchParams).lang === "ar";
-  const accent = score >= 75 ? "#4ade80" : score >= 55 ? "#fbbf24" : "#f87171";
+  const accent = score >= 75 ? "#a78bfa" : score >= 55 ? "#fbbf24" : "#f87171";
   const label = ar
     ? score >= 75 ? "مرشّح للقبول" : score >= 55 ? "على الحدود" : "يحتاج تحسين"
     : score >= 75 ? "Shortlisted" : score >= 55 ? "Borderline" : "Needs work";

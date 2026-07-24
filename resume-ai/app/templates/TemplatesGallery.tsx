@@ -133,7 +133,7 @@ export default function TemplatesGallery({ ar = false }: { ar?: boolean }) {
 
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {TEMPLATES.map((t) => (
-          <div key={t.slug} className="card overflow-hidden p-4 card-hover" style={t.best ? { borderColor: "rgba(74,222,128,0.5)" } : undefined}>
+          <div key={t.slug} className="card overflow-hidden p-4 card-hover" style={t.best ? { borderColor: "rgba(139,92,246,0.5)" } : undefined}>
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2 font-bold">
@@ -142,7 +142,7 @@ export default function TemplatesGallery({ ar = false }: { ar?: boolean }) {
                 </div>
                 <div className="font-mono text-[11px]" style={{ color: "var(--faint)" }}>{ar ? t.tagAr : t.tag}</div>
               </div>
-              <span className="rounded-full px-2 py-0.5 font-mono text-[10px] font-bold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>ATS</span>
+              <span className="rounded-full px-2 py-0.5 font-mono text-[10px] font-bold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>ATS</span>
             </div>
             <div className="mb-4 overflow-hidden rounded-lg" style={{ height: 794 * SCALE * 0.62, border: "1px solid var(--line)" }}>
               {mode === "bi" ? (

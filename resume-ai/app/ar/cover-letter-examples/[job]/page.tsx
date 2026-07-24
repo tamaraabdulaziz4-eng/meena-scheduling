@@ -98,7 +98,7 @@ export default async function Page({ params }: { params: Promise<{ job: string }
           </ul>
         </section>
 
-        <div className="card mt-10 p-7 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+        <div className="card mt-10 p-7 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
           <h2 className="text-2xl font-bold">أنشئ خطاب تعريف مخصصاً بالذكاء الاصطناعي</h2>
           <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>الصق سيرتك وإعلان الوظيفة، واحصل على خطاب جاهز للإرسال خلال ثوانٍ.</p>
           <Link href="/ar/optimize" className="btn-accent mt-5 inline-block px-8 py-3">ابدأ مجاناً ←</Link>

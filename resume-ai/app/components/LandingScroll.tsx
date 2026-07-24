@@ -517,18 +517,18 @@ export default function LandingScroll({ lang }: { lang: Lang }) {
             {!reduced && (
               <motion.div style={{ opacity: afterOpacity }} className="absolute inset-0 rounded-2xl p-6">
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="rounded px-2 py-0.5 font-mono text-xs font-bold" style={{ background: "rgba(34,197,94,0.15)", color: GREEN }}>{t.tr_after}</span>
+                  <span className="rounded px-2 py-0.5 font-mono text-xs font-bold" style={{ background: "rgba(139,92,246,0.15)", color: GREEN }}>{t.tr_after}</span>
                 </div>
                 {DEMO_AFTER.map((l) => (
-                  <p key={l} className="mb-2 rounded-lg px-4 py-2.5 text-sm" style={{ background: "rgba(34,197,94,0.08)", color: "#f4f5f3", border: "1px solid rgba(34,197,94,0.2)" }}>{l}</p>
+                  <p key={l} className="mb-2 rounded-lg px-4 py-2.5 text-sm" style={{ background: "rgba(139,92,246,0.08)", color: "#f4f5f3", border: "1px solid rgba(139,92,246,0.2)" }}>{l}</p>
                 ))}
               </motion.div>
             )}
             {reduced && (
               <div className="mt-4 rounded-2xl p-6">
-                <span className="rounded px-2 py-0.5 font-mono text-xs font-bold" style={{ background: "rgba(34,197,94,0.15)", color: GREEN }}>{t.tr_after}</span>
+                <span className="rounded px-2 py-0.5 font-mono text-xs font-bold" style={{ background: "rgba(139,92,246,0.15)", color: GREEN }}>{t.tr_after}</span>
                 {DEMO_AFTER.map((l) => (
-                  <p key={l} className="mb-2 mt-2 rounded-lg px-4 py-2.5 text-sm" style={{ background: "rgba(34,197,94,0.08)", color: "#f4f5f3" }}>{l}</p>
+                  <p key={l} className="mb-2 mt-2 rounded-lg px-4 py-2.5 text-sm" style={{ background: "rgba(139,92,246,0.08)", color: "#f4f5f3" }}>{l}</p>
                 ))}
               </div>
             )}

@@ -67,7 +67,7 @@ export default async function ResumeSkillsPage({ params }: { params: Promise<{ j
           </p>
           <div className="flex flex-wrap gap-2">
             {j.atsKeywords.map((k) => (
-              <span key={k} className="rounded-full px-4 py-1.5 text-sm font-medium" style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.25)" }}>{k}</span>
+              <span key={k} className="rounded-full px-4 py-1.5 text-sm font-medium" style={{ background: "rgba(139,92,246,0.1)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.25)" }}>{k}</span>
             ))}
           </div>
         </section>
@@ -122,7 +122,7 @@ EXPERIENCE (example bullet)
         </section>
 
         {/* CTA */}
-        <section className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+        <section className="card mt-10 p-8 text-center" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
           <h2 className="text-2xl font-bold">Which of these is YOUR resume missing?</h2>
           <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
             Paste your resume + a real posting — see your match score and the exact missing keywords, free, in ~10 seconds.

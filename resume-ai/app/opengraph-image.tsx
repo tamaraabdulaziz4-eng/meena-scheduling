@@ -24,16 +24,16 @@ export default function Image() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 44 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 13, background: "#4ade80", color: "#05130a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 800, marginRight: 18 }}>R</div>
+          <div style={{ width: 56, height: 56, borderRadius: 13, background: "#a78bfa", color: "#05130a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 800, marginRight: 18 }}>R</div>
           <div style={{ display: "flex", fontSize: 40, fontWeight: 700 }}>ResumeAI</div>
         </div>
         <div style={{ display: "flex", fontSize: 68, fontWeight: 800, lineHeight: 1.1, maxWidth: 900 }}>
-          Honest AI resume optimization in <span style={{ color: "#4ade80", marginLeft: 16 }}>10 seconds</span>
+          Honest AI resume optimization in <span style={{ color: "#a78bfa", marginLeft: 16 }}>10 seconds</span>
         </div>
         <div style={{ display: "flex", marginTop: 30, fontSize: 32, color: "#9a9a9a", maxWidth: 880, lineHeight: 1.35 }}>
           Free ATS match score, missing keywords, and a rewrite that never invents a fact you didn&apos;t provide.
         </div>
-        <div style={{ display: "flex", marginTop: 52, fontSize: 26, color: "#4ade80", fontWeight: 600, letterSpacing: 1 }}>cv.rabit.sa</div>
+        <div style={{ display: "flex", marginTop: 52, fontSize: 26, color: "#a78bfa", fontWeight: 600, letterSpacing: 1 }}>cv.rabit.sa</div>
       </div>
     ),
     { ...size }

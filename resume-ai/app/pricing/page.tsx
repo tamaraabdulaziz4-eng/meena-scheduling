@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 function PlanCard({ id, highlight }: { id: "single" | "complete"; highlight?: boolean }) {
   const p = PLANS[id];
   return (
-    <div className="card p-8" style={highlight ? { borderColor: "rgba(74,222,128,0.5)", background: "rgba(74,222,128,0.05)", position: "relative" } : undefined}>
+    <div className="card p-8" style={highlight ? { borderColor: "rgba(139,92,246,0.5)", background: "rgba(139,92,246,0.05)", position: "relative" } : undefined}>
       {highlight && (
         <div className="absolute right-5 top-5 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider" style={{ background: "var(--accent)", color: "#05130a" }}>BEST VALUE</div>
       )}

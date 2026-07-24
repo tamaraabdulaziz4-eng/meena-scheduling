@@ -30,7 +30,7 @@ const STATUS_COLORS: Record<JobStatus, string> = {
   saved: "var(--faint)",
   applied: "#60a5fa",
   interview: "#fbbf24",
-  offer: "#4ade80",
+  offer: "#a78bfa",
   rejected: "#f87171",
 };
 
@@ -216,7 +216,7 @@ function AccountInner() {
       <div className="mx-auto max-w-2xl px-6 py-14">
         {welcome && (
           <div className="mb-6 rounded-xl px-4 py-3 text-sm font-semibold"
-            style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.35)", color: "var(--accent)" }}>
+            style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.35)", color: "var(--accent)" }}>
             {t.welcome}
           </div>
         )}
@@ -374,7 +374,7 @@ function AccountInner() {
             <p className="mb-3 text-xs" style={{ color: "var(--faint)" }}>These are stored on your account — they won&apos;t be lost if you clear this browser or switch device.</p>
             <ul className="space-y-2">
               {cloudCvs.map((c) => (
-                <li key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)" }}>
+                <li key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.2)" }}>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-semibold">{c.title}</div>
                     <div className="font-mono text-[11px]" style={{ color: "var(--faint)" }}>

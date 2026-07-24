@@ -63,7 +63,7 @@ export default function ResultCoaching({
         <div className="mb-2 text-xs" style={{ color: "var(--muted)" }}>{hint}</div>
         <div className="flex flex-wrap gap-1.5">
           {items.slice(0, 12).map((k, i) => (
-            <span key={i} className="rounded-full px-2.5 py-1 text-xs" style={{ background: "rgba(74,222,128,0.08)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.25)" }}>{k}</span>
+            <span key={i} className="rounded-full px-2.5 py-1 text-xs" style={{ background: "rgba(139,92,246,0.08)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.25)" }}>{k}</span>
           ))}
         </div>
       </div>
@@ -72,13 +72,13 @@ export default function ResultCoaching({
   return (
     <div className="my-6">
       {/* Reveal banner */}
-      <div className="improved-banner reveal-pop mb-5 rounded-2xl p-5 text-center" style={{ background: "linear-gradient(135deg, rgba(74,222,128,0.15), rgba(34,197,94,0.05))", border: "1px solid rgba(74,222,128,0.4)" }}>
+      <div className="improved-banner reveal-pop mb-5 rounded-2xl p-5 text-center" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(139,92,246,0.05))", border: "1px solid rgba(139,92,246,0.4)" }}>
         <div className="text-2xl font-extrabold" style={{ color: "var(--accent)" }}>{t.improved}</div>
         <div className="mt-1 text-sm font-semibold" style={{ color: "var(--fg)" }}>{t.gained}</div>
       </div>
 
       {/* Coaching */}
-      <div className="rounded-2xl p-5" style={{ background: "rgba(74,222,128,0.04)", border: "1px solid rgba(74,222,128,0.25)" }}>
+      <div className="rounded-2xl p-5" style={{ background: "rgba(139,92,246,0.04)", border: "1px solid rgba(139,92,246,0.25)" }}>
         <h3 className="mb-1 text-lg font-bold">{t.heading}</h3>
         <p className="mb-4 text-sm" style={{ color: "var(--muted)" }}>{t.sub}</p>
         <div className="space-y-3">
@@ -107,7 +107,7 @@ export default function ResultCoaching({
             </div>
           )}
         </div>
-        <div className="mt-4 rounded-xl px-4 py-2.5 text-center text-sm font-semibold" style={{ background: "rgba(74,222,128,0.1)", color: "var(--accent)" }}>{t.rescan}</div>
+        <div className="mt-4 rounded-xl px-4 py-2.5 text-center text-sm font-semibold" style={{ background: "rgba(139,92,246,0.1)", color: "var(--accent)" }}>{t.rescan}</div>
       </div>
     </div>
   );

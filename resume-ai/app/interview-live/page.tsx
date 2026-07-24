@@ -284,7 +284,7 @@ export default function InterviewLivePage() {
         {phase === "paywall" && (
           <div className="text-center">
             <div className="mx-auto mb-4 h-44 w-44"><InterviewerAvatar speaking={aiSpeaking} label="المُقابِل" /></div>
-            <div className="card mx-auto max-w-lg p-7" style={{ borderColor: "rgba(74,222,128,0.4)", background: "rgba(74,222,128,0.05)" }}>
+            <div className="card mx-auto max-w-lg p-7" style={{ borderColor: "rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.05)" }}>
               <div className="chip mb-3">🔒 ميزة الحزمة الكاملة</div>
               <p className="text-lg font-bold leading-relaxed">{paywallMsg}</p>
               <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "var(--muted)" }}>
@@ -318,8 +318,8 @@ export default function InterviewLivePage() {
             {/* Two-panel video call: AI interviewer + you */}
             <div className="grid gap-3 sm:grid-cols-2">
               {/* AI interviewer */}
-              <div className="relative overflow-hidden rounded-2xl p-4" style={{ border: "1px solid var(--line)", background: "radial-gradient(ellipse at 50% 0%, rgba(74,222,128,0.08), var(--surface) 70%)", aspectRatio: "1/1" }}>
-                <div className="absolute right-3 top-3 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold" style={{ background: "rgba(74,222,128,0.14)", color: "var(--accent)" }}>AI</div>
+              <div className="relative overflow-hidden rounded-2xl p-4" style={{ border: "1px solid var(--line)", background: "radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.08), var(--surface) 70%)", aspectRatio: "1/1" }}>
+                <div className="absolute right-3 top-3 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold" style={{ background: "rgba(139,92,246,0.14)", color: "var(--accent)" }}>AI</div>
                 <InterviewerAvatar speaking={aiSpeaking} />
               </div>
               {/* You */}
@@ -335,10 +335,10 @@ export default function InterviewLivePage() {
             </div>
 
             {/* Question */}
-            <div className="card p-5" style={{ borderColor: aiSpeaking ? "rgba(74,222,128,0.4)" : "var(--line)" }}>
+            <div className="card p-5" style={{ borderColor: aiSpeaking ? "rgba(139,92,246,0.4)" : "var(--line)" }}>
               <div className="mb-1 font-mono text-xs" style={{ color: "var(--accent)" }}>🎤 المُقابِل يسأل</div>
               <div className="text-lg font-bold leading-relaxed">{questions[idx]}</div>
-              <button onClick={() => speak(questions[idx])} className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(74,222,128,0.12)", color: "var(--accent)", border: "1px solid rgba(74,222,128,0.3)" }}>🔊 استمع للسؤال بصوت المُقابِل</button>
+              <button onClick={() => speak(questions[idx])} className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "rgba(139,92,246,0.12)", color: "var(--accent)", border: "1px solid rgba(139,92,246,0.3)" }}>🔊 استمع للسؤال بصوت المُقابِل</button>
               {voiceOff && <p className="mt-2 text-xs" style={{ color: "#fbbf24" }}>جهازك ما فيه صوت عربي مثبّت — تقدر تقرأ السؤال، أو ثبّت صوتاً عربياً من إعدادات الجهاز (النطق/Text-to-Speech).</p>}
             </div>
 
@@ -363,15 +363,15 @@ export default function InterviewLivePage() {
             )}
             {phase === "review" && feedback && (
               <div className="space-y-3">
-                <div className="card p-5" style={{ borderColor: "rgba(74,222,128,0.4)" }}>
+                <div className="card p-5" style={{ borderColor: "rgba(139,92,246,0.4)" }}>
                   <div className="mb-2 flex items-center justify-between">
                     <span className="font-bold">تقييم إجابتك</span>
-                    <span className="font-mono text-2xl font-bold" style={{ color: feedback.score >= 7 ? "#4ade80" : feedback.score >= 5 ? "#fbbf24" : "#f87171" }}>{feedback.score}/10</span>
+                    <span className="font-mono text-2xl font-bold" style={{ color: feedback.score >= 7 ? "#a78bfa" : feedback.score >= 5 ? "#fbbf24" : "#f87171" }}>{feedback.score}/10</span>
                   </div>
-                  {feedback.strengths && <p className="text-sm" style={{ color: "rgba(244,245,243,0.85)" }}><b style={{ color: "#4ade80" }}>✓ نقطة قوة:</b> {feedback.strengths}</p>}
+                  {feedback.strengths && <p className="text-sm" style={{ color: "rgba(244,245,243,0.85)" }}><b style={{ color: "#a78bfa" }}>✓ نقطة قوة:</b> {feedback.strengths}</p>}
                   {feedback.improve && <p className="mt-2 text-sm" style={{ color: "rgba(244,245,243,0.85)" }}><b style={{ color: "#fbbf24" }}>↑ للتحسين:</b> {feedback.improve}</p>}
                   {feedback.model && (
-                    <div className="mt-3 rounded-lg p-3 text-sm leading-relaxed" style={{ background: "rgba(74,222,128,0.06)", color: "var(--muted)" }}>
+                    <div className="mt-3 rounded-lg p-3 text-sm leading-relaxed" style={{ background: "rgba(139,92,246,0.06)", color: "var(--muted)" }}>
                       <div className="mb-1 font-mono text-xs" style={{ color: "var(--accent)" }}>إجابة نموذجية أقوى</div>
                       {feedback.model}
                     </div>
