@@ -208,6 +208,15 @@
 .jn-p-line.editable{cursor:pointer;border-radius:6px;padding:2px 4px;margin-inline-start:-4px;transition:background .3s}
 .jn-p-line.editable:hover{background:#f1edfb}
 .jn-ghost{height:8px;border-radius:4px;background:#eeeaf7;margin-bottom:8px;transition:opacity .5s}
+.jn-p-line.head{margin-top:9px}
+.jn-p-line.head b{color:#1c1530}
+/* ATS-map tracker: the six axes the brain walks, lighting up as they fill */
+.jn-axes{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;padding:12px 8px 6px}
+.jn-axis{font-size:10px;font-weight:700;color:var(--faint);background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.1);padding:4px 10px;border-radius:999px;transition:all .45s var(--ez)}
+.jn-axis.on{color:#0b3d24;background:linear-gradient(135deg,#6ee7b7,#34d399);border-color:transparent;
+  box-shadow:0 0 10px rgba(74,222,128,.35)}
+.jn-axis.cur{color:#f3d8fe;border-color:rgba(240,171,252,.55);animation:jn-minipulse 1.6s var(--ez) infinite}
 
 /* ── score ── */
 .jn-score{padding:24px 20px;text-align:center;background:var(--card);border:1px solid var(--card-border);

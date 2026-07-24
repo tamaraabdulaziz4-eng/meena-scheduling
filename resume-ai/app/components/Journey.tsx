@@ -33,11 +33,11 @@ type OutLang = "en" | "ar" | "both";
 interface Msg { who: "ai" | "user"; text: string; typing?: boolean }
 interface Chip { label: string; patch?: Record<string, unknown> }
 interface Profile {
-  role: string; name: string; contact: string;
+  role: string; name: string; contact: string; summary: string;
   education: string; skills: string; extras: string[];
   wovenLines: string[]; jobAd: string;
 }
-const EMPTY: Profile = { role: "", name: "", contact: "", education: "", skills: "", extras: [], wovenLines: [], jobAd: "" };
+const EMPTY: Profile = { role: "", name: "", contact: "", summary: "", education: "", skills: "", extras: [], wovenLines: [], jobAd: "" };
 
 const T = {
   ar: {
@@ -63,6 +63,8 @@ const T = {
     greet: "ما مهنتك؟",
     typePh: "اكتب إجابتك…",
     building: "تُبنى الآن…", done2: "اكتملت ✓",
+    axes: ["الدور", "الملخص", "الخبرة", "المهارات", "التعليم", "هويتك"],
+    sumSec: "الملخص المهني",
     have_cv: "عندي سيرة — حدّثها", tool_pricing: "الأسعار", tool_account: "حسابي",
     paste_ph: "الصق سيرتك الحالية هنا، أو ارفع ملف…",
     upload: "إرفاق ملف", uploading: "جارٍ قراءة الملف…", upload_fail: "تعذّرت قراءة الملف — الصق النص مباشرة.",
@@ -137,6 +139,8 @@ const T = {
     greet: "What's your current role?",
     typePh: "Type your answer…",
     building: "Building…", done2: "Complete ✓",
+    axes: ["Role", "Summary", "Experience", "Skills", "Education", "Identity"],
+    sumSec: "PROFESSIONAL SUMMARY",
     have_cv: "I have a resume — update it", tool_pricing: "Pricing", tool_account: "Account",
     paste_ph: "Paste your current resume here, or upload a file…",
     upload: "Upload file", uploading: "Reading file…", upload_fail: "Couldn't read the file — paste the text instead.",
@@ -447,14 +451,36 @@ export default function Journey({ lang }: { lang: Lang }) {
     if (typeof patch.contact === "string" && patch.contact) n.contact = patch.contact.slice(0, 200);
     if (typeof patch.role === "string" && patch.role) n.role = patch.role.slice(0, 120);
     if (typeof patch.targetRole === "string" && patch.targetRole) n.role = patch.targetRole.slice(0, 120);
+    if (typeof patch.summary === "string" && patch.summary) n.summary = patch.summary.slice(0, 700);
     if (typeof patch.education === "string" && patch.education) n.education = patch.education.slice(0, 400);
+    if (typeof patch.certifications === "string" && patch.certifications) {
+      const cert = patch.certifications.slice(0, 300);
+      if (!n.education.includes(cert)) n.education = n.education ? `${n.education}\n${cert}` : cert;
+    }
     if (typeof patch.skills === "string" && patch.skills) n.skills = String(patch.skills).slice(0, 400);
+    if (Array.isArray(patch.skills)) n.skills = patch.skills.map(String).filter(Boolean).slice(0, 12).join("، ");
     if (typeof patch.jobAd === "string" && patch.jobAd) n.jobAd = patch.jobAd.slice(0, 3000);
     if (Array.isArray(patch.extras)) n.extras.push(...patch.extras.map(String).slice(0, 6));
     if (Array.isArray(patch.experiences)) {
       for (const ex of patch.experiences as Array<Record<string, unknown>>) {
-        if (typeof ex?.header === "string" && ex.header) n.wovenLines.push(ex.header);
-        if (Array.isArray(ex?.bullets)) n.wovenLines.push(...(ex.bullets as unknown[]).map((b) => `- ${String(b)}`));
+        // header may arrive as a string or as {title, company, start_date}
+        let head = "";
+        if (typeof ex?.header === "string") head = ex.header;
+        else if (ex?.header && typeof ex.header === "object") {
+          const h = ex.header as Record<string, unknown>;
+          head = [h.title, h.company].filter(Boolean).join(" — ") + (h.start_date ? ` | ${h.start_date}` : "");
+        }
+        const bullets = Array.isArray(ex?.bullets) ? (ex.bullets as unknown[]).map((b) => `- ${String(b).replace(/^[-•]\s*/, "")}`) : [];
+        if (!head) { n.wovenLines.push(...bullets); continue; }
+        const at = n.wovenLines.indexOf(head);
+        if (at === -1) {
+          n.wovenLines.push(head, ...bullets);
+        } else {
+          // replace the existing entry (header + its bullets up to the next header)
+          let end = at + 1;
+          while (end < n.wovenLines.length && /^[-•]/.test(n.wovenLines[end].trim())) end++;
+          n.wovenLines.splice(at, end - at, head, ...bullets);
+        }
       }
     }
     return n;
@@ -468,14 +494,14 @@ export default function Journey({ lang }: { lang: Lang }) {
     setNetFail(false);
     pendingAns.current = answer;
     orbRef.current?.classList.add("thinking");
-    let data: { action?: string; say?: string; profile_patch?: Record<string, unknown>; resume_lines?: string[]; chips?: Chip[]; progress?: number } | null = null;
+    let data: { action?: string; axis?: number; say?: string; profile_patch?: Record<string, unknown>; resume_lines?: string[]; chips?: Chip[]; progress?: number } | null = null;
     for (let attempt = 0; attempt < 2 && !data; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
       try {
         const res = await fetchT("/api/interview", {
           action: "turn", lang: outChoice, answer,
           targetRole: base.role,
-          profile: { role: base.role, name: base.name, contact: base.contact, education: base.education, skills: base.skills, outputLang: outChoice },
+          profile: { role: base.role, name: base.name, contact: base.contact, education: base.education, skills: base.skills, summary: base.summary, wovenLines: base.wovenLines.slice(-30), outputLang: outChoice },
           history: history.map((m) => ({ who: m.who, text: m.text })),
         }, 90000);
         const j = await res.json();
@@ -486,8 +512,9 @@ export default function Journey({ lang }: { lang: Lang }) {
     orbRef.current?.classList.remove("thinking");
     if (!data) { setNetFail(true); return; }
     const merged = mergePatch(base, data.profile_patch || {});
-    const newLines = Array.isArray(data.resume_lines) ? data.resume_lines.map(String).filter(Boolean) : [];
-    if (newLines.length) merged.wovenLines.push(...newLines);
+    // FINISH recaps are ignored — the profile already holds every line
+    const newLines = data.action === "FINISH" ? [] : (Array.isArray(data.resume_lines) ? data.resume_lines.map(String).filter(Boolean) : []);
+    for (const ln of newLines) if (!merged.wovenLines.includes(ln)) merged.wovenLines.push(ln);
     setProfile(merged);
     if (typeof data.progress === "number") {
       const pv = data.progress > 0 && data.progress <= 1 ? data.progress * 100 : data.progress;
@@ -495,9 +522,12 @@ export default function Journey({ lang }: { lang: Lang }) {
     }
     setChips(Array.isArray(data.chips) ? data.chips.slice(0, 4) : []);
     const say = String(data.say || "").trim();
-    const nextMsgs: Msg[] = say ? [...msgs, { who: "ai", text: say, typing: true }] : [...msgs];
-    setMsgs(nextMsgs);
-    persist({ profile: merged, msgs: nextMsgs });
+    // functional append — never overwrite the user's just-added bubble (stale-state bug)
+    setMsgs((m) => {
+      const next: Msg[] = say ? [...m, { who: "ai", text: say, typing: true }] : m;
+      persist({ profile: merged, msgs: next });
+      return next;
+    });
     if (data.action === "FINISH") {
       if (say) finalizeRef.current = true;   // finalize after the farewell types out
       else finalize(merged);                  // no farewell — build immediately
@@ -578,13 +608,15 @@ export default function Journey({ lang }: { lang: Lang }) {
   /* ═══ assemble + finalize (real /api/optimize) ═══ */
   const finalizeRef = useRef(false);
   function assembleResume(p: Profile): string {
+    // canonical ATS order: header → summary → experience → skills → education → extras
     const parts: string[] = [];
     if (p.name) parts.push(p.name);
     if (p.contact) parts.push(p.contact);
-    if (p.role) parts.push(`\n${rtl ? "الهدف الوظيفي" : "PROFESSIONAL SUMMARY"}\n${p.role}`);
-    if (p.wovenLines.length) parts.push(`\n${rtl ? "الخبرة العملية" : "EXPERIENCE"}\n${p.wovenLines.join("\n")}`);
-    if (p.education) parts.push(`\n${rtl ? "التعليم" : "EDUCATION"}\n${p.education}`);
+    if (p.role) parts.push(p.role);
+    if (p.summary) parts.push(`\n${rtl ? "الملخص المهني" : "PROFESSIONAL SUMMARY"}\n${p.summary}`);
+    if (p.wovenLines.length) parts.push(`\n${rtl ? "الخبرة العملية" : "WORK EXPERIENCE"}\n${p.wovenLines.join("\n")}`);
     if (p.skills) parts.push(`\n${rtl ? "المهارات" : "SKILLS"}\n${p.skills}`);
+    if (p.education) parts.push(`\n${rtl ? "التعليم والشهادات" : "EDUCATION & CERTIFICATIONS"}\n${p.education}`);
     if (p.extras.length) parts.push(`\n${rtl ? "إضافات" : "ADDITIONAL"}\n${p.extras.map((x) => `- ${x}`).join("\n")}`);
     return parts.join("\n");
   }
@@ -656,16 +688,22 @@ export default function Journey({ lang }: { lang: Lang }) {
     rec.start();
   }
 
-  /* ═══ tap-to-edit a woven line ═══ */
+  /* ═══ tap-to-edit a woven line (clear the field to delete it) ═══ */
   function editLine(idx: number) {
     const cur = profile.wovenLines[idx];
     const next = window.prompt(t.edit_prompt, cur.replace(/^- /, ""));
-    if (next == null || !next.trim()) return;
+    if (next == null) return;
     setProfile((p) => {
       const wl = [...p.wovenLines];
-      wl[idx] = cur.startsWith("- ") ? `- ${next.trim()}` : next.trim();
+      if (!next.trim()) wl.splice(idx, 1);
+      else wl[idx] = cur.startsWith("- ") ? `- ${next.trim()}` : next.trim();
       return { ...p, wovenLines: wl };
     });
+  }
+  function editSummary() {
+    const next = window.prompt(t.edit_prompt, profile.summary);
+    if (next == null || !next.trim()) return;
+    setProfile((p) => ({ ...p, summary: next.trim() }));
   }
 
   /* ═══ greet when the interview stage scrolls into view ═══ */
@@ -772,6 +810,15 @@ export default function Journey({ lang }: { lang: Lang }) {
   /* ═══════════════════════ RENDER ═══════════════════════ */
   const num = (i: number) => (rtl ? AR_NUM[i] : String(i + 1));
   const ghostCount = Math.max(0, 4 - [profile.name || profile.role, profile.wovenLines.length, profile.education, profile.skills].filter(Boolean).length);
+  // ATS-map coverage: role | summary | experience | skills | education | identity
+  const axesDone = [
+    Boolean(profile.role),
+    Boolean(profile.summary),
+    profile.wovenLines.length >= 2,
+    Boolean(profile.skills),
+    Boolean(profile.education),
+    Boolean(profile.name || profile.contact),
+  ];
 
   return (
     <div className="journey-root">
@@ -945,18 +992,37 @@ export default function Journey({ lang }: { lang: Lang }) {
                   </div>
                 </div>
 
-                {/* the live paper */}
+                {/* the live paper — the ATS template the brain fills, axis by axis */}
                 <div className={`jn-paper-wrap${paperOpen ? " open" : ""}`}>
                   <div className={`jn-paper-live${scorePhase === "working" ? " working" : ""}`}>{cv ? t.done2 : t.building}</div>
+                  <div className="jn-axes">
+                    {t.axes.map((a, i) => {
+                      const done = axesDone[i];
+                      const cur = !done && i === axesDone.findIndex((d) => !d);
+                      return <span key={i} className={`jn-axis${done ? " on" : ""}${cur ? " cur" : ""}`}>{a}{done ? " ✓" : ""}</span>;
+                    })}
+                  </div>
                   <div className="jn-paper">
                     {profile.name && <div className="jn-pl"><div className="jn-ph-name">{profile.name}</div></div>}
+                    {profile.contact && <div className="jn-pl"><div className="jn-p-line" style={{ fontSize: 11 }}>{profile.contact}</div></div>}
                     {profile.role && <div className="jn-pl"><div className="jn-ph-role">{profile.role}</div><hr className="jn-ph-line" /></div>}
+                    {profile.summary && (
+                      <div className="jn-pl">
+                        <div className="jn-p-sec">{t.sumSec}</div>
+                        <div className="jn-p-line editable" title="✎" onClick={editSummary}>{profile.summary}</div>
+                      </div>
+                    )}
                     {profile.wovenLines.length > 0 && (
                       <div className="jn-pl">
                         <div className="jn-p-sec">{t.exp}</div>
-                        {profile.wovenLines.map((ln, i) => (
-                          <div key={i} className="jn-p-line editable" title="✎" onClick={() => editLine(i)}>{ln}</div>
-                        ))}
+                        {profile.wovenLines.map((ln, i) => {
+                          const head = !/^[-•]/.test(ln.trim());
+                          return (
+                            <div key={i} className={`jn-p-line editable${head ? " head" : ""}`} title="✎" onClick={() => editLine(i)}>
+                              {head ? <b>{ln}</b> : ln}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                     {profile.education && <div className="jn-pl"><div className="jn-p-sec">{t.edu}</div><div className="jn-p-line">{profile.education}</div></div>}
