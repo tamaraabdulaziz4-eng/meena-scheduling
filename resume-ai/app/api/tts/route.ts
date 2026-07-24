@@ -18,7 +18,7 @@ function escapeXml(s: string): string {
 }
 
 // ── 1. Gemini TTS (generateContent, AUDIO modality → base64 PCM 24kHz) ──
-async function geminiTts(text: string, female: boolean): Promise<Response | null> {
+async function geminiTts(text: string, female: boolean, _lang?: string): Promise<Response | null> {
   const key = process.env.GEMINI_TTS_KEY;
   if (!key) return null;
   const model = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
@@ -84,7 +84,7 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
 }
 
 // ── 2. ElevenLabs (multilingual v2 → MP3) ──
-async function elevenTts(text: string, female: boolean): Promise<Response | null> {
+async function elevenTts(text: string, female: boolean, _lang?: string): Promise<Response | null> {
   const key = process.env.ELEVENLABS_KEY;
   if (!key) return null;
   // Default multilingual voices; override per-gender via env if desired.
@@ -116,13 +116,18 @@ async function elevenTts(text: string, female: boolean): Promise<Response | null
 }
 
 // ── 3. Azure Speech (neural → high-bitrate MP3) ──
-const AZURE_VOICES: Record<string, string> = { hamed: "ar-SA-HamedNeural", zariyah: "ar-SA-ZariyahNeural" };
-async function azureTts(text: string, female: boolean): Promise<Response | null> {
+const AZURE_VOICES: Record<string, string> = {
+  hamed: "ar-SA-HamedNeural", zariyah: "ar-SA-ZariyahNeural",
+  guy: "en-US-GuyNeural", jenny: "en-US-JennyNeural",
+};
+async function azureTts(text: string, female: boolean, lang: string): Promise<Response | null> {
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
   if (!key || !region) return null;
-  const voice = female ? AZURE_VOICES.zariyah : AZURE_VOICES.hamed;
-  const ssml = `<speak version="1.0" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="ar-SA"><voice name="${voice}"><mstts:express-as style="chat"><prosody rate="-2%" pitch="-2%">${escapeXml(text)}</prosody></mstts:express-as></voice></speak>`;
+  const en = lang === "en";
+  const xmlLang = en ? "en-US" : "ar-SA";
+  const voice = en ? (female ? AZURE_VOICES.jenny : AZURE_VOICES.guy) : (female ? AZURE_VOICES.zariyah : AZURE_VOICES.hamed);
+  const ssml = `<speak version="1.0" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${xmlLang}"><voice name="${voice}"><mstts:express-as style="chat"><prosody rate="-2%" pitch="-2%">${escapeXml(text)}</prosody></mstts:express-as></voice></speak>`;
   try {
     const res = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
       method: "POST",
@@ -153,7 +158,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });
   }
 
-  let body: { text?: string; voice?: string };
+  let body: { text?: string; voice?: string; lang?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const text = String(body.text || "").slice(0, 800).trim();
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
@@ -161,10 +166,12 @@ export async function POST(req: NextRequest) {
   // hint (hamed/charon/male) to switch.
   const v = String(body.voice || "").toLowerCase();
   const female = !(v.includes("hamed") || v.includes("charon") || v.includes("male"));
+  const lang = body.lang === "en" ? "en" : "ar";
 
-  // Quality order — first configured provider that returns audio wins.
+  // Quality order — first configured provider that returns audio wins. Gemini &
+  // ElevenLabs auto-detect language from the text; Azure needs it explicitly.
   for (const provider of [geminiTts, elevenTts, azureTts]) {
-    const out = await provider(text, female);
+    const out = await provider(text, female, lang);
     if (out) return out;
   }
   return NextResponse.json({ error: "TTS not configured" }, { status: 501 });

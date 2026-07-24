@@ -6,7 +6,8 @@
  * wired to speechSynthesis start/end). No paid streaming-avatar service needed;
  * gives a real "someone is talking to you" feel for the live mock interview.
  */
-export default function InterviewerAvatar({ speaking = false, label = "المُقابِل" }: { speaking?: boolean; label?: string }) {
+export default function InterviewerAvatar({ speaking = false, label = "المُقابِل", lang = "ar" }: { speaking?: boolean; label?: string; lang?: "ar" | "en" }) {
+  const status = lang === "en" ? (speaking ? "· speaking…" : "· listening") : (speaking ? "· يتحدّث…" : "· ينصت");
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-3">
       <div className="relative flex items-center justify-center" style={{ width: 172, height: 172 }}>
@@ -65,7 +66,7 @@ export default function InterviewerAvatar({ speaking = false, label = "المُ�
 
       <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--muted)" }}>
         <span className="inline-block h-2 w-2 rounded-full" style={{ background: speaking ? "#a78bfa" : "var(--faint)", boxShadow: speaking ? "0 0 8px #a78bfa" : "none" }} />
-        {label} {speaking ? "· يتحدّث…" : "· ينصت"}
+        {label} {status}
       </div>
     </div>
   );
