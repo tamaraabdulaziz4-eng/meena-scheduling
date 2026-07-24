@@ -47,7 +47,8 @@ export default function CosmosField() {
     const sprDeep = makeSprite("rgba(76,29,149,.4)");
 
     function resize() {
-      const DPR = Math.min(window.devicePixelRatio || 1, 2);
+      // 1.5 is visually identical for soft nebulae and halves the GPU fill cost on hi-dpi phones
+      const DPR = Math.min(window.devicePixelRatio || 1, 1.5);
       W = window.innerWidth; H = window.innerHeight;
       cv!.width = W * DPR; cv!.height = H * DPR;
       cv!.style.width = `${W}px`; cv!.style.height = `${H}px`;
@@ -110,6 +111,11 @@ export default function CosmosField() {
     } else {
       const loop = (now: number) => {
         if (!running) return;
+        // the interview theater covers the sky almost fully — rest the GPU
+        if (document.body.classList.contains("jn-takeover-on")) {
+          raf = requestAnimationFrame(loop);
+          return;
+        }
         const t = (now - t0) / 1000;
         ptr.x += (ptr.tx - ptr.x) * 0.045;
         ptr.y += (ptr.ty - ptr.y) * 0.045;

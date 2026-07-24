@@ -383,10 +383,14 @@ export default function Journey({ lang }: { lang: Lang }) {
     };
 
     if (reduce) { P = 1; paint(); return; }
+    paint(); // first frame — establishes the initial scene/orb/progress state
     const loop = () => {
       const target = Math.min(1, Math.max(0, window.scrollY / (trackEl.offsetHeight - window.innerHeight)));
-      P += (target - P) * 0.085;
-      paint();
+      // sleep when settled — no painting unless the scroll actually moved
+      if (Math.abs(target - P) > 0.0004) {
+        P += (target - P) * 0.085;
+        paint();
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -417,16 +421,18 @@ export default function Journey({ lang }: { lang: Lang }) {
     setJustOpened(n);
     setTimeout(() => stageRefs.current[n]?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" }), 300);
     setTimeout(() => setJustOpened(-1), 1400);
+    persist({ stage: n });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reduce]);
   const unlockNext = useCallback(() => unlockTo(stageRef.current + 1), [unlockTo]);
 
   /* ═══ persistence ═══ */
-  const persist = useCallback((next: Partial<{ profile: Profile; msgs: Msg[]; mode: string; cvBase: string; progress: number }>) => {
+  const persist = useCallback((next: Partial<{ profile: Profile; msgs: Msg[]; mode: string; cvBase: string; progress: number; cv: string; score: { value: number; watermark: boolean } | null; stage: number }>) => {
     try {
-      const cur = { profile, msgs: msgs.slice(-30), mode, cvBase, progress };
+      const cur = { profile, msgs: msgs.slice(-30), mode, cvBase, progress, cv, score, stage: stageRef.current };
       localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...cur, ...next, msgs: (next.msgs ?? msgs).slice(-30).map((m) => ({ who: m.who, text: m.text })) }));
     } catch { /* noop */ }
-  }, [profile, msgs, mode, cvBase, progress, DRAFT_KEY]);
+  }, [profile, msgs, mode, cvBase, progress, cv, score, DRAFT_KEY]);
 
   function restoreDraft() {
     try {
@@ -435,6 +441,16 @@ export default function Journey({ lang }: { lang: Lang }) {
       if (Array.isArray(d?.msgs)) setMsgs(d.msgs);
       if (typeof d?.progress === "number") setProgress(d.progress);
       if (d?.mode === "update") { setMode("update"); if (typeof d.cvBase === "string") setCvBase(d.cvBase); }
+      // a finished build resumes AT the result, not at the interview
+      if (typeof d?.cv === "string" && d.cv && d.score && typeof d.score.value === "number") {
+        setCv(d.cv);
+        setScore({ value: d.score.value, watermark: d.score.watermark !== false });
+        setScorePhase("done");
+        const st = Math.max(1, Math.min(5, Number(d.stage) || 1));
+        stageRef.current = st;
+        setStage(st);
+        if (typeof d.progress !== "number") setProgress(100);
+      }
       setStarted(true);
     } catch { /* keep fresh */ }
     setWelcomeBack(false);
@@ -629,7 +645,11 @@ export default function Journey({ lang }: { lang: Lang }) {
       const { text: opt, score: sc, watermark } = await readNdjson(res, "optimizedResume");
       if (!opt) throw new Error("empty");
       setCv(opt);
-      if (typeof sc === "number") { setScore({ value: sc, watermark: watermark !== false }); setScorePhase("done"); } else setScorePhase("failed");
+      if (typeof sc === "number") {
+        const sc2 = { value: sc, watermark: watermark !== false };
+        setScore(sc2); setScorePhase("done");
+        persist({ cv: opt, score: sc2, stage: 1 });
+      } else setScorePhase("failed");
       track("cv_completed", { lang, mode });
       try { saveResume({ title: `${p.name || "CV"} — ${p.role || "journey"}`, source: "built", text: opt }); } catch { /* noop */ }
     } catch { setBuildFail(true); setScorePhase("failed"); }
@@ -646,7 +666,11 @@ export default function Journey({ lang }: { lang: Lang }) {
       const { text: opt, score: sc, watermark } = await readNdjson(res, "optimizedResume");
       if (!opt) throw new Error("empty");
       setCv(opt);
-      if (typeof sc === "number") { setScore({ value: sc, watermark: watermark !== false }); setScorePhase("done"); } else setScorePhase("failed");
+      if (typeof sc === "number") {
+        const sc2 = { value: sc, watermark: watermark !== false };
+        setScore(sc2); setScorePhase("done");
+        persist({ cv: opt, score: sc2, stage: 1 });
+      } else setScorePhase("failed");
       track("cv_completed", { lang, mode: "update" });
       try { saveResume({ title: `${p.name || "CV"} — ${rtl ? "محدثة" : "updated"}`, source: "optimized", text: opt }); } catch { /* noop */ }
     } catch { setBuildFail(true); setScorePhase("failed"); }
@@ -776,6 +800,7 @@ export default function Journey({ lang }: { lang: Lang }) {
       document.body.style.position = "fixed";
       document.body.style.top = `-${lockedAt}px`;
       document.body.style.width = "100%";
+      document.body.classList.add("jn-takeover-on");
     };
     const unlock = () => {
       document.documentElement.style.overflow = "";
@@ -783,6 +808,7 @@ export default function Journey({ lang }: { lang: Lang }) {
       document.body.style.position = "";
       document.body.style.top = "";
       document.body.style.width = "";
+      document.body.classList.remove("jn-takeover-on");
       window.scrollTo(0, lockedAt);
     };
     if (scorePhase === "done" || scorePhase === "failed") {
@@ -1025,8 +1051,8 @@ export default function Journey({ lang }: { lang: Lang }) {
                         })}
                       </div>
                     )}
-                    {profile.education && <div className="jn-pl"><div className="jn-p-sec">{t.edu}</div><div className="jn-p-line">{profile.education}</div></div>}
                     {profile.skills && <div className="jn-pl"><div className="jn-p-sec">{t.skills}</div><div className="jn-p-line">{profile.skills}</div></div>}
+                    {profile.education && <div className="jn-pl"><div className="jn-p-sec">{t.edu}</div><div className="jn-p-line" style={{ whiteSpace: "pre-wrap" }}>{profile.education}</div></div>}
                     {profile.extras.length > 0 && (
                       <div className="jn-pl">
                         <div className="jn-p-sec">{t.extras}</div>
