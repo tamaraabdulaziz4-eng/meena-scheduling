@@ -187,15 +187,10 @@ function wlCheckNewEmergencies(items) {
   if (wlState.seenEmerg === null) { wlState.seenEmerg = new Set(keys); return; }   // seed, no alarm
   const fresh = emerg.filter((i) => !wlState.seenEmerg.has(wlKey(i)));
   keys.forEach((k) => wlState.seenEmerg.add(k));
-  // Hand the reconciling painter the uids of just-arrived STAT orders so their rows get a
-  // one-shot arrival cue (see wlPaintBoard → .rw-newstat). Always overwrite so a stale set
-  // from a previous tick can't re-fire.
-  wlState._freshEmergUids = new Set(fresh.map(wlRowUid));
   if (fresh.length) { wlBeep(); wlNotify(fresh); }
 }
 
 async function renderWorklistPage() {
-  _wlCardOpen = false;   // safety: a fresh board load always resumes the background pumps
   setTopbar('Radiology worklist', 'Live RIS status board · STAT first');
   wlState.filter = null; wlState.searchView = false;   // never reopen stuck in a search view
   wlState._paintedOnce = false;                        // entrance animation once per visit
@@ -241,7 +236,14 @@ async function renderWorklistPage() {
         <select id="wl-branch" class="ctrl wl-branchsel" onchange="wlOnBranch()">
           <option value="">All branches</option>
         </select>
-        <button class="ctrl" id="wl-refresh-btn" title="Check for new requests now" onclick="wlManualRefresh()">${icon('refresh')}Update</button>
+        <div class="rw-export" style="position:relative;display:inline-block">
+          <button class="ctrl" title="Download the worklist as Excel" onclick="wlToggleExport(event)">${icon('download')}Excel</button>
+          <div id="wl-exportpop" style="display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:60;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.16);padding:6px;min-width:236px;flex-direction:column;gap:2px">
+            <button class="xopt" onclick="wlExportExcel('view')">Current view<br><small>This tab + active filters</small></button>
+            <button class="xopt" onclick="wlExportExcel('all')">All rows on board<br><small>Ignore tab &amp; filters</small></button>
+          </div>
+        </div>
+        <button class="ctrl" title="Refresh now" onclick="wlLoad(true)">${icon('refresh')}</button>
         <div class="datepop rw-datepop" id="wl-datepop" style="display:none">
           <button class="ctrl icon" onclick="wlShiftDay(-1)" title="Previous day">‹</button>
           <span class="dl">From</span>
@@ -392,9 +394,8 @@ function wlSwitchBranch() {
   wlState.loading = false;        // …so the silent refresh below isn't dropped by the lock
   _wlEnrichBusy = false;          // free the enrich lock for the (possibly narrower) new scope
   wlState.openRows.clear(); wlState.selMrns.clear();
-  wlRenderLocal();                // INSTANT: client-side site filter — branch rows if in hand,
-                                  // else a brief empty (never a blank spinner or the wrong branch).
-                                  // Local so switching branch snaps instead of animating a churn.
+  wlRender();                     // INSTANT: client-side site filter — branch rows if in hand,
+                                  // else a brief empty (never a blank spinner or the wrong branch)
   wlLoad(false, true);            // silent background refresh — no loading flash
 }
 
@@ -413,36 +414,7 @@ function wlSwitchReload() {
   wlState.modCache.clear(); wlState.stageCache.clear(); wlState.scannedSeen.clear();
   if (wlState.indCache) wlState.indCache.clear();
   wlState.openRows.clear(); wlState.selMrns.clear();
-  // Instant repaint for a date window already viewed this session: restore its snapshot
-  // and refresh underneath — stepping days back and forth never blanks the board. A
-  // never-seen window clears the old scope's rows (showing them under a new date would
-  // mislead) and paints the skeleton instead.
-  wlState.data = null;
-  try {
-    const raw = sessionStorage.getItem('wl:board:' + wlScopeKey());
-    if (raw) { const s = JSON.parse(raw); if (s && s.data) wlState.data = s.data; }
-  } catch (e) { /* ignore */ }
-  wlState.lastReady = null;       // new scope → let the ready pass re-fire right away
-  // Ride the warm caches for the switch itself (server mirror / short caches / the
-  // connector's board cache) instead of forcing a fresh HIS fan-out — this is what
-  // made date changes feel slow. The 12s poll's ~30s nocache window still guarantees
-  // HIS-side changes surface within half a minute.
-  wlState.lastFresh = Date.now();
-  wlLoad(false);
-}
-
-// Manual "Update" — the operator's instant check for NEW requests. Forces a fresh
-// connector build (nocache) and re-runs the enrichment passes; the button spins while
-// it works so the click visibly does something.
-async function wlManualRefresh() {
-  const btn = document.getElementById('wl-refresh-btn');
-  if (btn) { btn.disabled = true; btn.classList.add('spin'); }
-  try {
-    await wlLoad(true);
-    if (typeof toast === 'function') toast('Worklist updated');
-  } finally {
-    if (btn) { btn.disabled = false; btn.classList.remove('spin'); }
-  }
+  wlLoad(true);                   // force nocache — fresh data for the new scope
 }
 
 // Cache key for the persisted board — keyed by the DATE window only. The board always holds
@@ -540,9 +512,7 @@ async function wlLoad(force, silent) {
 // rows into psLookupCache so tapping "Full patient card" (or a row) opens INSTANTLY with
 // no spinner. Runs on idle at low concurrency so the 2GB HIS box is never stressed — this
 // only warms the lightweight /radiology/lookup panel (same call the card's first paint
-// makes). The first DEEP_WARM rows additionally get their heavy sections (clinical
-// history, visits, labs, appointments) prefetched via psPrefetchCard, and hovering
-// any row warms that patient's full card — so one click opens complete, no spinners.
+// makes), not the heavy history sections, which still load lazily inside the card.
 let _wlCardWarmGen = 0;
 function wlPrefetchCards() {
   if (typeof psPrefetchLookup !== 'function') return;        // patientsearch.js not loaded — nothing to warm
@@ -558,43 +528,27 @@ function wlPrefetchCards() {
   }
   if (!mrns.length) return;
   const myGen = ++_wlCardWarmGen;                            // a newer board load cancels this sweep
-  // Every VISIBLE row is now light-warmed for free by the indication pump (instant tap), so
-  // here we only DEEP-warm the top few most-likely rows (emergency-first board order) with
-  // their heavy sections (clinical history · visits · labs · appointments) — opening them is
-  // one paint, zero spinners. Bounded, sequential, and PAUSED while a card is open, so the
-  // single-core connector is never stressed by speculative work.
-  const DEEP_WARM = 3; let idx = 0;
+  const CONC = 2; let idx = 0;
   const pump = () => {
     if (myGen !== _wlCardWarmGen) return;                    // superseded — stop warming stale rows
-    if (typeof _wlCardOpen !== 'undefined' && _wlCardOpen) { setTimeout(pump, 400); return; }  // yield to the open card
-    if (idx >= DEEP_WARM || idx >= mrns.length) return;
+    if (idx >= mrns.length) return;
     const mrno = mrns[idx++];
-    if (typeof psPrefetchCard !== 'function') return;
-    const p = psPrefetchCard(mrno);                          // full card + sections (deduped/single-flight)
-    if (p && typeof p.then === 'function') p.then(pump, pump); else pump();
+    let done = false;
+    const next = () => { if (done) return; done = true; pump(); };
+    try {
+      const p = psPrefetchLookup(mrno);                      // no-op if already warm/in-flight
+      if (p && typeof p.then === 'function') {
+        // As each warm-up lands, backfill the clinic/phone/age/gender the fast board can't carry
+        // so the VISIBLE (collapsed) rows show them too — not only expanded ones.
+        p.then((lk) => { try { wlBackfillDetail(mrno, lk); } catch (e) {} }, () => {});
+        p.then(next, next);
+      } else next();
+    } catch (e) { next(); }
   };
-  if (typeof requestIdleCallback === 'function') requestIdleCallback(pump, { timeout: 1500 });
-  else setTimeout(pump, 300);
+  const kick = () => { for (let i = 0; i < CONC; i++) pump(); };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 1500 });
+  else setTimeout(kick, 250);
 }
-
-// HOVER-WARM (instant.page for the board): the moment the operator's pointer settles on
-// a row — a strong "about to open" signal — warm that patient's FULL card (lookup +
-// clinical/visits/labs/appointments). All layers dedupe and single-flight (client
-// section cache → server → connector per-patient caches), so lingering or re-hovering
-// costs nothing, and a hover typically buys 200-600ms of head start before the click.
-let _wlHoverTimer = null, _wlHoverMrn = null;
-document.addEventListener('pointerover', (e) => {
-  const row = e.target && e.target.closest && e.target.closest('.rw-row[data-mrn]');
-  if (!row) return;
-  const mrn = row.getAttribute('data-mrn');
-  if (!mrn || mrn === _wlHoverMrn) return;
-  _wlHoverMrn = mrn;
-  clearTimeout(_wlHoverTimer);
-  // Small settle delay so skimming the pointer down the board doesn't warm every row.
-  _wlHoverTimer = setTimeout(() => {
-    if (typeof psPrefetchCard === 'function') psPrefetchCard(mrn);
-  }, 120);
-}, { passive: true });
 
 // Paint modality/exam AND pipeline stage onto the freshly-loaded board from the
 // persistent caches, so a live refresh shows everything INSTANTLY without waiting on
@@ -708,22 +662,26 @@ async function wlEnrich(silent, force) {
     // exams → Completed lane) that the panel alone can't see. So fire it once on the first RIS
     // load, then throttle to ~3 min like the live timer. The legacy search board keeps its
     // "not on open" behaviour (its ready pass is the slow per-patient work we defer).
-    // The server now keeps a warm ready-mirror (the DePACS stage board refreshed by a
-    // background loop), so a ready request normally returns from the DB in a few ms —
-    // fire it unconditionally right after the FIRST paint on any board so the Pending
-    // Report lane fills instantly, and keep the usual throttle afterwards. When the
-    // mirror is cold it simply costs what the first-load pass always cost.
+    const _isRis = !!(wlState.data && wlState.data.source === 'ris');
     const _firstReady = wlState.lastReady == null;
-    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 25000)) || _firstReady;
+    const readyDue = force || (silent && (Date.now() - (wlState.lastReady || 0) > 25000)) || (_isRis && _firstReady);
     if (readyDue) {
       passes.push(API.get('/radiology/worklist?' + mkQs({ ready: '1' }))
         .then((d) => { if (wlState._loadGen === enrichGen) { wlMergeEnrich(d, true); wlState.lastReady = Date.now(); } }).catch(() => {}));
     }
-    // Payment/billing pass removed — the board no longer fetches patient outstanding
-    // balances (bill/revenue isn't needed on the worklist). This also drops the heavy
-    // per-bill GetDueBillDetailsByID fan-out on the connector (hundreds of HIS calls per
-    // board load for heavy-billing patients). The paid/unpaid badge is guarded on
-    // `paymentKnown`, so it simply stops rendering — no other change needed.
+    // Payment pass — reads each order's bill for the patient's outstanding portion, so the
+    // board can flag "patient payment due". Independent + bounded on the connector. Runs on
+    // an explicit load, once per board, then at most every ~3 min on the silent timer.
+    const payDue = force || !wlState.paidOnce || (silent && (Date.now() - (wlState.lastPay || 0) > 180000));
+    if (payDue) {
+      passes.push(API.get('/radiology/worklist?' + mkQs({ pay: '1' }))
+        .then((d) => {
+          if (wlState._loadGen !== enrichGen) return;
+          wlMergePay(d); wlState.lastPay = Date.now(); wlState.paidOnce = true;
+          if (d && (d.billItemKeys || d.payDiagSample)) { wlState.payDiag = { keys: d.billItemKeys, sample: d.payDiagSample }; }
+          if (d && d.billItemKeys && !wlState._billKeysLogged) { wlState._billKeysLogged = true; console.log('[worklist] bill item keys:', (d.billItemKeys || []).join(',')); }
+        }).catch(() => {}));
+    }
     await Promise.all(passes);
     wlState.lastEnrich = Date.now();
   } finally {
@@ -929,146 +887,23 @@ function wlRowMod(it) {
   return null;
 }
 
-// ── Live board painter (keyed reconcile + FLIP) ───────────────────────────────
-// Instead of blowing the whole board away on every tick, we diff the desired rows
-// against the DOM by uid and only touch what changed: a new order slides IN, a
-// filed study fades OUT (rows below glide up), a re-sorted/pushed-up row travels
-// via FLIP, a status bump pulses its pill. Unchanged rows are left untouched — so
-// async-injected cells (vitals / indication / pregnancy) survive a refresh instead
-// of being wiped and re-fetched every poll. User navigation (tab/filter/sort/open)
-// sets _localMutate so it stays instant; only LIVE data changes animate. Reduced
-// motion or any failure falls back to a plain full repaint.
-function _wlReduceMotion() {
-  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
-  catch (_e) { return false; }
-}
-function _wlCssEsc(s) { return (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s).replace(/["\\\]]/g, '\\$&'); }
-function wlBuildItem(html) { const t = document.createElement('template'); t.innerHTML = html; return t.content.firstElementChild; }
-// Remove one-shot animation classes once they've played so they can re-trigger later.
-function _wlOneShot(el, classes) {
-  const cls = Array.isArray(classes) ? classes : [classes];
-  let done = false;
-  const clear = () => { if (done) return; done = true; cls.forEach((c) => el.classList.remove(c)); el.removeEventListener('animationend', clear); };
-  el.addEventListener('animationend', clear);
-  setTimeout(clear, 1400);
-}
-function _wlClearFlip(item) {
-  const c = () => { item.style.transition = ''; item.style.transform = ''; item.removeEventListener('transitionend', c); };
-  item.addEventListener('transitionend', c);
-  setTimeout(c, 500);
-}
-// Pull a departing row out of flow (absolute, pinned where it sits) so the rows below
-// glide up while it fades — then drop it when the exit animation ends.
-function wlExitItem(el, body) {
-  try {
-    el.style.top = el.offsetTop + 'px';
-    el.dataset.exiting = '1';
-    el.classList.add('rw-exit');
-    body.appendChild(el);          // park at the end; absolute + top holds its visual position
-    let done = false;
-    const rm = () => { if (done) return; done = true; el.remove(); };
-    el.addEventListener('animationend', rm);
-    setTimeout(rm, 600);
-  } catch (_e) { el.remove(); }
-}
-function wlPaintBoard(body, rows) {
-  try {
-    const localMutate = !!wlState._localMutate; wlState._localMutate = false;
-    const reduce = _wlReduceMotion();
-
-    const desired = rows.map((it) => ({ uid: wlRowUid(it), html: wlRowHtml(it), status: it.__status }));
-    const seen   = wlState._seenUids  || (wlState._seenUids  = new Set());
-    const sig    = wlState._rowSig    || (wlState._rowSig    = new Map());
-    const prevSt = wlState._rowStatus || (wlState._rowStatus = new Map());
-
-    const kids = Array.from(body.children);
-    const clean = kids.length > 0 && kids.every((el) => el.classList.contains('rw-item'));
-
-    // Fresh mount, a non-board view (typeahead / empty state) was showing, or reduced
-    // motion → a plain full paint. Reseed the caches so the next diff has a clean base;
-    // the initial staggered entrance is handled by the CSS (.rw-row rw-rise), not here.
-    if (!clean || reduce) {
-      body.innerHTML = desired.map((d) => d.html).join('');
-      sig.clear(); prevSt.clear(); seen.clear();
-      desired.forEach((d) => { sig.set(d.uid, d.html); prevSt.set(d.uid, d.status); seen.add(d.uid); });
-      return;
-    }
-
-    const existing = new Map();
-    for (const el of kids) { if (!el.dataset.exiting && el.dataset.uid) existing.set(el.dataset.uid, el); }
-    const desiredUids = new Set(desired.map((d) => d.uid));
-
-    // FLIP FIRST — kept-row positions while everything (incl. soon-to-exit rows) is in flow.
-    const firstTop = new Map();
-    if (!localMutate) existing.forEach((el, uid) => { if (desiredUids.has(uid)) firstTop.set(uid, el.getBoundingClientRect().top); });
-
-    // Exit rows no longer on the board.
-    existing.forEach((el, uid) => {
-      if (desiredUids.has(uid)) return;
-      sig.delete(uid); prevSt.delete(uid); seen.delete(uid);
-      if (localMutate || reduce) el.remove(); else wlExitItem(el, body);
-    });
-
-    const freshEmerg = wlState._freshEmergUids || new Set();
-    const enterUids = [], advanceUids = [];
-
-    // Walker: place every desired row in order, reusing unchanged nodes.
-    let ref = body.firstElementChild;
-    for (const d of desired) {
-      let el = existing.get(d.uid);
-      if (el) {
-        if (sig.get(d.uid) !== d.html) {                          // content changed → rebuild in place
-          if ((_WL_ST_RANK[d.status] != null ? _WL_ST_RANK[d.status] : 5) >
-              (_WL_ST_RANK[prevSt.get(d.uid)] != null ? _WL_ST_RANK[prevSt.get(d.uid)] : -1)) advanceUids.push(d.uid);
-          const nw = wlBuildItem(d.html);
-          if (ref === el) ref = ref.nextElementSibling;
-          el.replaceWith(nw);
-          el = nw;
-        }
-      } else {
-        el = wlBuildItem(d.html);
-        if (!seen.has(d.uid)) enterUids.push(d.uid);
-      }
-      if (el === ref) { ref = ref.nextElementSibling; }
-      else { body.insertBefore(el, ref); }
-      sig.set(d.uid, d.html); prevSt.set(d.uid, d.status); seen.add(d.uid);
-    }
-    // Drop the exiting nodes still parked at the tail from the walker's view (they're
-    // position:absolute, so leaving them in the DOM tail doesn't disturb the flow).
-
-    if (localMutate || reduce) return;
-
-    const byUid = (uid) => body.querySelector('.rw-item[data-uid="' + _wlCssEsc(uid) + '"]:not([data-exiting])');
-
-    for (const uid of enterUids) {
-      const el = byUid(uid); if (!el) continue;
-      el.classList.add('rw-enter');
-      if (freshEmerg.has(uid)) el.classList.add('rw-newstat');
-      _wlOneShot(el, ['rw-enter', 'rw-newstat']);
-    }
-    for (const uid of advanceUids) {
-      const el = byUid(uid), pill = el && el.querySelector('.rw-row .ris');
-      if (pill) { pill.classList.add('rw-advance'); _wlOneShot(pill, ['rw-advance']); }
-    }
-
-    // FLIP LAST + INVERT + PLAY for rows that moved.
-    if (firstTop.size) {
-      const moves = [];
-      firstTop.forEach((oldTop, uid) => {
-        const el = byUid(uid); if (!el) return;
-        const dy = oldTop - el.getBoundingClientRect().top;
-        if (Math.abs(dy) > 1) moves.push([el, dy]);
-      });
-      if (moves.length) {
-        for (const [el, dy] of moves) { el.style.transform = 'translateY(' + dy + 'px)'; el.style.transition = 'none'; }
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          for (const [el] of moves) { el.style.transition = 'transform .34s var(--ease-out)'; el.style.transform = ''; _wlClearFlip(el); }
-        }));
-      }
-    }
-  } catch (_e) {
-    try { body.innerHTML = rows.map(wlRowHtml).join(''); } catch (_e2) { /* give up quietly */ }
-  }
+// The current tab → status filter (Urgent = emergency across all statuses), the left-panel
+// modality/priority/doctor filters, and the chosen sort — applied to an already branch-scoped
+// item list. Factored out of wlRender so the Excel export produces the SAME rows the board shows.
+// Assumes it.__status is already set (wlRender's classify pass, or the export sets it first).
+function wlFilterSortRows(items) {
+  let rows = items;
+  if (wlState.tab === 'urgent') rows = rows.filter((it) => it.emergency);
+  else if (wlState.tab !== 'all') rows = rows.filter((it) => it.__status === wlState.tab);
+  if (wlState.fMods.size) rows = rows.filter((it) => wlState.fMods.has(wlRowMod(it)));
+  if (wlState.fPrio === 'stat') rows = rows.filter((it) => it.emergency);
+  else if (wlState.fPrio === 'routine') rows = rows.filter((it) => !it.emergency);
+  if (wlState.fDoc) rows = rows.filter((it) => String(it.doctorName || '').trim() === wlState.fDoc);
+  rows = rows.slice();
+  if (wlState.fSort === 'wait') rows.sort((a, b) => (b.ageHours || 0) - (a.ageHours || 0));
+  else if (wlState.fSort === 'recent') rows.sort((a, b) => (a.ageHours || 0) - (b.ageHours || 0));
+  else rows.sort((a, b) => (Number(!!b.emergency) - Number(!!a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+  return rows;
 }
 
 function wlRender() {
@@ -1111,7 +946,7 @@ function wlRender() {
       : `<div class="empty"><div class="ei">🔍</div><p>No patient on this board starts with “${escapeHtml(f)}”.${f.length >= 6 ? ' Press Enter to search all branches.' : ''}</p></div>`);
     wlState._lastBodyHtml = null;   // typeahead view — next full-board render must repaint
     wlRenderTabs(items);
-    wlAutoPreg(); wlAutoIndication(match); wlAutoVitals(); wlSyncActionbar();
+    wlAutoPreg(); wlAutoIndication(); wlAutoVitals(); wlSyncActionbar();
     return;
   }
 
@@ -1123,23 +958,9 @@ function wlRender() {
     wlSyncActionbar(); return;
   }
 
-  // Active tab → status filter (Urgent = emergency across all statuses; Not Done is a
-  // Phase-2 backend feature and stays empty for now).
-  let rows = items;
-  if (wlState.tab === 'urgent') rows = rows.filter((it) => it.emergency);
-  else if (wlState.tab !== 'all') rows = rows.filter((it) => it.__status === wlState.tab);
-
-  // Left-panel filters (all client-side).
-  if (wlState.fMods.size) rows = rows.filter((it) => wlState.fMods.has(wlRowMod(it)));
-  if (wlState.fPrio === 'stat') rows = rows.filter((it) => it.emergency);
-  else if (wlState.fPrio === 'routine') rows = rows.filter((it) => !it.emergency);
-  if (wlState.fDoc) rows = rows.filter((it) => String(it.doctorName || '').trim() === wlState.fDoc);
-
-  // Sort.
-  rows = rows.slice();
-  if (wlState.fSort === 'wait') rows.sort((a, b) => (b.ageHours || 0) - (a.ageHours || 0));
-  else if (wlState.fSort === 'recent') rows.sort((a, b) => (a.ageHours || 0) - (b.ageHours || 0));
-  else rows.sort((a, b) => (Number(!!b.emergency) - Number(!!a.emergency)) || ((b.ageHours || 0) - (a.ageHours || 0)));
+  // Active tab + left-panel filters + sort (shared with the Excel export so the download
+  // matches exactly what's on screen).
+  const rows = wlFilterSortRows(items);
 
   const html = rows.length
     ? wlRowsHtml(rows)
@@ -1151,14 +972,14 @@ function wlRender() {
   // no-op assignment also PRESERVES async-injected cell content (vitals/indication) instead
   // of wiping and re-fetching it every tick.
   if (html !== wlState._lastBodyHtml || !body.firstChild) {
-    wlPaintBoard(body, rows);
+    body.innerHTML = html;
     wlState._lastBodyHtml = html;
   }
 
   // Selection + expanded state are re-derived from the wlState Sets while building the
   // row HTML, so they survive every repaint with no separate restore pass.
   wlAutoPreg();           // auto-check pregnancy status for female rows (throttled, cached)
-  wlAutoIndication(rows); // pre-warm indications for the top visible rows (instant on click)
+  wlAutoIndication();     // auto-fetch the clinical indication for waiting/in-progress rows
   wlAutoVitals();         // auto-fetch vitals for any EXPANDED order row (throttled, cached)
   wlSyncActionbar();      // reflect the current checkbox selection in the sticky action bar
 }
@@ -1269,7 +1090,7 @@ function wlRowHtml(it) {
   const primaryAct = canReport
     ? `<button class="iconbtn primary" title="Report & images" onclick="event.stopPropagation();openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" ontouchstart="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}</button>`
     : `<button class="iconbtn" title="Handoff" onclick="event.stopPropagation();wlOpenHandoff('${jsAttr(mrn)}')">${icon('inbox')}</button>`;
-  return `<div class="rw-item" data-uid="${uid}"><div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" data-uid="${uid}" data-mrn="${escapeHtml(mrn)}" onclick="wlToggleRow('${uid}',event)">
+  return `<div class="rw-row${sel ? ' sel' : ''}${stat ? ' stat' : ''}${open ? ' open' : ''}" onclick="wlToggleRow('${uid}',event)">
     <span class="rw-check${sel ? ' on' : ''}" onclick="wlToggleSel('${jsAttr(mrn)}',event)">${icon('check')}</span>
     <div class="pt">
       <div class="l1"><span class="pname">${escapeHtml(it.patientName || '—')}</span>${stat ? '<span class="stat-tag">STAT</span>' : ''}${consentChip}${payChip}</div>
@@ -1286,7 +1107,7 @@ function wlRowHtml(it) {
       <button class="iconbtn" title="Expand" onclick="wlToggleRow('${uid}',event)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
     </div>
   </div>
-  <div class="rw-expand">${wlExpandHtml(it, st)}</div></div>`;
+  <div class="rw-expand">${wlExpandHtml(it, st)}</div>`;
 }
 
 // The expand card built from the real item fields.
@@ -1340,9 +1161,8 @@ function wlExpandHtml(it, st) {
     <div class="xbtns">
       ${canReport ? `<button class="btn solid" onclick="openStudyViewer(this,'${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')" onmouseenter="studyPrefetch('${jsAttr(mrn)}','${jsAttr(acc)}','${jsAttr(it.invPatTestResultId || '')}')">${icon('file-text')}View report &amp; images</button>` : ''}
       <button class="btn" onclick="wlOpenPatientCard('${jsAttr(mrn)}')" onmouseenter="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')" ontouchstart="if(typeof psPrefetchLookup==='function')psPrefetchLookup('${jsAttr(mrn)}')">${icon('user')}Full patient card</button>
-      <button class="btn" onclick="wlStampIndication('${jsAttr(mrn)}',this)" title="Write this patient's clinical indication onto the DePACS study now">🖊 Stamp now</button>
       <button class="btn" onclick="wlFlagCritical('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(acc)}',${it.genPatBillingId != null ? it.genPatBillingId : 'null'},${it.site != null ? "'" + jsAttr(String(it.site)) + "'" : 'null'},'${jsAttr(it.doctorName || '')}')">🚨 Flag critical</button>
-      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}','${jsAttr(it.providerId || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
+      ${needConsent ? `<button class="btn" onclick="wlConsent('${jsAttr(mrn)}','${jsAttr(it.patientName || '')}','${jsAttr(it.exam || '')}','${jsAttr(it.doctorName || '')}','${jsAttr(it.branch || '')}','${jsAttr(it.billNo || '')}','${jsAttr(it.site || '')}')">${icon('id-card')}Send consent QR</button>` : ''}
       ${wlWorkflowBtns(it, st)}
     </div>
   </div>`;
@@ -1376,27 +1196,23 @@ function wlSyncActionbar() {
 }
 
 // ── Redesign view-state handlers (all repaint via wlRender) ────────────────────
-// A repaint driven by the operator (tab / filter / sort / open / select). Flag it so
-// wlPaintBoard applies the change instantly instead of animating enter/exit/FLIP —
-// navigation stays snappy; only unattended LIVE data changes get motion.
-function wlRenderLocal() { wlState._localMutate = true; wlRender(); }
-function wlSetTab(k) { wlState.tab = k; wlRenderLocal(); }
-function wlToggleMod(m) { if (wlState.fMods.has(m)) wlState.fMods.delete(m); else wlState.fMods.add(m); wlRenderLocal(); }
-function wlSetPrio(p) { wlState.fPrio = p; wlRenderLocal(); }
-function wlSetDoc(v) { wlState.fDoc = v; wlRenderLocal(); }
-function wlSetSort(v) { wlState.fSort = v; const s = document.getElementById('rw-sortsel'); if (s && s.value !== v) s.value = v; wlRenderLocal(); }
+function wlSetTab(k) { wlState.tab = k; wlRender(); }
+function wlToggleMod(m) { if (wlState.fMods.has(m)) wlState.fMods.delete(m); else wlState.fMods.add(m); wlRender(); }
+function wlSetPrio(p) { wlState.fPrio = p; wlRender(); }
+function wlSetDoc(v) { wlState.fDoc = v; wlRender(); }
+function wlSetSort(v) { wlState.fSort = v; const s = document.getElementById('rw-sortsel'); if (s && s.value !== v) s.value = v; wlRender(); }
 function wlSetDensity(dn) {
   wlState.density = dn;
   const a = document.getElementById('rw-dCompact'), b = document.getElementById('rw-dDetailed');
   if (a) a.classList.toggle('on', dn === 'compact');
   if (b) b.classList.toggle('on', dn === 'detailed');
-  wlRenderLocal();
+  wlRender();
 }
 function wlResetFilters() {
   wlState.fMods.clear(); wlState.fPrio = ''; wlState.fDoc = '';
   const r = document.querySelector('input[name="rw-prio"][value=""]'); if (r) r.checked = true;
   const ds = document.getElementById('rw-docsel'); if (ds) ds.value = '';
-  wlRenderLocal();
+  wlRender();
 }
 function wlToggleRow(uid, e) {
   if (e) e.stopPropagation();
@@ -1414,10 +1230,10 @@ function wlToggleRow(uid, e) {
       }
     } catch (_e) { /* prefetch is best-effort */ }
   }
-  wlRenderLocal();
+  wlRender();
 }
-function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRenderLocal(); }
-function wlClearSel() { wlState.selMrns.clear(); wlRenderLocal(); }
+function wlToggleSel(mrn, e) { if (e) e.stopPropagation(); const k = String(mrn); if (wlState.selMrns.has(k)) wlState.selMrns.delete(k); else wlState.selMrns.add(k); wlRender(); }
+function wlClearSel() { wlState.selMrns.clear(); wlRender(); }
 
 // ── Phase-2 workflow actions (Meena-owned local overlay) ──────────────────────
 // receive / start / complete / assign / note / cancel — POST to the order endpoint,
@@ -1672,7 +1488,7 @@ function wlPickConsentName(patient, fallbackEn) {
   const isArab = arScript && (!nat || WL_ARAB_NAT.test(nat));
   return { display: (isArab && ar) ? ar : (en || ar), en: en || ar };
 }
-async function wlConsent(mrno, name, exam, doctor, branch, bill, site, provId) {
+async function wlConsent(mrno, name, exam, doctor, branch, bill, site) {
   // QR flow: her data is pre-printed on the official form, she scans the QR, signs
   // on HER OWN phone, and it reflects straight back (the board refreshes to ✓ Consent).
   // Keys must match the /consent/link backend: physician (not referring_doctor),
@@ -1689,11 +1505,8 @@ async function wlConsent(mrno, name, exam, doctor, branch, bill, site, provId) {
   // Carry the identity + vitals the HIS already has (DOB, weight, height) so the form
   // prints COMPLETE — the worklist row alone doesn't have these, and without them the
   // signed PDF came out with blank patient fields.
-  // The form asks for "Physician (Name +ID No)" — the worklist row carries the HIS
-  // ordering-doctor id (providerId), so print "Name (id)" like the technologist line.
-  const physician = (doctor || '') + (provId ? ` (${provId})` : '');
   const prefill = { file_no: mrno, mrno: mrno, mrn: mrno, name: display, name_en: en, procedure: exam,
-                    physician: physician, branch: branch || '',
+                    physician: doctor || '', branch: branch || '',
                     dob: (pat.dob || '').trim ? (pat.dob || '').trim() : (pat.dob || ''),
                     gender: pat.gender || '',
                     weight: (pat.weight != null ? String(pat.weight) : ''),
@@ -1746,55 +1559,36 @@ function wlIndSet(mr) {
 // study's indication is already viewable in the drill.
 let _wlIndBusy = 0;
 const _WL_IND_MAX = 2;
-const _WL_IND_WARM = 12;   // how many TOP visible rows to pre-warm so a click is instant
 const _wlIndQueue = [];
 const _wlIndInflight = new Set();
-// While a patient card/modal is open, PAUSE the board's background enrichment pumps so
-// the foreground card's live HIS fetches aren't starved on the single-core connector.
-// Isolated, the card's sections load in ~2-3s; the board pump running alongside pushed
-// that to ~7s. Resumed on card close.
-let _wlCardOpen = false;
-function wlAutoIndication(rows) {
-  // `rows` is the sorted, filtered, VISIBLE list (STAT-first) from wlRender; fall back to
-  // the raw items if called without it. Two priorities feed one throttled pump:
-  const items = (rows && rows.length) ? rows : ((wlState.data && wlState.data.items) || []);
+function wlAutoIndication() {
+  const items = (wlState.data && wlState.data.items) || [];
   const seen = new Set(_wlIndQueue.map((x) => x.mr));
-  const want = (mr) => mr && !wlState.indCache.has(mr) && !seen.has(mr) && !_wlIndInflight.has(mr);
-  // 1) EXPANDED rows first — the user is looking at these NOW, so jump the queue (unshift).
+  // On-demand: only fetch the clinical indication for an EXPANDED card, not the whole
+  // board — the per-MRN HIS lookup was what made the indication lag on the list.
   for (const it of items) {
     if (!wlState.openRows.has(wlRowUid(it))) continue;
     const mr = String(it.mrno || '');
-    if (want(mr)) { seen.add(mr); _wlIndQueue.unshift({ mr }); }
-  }
-  // 2) PREDICTIVE WARM — the top few visible rows (most likely to be clicked) so expanding
-  //    is INSTANT instead of a ~2s HIS wait. Bounded (_WL_IND_WARM), deduped against the
-  //    per-MRN cache so steady-board polls don't re-fetch, and paused while a card is open.
-  let warm = 0;
-  for (const it of items) {
-    if (warm >= _WL_IND_WARM) break;
-    const mr = String(it.mrno || '');
-    if (want(mr)) { seen.add(mr); _wlIndQueue.push({ mr }); warm++; }
+    if (!mr || wlState.indCache.has(mr) || seen.has(mr) || _wlIndInflight.has(mr)) continue;
+    seen.add(mr);
+    _wlIndQueue.push({ mr });
   }
   wlIndPump();
 }
 function wlIndPump() {
-  while (_wlIndBusy < _WL_IND_MAX && _wlIndQueue.length && !_wlCardOpen) {
+  while (_wlIndBusy < _WL_IND_MAX && _wlIndQueue.length) {
     const { mr } = _wlIndQueue.shift();
     if (wlState.indCache.has(mr) || _wlIndInflight.has(mr)) continue;
     _wlIndBusy++; _wlIndInflight.add(mr);
-    // Board rows use the LIGHT lookup: RIS-panel enrichment (clinical indication + ER +
-    // doctor name) but NOT the slow RadiologySearch (ordering-clinic name + referring-
-    // doctor phone). That keeps the indication column while cutting ~3-4x the per-row HIS
-    // work — the dominant board load. Clinic/phone still fill in when a row is expanded or
-    // the full patient card is opened (those fire the full /radiology/lookup on demand).
-    const _lk = API.get('/radiology/lookup-light/' + encodeURIComponent(mr));
+    // Reuse the SAME lookup the row-expand prefetch already kicked off (psPrefetchLookup
+    // serves it from psLookupCache or shares the in-flight promise) instead of firing a
+    // second identical /radiology/lookup — one call feeds both the indication cell and the
+    // patient card, so the indication resolves as soon as that prefetch lands.
+    const _lk = (typeof psPrefetchLookup === 'function')
+      ? psPrefetchLookup(mr)
+      : API.get('/radiology/lookup/' + encodeURIComponent(mr));
     Promise.resolve(_lk)
-      .then((lk) => {
-        wlState.indCache.set(mr, wlIndexIndications(lk)); wlBackfillDetail(mr, lk); wlIndSet(mr);
-        // PREDICTIVE WARM (free): this indication fetch IS the light card — cache it so
-        // tapping the row / "Full patient card" opens INSTANTLY. Never downgrade a full card.
-        try { if (typeof psLookupCache !== 'undefined' && lk && !psLookupCache.get(mr)) psLookupCache.set(mr, { ts: Date.now(), data: lk }); } catch (e) {}
-      })
+      .then((lk) => { wlState.indCache.set(mr, wlIndexIndications(lk)); wlBackfillDetail(mr, lk); wlIndSet(mr); })
       .catch(() => { /* leave the shimmer; a later refresh retries */ })
       .finally(() => { _wlIndBusy--; _wlIndInflight.delete(mr); wlIndPump(); });
   }
@@ -1845,7 +1639,7 @@ function wlAutoVitals() {
   wlVitalsPump();
 }
 function wlVitalsPump() {
-  while (_wlVitalsBusy < _WL_VITALS_MAX && _wlVitalsQueue.length && !_wlCardOpen) {
+  while (_wlVitalsBusy < _WL_VITALS_MAX && _wlVitalsQueue.length) {
     const { mr } = _wlVitalsQueue.shift();
     if (wlState.vitalsCache.has(mr) || _wlVitalsInflight.has(mr)) continue;
     _wlVitalsBusy++; _wlVitalsInflight.add(mr);
@@ -1981,36 +1775,9 @@ function wlEnsurePcardStyles() {
     .pname-link:hover{color:var(--accent,#6B4EFF);text-decoration:underline}`;
   document.head.appendChild(s);
 }
-// Manual "Stamp now": write THIS patient's clinical indication onto their DePACS study
-// immediately (same matcher/safety as the background auto-stamp). Auto keeps running.
-async function wlStampIndication(mrno, btn) {
-  mrno = String(mrno || '').trim();
-  if (!mrno) return;
-  const label = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'Stamping…'; }
-  try {
-    const d = await API.post(`/radiology/patient/${encodeURIComponent(mrno)}/autostamp`, {}) || {};
-    // The stamp now runs in the BACKGROUND (instant response) and keeps retrying for 5 min,
-    // stamping each exam as its images reach DePACS — no waiting, no re-clicking.
-    if (d.queued) {
-      toast('Stamping — will keep watch for 5 min as images arrive ⏳✓', 'ok');
-    } else {
-      // Back-compat: older synchronous response shape.
-      const n = d.stamped || 0;
-      if (n) toast(`Stamped ${n} stud${n === 1 ? 'y' : 'ies'} on DePACS ✓`);
-      else toast('Stamping — will keep trying for 5 min ⏳', 'ok');
-    }
-  } catch (e) {
-    toast(e.message || 'Stamp failed', 'err');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = label || '🖊 Stamp now'; }
-  }
-}
-
 async function wlOpenPatientCard(mrno) {
   mrno = String(mrno || '').trim();
   if (!mrno || typeof renderPsDetail !== 'function') return;
-  _wlCardOpen = true;   // pause the board's background enrichment so the card isn't starved
   wlEnsurePcardStyles();
   let ov = document.getElementById('wl-pcard');
   if (!ov) { ov = document.createElement('div'); ov.id = 'wl-pcard'; document.body.appendChild(ov); }
@@ -2051,14 +1818,10 @@ async function wlOpenPatientCard(mrno) {
     document.addEventListener('keydown', window._wlPcardEsc);
   }
   try {
-    // Warm (already enriched in cache) → paint the full card. Otherwise fetch the FAST
-    // base card (~0.5s) so the modal fills in immediately; renderPsDetail then shows the
-    // "Load full details" button for the on-demand enrichment (same as the lookup page),
-    // instead of blocking this modal on the ~100-call full lookup.
+    // Use the shared patient-lookup cache (filled by hover/board prefetch); else fetch now.
     const d = isWarm ? warm.data
-      : (typeof psFetchLookupFast === 'function' ? await psFetchLookupFast(mrno)
-        : (typeof psPrefetchLookup === 'function' ? await psPrefetchLookup(mrno)
-          : await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`)));
+      : (typeof psPrefetchLookup === 'function' ? await psPrefetchLookup(mrno)
+        : await API.get(`/radiology/lookup/${encodeURIComponent(mrno)}`));
     const _cur = document.getElementById('wl-pcard');
     if (!_cur || _cur.dataset.mrno !== mrno) return;                  // closed, or a newer patient was opened
     if (typeof psNoteCache !== 'undefined') { try { psNoteCache = new Map(); psReportStore = {}; } catch (e) {} }
@@ -2076,8 +1839,6 @@ async function wlOpenPatientCard(mrno) {
 function wlClosePatientCard() {
   const ov = document.getElementById('wl-pcard');
   document.body.style.overflow = '';
-  _wlCardOpen = false;   // resume the board's background enrichment
-  try { wlIndPump(); wlVitalsPump(); } catch (e) {}
   if (window._wlPcardEsc) { document.removeEventListener('keydown', window._wlPcardEsc); window._wlPcardEsc = null; }
   if (!ov) return;
   // Play the exit (fade + settle) before removing, instead of a hard snap-out. Guard
@@ -2160,3 +1921,84 @@ function wlShowMatches(pts) {
     <button class="btn" onclick="wlClearFilter()">← Back to worklist</button></div>${rows}`;
   wlState._lastBodyHtml = null;   // cross-branch match view — next full-board render must repaint
 }
+
+// ── Excel export ──────────────────────────────────────────────────────────────
+// Download the worklist as a real .xlsx (SheetJS, loaded on demand from CDN — the same
+// pattern the schedule ROTA export uses). "Current view" honours the active tab + filters +
+// branch scope so the sheet matches the board; "All rows on board" ignores the tab/filters
+// (still branch-scoped). Every field the RIS panel carries is a column — nothing summarised.
+function wlToggleExport(ev) {
+  if (ev) ev.stopPropagation();
+  const p = document.getElementById('wl-exportpop'); if (!p) return;
+  const show = p.style.display === 'none';
+  p.style.display = show ? 'flex' : 'none';
+  if (show) setTimeout(() => document.addEventListener('click', function _c(e) {
+    if (!e.target.closest('.rw-export')) { p.style.display = 'none'; document.removeEventListener('click', _c); }
+  }), 0);
+}
+
+async function wlExportExcel(scope) {
+  const pop = document.getElementById('wl-exportpop'); if (pop) pop.style.display = 'none';
+  const d = wlState.data || {};
+  let items = (d.items || []).slice();
+  if (wlState.site) items = items.filter((it) => String(it.site) === String(wlState.site));
+  // Ensure the unified status is set (export can run between render ticks).
+  for (const it of items) { it.__status = wlStatus(it); }
+  const rows = (scope === 'all') ? items : wlFilterSortRows(items);
+  if (!rows.length) { toast('No rows to export in this view', 'err'); return; }
+  if (!window.XLSX) {
+    if (typeof showLoader === 'function') showLoader('Loading export library…');
+    try { await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js'); }
+    catch (e) { if (typeof hideLoader === 'function') hideLoader(); toast('Could not load the Excel library — check your connection', 'err'); return; }
+    if (typeof hideLoader === 'function') hideLoader();
+  }
+  const yn = (v) => (v ? 'Yes' : 'No');
+  const fmt = (v) => { if (!v) return ''; const t = Date.parse(v); return Number.isFinite(t)
+    ? new Date(t).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : String(v); };
+  const header = ['Branch', 'Site ID', 'MRN', 'Patient Name', 'Age', 'Gender', 'Priority', 'Emergency',
+    'Modality', 'Exam / Service', 'Service ID', 'Status', 'Stage (raw)', 'HIS Status', 'Reported',
+    'Accession', 'Bill / Order Date', 'Order Date', 'Arrived', 'Exam Start', 'Exam End', 'Scanned',
+    'Wait (hrs)', 'Cancelled', 'Referring Doctor', 'Department', 'Provider ID', 'Technician',
+    'Radiologist', 'Payer', 'Billing Status', 'Bill No', 'Order ID'];
+  const aoa = [header];
+  for (const it of rows) {
+    aoa.push([
+      it.branch || '', it.site != null ? String(it.site) : '',
+      String(it.mrno || ''), it.patientName || '',
+      (it.age != null && it.age !== '') ? it.age : '', it.gender || '',
+      it.priority || (it.emergency ? 'Emergency' : 'Routine'), yn(it.emergency),
+      wlRowMod(it) || it.modality || '', it.exam || '', it.svcId != null ? String(it.svcId) : '',
+      WL_STATUS_LABEL[it.__status] || it.__status || '', it.stage || '', it.hisStatus || '', yn(it.hisReported),
+      it.accession || it.accessionNumber || '', fmt(it.orderedDate), fmt(it.orderDate),
+      fmt(it.arrivedAt), fmt(it.examStartAt), fmt(it.examEndAt), yn(it.scanned),
+      (it.ageHours != null) ? Math.round(it.ageHours) : '', yn(it.cancelled),
+      it.doctorName || '', it.department || '', it.providerId != null ? String(it.providerId) : '',
+      it.technicianName || '', it.radiologistName || '', it.payer || '', it.billingStatus || '',
+      it.billNo != null ? String(it.billNo) : '', it.genPatBillingId != null ? String(it.genPatBillingId) : '',
+    ]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = header.map((h, i) => ({ wch: [3, 8, 10, 22, 24, 20, 26].includes(i) ? 22 : Math.max(9, Math.min(30, h.length + 3)) }));
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: header.length - 1, r: rows.length } }) };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Worklist');
+  const br = (wlState.site && Array.isArray(wlState.branches))
+    ? (wlState.branches.find((b) => String(b.siteId) === String(wlState.site)) || {}) : {};
+  const bn = String(br.shortName || br.name || (wlState.site ? 'branch' + wlState.site : 'all-branches')).replace(/[^\w-]+/g, '-');
+  const range = (wlState.from && wlState.to) ? `${wlState.from}_${wlState.to}` : (typeof wlTodayLocal === 'function' ? wlTodayLocal() : '');
+  const scopeTag = scope === 'all' ? 'all' : (wlState.tab || 'view');
+  XLSX.writeFile(wb, `RIS-worklist-${bn}-${scopeTag}-${range}.xlsx`);
+  toast(`Exported ${rows.length} row${rows.length === 1 ? '' : 's'} to Excel`);
+}
+
+// Minimal styling for the export menu options (injected once).
+(function wlInjectExportCSS() {
+  if (document.getElementById('wl-export-css')) return;
+  const s = document.createElement('style'); s.id = 'wl-export-css';
+  s.textContent = `.rw-export .xopt{display:block;width:100%;text-align:left;border:0;background:none;
+    padding:9px 11px;border-radius:7px;cursor:pointer;font:inherit;color:inherit;line-height:1.3}
+    .rw-export .xopt small{opacity:.6;font-size:11px}
+    .rw-export .xopt:hover{background:var(--hover,#f2f3f7)}`;
+  document.head.appendChild(s);
+})();
