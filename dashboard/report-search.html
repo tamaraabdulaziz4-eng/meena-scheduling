@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meena — البحث عن التقرير</title>
+<link rel="icon" href="/meena_logo.png" type="image/png">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --primary:#2e2a48; --accent:#6b4eff; --accent2:#8358fd; --muted:#7c7a99;
+          --border:#e0dcf5; --card:#ffffff; --bg:#f4f1fe; --ok:#00A87D; --red:#E25555; }
+  @media (prefers-color-scheme:dark){ :root{ --primary:#e9e7f5; --muted:#9b98c0; --border:#262340; --card:#17152b; --bg:#0d0b1a; } }
+  * { box-sizing:border-box; }
+  body { font-family:'Tajawal',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary); -webkit-text-size-adjust:100%; }
+  .wrap { max-width:600px; margin:0 auto; padding:18px 16px 48px; }
+  .head { display:flex; align-items:center; gap:12px; margin:14px 0; }
+  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.18); }
+  .head .t { font-size:17px; font-weight:800; }
+  .head .s { font-size:12px; color:var(--muted); font-weight:600; }
+  .verify-banner { display:flex; gap:10px; align-items:flex-start; background:#FFF7E6; border:1.5px solid #F4D48A;
+                   color:#8a6100; border-radius:14px; padding:12px 14px; font-size:13px; font-weight:700; line-height:1.7; margin-bottom:14px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
+          box-shadow:0 12px 34px rgba(15,42,107,.08); margin-bottom:14px; }
+  label { display:block; font-size:13px; font-weight:700; margin:0 0 6px; }
+  .row { display:flex; gap:8px; }
+  input { flex:1; width:100%; padding:12px 13px; font-size:16px; font-family:inherit; color:var(--primary);
+         border:1.5px solid var(--border); border-radius:11px; background:#fff; outline:none; }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(107,78,255,.14); }
+  .btn2 { padding:12px 20px; font-size:15px; font-weight:800; font-family:inherit; color:#fff; border:none;
+         border-radius:12px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
+         box-shadow:0 8px 20px rgba(107,78,255,.32); white-space:nowrap; }
+  .btn2:disabled { opacity:.6; cursor:default; }
+  .hint { font-size:12px; color:var(--muted); margin-top:8px; }
+  .msg { font-size:13px; padding:10px 12px; border-radius:10px; margin-top:12px; display:none; }
+  .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
+  .item { border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-top:10px; background:#fff; }
+  .item .it { font-weight:700; font-size:15px; }
+  .item .im { font-size:12px; color:var(--muted); margin-top:3px; }
+  .item a.dl { display:inline-block; margin-top:10px; text-decoration:none; font-weight:800; font-size:13px;
+               color:#fff; background:linear-gradient(135deg,var(--accent2),var(--accent)); padding:8px 16px; border-radius:10px; }
+  .loading { text-align:center; color:var(--muted); padding:26px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="/meena_logo.png" alt="Meena">
+    <div><div class="t">البحث عن التقرير</div><div class="s">ابحث برقم ملف المريض</div></div>
+  </div>
+
+  <div class="verify-banner">
+    ⚠️ تأكد دائماً من مطابقة <b>اسم المريض ورقم الملف</b> للتقرير قبل الاعتماد عليه.
+  </div>
+
+  <div class="card">
+    <label for="file">رقم الملف</label>
+    <div class="row">
+      <input id="file" inputmode="numeric" autocomplete="off" placeholder="مثال: 26289620" onkeydown="if(event.key==='Enter')lookup()">
+      <button class="btn2" id="go" onclick="lookup()">بحث</button>
+    </div>
+    <div class="hint">الأحدث أولاً — اضغط على التحميل لفتح التقرير.</div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.search).get('token') || '';
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtDate(s){ const d=String(s||'').slice(0,16).replace('T',' '); return d||'—'; }
+function showMsg(t){ const m=$('msg'); m.className='msg err'; m.textContent=t; }
+
+if (!TOKEN){ showMsg('الرابط لا يحتوي على رمز الدخول. اطلب رابطاً صالحاً من فريق الأشعة.'); }
+
+async function lookup(){
+  const file = ($('file').value||'').trim();
+  $('msg').className='msg';
+  if (!file) return;
+  if (!TOKEN){ showMsg('الرابط لا يحتوي على رمز الدخول.'); return; }
+  $('go').disabled = true;
+  $('results').innerHTML = '<div class="loading">جاري البحث…</div>';
+  try {
+    const r = await fetch('/api/public/manual-reports/lookup?file=' + encodeURIComponent(file) + '&t=' + encodeURIComponent(TOKEN));
+    if (!r.ok){ let d; try{d=await r.json()}catch(e){d={}} throw new Error(d.detail || ('HTTP '+r.status)); }
+    const d = await r.json();
+    renderList(d, file);
+  } catch(e){
+    $('results').innerHTML = '';
+    showMsg(e.message || 'تعذّر البحث');
+  } finally {
+    $('go').disabled = false;
+  }
+}
+
+function renderList(d, file){
+  const reports = d.reports || [];
+  if (!reports.length){
+    $('results').innerHTML = '<div class="card" style="text-align:center;color:var(--muted)">لا يوجد تقرير مرفوع لهذا الملف.</div>';
+    return;
+  }
+  const rows = reports.map(r => `
+    <div class="item">
+      <div class="it">${esc(r.title || 'تقرير')}</div>
+      <div class="im">${esc(r.patient_name || '')} ${r.patient_name ? '·' : ''} ${esc(fmtDate(r.created_at))}</div>
+      <a class="dl" href="/api/public/manual-reports/${encodeURIComponent(r.id)}/pdf?file=${encodeURIComponent(file)}&t=${encodeURIComponent(TOKEN)}" target="_blank" rel="noopener">📄 فتح التقرير</a>
+    </div>`).join('');
+  $('results').innerHTML = `<div class="card"><label>نتائج الملف ${esc(file)} (${reports.length})</label>${rows}</div>`;
+}
+</script>
+</body>
+</html>
