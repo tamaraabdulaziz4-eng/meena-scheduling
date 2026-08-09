@@ -2602,21 +2602,10 @@ def serve_downtime_public():
 @app.get("/reports")
 def serve_reports_public():
     """Public, login-free radiology report lookup (shared link for doctors).
-    Disabled — the team no longer uses it; serve a closed-link notice instead."""
+    Disabled — the team no longer uses it. Return a bare 404 so the route reads as
+    if it never existed (no page, no hint that a reports feature was ever here)."""
     if not REPORTS_PUBLIC_ENABLED:
-        from fastapi import Response
-        return Response(
-            "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>الرابط غير متاح</title></head>"
-            "<body style='font-family:system-ui,Segoe UI,Tahoma,Arial;text-align:center;"
-            "padding:3rem 1.25rem;color:#334155'>"
-            "<div style='font-size:3rem'>🔒</div>"
-            "<h1 style='font-size:1.25rem;margin:.75rem 0'>هذا الرابط لم يعد متاحاً</h1>"
-            "<p style='color:#64748b'>This link is no longer available.</p>"
-            "</body></html>",
-            media_type="text/html; charset=utf-8", status_code=410,
-            headers={"Cache-Control": "no-store"})
+        raise HTTPException(404, "Not Found")
     return FileResponse(
         os.path.join(DASHBOARD, "reports-public.html"),
         media_type="text/html",
@@ -12036,7 +12025,7 @@ def public_radcare_pdf(request: Request):
 def public_reports_lookup(request: Request):
     """List a patient's DePACS studies (newest first) for the public link."""
     if not REPORTS_PUBLIC_ENABLED:
-        raise HTTPException(410, "The report-lookup link has been disabled.")
+        raise HTTPException(404, "Not Found")
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
@@ -12064,7 +12053,7 @@ def public_reports_lookup(request: Request):
 def public_reports_study(study_id: int, request: Request):
     """Full report text for one study (public link)."""
     if not REPORTS_PUBLIC_ENABLED:
-        raise HTTPException(410, "The report-lookup link has been disabled.")
+        raise HTTPException(404, "Not Found")
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
@@ -12093,7 +12082,7 @@ def public_reports_study(study_id: int, request: Request):
 def public_reports_pdf(study_id: int, request: Request):
     from fastapi import Response
     if not REPORTS_PUBLIC_ENABLED:
-        raise HTTPException(410, "The report-lookup link has been disabled.")
+        raise HTTPException(404, "Not Found")
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
