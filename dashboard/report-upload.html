@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meena — رفع تقرير</title>
+<link rel="icon" href="/meena_logo.png" type="image/png">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root { --primary:#2e2a48; --accent:#6b4eff; --accent2:#8358fd; --muted:#7c7a99;
+          --border:#e0dcf5; --card:#ffffff; --bg:#f4f1fe; --ok:#00A87D; --red:#E25555; }
+  @media (prefers-color-scheme:dark){ :root{ --primary:#e9e7f5; --muted:#9b98c0; --border:#262340; --card:#17152b; --bg:#0d0b1a; } }
+  * { box-sizing:border-box; }
+  body { font-family:'Tajawal',system-ui,sans-serif; margin:0; background:var(--bg); color:var(--primary); -webkit-text-size-adjust:100%; }
+  .wrap { max-width:600px; margin:0 auto; padding:18px 16px 48px; }
+  .head { display:flex; align-items:center; gap:12px; margin:14px 0; }
+  .head img { height:36px; background:#fff; padding:8px 12px; border-radius:14px; box-shadow:0 8px 22px rgba(107,78,255,.18); }
+  .head .t { font-size:17px; font-weight:800; }
+  .head .s { font-size:12px; color:var(--muted); font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 16px;
+          box-shadow:0 12px 34px rgba(15,42,107,.08); margin-bottom:14px; }
+  label { display:block; font-size:13px; font-weight:700; margin:14px 0 6px; }
+  label:first-child { margin-top:0; }
+  input[type=text], input[type=number] { width:100%; padding:12px 13px; font-size:16px; font-family:inherit; color:var(--primary);
+         border:1.5px solid var(--border); border-radius:11px; background:#fff; outline:none; }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(107,78,255,.14); }
+  input[type=file] { width:100%; padding:10px; border:1.5px dashed var(--border); border-radius:11px; background:#fff; font-family:inherit; }
+  .btn2 { width:100%; padding:13px 20px; font-size:15px; font-weight:800; font-family:inherit; color:#fff; border:none;
+         border-radius:12px; background:linear-gradient(135deg,var(--accent2),var(--accent)); cursor:pointer;
+         box-shadow:0 8px 20px rgba(107,78,255,.32); margin-top:18px; }
+  .btn2:disabled { opacity:.6; cursor:default; }
+  .hint { font-size:12px; color:var(--muted); margin-top:8px; }
+  .msg { font-size:13px; padding:10px 12px; border-radius:10px; margin-top:12px; display:none; }
+  .msg.err { display:block; background:rgba(226,85,85,.12); color:#c0392b; }
+  .msg.ok { display:block; background:rgba(0,168,125,.12); color:#00714f; }
+  .gate { text-align:center; padding:40px 20px; color:var(--muted); }
+  .gate a { display:inline-block; margin-top:14px; text-decoration:none; font-weight:800; color:#fff;
+            background:linear-gradient(135deg,var(--accent2),var(--accent)); padding:11px 26px; border-radius:12px; }
+  .item { border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-top:10px; background:#fff; }
+  .item .it { font-weight:700; font-size:14px; }
+  .item .im { font-size:12px; color:var(--muted); margin-top:3px; }
+  .loading { text-align:center; color:var(--muted); padding:20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="/meena_logo.png" alt="Meena">
+    <div><div class="t">رفع تقرير</div><div class="s">إرفاق تقرير موجود لديك برقم ملف المريض</div></div>
+  </div>
+
+  <div id="app"><div class="loading">جاري التحقق من الدخول…</div></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtDate(s){ const d=String(s||'').slice(0,16).replace('T',' '); return d||'—'; }
+
+async function boot(){
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('not-logged-in');
+    renderForm();
+  } catch(e){
+    $('app').innerHTML = `<div class="card gate">
+      يجب تسجيل الدخول للتطبيق أولاً قبل رفع التقارير.
+      <br><a href="/">تسجيل الدخول</a>
+    </div>`;
+  }
+}
+
+function renderForm(){
+  $('app').innerHTML = `
+    <div class="card">
+      <label for="file">رقم الملف *</label>
+      <input type="text" id="file" inputmode="numeric" autocomplete="off" placeholder="مثال: 26289620">
+      <label for="pname">اسم المريض (اختياري)</label>
+      <input type="text" id="pname" autocomplete="off">
+      <label for="title">عنوان التقرير (اختياري)</label>
+      <input type="text" id="title" autocomplete="off" placeholder="مثال: أشعة صدر">
+      <label for="pdf">ملف التقرير (PDF أو صورة) *</label>
+      <input type="file" id="pdf" accept="application/pdf,image/*">
+      <div class="hint">الحد الأقصى ~20 ميجابايت.</div>
+      <button class="btn2" id="go" onclick="submitReport()">رفع التقرير</button>
+      <div class="msg" id="msg"></div>
+    </div>
+    <div id="existing"></div>`;
+}
+
+function fileToDataURL(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function submitReport(){
+  const msg = $('msg'); msg.className = 'msg';
+  const file_no = ($('file').value||'').trim();
+  const pdfInput = $('pdf');
+  const f = pdfInput.files && pdfInput.files[0];
+  if (!file_no){ msg.className='msg err'; msg.textContent='أدخل رقم الملف'; msg.style.display='block'; return; }
+  if (!f){ msg.className='msg err'; msg.textContent='اختر ملف التقرير'; msg.style.display='block'; return; }
+  $('go').disabled = true;
+  msg.className = 'msg'; msg.style.display = 'none';
+  try {
+    const dataUrl = await fileToDataURL(f);
+    const r = await fetch('/api/manual-reports/upload', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_no,
+        patient_name: ($('pname').value||'').trim(),
+        title: ($('title').value||'').trim(),
+        file: dataUrl,
+      }),
+    });
+    if (!r.ok){
+      let d; try{ d = await r.json(); } catch(e){ d = {}; }
+      throw new Error(d.detail || ('HTTP ' + r.status));
+    }
+    msg.className = 'msg ok'; msg.textContent = 'تم رفع التقرير بنجاح.'; msg.style.display = 'block';
+    $('pdf').value = '';
+    loadExisting(file_no);
+  } catch(e){
+    msg.className = 'msg err'; msg.textContent = e.message || 'فشل الرفع'; msg.style.display = 'block';
+  } finally {
+    $('go').disabled = false;
+  }
+}
+
+async function loadExisting(file_no){
+  try {
+    const r = await fetch('/api/manual-reports?file=' + encodeURIComponent(file_no), { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const reports = d.reports || [];
+    if (!reports.length){ $('existing').innerHTML = ''; return; }
+    const rows = reports.map(x => `
+      <div class="item">
+        <div class="it">${esc(x.title || 'تقرير')}</div>
+        <div class="im">${esc(x.patient_name || '')} ${x.patient_name ? '·' : ''} رفعه ${esc(x.uploaded_by || '—')} · ${esc(fmtDate(x.created_at))}</div>
+      </div>`).join('');
+    $('existing').innerHTML = `<div class="card"><label>التقارير المرفوعة لهذا الملف (${reports.length})</label>${rows}</div>`;
+  } catch(e){}
+}
+
+boot();
+</script>
+</body>
+</html>

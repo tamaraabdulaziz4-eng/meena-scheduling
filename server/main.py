@@ -537,6 +537,24 @@ def init_schema():
                 );""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_docup_file ON scheduling.doc_uploads(file_no);")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_docup_token ON scheduling.doc_uploads(token) WHERE token IS NOT NULL;")
+            # Manually-uploaded radiology reports. Deliberately self-contained: staff
+            # attach a PDF they already have in hand for a file number, and the public
+            # search link only ever reads rows from THIS table. No Siratech/HIS/DePACS
+            # call anywhere in this flow — replaces the old HIS-integrated /reports link
+            # (permanently disabled) with a manual process that needs no system access.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduling.manual_reports (
+                    id SERIAL PRIMARY KEY,
+                    file_no TEXT NOT NULL,
+                    patient_name TEXT,
+                    title TEXT,
+                    filename TEXT,
+                    pdf BYTEA NOT NULL,
+                    uploaded_by INTEGER REFERENCES scheduling.users(id) ON DELETE SET NULL,
+                    uploaded_by_name TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_manual_reports_file ON scheduling.manual_reports(file_no);")
             # A 'staff' user account is linked to one staff record (self-service portal).
             cur.execute("ALTER TABLE scheduling.users ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES scheduling.staff(id) ON DELETE SET NULL;")
             # Session epoch: bumped on password change to invalidate old tokens.
@@ -12124,6 +12142,159 @@ def regen_reports_link(user=Depends(require_admin)):
          ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
     insert_audit(user, "REPORTS_LINK_REGEN")
     return {"url": _reports_public_url(), "token": t}
+
+# ── Manual radiology reports (self-contained — NO Siratech/HIS/DePACS call) ────
+# Replaces the old HIS-integrated /reports link. Staff who already have a report
+# PDF in hand attach it here by file number; the public search link only reads
+# back rows from scheduling.manual_reports. Nothing in this flow talks to any
+# external system, so there is no "integration" here to authorise.
+def _manual_reports_token():
+    import secrets
+    t = get_setting("manual_reports_public_token")
+    if not t:
+        t = secrets.token_urlsafe(24)
+        q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('manual_reports_public_token',%s)
+             ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    return t
+
+def _manual_reports_public_url():
+    base = (os.environ.get("APP_URL", "").strip().rstrip("/"))
+    return f"{base}/report-search?t={_manual_reports_token()}"
+
+_manual_reports_pub_hits: list = []
+def _manual_reports_throttle():
+    import time as _t
+    now = _t.time()
+    _manual_reports_pub_hits[:] = [h for h in _manual_reports_pub_hits if now - h < 60]
+    if len(_manual_reports_pub_hits) >= 120:        # max 120 public lookups / minute
+        raise HTTPException(429, "Too many lookups, please wait a moment.")
+    _manual_reports_pub_hits.append(now)
+
+def _check_manual_reports_token(token):
+    import secrets
+    if not token or not secrets.compare_digest(str(token).encode(), str(_manual_reports_token()).encode()):
+        raise HTTPException(403, "Invalid or expired link. Ask the radiology team for a new one.")
+
+@app.get("/report-search")
+def serve_report_search_public():
+    """Public, login-free search of manually-uploaded reports by file number."""
+    return FileResponse(os.path.join(DASHBOARD, "report-search.html"), media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+@app.get("/report-upload")
+def serve_report_upload():
+    """Staff report-upload page. The page itself has no login gate, but every
+    action on it calls an authenticated API (require_radiology) — the same
+    pattern the SPA itself uses."""
+    return FileResponse(os.path.join(DASHBOARD, "report-upload.html"), media_type="text/html",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+@app.get("/api/public/manual-reports/lookup")
+def public_manual_reports_lookup(request: Request):
+    """List manually-uploaded reports for a file number (public link)."""
+    _check_manual_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _manual_reports_throttle()
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    rows = q("""SELECT id, patient_name, title, filename, created_at
+                FROM scheduling.manual_reports WHERE file_no=%s
+                ORDER BY created_at DESC""", (file_no,))
+    return {"file_no": file_no, "count": len(rows),
+            "reports": [{"id": r["id"], "patient_name": r["patient_name"], "title": r["title"],
+                         "filename": r["filename"], "created_at": str(r["created_at"])} for r in rows]}
+
+@app.get("/api/public/manual-reports/{report_id}/pdf")
+def public_manual_reports_pdf(report_id: int, request: Request):
+    """Stream one manually-uploaded report PDF (public link)."""
+    _check_manual_reports_token(request.query_params.get("t") or request.query_params.get("token"))
+    _manual_reports_throttle()
+    file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    row = q("SELECT pdf, filename, file_no FROM scheduling.manual_reports WHERE id=%s", (report_id,), one=True)
+    # Guard against IDOR: a report is only readable through the file number it was
+    # filed under, so a link-holder can't enumerate report_id 1,2,3… across patients.
+    if not row or str(row["file_no"]) != file_no:
+        raise HTTPException(403, "This report isn't available on this file number.")
+    fname = row["filename"] or f"report_{report_id}.pdf"
+    return Response(content=bytes(row["pdf"]), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+@app.get("/api/manual-reports")
+def list_manual_reports(request: Request, user=Depends(require_radiology)):
+    """Staff-side: what's already uploaded for a file number (upload page confirmation)."""
+    file_no = (request.query_params.get("file") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    rows = q("""SELECT id, patient_name, title, filename, uploaded_by_name, created_at
+                FROM scheduling.manual_reports WHERE file_no=%s
+                ORDER BY created_at DESC""", (file_no,))
+    return {"file_no": file_no,
+            "reports": [{"id": r["id"], "patient_name": r["patient_name"], "title": r["title"],
+                         "filename": r["filename"], "uploaded_by": r["uploaded_by_name"],
+                         "created_at": str(r["created_at"])} for r in rows]}
+
+@app.post("/api/manual-reports/upload")
+async def upload_manual_report(request: Request, user=Depends(require_radiology)):
+    """Staff attaches a report PDF (or a photo of one) they already have, by file number."""
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise HTTPException(400, "Bad request")
+    file_no = str(b.get("file_no") or "").strip()
+    if not file_no:
+        raise HTTPException(400, "Enter a patient file number")
+    data_url = str(b.get("file") or "")
+    m = re.match(r"data:([^;]+);base64,(.+)$", data_url, re.S)
+    if not m:
+        raise HTTPException(400, "No file was received")
+    mime, b64 = m.group(1), m.group(2)
+    try:
+        import base64 as _b64
+        raw = _b64.b64decode(b64)
+    except Exception:
+        raise HTTPException(400, "The file could not be read")
+    if len(raw) < 100:
+        raise HTTPException(400, "The file is empty")
+    if len(raw) > 20_000_000:
+        raise HTTPException(413, "The file is too large (max ~20 MB)")
+    pdf_bytes = _doc_to_pdf(raw, mime)
+    title = (str(b.get("title") or "").strip() or None)
+    patient_name = (str(b.get("patient_name") or "").strip() or None)
+    label = (title or "Report").strip()[:60]
+    ksa = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d")
+    filename = f"{label} - {ksa}.pdf"
+    row = q("""INSERT INTO scheduling.manual_reports
+               (file_no, patient_name, title, filename, pdf, uploaded_by, uploaded_by_name)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at""",
+            (file_no, patient_name, title, filename, psycopg2.Binary(pdf_bytes),
+             user.get("id"), user.get("username")), one=True)
+    insert_audit(user, "MANUAL_REPORT_UPLOAD", file_no, title or "")
+    return {"ok": True, "id": row["id"], "created_at": str(row["created_at"])}
+
+@app.delete("/api/manual-reports/{report_id}")
+def delete_manual_report(report_id: int, user=Depends(require_admin)):
+    """Remove a mistaken upload."""
+    row = q("DELETE FROM scheduling.manual_reports WHERE id=%s RETURNING file_no", (report_id,), one=True)
+    if not row:
+        raise HTTPException(404, "Not found")
+    insert_audit(user, "MANUAL_REPORT_DELETE", row["file_no"])
+    return {"ok": True}
+
+@app.get("/api/manual-reports/public-link")
+def get_manual_reports_link(user=Depends(require_admin)):
+    """The shareable public search link (admin)."""
+    return {"url": _manual_reports_public_url(), "token": _manual_reports_token()}
+
+@app.post("/api/manual-reports/public-link/regenerate")
+def regen_manual_reports_link(user=Depends(require_admin)):
+    """Rotate the token — old links stop working immediately."""
+    import secrets
+    t = secrets.token_urlsafe(24)
+    q("""INSERT INTO scheduling.app_settings (key,value) VALUES ('manual_reports_public_token',%s)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value""", (t,), exec_only=True)
+    insert_audit(user, "MANUAL_REPORTS_LINK_REGEN")
+    return {"url": _manual_reports_public_url(), "token": t}
 
 # ── Consumables inventory ─────────────────────────────────────────────────────
 def _inv_num(v, name, default=None):
