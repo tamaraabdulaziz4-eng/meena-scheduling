@@ -2601,7 +2601,11 @@ def serve_downtime_public():
 
 @app.get("/reports")
 def serve_reports_public():
-    """Public, login-free radiology report lookup (shared link for doctors)."""
+    """Public, login-free radiology report lookup (shared link for doctors).
+    Disabled — the team no longer uses it. Return a bare 404 so the route reads as
+    if it never existed (no page, no hint that a reports feature was ever here)."""
+    if not REPORTS_PUBLIC_ENABLED:
+        raise HTTPException(404, "Not Found")
     return FileResponse(
         os.path.join(DASHBOARD, "reports-public.html"),
         media_type="text/html",
@@ -12040,6 +12044,12 @@ def _cdxfer_cleanup_loop():
 # unguessable link token that is shared privately with doctors.
 # PRIVACY: anyone holding the link can read reports by file number. Rotate the
 # token if it leaks, and move to real doctor accounts when possible.
+#
+# DISABLED: the radiology team no longer uses the public /reports link, so the page
+# and its public lookup APIs are turned off. Flip this to True (and redeploy) to
+# restore it — the token machinery below is left intact so an existing link resumes.
+REPORTS_PUBLIC_ENABLED = False
+
 def _reports_token():
     import secrets
     t = get_setting("reports_public_token")
@@ -12151,6 +12161,8 @@ def public_radcare_pdf(request: Request):
 @app.get("/api/public/reports/lookup")
 def public_reports_lookup(request: Request):
     """List a patient's DePACS studies (newest first) for the public link."""
+    if not REPORTS_PUBLIC_ENABLED:
+        raise HTTPException(404, "Not Found")
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
@@ -12184,6 +12196,8 @@ def public_reports_lookup(request: Request):
 @app.get("/api/public/reports/study/{study_id}")
 def public_reports_study(study_id: int, request: Request):
     """Full report text for one study (public link)."""
+    if not REPORTS_PUBLIC_ENABLED:
+        raise HTTPException(404, "Not Found")
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
@@ -12211,6 +12225,8 @@ def public_reports_study(study_id: int, request: Request):
 @app.get("/api/public/reports/study/{study_id}/pdf")
 def public_reports_pdf(study_id: int, request: Request):
     from fastapi import Response
+    if not REPORTS_PUBLIC_ENABLED:
+        raise HTTPException(404, "Not Found")
     _check_reports_token(request.query_params.get("t") or request.query_params.get("token"))
     _reports_throttle()
     file_no = (request.query_params.get("file") or request.query_params.get("file_no") or "").strip()
