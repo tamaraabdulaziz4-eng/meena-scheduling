@@ -4,8 +4,8 @@
 The generated .js file embeds the cases (visible rows of the export files,
 i.e. the rows left after the file's Excel filter) together with the verdict
 computed by pacs_match.py. Pasted into the PACS web viewer's DevTools Console
-it re-fetches the live worklist for the period and opens a side panel that
-walks through the cases one by one, showing every PACS study of that patient
+it searches PACS per patient MRN (no full worklist download) and opens a side
+panel that walks through the cases one by one, showing every PACS study of that patient
 (accession, exam, date, images) with the matched study highlighted, so the
 reviewer can agree/disagree and copy the list of disagreements at the end.
 
@@ -45,24 +45,63 @@ TEMPLATE = r"""
   const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const setMsg = m => { P.innerHTML = '<h3 style="margin:4px 0">PACS verify</h3><div>' + esc(m) + '</div>'; };
 
-  // ---------- live PACS fetch
-  setMsg('Loading live PACS worklist ' + FROM + ' .. ' + TO + ' ...');
-  const byMrn = {}; let total = 0, empty = 0;
-  for (let s = 1; s <= 60000; s += 200) {
-    const r = await get(`${EP}worklists/28?attributes=03,04,17,27,08,09,10&filter=fromDate:${FROM};toDate:${TO}&startR=${s}&endR=${s + 199}`);
-    if (r.status !== 200) { setMsg('PACS request failed: ' + r.status + ' ' + r.text.slice(0, 200)); return; }
-    let items = [];
-    try { JSON.parse(r.text).data.forEach(b => { if (Array.isArray(b)) items = items.concat(b); }); } catch (e) {}
-    if (!items.length) { if (++empty >= 2) break; else continue; }
-    empty = 0;
-    for (const it of items) {
-      const w = it.workItem; total++;
-      const mrn = (w.patientIdentifier && w.patientIdentifier[0] && w.patientIdentifier[0].value) || '';
-      (byMrn[mrn] = byMrn[mrn] || []).push({ rp: w.requestedProcedureId, acc: w.procedureAccessionNo || '(no accession)', code: w.procedureCode, text: w.procedureText, status: w.procedureStatus, date: (w.procedureStartTime || '').slice(0, 16), mod: w.procedureModality, img: w.imageCount || 0, name: (w.patientName && w.patientName.text) || '' });
+  // ---------- per-patient search (no full worklist download)
+  const ATTR = 'attributes=03,04,17,27,08,09,10';
+  const parseItems = t => { let items = []; try { JSON.parse(t).data.forEach(b => { if (Array.isArray(b)) items = items.concat(b); }); } catch (e) {} return items; };
+  const toStudy = w => ({ rp: w.requestedProcedureId, acc: w.procedureAccessionNo || '(no accession)', code: w.procedureCode, text: w.procedureText, status: w.procedureStatus, date: (w.procedureStartTime || '').slice(0, 16), mod: w.procedureModality, img: w.imageCount || 0, mrn: (w.patientIdentifier && w.patientIdentifier[0] && w.patientIdentifier[0].value) || '' });
+  let TEMPLATE = null; // endpoint with {MRN} placeholder
+  const cache = {};
+
+  async function tryKeys(mrn) {
+    for (const key of ['patientId', 'patientID', 'patientIdentifier', 'mrn', 'MRN', 'pid', 'patientNumber']) {
+      const ep = `${EP}worklists/28?${ATTR}&filter=fromDate:${FROM};toDate:${TO};${key}:{MRN}&startR=1&endR=200`;
+      try {
+        const r = await get(ep.replace('{MRN}', mrn));
+        if (r.status !== 200) continue;
+        const items = parseItems(r.text).map(it => toStudy(it.workItem));
+        if (items.length && items.every(x => x.mrn === mrn)) { console.log('PACS search key found:', key); return ep; }
+      } catch (e) {}
     }
-    setMsg('Loading live PACS worklist ... ' + total + ' studies so far');
+    return null;
   }
-  Object.values(byMrn).forEach(a => a.sort((x, y) => x.date < y.date ? -1 : 1));
+
+  function learnFromUI() {
+    // watch the page's own requests until one carries an 8-digit MRN in Service-End-Point
+    return new Promise(resolve => {
+      const XH = XMLHttpRequest.prototype.setRequestHeader;
+      XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+        if (/service-end-point/i.test(k) && /worklist|search|patient/i.test(v)) {
+          const m = String(v).match(/(?<![0-9])(\d{8})(?![0-9])/);
+          if (m) {
+            XMLHttpRequest.prototype.setRequestHeader = XH;
+            let ep = String(v).split(m[1]).join('{MRN}');
+            ep = ep.replace(/timeRange:[^;&]*/, `fromDate:${FROM};toDate:${TO}`).replace(/;?imageCount:[^;&]*/, '');
+            if (!/fromDate/.test(ep)) ep = ep.replace('filter=', `filter=fromDate:${FROM};toDate:${TO};`);
+            ep = ep.replace(/endR=\d+/, 'endR=200');
+            console.log('learned PACS search endpoint:', ep);
+            resolve(ep);
+          }
+        }
+        return XH.apply(this, arguments);
+      };
+    });
+  }
+
+  async function getStudies(mrn) {
+    if (cache[mrn]) return cache[mrn];
+    const r = await get(TEMPLATE.replace('{MRN}', mrn));
+    const items = r.status === 200 ? parseItems(r.text).map(it => toStudy(it.workItem)) : [];
+    const list = items.filter(x => x.mrn === mrn && x.date.slice(0, 10) >= FROM && x.date.slice(0, 10) <= TO).sort((x, y) => x.date < y.date ? -1 : 1);
+    cache[mrn] = list;
+    return list;
+  }
+
+  setMsg('Finding how PACS searches by MRN ...');
+  TEMPLATE = await tryKeys(CASES[0].mrn);
+  if (!TEMPLATE) {
+    setMsg('Could not guess the MRN search field. Please search ONE patient by MRN in the PACS page now (type any 8-digit MRN in the search box and press Enter). The panel will continue automatically.');
+    TEMPLATE = await learnFromUI();
+  }
 
   // ---------- state
   let i = 0, fVerdict = 'ALL', fMonth = 'ALL';
@@ -77,7 +116,8 @@ TEMPLATE = r"""
     if (!L.length) { P.innerHTML = '<h3>PACS verify</h3><div>No cases for this filter.</div>' + btn('ALL', 'fv:ALL', true); bind(); return; }
     if (i >= L.length) i = L.length - 1; if (i < 0) i = 0;
     const c = L[i];
-    const studies = byMrn[c.mrn] || [];
+    const studies = cache[c.mrn];
+    if (!studies) { P.innerHTML = `<h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3><div>Searching PACS for MRN ${esc(c.mrn)} ...</div>`; getStudies(c.mrn).then(() => { if (list()[i] === c) render(); }); return; }
     const done = c.v === 'DONE';
     const agreeN = Object.values(marks).filter(m => m === 'agree').length, disN = Object.values(marks).filter(m => m === 'disagree').length;
     let h = `<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3>${btn('✕ close', 'close')}</div>`;
@@ -131,7 +171,7 @@ TEMPLATE = r"""
   }
   document.addEventListener('keydown', onKey);
   render();
-  console.log('PACS verify panel ready:', CASES.length, 'cases;', total, 'live PACS studies loaded');
+  console.log('PACS verify panel ready:', CASES.length, 'cases; searching PACS per MRN');
 })();
 """
 
