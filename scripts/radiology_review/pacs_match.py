@@ -19,7 +19,8 @@ Every PACS study (requested procedure) is assigned to at most ONE order:
    -3 .. +45 days of the order date (same day preferred, then closest);
 2. modality match: same MRN + compatible modality family, study date within
    -1 .. +45 days (used when PACS registered the exam under a generic code
-   such as "US" or "DX CHEST");
+   such as "US" or "DX CHEST"); when the order and the PACS exam both name a
+   body part, the names must agree (thoracic vs lumbar spine are different);
 3. leftover studies are only used to flag cancelled orders that still have
    images.
 
@@ -169,6 +170,39 @@ def family_for(category) -> set | None:
     return None if key == "" else set()
 
 
+# words that identify the body part / exam type; synonyms map to one token
+BODY_SYNONYMS = {
+    "tspine": ["THORACIC", "DORSAL", "TSPINE", "T-SPINE", "T SPINE"],
+    "lspine": ["LUMBO", "LUMBAR", "LSPINE", "L-SPINE", "L SPINE", "LUMBOSACRAL", "SACRAL"],
+    "cspine": ["CERVICAL", "CSPINE", "C-SPINE", "C SPINE"],
+    "chest": ["CHEST", "THORAX"], "abdomen": ["ABDOMEN", "ABD", "KUB"], "pelvis": ["PELVIS", "PELVIC", "GYN", "TRANSVAGINAL", "TVS"],
+    "knee": ["KNEE", "KNEES"], "shoulder": ["SHOULDER", "SCAPULA"], "hand": ["HAND"], "wrist": ["WRIST", "WRISTE"],
+    "foot": ["FOOT", "FEET"], "ankle": ["ANKLE"], "elbow": ["ELBOW"], "hip": ["HIP", "HIPS"], "skull": ["SKULL", "HEAD", "BRAIN"],
+    "sinus": ["SINUS", "PARANASAL", "FACIAL", "MAXILLOFACIAL", "ORBIT", "ORBITS"], "breast": ["BREAST", "MAMMO", "MAMMOGRAM"], "ob": ["OBSTETRIC", "OB", "PREGNANCY", "FETAL"],
+    "femur": ["FEMUR"], "tibia": ["TIBIA", "FIBULA", "LEG"], "humerus": ["HUMERUS", "ARM"], "forearm": ["FOREARM", "RADIUS", "ULNA"],
+    "clavicle": ["CLAVICLE"], "neck": ["NECK", "THYROID"], "scrotum": ["SCROTUM", "TESTIS", "TESTICULAR"], "renal": ["RENAL", "KIDNEY", "URINARY", "BLADDER"],
+    "finger": ["FINGER", "FINGERS", "THUMB"], "toe": ["TOE", "TOES"], "heel": ["HEEL", "CALCANEUS"], "sacrum": ["COCCYX"],
+    "dexa": ["DEXA", "BONE DENSITY", "BMD"], "small": ["SMALL PARTS", "SM PARTS", "SOFT TISSUE"],
+    "spine": ["SPINE"], "orbit": ["ORBIT"], "nasal": ["NASAL BONE"], "mandible": ["MANDIBLE", "JAW", "TMJ"], "ribs": ["RIB", "RIBS"],
+    "doppler": ["DOPPLER", "DUPLEX", "VASCULAR"], "echo": ["ECHO", "ECHOCARDIOGRAPHY"], "carotid": ["CAROTID"],
+}
+_SYN_INDEX = [(w, k) for k, ws in BODY_SYNONYMS.items() for w in ws]
+
+
+def body_tokens(text) -> set:
+    t = " " + re.sub(r"[^A-Z]+", " ", str(text or "").upper()) + " "
+    return {k for w, k in _SYN_INDEX if " " + w + " " in t}
+
+
+def similarity(order, study) -> int:
+    a = body_tokens(order.get("Exam / Service"))
+    b = body_tokens(study["text"])
+    if not a or not b:
+        return 0
+    common = len(a & b)
+    return common if common else -1  # both named a body part but different ones
+
+
 def match(orders: list[dict], studies: list[dict]) -> None:
     """Greedy one-to-one assignment; writes o['_study'], o['_match'] in place."""
     by_mrn = collections.defaultdict(list)
@@ -201,7 +235,7 @@ def match(orders: list[dict], studies: list[dict]) -> None:
             else:
                 if fam is not None and s["mod"] not in fam:
                     continue
-            out.append((abs(delta), 0 if s["img"] > 0 else 1, s))
+            out.append((abs(delta), 0 if s["img"] > 0 else 1, s, 0 if exact_code else similarity(o, s)))
         return out
 
     def run_pass(pool, before, after, exact_code, label):
@@ -209,11 +243,13 @@ def match(orders: list[dict], studies: list[dict]) -> None:
         for o in pool:
             if o["_study"] is not None:
                 continue
-            for absd, noimg, s in candidates(o, before, after, exact_code):
-                pairs.append((absd, noimg, o["_seq"], s))
-        pairs.sort(key=lambda p: (p[0], p[1], p[2]))
+            for absd, noimg, s, sim in candidates(o, before, after, exact_code):
+                if sim < 0:
+                    continue  # both name a body part and they differ (e.g. knee vs shoulder)
+                pairs.append((absd, -sim, noimg, o["_seq"], s))
+        pairs.sort(key=lambda p: (p[0], p[1], p[2], p[3]))
         seq_to_order = {o["_seq"]: o for o in pool}
-        for absd, _noimg, seq, s in pairs:
+        for absd, _sim, _noimg, seq, s in pairs:
             o = seq_to_order[seq]
             if o["_study"] is not None or s["order"] is not None:
                 continue
@@ -234,10 +270,10 @@ def match(orders: list[dict], studies: list[dict]) -> None:
         s0 = o["_study"]
         if s0 is None or s0["img"] > 0:
             continue
-        with_img = [c for c in candidates(o, FAMILY_BEFORE, FAMILY_AFTER, False) if c[2]["img"] > 0]
+        with_img = [c for c in candidates(o, FAMILY_BEFORE, FAMILY_AFTER, False) if c[2]["img"] > 0 and c[3] >= 0]
         if not with_img:
             continue
-        with_img.sort(key=lambda c: c[0])
+        with_img.sort(key=lambda c: (c[0], -c[3]))
         s1 = with_img[0][2]
         s0["order"] = None
         o["_study"] = s1
