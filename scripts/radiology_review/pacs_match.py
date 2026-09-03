@@ -35,12 +35,17 @@ verdict + evidence, a "Needs Check" sheet and a "Summary" sheet) and
 Usage:
     python3 pacs_match.py N3_JUL.xlsx N3_AUG.xlsx --pacs pacs_jul_aug.json pacs_jul_aug_part2.json --out review_out
 
+    # or: keep the original files untouched and only fill the DONE OR NOT DONE
+    # column for the rows visible under the file's Excel filter
+    python3 pacs_match.py fill N3_JUL.xlsx N3_AUG.xlsx --pacs pacs_jul_aug.json pacs_jul_aug_part2.json --out filled
+
 Patient data never leaves the machine; nothing here is committed to git.
 """
 from __future__ import annotations
 
 import argparse
 import collections
+import copy
 import datetime as dt
 import json
 import os
@@ -470,5 +475,71 @@ def main(argv=None):
     return 0
 
 
+
+
+# --------------------------------------------------------------------- in-place fill
+def fill_original(src: str, dst: str, orders: list[dict], results: list[dict], only_visible: bool = True) -> int:
+    """Copy the original export and fill ONLY the DONE OR NOT DONE column.
+
+    Everything else (filters, hidden rows, formatting, other sheets) is kept.
+    ``orders``/``results`` must be in sheet order (as returned by load_export).
+    Returns the number of cells written.
+    """
+    wb = openpyxl.load_workbook(src)
+    ws = wb.worksheets[0]
+    header = [c.value for c in ws[1]]
+    if VERDICT_COL in header:
+        col = header.index(VERDICT_COL) + 1
+    else:
+        col = len([h for h in header if h is not None]) + 1
+        ws.cell(row=1, column=col, value=VERDICT_COL)
+        ws.cell(row=1, column=col).font = copy.copy(ws.cell(row=1, column=1).font)
+        if ws.auto_filter.ref:
+            ws.auto_filter.ref = f"A1:{get_column_letter(col)}{ws.max_row}"
+    id_col = header.index("Order ID") + 1 if "Order ID" in header else None
+    written = 0
+    for i, (o, r) in enumerate(zip(orders, results)):
+        row = i + 2
+        if id_col and str(ws.cell(row=row, column=id_col).value) != str(o.get("Order ID")):
+            raise RuntimeError(f"{src}: row {row} does not match order {o.get('Order ID')}")
+        if only_visible and ws.row_dimensions[row].hidden:
+            continue
+        ws.cell(row=row, column=col, value=r[VERDICT_COL])
+        written += 1
+    wb.save(dst)
+    return written
+
+
+def main_fill(argv=None):
+    ap = argparse.ArgumentParser(description="Fill DONE OR NOT DONE in the original export files (nothing else changes).")
+    ap.add_argument("exports", nargs="+")
+    ap.add_argument("--pacs", nargs="+", required=True)
+    ap.add_argument("--out", default="review_out")
+    ap.add_argument("--all-rows", action="store_true", help="fill hidden (filtered-out) rows too")
+    args = ap.parse_args(argv)
+    os.makedirs(args.out, exist_ok=True)
+    studies = load_pacs(args.pacs)
+    per_file, all_orders, seq = [], [], 0
+    for path in args.exports:
+        header, rows = load_export(path)
+        for o in rows:
+            o["_key"] = (path, o.get("Order ID"), seq)
+            o["_seq"] = seq
+            seq += 1
+        all_orders.extend(rows)
+        per_file.append((path, rows))
+    match(all_orders, studies)
+    for path, rows in per_file:
+        results = [verdict(o) for o in rows]
+        base = os.path.splitext(os.path.basename(path))[0]
+        dst = os.path.join(args.out, f"{base}.xlsx")
+        n = fill_original(path, dst, rows, results, only_visible=not args.all_rows)
+        c = collections.Counter(r[VERDICT_COL] for o, r in zip(rows, results))
+        print(f"{dst}: filled {n} rows")
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "fill":
+        sys.exit(main_fill(sys.argv[2:]))
     sys.exit(main())
