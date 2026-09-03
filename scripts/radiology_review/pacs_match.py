@@ -23,12 +23,10 @@ Every PACS study (requested procedure) is assigned to at most ONE order:
 3. leftover studies are only used to flag cancelled orders that still have
    images.
 
-Verdict per order:
-* Cancelled in the system              -> NOT DONE (system)
-* matched study with images            -> DONE (PACS)
-* matched study with 0 images          -> NOT DONE (PACS, registered only)
-* no study, result released in system  -> DONE (system) but flagged for check
-* no study, still pending in system    -> NOT DONE (PACS, nothing found)
+Verdict per order (simple rule): a matched PACS study with images -> DONE,
+anything else -> NOT DONE. The Notes column says why (cancelled, registered
+with 0 images, not in PACS) and flags rows where the system disagrees with
+PACS (result released but no images / cancelled but images exist).
 
 Outputs (in --out): ``<export>_REVIEWED.xlsx`` per export (original columns +
 verdict + evidence, a "Needs Check" sheet and a "Summary" sheet) and
@@ -57,8 +55,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 DONE, NOT_DONE = "DONE", "NOT DONE"
 VERDICT_COL = "DONE OR NOT DONE"
 REVIEW_COLS = [
-    "Verified In", "Match Type", "Confidence", "PACS Accession", "PACS Exam",
-    "PACS Exam Date", "PACS Images", "PACS Status", "Notes",
+    "PACS Accession", "PACS Exam", "PACS Exam Date", "PACS Images", "PACS Status", "Notes",
 ]
 
 # N3 "Modality (Category)" -> compatible PACS modality codes
@@ -251,55 +248,37 @@ def match(orders: list[dict], studies: list[dict]) -> None:
 
 
 def verdict(o: dict) -> dict:
+    """Simple rule: images in PACS -> DONE, otherwise NOT DONE. Notes explain why."""
     s = o["_study"]
     status = str(o.get("Order Status") or "").strip()
     released = status.lower().startswith("completed") or status.lower().startswith("result entered")
-    conf_exact = "High" if o["_match"].startswith("Exact") else "Medium"
-    out = {"Verified In": "", "Match Type": o["_match"], "Confidence": "", "Notes": "",
+    out = {"Notes": "",
            "PACS Accession": s["acc"] if s else "", "PACS Exam": s["text"] if s else "",
-           "PACS Exam Date": s["start"] if s else "", "PACS Images": s["img"] if s else "",
-           "PACS Status": s["status"] if s else ""}
+           "PACS Exam Date": s["start"] if s else "", "PACS Images": s["img"] if s else 0,
+           "PACS Status": s["status"] if s else "Not in PACS"}
+    notes = list(o["_flag"])
     flags = []
 
-    if o["_cancelled"]:
-        out[VERDICT_COL] = NOT_DONE
-        out["Verified In"] = "System (cancelled)"
-        out["Confidence"] = "High"
-        if s and s["img"] > 0:
-            flags.append("CHECK: order cancelled in system but PACS has images on the same day")
-    elif s is not None:
-        if s["img"] > 0:
-            out[VERDICT_COL] = DONE
-            out["Verified In"] = "PACS"
-            out["Confidence"] = conf_exact
-        else:
-            out["Verified In"] = "PACS"
-            if released:
-                out[VERDICT_COL] = DONE
-                out["Confidence"] = "Low"
-                flags.append("CHECK: result released in system but PACS study has 0 images")
-            else:
-                out[VERDICT_COL] = NOT_DONE
-                out["Confidence"] = conf_exact
-                out["Notes"] = "Registered in PACS with 0 images (not performed)"
-        if out["Confidence"] == "Medium" and not flags:
-            out["Notes"] = (out["Notes"] + "; " if out["Notes"] else "") + "Matched by modality, exam name differs in PACS"
+    if s is not None and s["img"] > 0:
+        out[VERDICT_COL] = DONE
+        if o["_match"].startswith("Modality"):
+            notes.append("Exam name differs in PACS (matched by modality)")
+        elif not o["_match"].endswith("same day"):
+            notes.append(o["_match"])
+        if o["_cancelled"]:
+            flags.append("CHECK: cancelled in system but PACS has images")
     else:
-        if released:
-            out[VERDICT_COL] = DONE
-            out["Verified In"] = "System (result released)"
-            out["Confidence"] = "Low"
-            flags.append("CHECK: result released in system but no PACS study found")
+        out[VERDICT_COL] = NOT_DONE
+        if o["_cancelled"]:
+            notes.append("Cancelled in system")
+        elif s is not None:
+            notes.append("Registered in PACS with 0 images")
         else:
-            out[VERDICT_COL] = NOT_DONE
-            out["Verified In"] = "PACS (nothing found)"
-            out["Confidence"] = "Medium"
-            out["Notes"] = ("Patient has other PACS studies in the period, none matching this exam"
-                            if o["_has_other"] else "No PACS study for this patient in the period")
-    if o["_flag"]:
-        out["Notes"] = "; ".join(o["_flag"] + ([out["Notes"]] if out["Notes"] else []))
-    if flags:
-        out["Notes"] = "; ".join(flags + ([out["Notes"]] if out["Notes"] else []))
+            notes.append("No PACS study for this patient/exam in the period" if o["_has_other"]
+                         else "Patient not in PACS in the period")
+        if released:
+            flags.append("CHECK: result released in system but no images in PACS")
+    out["Notes"] = "; ".join(flags + notes)
     out["_check"] = bool(flags)
     return out
 
@@ -349,7 +328,7 @@ def write_reviewed(path_out: str, header: list[str], orders: list[dict], results
         cell = ws.cell(row=rr, column=v_idx)
         cell.font = BOLD
         cell.fill = FILL_CHECK if r["_check"] else (FILL_DONE if r[VERDICT_COL] == DONE else FILL_NOT)
-        if r["_check"] or r["Confidence"] in ("Medium", "Low"):
+        if r["_check"]:
             check_rows.append(row)
     dv = DataValidation(type="list", formula1=f'"{DONE},{NOT_DONE}"', allow_blank=True)
     ws.add_data_validation(dv)
@@ -370,34 +349,30 @@ def write_reviewed(path_out: str, header: list[str], orders: list[dict], results
     wsum.append([f"{label}: DONE / NOT DONE summary"])
     wsum["A1"].font = Font(bold=True, size=13)
     wsum.append([])
-    wsum.append(["Branch", "Orders", DONE, NOT_DONE, "Needs check (yellow)", "High confidence", "Medium", "Low"])
+    wsum.append(["Branch", "Orders", DONE, NOT_DONE, "Needs check (yellow)"])
     per = collections.defaultdict(lambda: collections.Counter())
     for o, r in zip(orders, results):
         b = str(o.get("Branch") or "(no branch)")
         per[b]["n"] += 1
         per[b][r[VERDICT_COL]] += 1
         per[b]["check"] += int(r["_check"])
-        per[b][r["Confidence"]] += 1
     tot = collections.Counter()
     for b in sorted(per):
         c = per[b]
-        wsum.append([b, c["n"], c[DONE], c[NOT_DONE], c["check"], c["High"], c["Medium"], c["Low"]])
+        wsum.append([b, c["n"], c[DONE], c[NOT_DONE], c["check"]])
         tot.update(c)
-    wsum.append(["TOTAL", tot["n"], tot[DONE], tot[NOT_DONE], tot["check"], tot["High"], tot["Medium"], tot["Low"]])
+    wsum.append(["TOTAL", tot["n"], tot[DONE], tot[NOT_DONE], tot["check"]])
     wsum[wsum.max_row][0].font = BOLD
     wsum.append([])
     wsum.append(["How the verdict was decided", "Orders"])
-    how = collections.Counter(f'{r["Verified In"]} | {r["Match Type"] or "-"}' for r in results)
+    how = collections.Counter(f'{r[VERDICT_COL]} | {r["Notes"] or "Images found in PACS, same exam, same day"}' for r in results)
     for k, v in how.most_common():
         wsum.append([k, v])
     wsum.append([])
     wsum.append(["Legend"])
-    wsum.append(["Green", "DONE - images found in PACS, or result released in the system"])
-    wsum.append(["Red", "NOT DONE - cancelled, or registered with 0 images, or nothing in PACS"])
-    wsum.append(["Yellow", "Needs a manual check - system and PACS disagree (see Notes)"])
-    wsum.append(["Confidence High", "Same patient + same exam code + date match in PACS, or system status is final"])
-    wsum.append(["Confidence Medium", "Matched by modality only, or nothing found in PACS for a pending order"])
-    wsum.append(["Confidence Low", "System says result released but PACS has no images - verify in Cerner/DE"])
+    wsum.append(["Green", "DONE - images exist in PACS for this patient and exam"])
+    wsum.append(["Red", "NOT DONE - no images in PACS (cancelled, registered with 0 images, or not in PACS)"])
+    wsum.append(["Yellow", "System and PACS disagree - see Notes, check in Cerner/DE if needed"])
     for c in wsum[3]:
         c.font = BOLD
         c.fill = FILL_HEAD
@@ -409,15 +384,15 @@ def write_reviewed(path_out: str, header: list[str], orders: list[dict], results
         "",
         "EN:",
         "1. Sheet 'Radiology Orders' is your original export with DONE OR NOT DONE filled automatically.",
-        "2. Green = DONE (images exist in PACS). Red = NOT DONE. Yellow = system and PACS disagree; check in Cerner/DE and correct the cell (dropdown).",
-        "3. Sheet 'Needs Check' lists only the rows worth a manual look (yellow rows + medium/low confidence).",
+        "2. Rule: images exist in PACS = DONE, otherwise NOT DONE. Yellow = system and PACS disagree; check in Cerner/DE and correct the cell (dropdown) if needed.",
+        "3. Sheet 'Needs Check' lists only the yellow rows.",
         "4. Columns PACS Accession / PACS Exam / PACS Exam Date / PACS Images show the evidence used for each row.",
         "5. Sheet 'Summary' gives totals per branch to send with the file.",
         "",
         "AR:",
         "1. ورقة Radiology Orders هي ملفك الأصلي مع تعبئة عمود DONE OR NOT DONE تلقائياً.",
-        "2. الأخضر = DONE (توجد صور في PACS). الأحمر = NOT DONE. الأصفر = تعارض بين النظام وPACS، راجعه في Cerner أو DE وعدّل الخلية من القائمة المنسدلة.",
-        "3. ورقة Needs Check فيها فقط الصفوف التي تحتاج نظرة يدوية.",
+        "2. القاعدة: توجد صور في PACS = DONE، وغير ذلك = NOT DONE. الأصفر = تعارض بين النظام وPACS، راجعه في Cerner أو DE وعدّل الخلية من القائمة المنسدلة إذا لزم.",
+        "3. ورقة Needs Check فيها فقط الصفوف الصفراء.",
         "4. أعمدة PACS Accession / PACS Exam / PACS Exam Date / PACS Images توضح الدليل المستخدم لكل صف.",
         "5. ورقة Summary فيها الإجماليات لكل فرع.",
     ]
@@ -450,6 +425,7 @@ def main(argv=None):
     ap.add_argument("exports", nargs="+", help="order export .xlsx files")
     ap.add_argument("--pacs", nargs="+", required=True, help="PACS worklist JSON dump(s)")
     ap.add_argument("--out", default="review_out", help="output directory")
+    ap.add_argument("--branch", default="", help="only write orders whose Branch contains this text (matching still uses all orders)")
     args = ap.parse_args(argv)
 
     os.makedirs(args.out, exist_ok=True)
@@ -473,14 +449,17 @@ def main(argv=None):
 
     months = set()
     for path, header, rows in per_file:
+        if args.branch:
+            rows = [o for o in rows if args.branch.lower() in str(o.get("Branch") or "").lower()]
         results = [verdict(o) for o in rows]
         base = os.path.splitext(os.path.basename(path))[0]
+        if args.branch:
+            base += "_" + re.sub(r"[^A-Za-z0-9]+", "", args.branch.title())
         out = os.path.join(args.out, f"{base}_REVIEWED.xlsx")
         write_reviewed(out, header, rows, results, base)
         c = collections.Counter(r[VERDICT_COL] for r in results)
         chk = sum(r["_check"] for r in results)
-        conf = collections.Counter(r["Confidence"] for r in results)
-        print(f"  -> {out}: DONE {c[DONE]}, NOT DONE {c[NOT_DONE]}, needs check {chk}, confidence {dict(conf)}")
+        print(f"  -> {out}: {len(rows)} orders, DONE {c[DONE]}, NOT DONE {c[NOT_DONE]}, needs check {chk}")
         for o in rows:
             if o["_date"]:
                 months.add(o["_date"].strftime("%Y-%m"))
