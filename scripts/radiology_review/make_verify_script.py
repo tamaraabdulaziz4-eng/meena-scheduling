@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Generate a browser-console script to eyeball-verify DONE / NOT DONE inside PACS.
+
+The generated .js file embeds the cases (visible rows of the export files,
+i.e. the rows left after the file's Excel filter) together with the verdict
+computed by pacs_match.py. Pasted into the PACS web viewer's DevTools Console
+it re-fetches the live worklist for the period and opens a side panel that
+walks through the cases one by one, showing every PACS study of that patient
+(accession, exam, date, images) with the matched study highlighted, so the
+reviewer can agree/disagree and copy the list of disagreements at the end.
+
+Usage:
+    python3 make_verify_script.py N3_JUL.xlsx N3_AUG.xlsx \
+        --pacs pacs_jul_aug.json pacs_jul_aug_part2.json \
+        --from 2026-07-01 --to 2026-08-31 --out pacs_verify.js
+
+The .js output contains patient identifiers: keep it inside the hospital.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+import openpyxl
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pacs_match import VERDICT_COL, load_export, load_pacs, match, verdict  # noqa: E402
+
+TEMPLATE = r"""
+(async () => {
+  const CASES = __CASES__;
+  const FROM = '__FROM__', TO = '__TO__';
+  const BASE = location.origin + '/dataController/proxy';
+  const EP = 'https://localhost:9096/service/desktop/';
+  const hdr = ep => ({ 'Content-Type': 'application/json', 'Service-End-Point': ep, 'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/plain, */*' });
+  const get = async ep => { const r = await fetch(BASE, { headers: hdr(ep), credentials: 'include' }); return { status: r.status, text: await r.text() }; };
+
+  // ---------- panel
+  const old = document.getElementById('pacsVerifyPanel'); if (old) old.remove();
+  const P = document.createElement('div'); P.id = 'pacsVerifyPanel';
+  P.style.cssText = 'position:fixed;top:0;right:0;width:560px;height:100vh;overflow:auto;background:#fff;color:#111;z-index:2147483647;font:13px Arial,sans-serif;border-left:3px solid #1f4e79;padding:10px;box-sizing:border-box;direction:ltr;text-align:left';
+  document.body.appendChild(P);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const setMsg = m => { P.innerHTML = '<h3 style="margin:4px 0">PACS verify</h3><div>' + esc(m) + '</div>'; };
+
+  // ---------- live PACS fetch
+  setMsg('Loading live PACS worklist ' + FROM + ' .. ' + TO + ' ...');
+  const byMrn = {}; let total = 0, empty = 0;
+  for (let s = 1; s <= 60000; s += 200) {
+    const r = await get(`${EP}worklists/28?attributes=03,04,17,27,08,09,10&filter=fromDate:${FROM};toDate:${TO}&startR=${s}&endR=${s + 199}`);
+    if (r.status !== 200) { setMsg('PACS request failed: ' + r.status + ' ' + r.text.slice(0, 200)); return; }
+    let items = [];
+    try { JSON.parse(r.text).data.forEach(b => { if (Array.isArray(b)) items = items.concat(b); }); } catch (e) {}
+    if (!items.length) { if (++empty >= 2) break; else continue; }
+    empty = 0;
+    for (const it of items) {
+      const w = it.workItem; total++;
+      const mrn = (w.patientIdentifier && w.patientIdentifier[0] && w.patientIdentifier[0].value) || '';
+      (byMrn[mrn] = byMrn[mrn] || []).push({ rp: w.requestedProcedureId, acc: w.procedureAccessionNo || '(no accession)', code: w.procedureCode, text: w.procedureText, status: w.procedureStatus, date: (w.procedureStartTime || '').slice(0, 16), mod: w.procedureModality, img: w.imageCount || 0, name: (w.patientName && w.patientName.text) || '' });
+    }
+    setMsg('Loading live PACS worklist ... ' + total + ' studies so far');
+  }
+  Object.values(byMrn).forEach(a => a.sort((x, y) => x.date < y.date ? -1 : 1));
+
+  // ---------- state
+  let i = 0, fVerdict = 'ALL', fMonth = 'ALL';
+  const marks = {};
+  const list = () => CASES.filter(c => (fVerdict === 'ALL' || c.v === fVerdict) && (fMonth === 'ALL' || c.date.slice(0, 7) === fMonth));
+  const months = [...new Set(CASES.map(c => c.date.slice(0, 7)))].sort();
+
+  const btn = (label, on, active) => `<button data-act="${on}" style="margin:2px;padding:4px 8px;cursor:pointer;border:1px solid #888;border-radius:4px;background:${active ? '#1f4e79' : '#f3f3f3'};color:${active ? '#fff' : '#111'}">${label}</button>`;
+
+  function render() {
+    const L = list();
+    if (!L.length) { P.innerHTML = '<h3>PACS verify</h3><div>No cases for this filter.</div>' + btn('ALL', 'fv:ALL', true); bind(); return; }
+    if (i >= L.length) i = L.length - 1; if (i < 0) i = 0;
+    const c = L[i];
+    const studies = byMrn[c.mrn] || [];
+    const done = c.v === 'DONE';
+    const agreeN = Object.values(marks).filter(m => m === 'agree').length, disN = Object.values(marks).filter(m => m === 'disagree').length;
+    let h = `<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3>${btn('✕ close', 'close')}</div>`;
+    h += `<div style="margin:4px 0">${btn('ALL', 'fv:ALL', fVerdict === 'ALL')}${btn('DONE only', 'fv:DONE', fVerdict === 'DONE')}${btn('NOT DONE only', 'fv:NOT DONE', fVerdict === 'NOT DONE')} | ${btn('all months', 'fm:ALL', fMonth === 'ALL')}${months.map(m => btn(m, 'fm:' + m, fMonth === m)).join('')}</div>`;
+    h += `<div style="border:1px solid #ccc;border-radius:6px;padding:8px;margin:6px 0;background:#fafafa">
+      <div><b>Order</b> ${esc(c.id)} &nbsp; <b>Order date</b> ${esc(c.date)} &nbsp; <b>Status in system</b> ${esc(c.st)}</div>
+      <div><b>MRN</b> <span style="font-size:16px">${esc(c.mrn)}</span> &nbsp; <b>Patient</b> ${esc(c.name)}</div>
+      <div><b>Ordered exam</b> ${esc(c.exam)} <span style="color:#666">(${esc(c.code)})</span></div>
+      <div style="margin-top:6px"><span style="display:inline-block;padding:4px 10px;border-radius:4px;font-weight:bold;background:${done ? '#c6efce' : '#ffc7ce'};color:${done ? '#006100' : '#9c0006'}">${esc(c.v)}</span>
+      ${c.rp ? ` &nbsp; matched to <b>${esc(c.acc || '(no accession)')}</b>` : ' &nbsp; no matching study'} ${c.note ? `<div style="color:#666;margin-top:4px">${esc(c.note)}</div>` : ''}</div>
+    </div>`;
+    h += `<div><b>PACS studies for this patient (${FROM} .. ${TO}): ${studies.length}</b></div>`;
+    if (!studies.length) h += `<div style="padding:8px;color:#9c0006">Nothing in PACS for MRN ${esc(c.mrn)} in this period.</div>`;
+    else {
+      h += '<table style="border-collapse:collapse;width:100%;margin:4px 0"><tr style="background:#ddebf7"><th style="border:1px solid #bbb;padding:3px">Accession</th><th style="border:1px solid #bbb;padding:3px">Date</th><th style="border:1px solid #bbb;padding:3px">Exam</th><th style="border:1px solid #bbb;padding:3px">Mod</th><th style="border:1px solid #bbb;padding:3px">Images</th><th style="border:1px solid #bbb;padding:3px">Status</th></tr>';
+      for (const s of studies) {
+        const hit = c.rp && s.rp === c.rp;
+        const bg = hit ? (s.img > 0 ? '#c6efce' : '#ffc7ce') : (s.date.slice(0, 10) === c.date.slice(0, 10) ? '#fff2cc' : '#fff');
+        h += `<tr style="background:${bg};${hit ? 'font-weight:bold' : ''}"><td style="border:1px solid #bbb;padding:3px">${esc(s.acc)}</td><td style="border:1px solid #bbb;padding:3px;white-space:nowrap">${esc(s.date)}</td><td style="border:1px solid #bbb;padding:3px">${esc(s.text)} <span style="color:#666">${esc(s.code)}</span></td><td style="border:1px solid #bbb;padding:3px">${esc(s.mod)}</td><td style="border:1px solid #bbb;padding:3px;text-align:center;font-size:15px">${esc(s.img)}</td><td style="border:1px solid #bbb;padding:3px">${esc(s.status)}</td></tr>`;
+      }
+      h += '</table><div style="color:#666">green/red row = the study used for the verdict; yellow = same day as the order.</div>';
+    }
+    const m = marks[c.id] || '';
+    h += `<div style="margin:10px 0">${btn('◀ Prev', 'prev')}${btn('Next ▶', 'next')} &nbsp; ${btn('✔ Agree', 'agree', m === 'agree')}${btn('✘ Disagree', 'disagree', m === 'disagree')} &nbsp; ${btn('Go to first unmarked', 'unmarked')}</div>`;
+    h += `<div style="color:#666">Marked: ${agreeN} agree, ${disN} disagree. ${btn('Copy disagreements', 'copy')} (paste into Excel / notepad)</div>`;
+    h += '<div style="color:#999;margin-top:6px">Keys: → next, ← prev, A agree, D disagree</div>';
+    P.innerHTML = h; bind();
+  }
+  function act(a) {
+    const L = list();
+    if (a === 'close') { P.remove(); document.removeEventListener('keydown', onKey); return; }
+    if (a.startsWith('fv:')) { fVerdict = a.slice(3); i = 0; }
+    else if (a.startsWith('fm:')) { fMonth = a.slice(3); i = 0; }
+    else if (a === 'prev') i = Math.max(0, i - 1);
+    else if (a === 'next') i = Math.min(L.length - 1, i + 1);
+    else if (a === 'agree' || a === 'disagree') { marks[L[i].id] = a; i = Math.min(L.length - 1, i + 1); }
+    else if (a === 'unmarked') { const k = L.findIndex(c => !marks[c.id]); if (k >= 0) i = k; }
+    else if (a === 'copy') {
+      const rows = ['Order ID\tOrder Date\tMRN\tPatient\tExam\tAuto verdict\tYour mark'];
+      CASES.forEach(c => { if (marks[c.id]) rows.push([c.id, c.date, c.mrn, c.name, c.exam, c.v, marks[c.id]].join('\t')); });
+      navigator.clipboard.writeText(rows.join('\n')).then(() => alert('Copied ' + (rows.length - 1) + ' marked cases')).catch(() => { console.log(rows.join('\n')); alert('Clipboard blocked: the list was printed in the Console'); });
+      return;
+    }
+    render();
+  }
+  function bind() { P.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => act(b.dataset.act)); }
+  function onKey(e) {
+    if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') act('next'); else if (e.key === 'ArrowLeft') act('prev');
+    else if (e.key === 'a' || e.key === 'A') act('agree'); else if (e.key === 'd' || e.key === 'D') act('disagree');
+  }
+  document.addEventListener('keydown', onKey);
+  render();
+  console.log('PACS verify panel ready:', CASES.length, 'cases;', total, 'live PACS studies loaded');
+})();
+"""
+
+
+def visible_rows(path: str) -> set[int]:
+    """0-based indexes (in data order) of rows not hidden by the sheet filter."""
+    wb = openpyxl.load_workbook(path, read_only=False)
+    ws = wb.worksheets[0]
+    out = set()
+    idx = 0
+    for r in range(2, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value is None:
+            break
+        if not ws.row_dimensions[r].hidden:
+            out.add(idx)
+        idx += 1
+    wb.close()
+    return out
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("exports", nargs="+")
+    ap.add_argument("--pacs", nargs="+", required=True)
+    ap.add_argument("--from", dest="date_from", required=True)
+    ap.add_argument("--to", dest="date_to", required=True)
+    ap.add_argument("--out", default="pacs_verify.js")
+    ap.add_argument("--all-rows", action="store_true", help="include rows hidden by the Excel filter too")
+    args = ap.parse_args(argv)
+
+    studies = load_pacs(args.pacs)
+    per_file, all_orders, seq = [], [], 0
+    for path in args.exports:
+        _header, rows = load_export(path)
+        for o in rows:
+            o["_key"] = (path, o.get("Order ID"), seq)
+            o["_seq"] = seq
+            seq += 1
+        all_orders.extend(rows)
+        per_file.append((path, rows))
+    match(all_orders, studies)
+
+    cases = []
+    for path, rows in per_file:
+        keep = None if args.all_rows else visible_rows(path)
+        for idx, o in enumerate(rows):
+            if keep is not None and idx not in keep:
+                continue
+            r = verdict(o)
+            cases.append({
+                "id": o.get("Order ID"),
+                "date": str(o.get("Order Date") or "")[:16],
+                "mrn": str(o.get("MRNO") or "").strip(),
+                "name": o.get("Patient Name") or "",
+                "exam": o.get("Exam / Service") or "",
+                "code": o.get("Service Code") or "",
+                "st": o.get("Order Status") or "",
+                "v": r[VERDICT_COL],
+                "acc": r["PACS Accession"],
+                "rp": o["_study"]["rpid"] if o.get("_study") else None,
+                "note": r["Notes"],
+            })
+    js = (TEMPLATE.replace("__CASES__", json.dumps(cases, ensure_ascii=False))
+          .replace("__FROM__", args.date_from).replace("__TO__", args.date_to))
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(js.strip() + "\n")
+    print(f"{args.out}: {len(cases)} cases embedded")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
