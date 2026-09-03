@@ -55,7 +55,10 @@ def to_dt(v) -> dt.datetime | None:
 
 
 def decide(o: dict, studies: list[dict]) -> tuple[str, dict | None, str]:
-    """Return (verdict, study used, reason)."""
+    """Return (verdict, study used, reason).
+
+    verdict is "" when the two reviewer rules disagree and a human must decide.
+    """
     od = to_dt(o.get("Order Date"))
     if od is None:
         return NOT_DONE, None, "order has no date"
@@ -72,22 +75,29 @@ def decide(o: dict, studies: list[dict]) -> tuple[str, dict | None, str]:
         window.append((sd, s))
     window.sort(key=lambda x: x[0])
     with_img = [s for _sd, s in window if s["img"] > 0]
-    own = [s for s in with_img if s["code"] == code]
-    if own:
-        s = own[0]
+    own_all = [s for _sd, s in window if code and s["code"] == code]
+    own_img = [s for s in own_all if s["img"] > 0]
+    if own_img:
+        s = own_img[0]
         return DONE, s, f"CONFIRMED DONE: own exam {s['status']} with {s['img']} images"
+    own_zero = own_all[0] if own_all else None
     if with_img:
         s = max(with_img, key=lambda x: x["img"])
-        return DONE, s, f"images in same visit under {s['text']} ({s['status']}, {s['img']} images)"
+        if own_zero is not None:
+            # rule conflict: the ordered exam itself is registered with 0 images,
+            # but another exam of the same visit has images -> human decides
+            return "", s, (f"CHECK: own exam registered {own_zero['status']} with 0 images "
+                           f"({own_zero['acc'] or 'no accession'}), but images exist under {s['text']} "
+                           f"({s['img']} images) in the same visit")
+        return DONE, s, f"DONE: no separate entry for this exam; images in same visit under {s['text']} ({s['status']}, {s['img']} images)"
+    if own_zero is not None:
+        if own_zero["status"] == "Ordered":
+            return NOT_DONE, own_zero, "CONFIRMED NOT DONE: same exam registered same day as Ordered with 0 images"
+        return "", own_zero, f"CHECK: same exam registered same day as {own_zero['status']} with 0 images (arrived but no images sent?)"
     zero = [s for _sd, s in window]
-    same_code = [s for s in zero if s["code"] == code]
-    if same_code:
-        s = same_code[0]
-        tag = "CONFIRMED NOT DONE" if s["status"] == "Ordered" else "NOT DONE"
-        return NOT_DONE, s, f"{tag}: same exam registered same day as {s['status']} with 0 images"
     if zero:
-        return NOT_DONE, zero[0], f"only 0-image entries in this visit ({zero[0]['status']})"
-    return NOT_DONE, None, "nothing in PACS for this visit"
+        return NOT_DONE, zero[0], f"CONFIRMED NOT DONE: no images at all in this visit (entries: {', '.join(sorted(set(x['status'] for x in zero)))})"
+    return NOT_DONE, None, "CONFIRMED NOT DONE: nothing in PACS for this visit"
 
 
 def main(argv=None):
@@ -140,11 +150,11 @@ def main(argv=None):
                 elif c == "Why":
                     row.append(f"{why}; {evid}" if evid else why)
                 elif c == "Review":
-                    row.append("SURE" if (why.startswith("CONFIRMED") or why.startswith("nothing in PACS")) else "CHECK")
+                    row.append("CHECK" if why.startswith("CHECK") else "SURE")
                 else:
                     row.append(o.get(c))
             ws.append(row)
-            ws.cell(row=ws.max_row, column=vcol).fill = FILL_DONE if v == DONE else FILL_NOT
+            ws.cell(row=ws.max_row, column=vcol).fill = FILL_DONE if v == DONE else (FILL_NOT if v == NOT_DONE else PatternFill("solid", fgColor="FFEB9C"))
         for c in ws[1]:
             c.font = Font(bold=True)
         ws.freeze_panes = "A2"
@@ -154,7 +164,19 @@ def main(argv=None):
         base = os.path.splitext(os.path.basename(path))[0]
         out = os.path.join(args.out, f"{base}_{re.sub(r'[^A-Za-z0-9]+', '', args.branch.title())}.xlsx")
         wb.save(out)
-        print(f"{out}: {len(rows)} rows, DONE {counts[DONE]}, NOT DONE {counts[NOT_DONE]}")
+        # separate small workbook with only the rows a human must decide
+        wc = openpyxl.Workbook(); wsc = wc.active; wsc.title = "For your review"
+        wsc.append(cols)
+        for r in ws.iter_rows(min_row=2, values_only=True):
+            if r[cols.index("Review")] == "CHECK":
+                wsc.append(list(r))
+        for c in wsc[1]:
+            c.font = Font(bold=True)
+        wsc.freeze_panes = "A2"; wsc.auto_filter.ref = wsc.dimensions
+        for i, c in enumerate(cols, start=1):
+            wsc.column_dimensions[get_column_letter(i)].width = 16 if c not in ("Patient Name", "Exam / Service", "Why", "Branch") else 45
+        wc.save(out.replace(".xlsx", "_FOR_REVIEW.xlsx"))
+        print(f"{out}: {len(rows)} rows, DONE {counts[DONE]}, NOT DONE {counts[NOT_DONE]}, CHECK {counts['']}")
         for k, v in reasons.most_common():
             print(f"    {v:5d}  {k}")
     return 0

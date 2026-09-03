@@ -119,17 +119,17 @@ TEMPLATE = r"""
     const c = L[i];
     const studies = cache[c.mrn];
     if (!studies) { P.innerHTML = `<h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3><div>Searching PACS for MRN ${esc(c.mrn)} ...</div>`; getStudies(c.mrn).then(() => { if (list()[i] === c) render(); }); return; }
-    const done = c.v === 'DONE';
+    const done = c.v === 'DONE'; const check = !c.v;
     const agreeN = Object.values(marks).filter(m => m === 'agree').length, disN = Object.values(marks).filter(m => m === 'disagree').length;
     let h = `<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3><span>${btn('▶ Run all automatically', 'runall', true)}${btn('✕ close', 'close')}</span></div>`;
-    h += `<div style="margin:4px 0">${btn('ALL', 'fv:ALL', fVerdict === 'ALL')}${btn('DONE only', 'fv:DONE', fVerdict === 'DONE')}${btn('NOT DONE only', 'fv:NOT DONE', fVerdict === 'NOT DONE')} | ${btn('all months', 'fm:ALL', fMonth === 'ALL')}${months.map(m => btn(m, 'fm:' + m, fMonth === m)).join('')}</div>`;
+    h += `<div style="margin:4px 0">${btn('ALL', 'fv:ALL', fVerdict === 'ALL')}${btn('DONE only', 'fv:DONE', fVerdict === 'DONE')}${btn('NOT DONE only', 'fv:NOT DONE', fVerdict === 'NOT DONE')}${btn('YOU DECIDE only', 'fv:', fVerdict === '')} | ${btn('all months', 'fm:ALL', fMonth === 'ALL')}${months.map(m => btn(m, 'fm:' + m, fMonth === m)).join('')}</div>`;
     h += `<div style="border:1px solid #ccc;border-radius:6px;padding:8px;margin:6px 0;background:#fafafa">
       <div><b>Order</b> ${esc(c.id)} &nbsp; <b>Order date</b> ${esc(c.date)} &nbsp; <b>Status in system</b> ${esc(c.st)}</div>
       <div><b>MRN</b> <span style="font-size:16px">${esc(c.mrn)}</span> &nbsp; <b>Patient</b> ${esc(c.name)}</div>
       <div><b>Ordered exam</b> ${esc(c.exam)} <span style="color:#666">(${esc(c.code)})</span></div>
-      <div style="margin-top:6px"><span style="display:inline-block;padding:4px 10px;border-radius:4px;font-weight:bold;background:${done ? '#c6efce' : '#ffc7ce'};color:${done ? '#006100' : '#9c0006'}">${esc(c.v)}</span>
+      <div style="margin-top:6px"><span style="display:inline-block;padding:4px 10px;border-radius:4px;font-weight:bold;background:${check ? '#ffeb9c' : (done ? '#c6efce' : '#ffc7ce')};color:${check ? '#7f6000' : (done ? '#006100' : '#9c0006')}">${check ? 'YOU DECIDE' : esc(c.v)}</span>
       ${c.rp ? ` &nbsp; matched to <b>${esc(c.acc || '(no accession)')}</b>` : ' &nbsp; no matching study'}
-      ${/^CONFIRMED/.test(c.note || '') ? `<div style="margin-top:6px;padding:5px 8px;border-radius:4px;font-weight:bold;background:${done ? '#006100' : '#9c0006'};color:#fff">✔ ${esc(c.note)}</div>` : (c.note ? `<div style="color:#666;margin-top:4px">${esc(c.note)}</div>` : '')}</div>
+      ${/^CONFIRMED/.test(c.note || '') ? `<div style="margin-top:6px;padding:5px 8px;border-radius:4px;font-weight:bold;background:${done ? '#006100' : '#9c0006'};color:#fff">✔ ${esc(c.note)}</div>` : (c.note ? `<div style="margin-top:6px;padding:5px 8px;border-radius:4px;background:${check ? '#ffeb9c' : '#eee'};color:#333">${esc(c.note)}</div>` : '')}</div>
     </div>`;
     h += `<div><b>PACS studies for this patient (${FROM} .. ${TO}): ${studies.length}</b></div>`;
     if (!studies.length) h += `<div style="padding:8px;color:#9c0006">Nothing in PACS for MRN ${esc(c.mrn)} in this period.</div>`;
@@ -177,13 +177,21 @@ TEMPLATE = r"""
     const fam = FAMILY[String(c.cat || '').toUpperCase()];
     const win = studies.filter(s => { const t = toMs(s.date); return !isNaN(t) && t >= od - 2 * 3600e3 && t <= od + 24 * 3600e3 && (fam === null || fam === undefined || fam.includes(s.mod)); }).sort((a, b) => toMs(a.date) - toMs(b.date));
     const img = win.filter(s => s.img > 0);
-    const own = img.find(s => s.code === c.code);
-    if (own) return { v: 'DONE', why: `CONFIRMED DONE: own exam ${own.status} with ${own.img} images`, sure: true, s: own };
-    if (img.length) { const s = img.reduce((a, b) => b.img > a.img ? b : a); return { v: 'DONE', why: `images in same visit under ${s.text} (${s.status}, ${s.img} images)`, sure: false, s }; }
-    const same = win.find(s => s.code === c.code);
-    if (same) return { v: 'NOT DONE', why: `${same.status === 'Ordered' ? 'CONFIRMED NOT DONE' : 'NOT DONE'}: same exam registered same day as ${same.status} with 0 images`, sure: same.status === 'Ordered', s: same };
-    if (win.length) return { v: 'NOT DONE', why: `only 0-image entries in this visit (${win[0].status})`, sure: false, s: win[0] };
-    return { v: 'NOT DONE', why: 'nothing in PACS for this visit', sure: true };
+    const ownAll = win.filter(s => c.code && s.code === c.code);
+    const ownImg = ownAll.find(s => s.img > 0);
+    if (ownImg) return { v: 'DONE', why: `CONFIRMED DONE: own exam ${ownImg.status} with ${ownImg.img} images`, sure: true, s: ownImg };
+    const ownZero = ownAll[0];
+    if (img.length) {
+      const s = img.reduce((a, b) => b.img > a.img ? b : a);
+      if (ownZero) return { v: '', why: `CHECK: own exam registered ${ownZero.status} with 0 images (${ownZero.acc}), but images exist under ${s.text} (${s.img} images) in the same visit`, sure: false, s };
+      return { v: 'DONE', why: `DONE: no separate entry for this exam; images in same visit under ${s.text} (${s.status}, ${s.img} images)`, sure: true, s };
+    }
+    if (ownZero) {
+      if (ownZero.status === 'Ordered') return { v: 'NOT DONE', why: 'CONFIRMED NOT DONE: same exam registered same day as Ordered with 0 images', sure: true, s: ownZero };
+      return { v: '', why: `CHECK: same exam registered same day as ${ownZero.status} with 0 images (arrived but no images sent?)`, sure: false, s: ownZero };
+    }
+    if (win.length) return { v: 'NOT DONE', why: `CONFIRMED NOT DONE: no images at all in this visit (${[...new Set(win.map(x => x.status))].join(', ')})`, sure: true, s: win[0] };
+    return { v: 'NOT DONE', why: 'CONFIRMED NOT DONE: nothing in PACS for this visit', sure: true };
   }
   async function runAll() {
     const out = []; let n = 0;

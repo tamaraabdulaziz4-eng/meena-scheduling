@@ -126,7 +126,7 @@ def load_pacs(paths: list[str]) -> list[dict]:
             else:
                 mrn = w.get("mrn", "")
             mrn = str(mrn).strip()
-            if not re.fullmatch(r"\d{8}", mrn):
+            if not re.fullmatch(r"\d{3,10}", mrn):  # drop test entries such as "TST1"; keep short legacy MRNs
                 continue
             start = w.get("procedureStartTime", w.get("start", ""))
             name = w.get("patientName")
