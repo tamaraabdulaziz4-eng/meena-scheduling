@@ -26,7 +26,8 @@ import sys
 import openpyxl
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pacs_match import VERDICT_COL, load_export, load_pacs, match, verdict  # noqa: E402
+from pacs_match import VERDICT_COL, load_export, load_pacs, match, verdict, visible_rows  # noqa: E402
+from sameday_fill import decide  # noqa: E402
 
 TEMPLATE = r"""
 (async () => {
@@ -176,22 +177,6 @@ TEMPLATE = r"""
 """
 
 
-def visible_rows(path: str) -> set[int]:
-    """0-based indexes (in data order) of rows not hidden by the sheet filter."""
-    wb = openpyxl.load_workbook(path, read_only=False)
-    ws = wb.worksheets[0]
-    out = set()
-    idx = 0
-    for r in range(2, ws.max_row + 1):
-        if ws.cell(row=r, column=1).value is None:
-            break
-        if not ws.row_dimensions[r].hidden:
-            out.add(idx)
-        idx += 1
-    wb.close()
-    return out
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("exports", nargs="+")
@@ -200,6 +185,9 @@ def main(argv=None):
     ap.add_argument("--to", dest="date_to", required=True)
     ap.add_argument("--out", default="pacs_verify.js")
     ap.add_argument("--all-rows", action="store_true", help="include rows hidden by the Excel filter too")
+    ap.add_argument("--rule", choices=["match", "sameday"], default="match", help="sameday = strict same-visit rule of sameday_fill.py")
+    ap.add_argument("--branch", default="", help="only rows whose Branch contains this text")
+    ap.add_argument("--drop-cancelled", action="store_true")
     args = ap.parse_args(argv)
 
     studies = load_pacs(args.pacs)
@@ -213,6 +201,10 @@ def main(argv=None):
         all_orders.extend(rows)
         per_file.append((path, rows))
     match(all_orders, studies)
+    by_mrn = {}
+    for st in studies:
+        st["start_full"] = st["start"]
+        by_mrn.setdefault(st["mrn"], []).append(st)
 
     cases = []
     for path, rows in per_file:
@@ -220,7 +212,16 @@ def main(argv=None):
         for idx, o in enumerate(rows):
             if keep is not None and idx not in keep:
                 continue
-            r = verdict(o)
+            if args.branch and args.branch.lower() not in str(o.get("Branch") or "").lower():
+                continue
+            if args.drop_cancelled and str(o.get("Order Status") or "").lower().startswith("cancel"):
+                continue
+            if args.rule == "sameday":
+                v, st, why = decide(o, by_mrn.get(str(o.get("MRNO") or "").strip(), []))
+                r = {VERDICT_COL: v, "PACS Accession": st["acc"] if st else "", "Notes": why}
+                o["_study"] = st
+            else:
+                r = verdict(o)
             cases.append({
                 "id": o.get("Order ID"),
                 "date": str(o.get("Order Date") or "")[:16],

@@ -162,6 +162,21 @@ def load_export(path: str) -> tuple[list[str], list[dict]]:
     return header, rows
 
 
+def visible_rows(path: str) -> set[int]:
+    """0-based indexes (in data order) of rows not hidden by the sheet's Excel filter."""
+    wb = openpyxl.load_workbook(path)
+    ws = wb.worksheets[0]
+    out, idx = set(), 0
+    for r in range(2, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value is None:
+            break
+        if not ws.row_dimensions[r].hidden:
+            out.add(idx)
+        idx += 1
+    wb.close()
+    return out
+
+
 # --------------------------------------------------------------------------- match
 def family_for(category) -> set | None:
     key = str(category or "").strip().upper()
