@@ -75,13 +75,18 @@ def decide(o: dict, studies: list[dict]) -> tuple[str, dict | None, str]:
     own = [s for s in with_img if s["code"] == code]
     if own:
         s = own[0]
-        return DONE, s, f"own exam has {s['img']} images"
+        return DONE, s, f"CONFIRMED DONE: own exam {s['status']} with {s['img']} images"
     if with_img:
         s = max(with_img, key=lambda x: x["img"])
-        return DONE, s, f"images in same visit under {s['text']} ({s['img']} images)"
+        return DONE, s, f"images in same visit under {s['text']} ({s['status']}, {s['img']} images)"
     zero = [s for _sd, s in window]
+    same_code = [s for s in zero if s["code"] == code]
+    if same_code:
+        s = same_code[0]
+        tag = "CONFIRMED NOT DONE" if s["status"] == "Ordered" else "NOT DONE"
+        return NOT_DONE, s, f"{tag}: same exam registered same day as {s['status']} with 0 images"
     if zero:
-        return NOT_DONE, zero[0], "registered in PACS with 0 images"
+        return NOT_DONE, zero[0], f"only 0-image entries in this visit ({zero[0]['status']})"
     return NOT_DONE, None, "nothing in PACS for this visit"
 
 
@@ -115,6 +120,7 @@ def main(argv=None):
         if VERDICT_COL not in cols:
             cols.append(VERDICT_COL)
         cols.append("Why")
+        cols.append("Review")
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Radiology Orders"
@@ -125,7 +131,7 @@ def main(argv=None):
         for o in rows:
             v, s, why = decide(o, by_mrn.get(str(o.get("MRNO") or "").strip(), []))
             counts[v] += 1
-            reasons[why.split(" (")[0] if why.startswith("images in same visit") else why.split(" has ")[0]] += 1
+            reasons[why.split(":")[0] if ":" in why else why.split(" (")[0]] += 1
             evid = f"{s['acc'] or '(no accession)'} | {s['text']} | {s['start']} | {s['img']} images" if s else ""
             row = []
             for c in cols:
@@ -133,6 +139,8 @@ def main(argv=None):
                     row.append(v)
                 elif c == "Why":
                     row.append(f"{why}; {evid}" if evid else why)
+                elif c == "Review":
+                    row.append("SURE" if (why.startswith("CONFIRMED") or why.startswith("nothing in PACS")) else "CHECK")
                 else:
                     row.append(o.get(c))
             ws.append(row)
@@ -146,7 +154,9 @@ def main(argv=None):
         base = os.path.splitext(os.path.basename(path))[0]
         out = os.path.join(args.out, f"{base}_{re.sub(r'[^A-Za-z0-9]+', '', args.branch.title())}.xlsx")
         wb.save(out)
-        print(f"{out}: {len(rows)} rows, DONE {counts[DONE]}, NOT DONE {counts[NOT_DONE]} | {dict(reasons)}")
+        print(f"{out}: {len(rows)} rows, DONE {counts[DONE]}, NOT DONE {counts[NOT_DONE]}")
+        for k, v in reasons.most_common():
+            print(f"    {v:5d}  {k}")
     return 0
 
 

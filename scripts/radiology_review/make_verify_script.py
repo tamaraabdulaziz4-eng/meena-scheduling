@@ -121,14 +121,15 @@ TEMPLATE = r"""
     if (!studies) { P.innerHTML = `<h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3><div>Searching PACS for MRN ${esc(c.mrn)} ...</div>`; getStudies(c.mrn).then(() => { if (list()[i] === c) render(); }); return; }
     const done = c.v === 'DONE';
     const agreeN = Object.values(marks).filter(m => m === 'agree').length, disN = Object.values(marks).filter(m => m === 'disagree').length;
-    let h = `<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3>${btn('✕ close', 'close')}</div>`;
+    let h = `<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:4px 0">PACS verify: case ${i + 1} / ${L.length}</h3><span>${btn('▶ Run all automatically', 'runall', true)}${btn('✕ close', 'close')}</span></div>`;
     h += `<div style="margin:4px 0">${btn('ALL', 'fv:ALL', fVerdict === 'ALL')}${btn('DONE only', 'fv:DONE', fVerdict === 'DONE')}${btn('NOT DONE only', 'fv:NOT DONE', fVerdict === 'NOT DONE')} | ${btn('all months', 'fm:ALL', fMonth === 'ALL')}${months.map(m => btn(m, 'fm:' + m, fMonth === m)).join('')}</div>`;
     h += `<div style="border:1px solid #ccc;border-radius:6px;padding:8px;margin:6px 0;background:#fafafa">
       <div><b>Order</b> ${esc(c.id)} &nbsp; <b>Order date</b> ${esc(c.date)} &nbsp; <b>Status in system</b> ${esc(c.st)}</div>
       <div><b>MRN</b> <span style="font-size:16px">${esc(c.mrn)}</span> &nbsp; <b>Patient</b> ${esc(c.name)}</div>
       <div><b>Ordered exam</b> ${esc(c.exam)} <span style="color:#666">(${esc(c.code)})</span></div>
       <div style="margin-top:6px"><span style="display:inline-block;padding:4px 10px;border-radius:4px;font-weight:bold;background:${done ? '#c6efce' : '#ffc7ce'};color:${done ? '#006100' : '#9c0006'}">${esc(c.v)}</span>
-      ${c.rp ? ` &nbsp; matched to <b>${esc(c.acc || '(no accession)')}</b>` : ' &nbsp; no matching study'} ${c.note ? `<div style="color:#666;margin-top:4px">${esc(c.note)}</div>` : ''}</div>
+      ${c.rp ? ` &nbsp; matched to <b>${esc(c.acc || '(no accession)')}</b>` : ' &nbsp; no matching study'}
+      ${/^CONFIRMED/.test(c.note || '') ? `<div style="margin-top:6px;padding:5px 8px;border-radius:4px;font-weight:bold;background:${done ? '#006100' : '#9c0006'};color:#fff">✔ ${esc(c.note)}</div>` : (c.note ? `<div style="color:#666;margin-top:4px">${esc(c.note)}</div>` : '')}</div>
     </div>`;
     h += `<div><b>PACS studies for this patient (${FROM} .. ${TO}): ${studies.length}</b></div>`;
     if (!studies.length) h += `<div style="padding:8px;color:#9c0006">Nothing in PACS for MRN ${esc(c.mrn)} in this period.</div>`;
@@ -137,7 +138,8 @@ TEMPLATE = r"""
       for (const s of studies) {
         const hit = c.rp && s.rp === c.rp;
         const bg = hit ? (s.img > 0 ? '#c6efce' : '#ffc7ce') : (s.date.slice(0, 10) === c.date.slice(0, 10) ? '#fff2cc' : '#fff');
-        h += `<tr style="background:${bg};${hit ? 'font-weight:bold' : ''}"><td style="border:1px solid #bbb;padding:3px">${esc(s.acc)}</td><td style="border:1px solid #bbb;padding:3px;white-space:nowrap">${esc(s.date)}</td><td style="border:1px solid #bbb;padding:3px">${esc(s.text)} <span style="color:#666">${esc(s.code)}</span></td><td style="border:1px solid #bbb;padding:3px">${esc(s.mod)}</td><td style="border:1px solid #bbb;padding:3px;text-align:center;font-size:15px">${esc(s.img)}</td><td style="border:1px solid #bbb;padding:3px">${esc(s.status)}</td></tr>`;
+        const stTag = s.status === 'Ordered' ? ' <span style="color:#9c0006;font-weight:bold">(0 img)</span>' : '';
+        h += `<tr style="background:${bg};${hit ? 'font-weight:bold' : ''}"><td style="border:1px solid #bbb;padding:3px">${esc(s.acc)}</td><td style="border:1px solid #bbb;padding:3px;white-space:nowrap">${esc(s.date)}</td><td style="border:1px solid #bbb;padding:3px">${esc(s.text)} <span style="color:#666">${esc(s.code)}</span></td><td style="border:1px solid #bbb;padding:3px">${esc(s.mod)}</td><td style="border:1px solid #bbb;padding:3px;text-align:center;font-size:15px">${esc(s.img)}</td><td style="border:1px solid #bbb;padding:3px">${esc(s.status)}${stTag}</td></tr>`;
       }
       h += '</table><div style="color:#666">green/red row = the study used for the verdict; yellow = same day as the order.</div>';
     }
@@ -150,6 +152,9 @@ TEMPLATE = r"""
   function act(a) {
     const L = list();
     if (a === 'close') { P.remove(); document.removeEventListener('keydown', onKey); return; }
+    if (a === 'runall') { runAll(); return; }
+    if (a === 'back') { render(); return; }
+    if (a === 'copyres') { navigator.clipboard.writeText(JSON.stringify(window._pacsResult || [])).then(() => alert('Copied')).catch(() => alert('Clipboard blocked: run copy(JSON.stringify(window._pacsResult)) in the Console')); return; }
     if (a.startsWith('fv:')) { fVerdict = a.slice(3); i = 0; }
     else if (a.startsWith('fm:')) { fMonth = a.slice(3); i = 0; }
     else if (a === 'prev') i = Math.max(0, i - 1);
@@ -163,6 +168,42 @@ TEMPLATE = r"""
       return;
     }
     render();
+  }
+  // ---------- automatic run of the same-visit rule against live PACS
+  const FAMILY = { XR: ['DX', 'CR', 'DR', 'RF', 'XA', 'OT'], ULTRASOUND: ['US'], CT: ['CT'], MRI: ['MR'], MAMM: ['MG'], BMD: ['BM', 'OT'], FLUROSCOPY: ['RF', 'XA', 'DX'], FLUOROSCOPY: ['RF', 'XA', 'DX'], RADIOLOGY: null };
+  const toMs = t => { const m = String(t || '').match(/(\d{4})-(\d{2})-(\d{2})[ T]?(\d{2})?:?(\d{2})?/); return m ? new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime() : NaN; };
+  function liveVerdict(c, studies) {
+    const od = toMs(c.date); if (isNaN(od)) return { v: 'NOT DONE', why: 'order has no date', sure: false };
+    const fam = FAMILY[String(c.cat || '').toUpperCase()];
+    const win = studies.filter(s => { const t = toMs(s.date); return !isNaN(t) && t >= od - 2 * 3600e3 && t <= od + 24 * 3600e3 && (fam === null || fam === undefined || fam.includes(s.mod)); }).sort((a, b) => toMs(a.date) - toMs(b.date));
+    const img = win.filter(s => s.img > 0);
+    const own = img.find(s => s.code === c.code);
+    if (own) return { v: 'DONE', why: `CONFIRMED DONE: own exam ${own.status} with ${own.img} images`, sure: true, s: own };
+    if (img.length) { const s = img.reduce((a, b) => b.img > a.img ? b : a); return { v: 'DONE', why: `images in same visit under ${s.text} (${s.status}, ${s.img} images)`, sure: false, s }; }
+    const same = win.find(s => s.code === c.code);
+    if (same) return { v: 'NOT DONE', why: `${same.status === 'Ordered' ? 'CONFIRMED NOT DONE' : 'NOT DONE'}: same exam registered same day as ${same.status} with 0 images`, sure: same.status === 'Ordered', s: same };
+    if (win.length) return { v: 'NOT DONE', why: `only 0-image entries in this visit (${win[0].status})`, sure: false, s: win[0] };
+    return { v: 'NOT DONE', why: 'nothing in PACS for this visit', sure: true };
+  }
+  async function runAll() {
+    const out = []; let n = 0;
+    for (const c of CASES) {
+      n++;
+      if (n % 5 === 0 || n === CASES.length) setMsg(`Auto-run: ${n} / ${CASES.length} (MRN ${c.mrn}) ...`);
+      let st = [];
+      try { st = await getStudies(c.mrn); } catch (e) { out.push({ ...c, live: 'ERROR', why: String(e), sure: false }); continue; }
+      const r = liveVerdict(c, st);
+      out.push({ id: c.id, date: c.date, mrn: c.mrn, name: c.name, exam: c.exam, code: c.code, cat: c.cat, st: c.st, offline: c.v, live: r.v, why: r.why, sure: r.sure, agree: r.v === c.v,
+        evidence: r.s ? `${r.s.acc} | ${r.s.text} | ${r.s.date} | ${r.s.img} images | ${r.s.status}` : '',
+        studies: st.map(s => `${s.acc} | ${s.text} | ${s.code} | ${s.date} | ${s.img} img | ${s.status}`) });
+    }
+    window._pacsResult = out;
+    const sure = out.filter(x => x.sure).length, dis = out.filter(x => !x.agree).length;
+    const json = JSON.stringify(out);
+    try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' })); a.download = 'pacs_verify_result.json'; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+    P.innerHTML = `<h3 style="margin:4px 0">Auto-run finished</h3><div>${out.length} cases checked live in PACS.<br>Sure: <b>${sure}</b> &nbsp; Need your review: <b>${out.length - sure}</b> &nbsp; Differ from the file: <b>${dis}</b></div>
+      <div style="margin:8px 0">The file <b>pacs_verify_result.json</b> should have downloaded. If not: ${btn('Copy result', 'copyres')} then paste into Notepad and save as pacs_verify_result.json.</div>
+      <div>${btn('Back to cases', 'back')}</div>`; bind();
   }
   function bind() { P.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => act(b.dataset.act)); }
   function onKey(e) {
@@ -229,6 +270,7 @@ def main(argv=None):
                 "name": o.get("Patient Name") or "",
                 "exam": o.get("Exam / Service") or "",
                 "code": o.get("Service Code") or "",
+                "cat": o.get("Modality (Category)") or "",
                 "st": o.get("Order Status") or "",
                 "v": r[VERDICT_COL],
                 "acc": r["PACS Accession"],
